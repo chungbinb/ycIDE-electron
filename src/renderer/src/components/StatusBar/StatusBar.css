@@ -33,3 +33,6 @@ button.statusbar-item {
 button.statusbar-item:hover {
   background: rgba(255, 255, 255, 0.12);
 }
+.statusbar-error {
+  color: #f48771;
+}

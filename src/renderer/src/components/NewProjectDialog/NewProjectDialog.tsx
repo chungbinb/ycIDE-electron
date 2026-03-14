@@ -41,7 +41,7 @@ function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): 
   // 打开时获取默认项目路径
   useEffect(() => {
     if (open && !projectPath) {
-      window.api?.project?.getDefaultPath?.().then(p => {
+      window.api?.project?.getDefaultPath?.().then((p: string) => {
         if (p) setProjectPath(p)
       })
     }

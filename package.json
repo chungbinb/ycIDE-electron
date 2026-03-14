@@ -21,6 +21,12 @@
       "out/**/*",
       "resources/**/*"
     ],
+    "extraFiles": [
+      { "from": "compiler", "to": "compiler" },
+      { "from": "lib", "to": "lib" },
+      { "from": "static_lib", "to": "static_lib" },
+      { "from": "themes", "to": "themes" }
+    ],
     "win": {
       "target": [
         "nsis"

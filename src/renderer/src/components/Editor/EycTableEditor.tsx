@@ -405,7 +405,7 @@ function buildBlocks(text: string): RenderBlock[] {
 
 // ========== 流程线计算 ==========
 
-interface FlowSegment { depth: number; type: 'start' | 'end' | 'branch' | 'through'; isLoop: boolean; isMarker?: boolean; hasInnerVert?: boolean; hasExtraEnds?: boolean; isInnerThrough?: boolean; isInnerEnd?: boolean; hasNextFlow?: boolean; hasPrevFlowEnd?: boolean; hasInnerLink?: boolean; hasOuterLink?: boolean; outerHidden?: boolean }
+interface FlowSegment { depth: number; type: 'start' | 'end' | 'branch' | 'through'; isLoop: boolean; isMarker?: boolean; hasInnerVert?: boolean; hasExtraEnds?: boolean; isInnerThrough?: boolean; isInnerEnd?: boolean; hasNextFlow?: boolean; hasPrevFlowEnd?: boolean; hasInnerLink?: boolean; hasOuterLink?: boolean; outerHidden?: boolean; isStraightEnd?: boolean }
 
 interface FlowBlock { startLine: number; endLine: number; branchLines: number[]; depth: number; isLoop: boolean; extraEndLines?: number[] }
 
@@ -413,7 +413,11 @@ interface FlowBlock { startLine: number; endLine: number; branchLines: number[];
 function extractFlowKw(codeLine: string): string | null {
   const trimmed = codeLine.replace(/^ +/, '')
   // 检查流程标记零宽字符（优先检查）
-  if (trimmed.startsWith('\u200C')) return '\u200C'
+  // \u200C 后有实际内容时视为普通代码行（不绘制分支横线），只有纯标记行才作为分支关键字
+  if (trimmed.startsWith('\u200C')) {
+    if (trimmed.length <= 1) return '\u200C'
+    return null
+  }
   if (trimmed.startsWith('\u200D')) return '\u200D'
   if (trimmed.startsWith('\u2060')) return '\u2060'
   let stripped = trimmed.replace(/[\r\t\u200B]/g, '')
@@ -449,10 +453,10 @@ const FLOW_AUTO_COMPLETE: Record<string, (string | null)[]> = {
   '如果': ['\u200C', '\u200D', null],
   '如果真': ['\u200D', null],
   '判断': ['\u200C', '\u2060', null],
-  '判断循环首': [null, '判断循环尾'],
-  '循环判断首': [null, '循环判断尾'],
-  '计次循环首': [null, '计次循环尾'],
-  '变量循环首': [null, '变量循环尾'],
+  '判断循环首': ['判断循环尾'],
+  '循环判断首': ['循环判断尾'],
+  '计次循环首': ['计次循环尾'],
+  '变量循环首': ['变量循环尾'],
 }
 
 /** 自动补齐的结束/分支行标记 */
@@ -470,14 +474,22 @@ function computeFlowLines(blocks: RenderBlock[]): { map: Map<number, FlowSegment
 
   // Pass 1: match flow block pairs
   const markerLines = new Set<number>()
-  // 收集代码行块用于前瞻
+  // 收集代码行块用于前瞻，记录子程序/程序集边界
   const codeBlocks: RenderBlock[] = []
+  const boundaryIndices = new Set<number>()  // codeBlocks 中的边界位置
   for (const blk of blocks) {
+    if (blk.kind === 'table' && (blk.tableType === 'sub' || blk.tableType === 'assembly')) {
+      boundaryIndices.add(codeBlocks.length)  // 下一个代码块开始新的子程序
+    }
     if (blk.kind === 'codeline' && blk.codeLine) codeBlocks.push(blk)
   }
   const skipIndices = new Set<number>()
   for (let ci = 0; ci < codeBlocks.length; ci++) {
     if (skipIndices.has(ci)) continue
+    // 遇到子程序/程序集边界时清空栈，防止流程线穿越子程序
+    if (boundaryIndices.has(ci)) {
+      stack.length = 0
+    }
     const blk = codeBlocks[ci]
     const kw = extractFlowKw(blk.codeLine!)
     if (!kw) continue
@@ -547,9 +559,11 @@ function computeFlowLines(blocks: RenderBlock[]): { map: Map<number, FlowSegment
     // 找标记分支行
     const markerBranches = fb.branchLines.filter(bl => markerLines.has(bl))
 
-    // 结束线段
+    // 结束线段（只有存在标记分支时才绘制内侧流程线，如果真等无分支命令只绘制外侧）
     const hasExtras = fb.extraEndLines && fb.extraEndLines.length > 0
-    addSeg(fb.endLine, { depth: fb.depth, type: 'end', isLoop: fb.isLoop, isMarker: markerLines.has(fb.endLine), hasExtraEnds: hasExtras || undefined })
+    // 无标记分支但结束行是标记行（如如果真的 \u200D）：直线到底+向下箭头，无横线
+    const isStraight = markerBranches.length === 0 && markerLines.has(fb.endLine)
+    addSeg(fb.endLine, { depth: fb.depth, type: 'end', isLoop: fb.isLoop, isMarker: markerBranches.length > 0 && markerLines.has(fb.endLine), hasExtraEnds: hasExtras || undefined, isStraightEnd: isStraight || undefined })
 
     // 所有标记分支都绘制横线
     for (const bl of fb.branchLines) {
@@ -880,9 +894,10 @@ export interface EycTableEditorHandle {
 interface EycTableEditorProps {
   value: string
   onChange: (value: string) => void
-  onCommandClick?: (commandName: string) => void
+  onCommandClick?: (commandName: string, paramIndex?: number) => void
   onCommandClear?: () => void
   onProblemsChange?: (problems: FileProblem[]) => void
+  onCursorChange?: (line: number, column: number) => void
 }
 
 export interface FileProblem {
@@ -934,7 +949,7 @@ function getCmdIconClass(category: string): string {
   return 'eyc-ac-icon-func'
 }
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, onChange, onCommandClick, onCommandClear, onProblemsChange }, ref) {
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange }, ref) {
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -943,6 +958,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const [currentText, setCurrentText] = useState(value)
   const lastFocusedLine = useRef<number>(-1)
   const flowMarkRef = useRef<string>('')
+  const flowIndentRef = useRef<string>('')
+  const wasFlowStartRef = useRef(false) // 编辑行是否为流程起始行（用于防止流程命令缩进翻倍）
+  const commitGuardRef = useRef(false) // 防止 commit 被重复调用（mousedown + blur-on-unmount）
   const [expandedLines, setExpandedLines] = useState<Set<number>>(new Set())
 
   // ===== 行选择状态 =====
@@ -1004,6 +1022,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       setSelectedLines(new Set([lineIndex]))
     }
     isDragging.current = true
+    // 聚焦 wrapper 以便接收键盘事件（Delete等）
+    wrapperRef.current?.focus()
   }, [rangeSet])
 
   // mousemove 和 mouseup 全局监听
@@ -1049,6 +1069,26 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         for (let i = 0; i < ls.length; i++) all.add(i)
         setSelectedLines(all)
         dragAnchor.current = 0
+        return
+      }
+
+      // Ctrl+Z / Ctrl+Y：撤销/重做（编辑器区域内）
+      if (ctrl && e.key === 'z' && inEditor) {
+        e.preventDefault()
+        if (undoStack.current.length > 0) {
+          const prev = undoStack.current.pop()!
+          redoStack.current.push(currentText)
+          setCurrentText(prev); prevRef.current = prev; onChange(prev)
+        }
+        return
+      }
+      if (ctrl && e.key === 'y' && inEditor) {
+        e.preventDefault()
+        if (redoStack.current.length > 0) {
+          const next = redoStack.current.pop()!
+          undoStack.current.push(currentText)
+          setCurrentText(next); prevRef.current = next; onChange(next)
+        }
         return
       }
 
@@ -1264,13 +1304,19 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const paramSlots = cmd.params.map(p => p.optional ? '' : '').join(', ')
         mainLine = innerPrefix + cmdName + ' (' + paramSlots + ')'
       } else {
-        mainLine = innerPrefix + cmdName
+        mainLine = innerPrefix + cmdName + ' ()'
       }
       // 自动插入的分支/结束行
       const extra = autoLines.map(kw => {
         if (kw === null) return ''
         if (kw === FLOW_TRUE_MARK || kw === FLOW_ELSE_MARK || kw === FLOW_JUDGE_END_MARK) return innerPrefix + kw
-        return innerPrefix + FLOW_AUTO_TAG + kw
+        // 流程尾命令也需要括号（如 计次循环尾）
+        const tailCmd = allCommandsRef.current.find(c => c.name === kw)
+        if (tailCmd && tailCmd.params.length > 0) {
+          const tailSlots = tailCmd.params.map(p => p.optional ? '' : '').join(', ')
+          return innerPrefix + FLOW_AUTO_TAG + kw + ' (' + tailSlots + ')'
+        }
+        return innerPrefix + FLOW_AUTO_TAG + kw + ' ()'
       })
       return [mainLine, ...extra]
     }
@@ -1405,7 +1451,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   }, [blocks, validCommandNames, onProblemsChange, currentText])
 
   const commit = useCallback((overrideVal?: string) => {
-    if (!editCell) return
+    if (!editCell || commitGuardRef.current) return
+    commitGuardRef.current = true
     setAcVisible(false)
 
     // 如果补全弹窗可见，自动上屏第一个补全项
@@ -1469,28 +1516,46 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           flowMarkRef.current = ''
           return
         }
-        // 非流程命令：直接保存
-        const nl = [...lines]; nl[editCell.lineIndex] = flowMarkRef.current + effectiveVal
+        // 非流程命令：格式化后保存（自动补全括号和参数）
+        const fmtLines = formatCommandLine(markerIndent + effectiveVal)
+        const nl = [...lines]; nl[editCell.lineIndex] = flowMarkRef.current + fmtLines[0].slice(markerIndent.length)
         const nt = nl.join('\n')
         setCurrentText(nt); prevRef.current = nt; onChange(nt); setEditCell(null)
         flowMarkRef.current = ''
         return
       }
-      const formattedLines = formatCommandLine(effectiveVal)
+      // 流程起始行重新输入流程命令时，flowIndent 已包含本命令自身的流程区域缩进（4空格），
+      // 而 formatCommandLine 会再次添加4空格，导致缩进翻倍。此处减去自身贡献。
+      let baseIndent = flowIndentRef.current
+      const trimmedCmd = effectiveVal.trim()
+      const cmdCheckName = trimmedCmd.startsWith('.') ? trimmedCmd : trimmedCmd.split(/[\s(（]/)[0]
+      if (trimmedCmd && FLOW_AUTO_COMPLETE[cmdCheckName] && wasFlowStartRef.current && baseIndent.length >= 4) {
+        baseIndent = baseIndent.slice(0, baseIndent.length - 4)
+      }
+      const formattedLines = formatCommandLine(baseIndent + effectiveVal)
+      flowIndentRef.current = ''
       const mainLine = formattedLines[0]
       // 检查是否需要插入自动补齐的后续行（只在新输入时插入，已有匹配结束标记时不重复插入）
       let extraLines = formattedLines.slice(1)
       if (extraLines.length > 0) {
-        // 检查后续行是否已存在对应的结束/分支关键词（只检查非空行）
+        // 检查后续行是否已存在对应的结束/分支关键词（只在新输入时插入，已有匹配结束标记时不重复插入）
+        // 只在当前子程序范围内检查（遇到 .子程序/.程序集 停止）
         const afterIdx = editCell.isVirtual ? editCell.lineIndex + 2 : editCell.lineIndex + 1
-        const remainingLines = lines.slice(afterIdx)
+        const remainingLines: string[] = []
+        for (let ri = afterIdx; ri < lines.length; ri++) {
+          const rl = lines[ri].replace(/[\r\t]/g, '').trim()
+          if (rl.startsWith('.子程序 ') || rl.startsWith('.程序集 ')) break
+          remainingLines.push(lines[ri])
+        }
         const kwLines = extraLines.filter(el => {
           const t = el.trim()
           return el.includes(FLOW_AUTO_TAG) || t === FLOW_TRUE_MARK || t === FLOW_ELSE_MARK || t === FLOW_JUDGE_END_MARK
         })
         const hasEnding = kwLines.length > 0 && kwLines.every(el => {
           const t = el.trim()
-          const kw = (t === FLOW_TRUE_MARK || t === FLOW_ELSE_MARK || t === FLOW_JUDGE_END_MARK) ? t : el.replace(FLOW_AUTO_TAG, '').trim()
+          const rawKw = (t === FLOW_TRUE_MARK || t === FLOW_ELSE_MARK || t === FLOW_JUDGE_END_MARK) ? t : el.replace(FLOW_AUTO_TAG, '').trim()
+          // 提取纯关键词名（去掉括号和参数部分）
+          const kw = rawKw.split(/[\s(（]/)[0] || rawKw
           return remainingLines.some(rl => extractFlowKw(rl) === kw)
         })
         if (hasEnding) extraLines = []
@@ -1523,6 +1588,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setCurrentText(nt); prevRef.current = nt; onChange(nt); setEditCell(null)
   }, [editCell, editVal, lines, onChange])
 
+  // 每次渲染后重置 commitGuard，允许下一次合法的 commit 调用
+  useEffect(() => { commitGuardRef.current = false })
+
+  // 光标位置变化通知
+  useEffect(() => {
+    if (editCell && editCell.lineIndex >= 0) {
+      const col = inputRef.current?.selectionStart ?? 1
+      onCursorChange?.(editCell.lineIndex + 1, col + 1)
+    }
+  }, [editCell, onCursorChange])
+
   // commitRef: 始终指向最新的 commit 函数，供 mouseDown 等闭包调用
   const commitRef = useRef<(overrideVal?: string) => void>(commit)
   commitRef.current = commit
@@ -1530,15 +1606,19 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const startEditCell = useCallback((li: number, ci: number, cellText: string, fieldIdx?: number, sliceField?: boolean) => {
     if (fieldIdx === undefined) return // 无字段映射（tick 单元格等），不可编辑
     setSelectedLines(new Set())
-    pushUndo(currentText)
+    pushUndo(prevRef.current)
     lastFocusedLine.current = li
     setEditCell({ lineIndex: li, cellIndex: ci, fieldIdx, sliceField: sliceField || false })
-    setEditVal(cellText || '')
+    // 将占位符 \u00A0 视为空值
+    setEditVal(cellText === '\u00A0' ? '' : (cellText || ''))
     setTimeout(() => { inputRef.current?.focus() }, 0)
-  }, [currentText, pushUndo])
+  }, [pushUndo])
 
   const startEditLine = useCallback((li: number, clientX?: number, containerLeft?: number, isVirtual?: boolean) => {
-    let text = isVirtual ? '' : (lines[li] || '')
+    // 使用 prevRef 获取最新行数据，防止 commit 修改文本后 React 尚未重渲染导致闭包中 lines 过时
+    const latestText = prevRef.current
+    const latestLines = latestText.split('\n')
+    let text = isVirtual ? '' : (latestLines[li] || '')
     // 剥离流程标记零宽字符和对应的缩进前缀，编辑时不显示
     const stripped = text.replace(/^ +/, '')
     let flowMark = ''
@@ -1546,10 +1626,32 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       flowMark = text.slice(0, text.length - stripped.length + 1) // 保留缩进 + 标记字符
       text = stripped.slice(1) // 实际可编辑内容
     }
-    pushUndo(currentText)
+    // 对于有流程线的普通行，剥离被流程线覆盖的前导空格
+    let flowIndent = ''
+    if (!flowMark && !isVirtual) {
+      // 若 commit 刚修改了文本但尚未重渲染，flowLines 可能过时，需重新计算
+      const currentFlowLines = (latestText === currentText) ? flowLines : computeFlowLines(buildBlocks(latestText))
+      const segs = currentFlowLines.map.get(li) || []
+      if (segs.length > 0) {
+        const lineMaxDepth = Math.max(...segs.map(s => s.depth)) + 1
+        const stripCount = lineMaxDepth * 4
+        const leadingSpaces = text.match(/^ */)?.[0] || ''
+        const actualStrip = Math.min(stripCount, leadingSpaces.length)
+        // 即使空行没有足够的前导空格，flowIndent 也要按流程深度设置，保证新输入的命令有正确缩进
+        flowIndent = ' '.repeat(stripCount)
+        if (actualStrip > 0) {
+          text = text.slice(actualStrip)
+        }
+        wasFlowStartRef.current = segs.some(s => s.type === 'start')
+      } else {
+        wasFlowStartRef.current = false
+      }
+    }
+    pushUndo(latestText)
     setSelectedLines(new Set())
     lastFocusedLine.current = li
     flowMarkRef.current = flowMark
+    flowIndentRef.current = flowIndent
     setEditCell({ lineIndex: li, cellIndex: -1, fieldIdx: -1, sliceField: false, isVirtual }); setEditVal(text)
     setTimeout(() => {
       if (!inputRef.current) return
@@ -1574,7 +1676,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         }
       }
     }, 0)
-  }, [lines, currentText, pushUndo])
+  }, [currentText, pushUndo, flowLines])
 
   const onKey = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     // ===== 补全弹窗键盘处理 =====
@@ -1687,22 +1789,44 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 if (formattedLines[formattedLines.length - 1].trim() === '') {
                   formattedLines = formattedLines.slice(0, -1)
                 }
-                nl.splice(editCell.lineIndex, 1, ...formattedLines)
-                const insertPos = editCell.lineIndex + formattedLines.length
-                nl.splice(insertPos, 0, flowMarkRef.current)
-                const nt = nl.join('\n')
-                setCurrentText(nt); prevRef.current = nt; onChange(nt)
-                const cursorLi = editCell.lineIndex + 1
-                const targetLine = nl[cursorLi] || ''
-                const strippedTarget = targetLine.replace(/^ +/, '')
-                if (strippedTarget.startsWith('\u200C') || strippedTarget.startsWith('\u200D') || strippedTarget.startsWith('\u2060')) {
-                  flowMarkRef.current = targetLine.slice(0, targetLine.length - strippedTarget.length + 1)
-                  setEditCell({ lineIndex: cursorLi, cellIndex: -1, fieldIdx: -1, sliceField: false })
-                  setEditVal(strippedTarget.slice(1))
-                } else {
+                const isLoopFlow = FLOW_LOOP_KW.has(cmdCheckName)
+                if (isLoopFlow) {
+                  // 循环类命令：在首命令和尾命令之间插入流程体内空行
+                  const mainLine = formattedLines[0]
+                  const mainIndent = mainLine.length - mainLine.trimStart().length
+                  const bodyIndent = ' '.repeat(mainIndent + 4)
+                  const withBody = [mainLine, bodyIndent, ...formattedLines.slice(1)]
+                  nl.splice(editCell.lineIndex, 1, ...withBody)
+                  const insertPos = editCell.lineIndex + withBody.length
+                  nl.splice(insertPos, 0, flowMarkRef.current)
+                  const nt = nl.join('\n')
+                  setCurrentText(nt); prevRef.current = nt; onChange(nt)
+                  // 光标移到流程体内的空行
+                  const cursorLi = editCell.lineIndex + 1
                   flowMarkRef.current = ''
+                  flowIndentRef.current = bodyIndent
+                  wasFlowStartRef.current = false
                   setEditCell({ lineIndex: cursorLi, cellIndex: -1, fieldIdx: -1, sliceField: false })
-                  setEditVal(targetLine)
+                  setEditVal('')
+                } else {
+                  // 非循环类（如果/如果真/判断）：光标移到分支标记行
+                  nl.splice(editCell.lineIndex, 1, ...formattedLines)
+                  const insertPos = editCell.lineIndex + formattedLines.length
+                  nl.splice(insertPos, 0, flowMarkRef.current)
+                  const nt = nl.join('\n')
+                  setCurrentText(nt); prevRef.current = nt; onChange(nt)
+                  const cursorLi = editCell.lineIndex + 1
+                  const targetLine = nl[cursorLi] || ''
+                  const strippedTarget = targetLine.replace(/^ +/, '')
+                  if (strippedTarget.startsWith('\u200C') || strippedTarget.startsWith('\u200D') || strippedTarget.startsWith('\u2060')) {
+                    flowMarkRef.current = targetLine.slice(0, targetLine.length - strippedTarget.length + 1)
+                    setEditCell({ lineIndex: cursorLi, cellIndex: -1, fieldIdx: -1, sliceField: false })
+                    setEditVal(strippedTarget.slice(1))
+                  } else {
+                    flowMarkRef.current = ''
+                    setEditCell({ lineIndex: cursorLi, cellIndex: -1, fieldIdx: -1, sliceField: false })
+                    setEditVal(targetLine)
+                  }
                 }
                 setTimeout(() => { inputRef.current?.focus(); if (inputRef.current) { inputRef.current.selectionStart = 0; inputRef.current.selectionEnd = 0 } }, 0)
                 return
@@ -1710,12 +1834,23 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               }
             } else {
               // 普通代码行/虚拟行：自动展开流程结构
-              const formattedLines = formatCommandLine(editVal)
+              // 需要加回 flowIndent（被 startEditLine 剥离的流程区域缩进）
+              // 但若编辑行本身是流程起始行，其自身流程区域的4空格不需要加回（formatCommandLine 会重新添加）
+              let enterIndent = flowIndentRef.current
+              if (wasFlowStartRef.current && enterIndent.length >= 4) {
+                enterIndent = enterIndent.slice(0, enterIndent.length - 4)
+              }
+              const formattedLines = formatCommandLine(enterIndent + editVal)
               if (formattedLines.length > 1) {
                 const mainLine = formattedLines[0]
                 let extraLines = formattedLines.slice(1)
                 const afterIdx = editCell.isVirtual ? editCell.lineIndex + 2 : editCell.lineIndex + 1
-                const remainingLines = lines.slice(afterIdx)
+                const remainingLines: string[] = []
+                for (let ri = afterIdx; ri < lines.length; ri++) {
+                  const rl = lines[ri].replace(/[\r\t]/g, '').trim()
+                  if (rl.startsWith('.子程序 ') || rl.startsWith('.程序集 ')) break
+                  remainingLines.push(lines[ri])
+                }
                 const kwLines = extraLines.filter(el => {
                   const t = el.trim()
                   return el.includes(FLOW_AUTO_TAG) || t === FLOW_TRUE_MARK || t === FLOW_ELSE_MARK || t === FLOW_JUDGE_END_MARK
@@ -1726,25 +1861,48 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                   return remainingLines.some(rl => extractFlowKw(rl) === kw)
                 })
                 if (hasEnding) extraLines = []
-                if (editCell.isVirtual) {
-                  nl.splice(editCell.lineIndex + 1, 0, mainLine, ...extraLines)
-                } else {
-                  nl.splice(editCell.lineIndex, 1, mainLine, ...extraLines)
-                }
-                const nt = nl.join('\n')
-                setCurrentText(nt); prevRef.current = nt; onChange(nt)
-                const baseLi = editCell.isVirtual ? editCell.lineIndex + 1 : editCell.lineIndex
-                const cursorLi = baseLi + 1
-                const targetLine = nl[cursorLi] || ''
-                const strippedTarget = targetLine.replace(/^ +/, '')
-                if (strippedTarget.startsWith('\u200C') || strippedTarget.startsWith('\u200D') || strippedTarget.startsWith('\u2060')) {
-                  flowMarkRef.current = targetLine.slice(0, targetLine.length - strippedTarget.length + 1)
-                  setEditCell({ lineIndex: cursorLi, cellIndex: -1, fieldIdx: -1, sliceField: false })
-                  setEditVal(strippedTarget.slice(1))
-                } else {
+
+                const isLoopFlow = FLOW_LOOP_KW.has(cmdCheckName)
+                if (isLoopFlow) {
+                  // 循环类命令：在首命令和尾命令之间插入流程体内空行
+                  const mainIndent = mainLine.length - mainLine.trimStart().length
+                  const bodyIndent = ' '.repeat(mainIndent + 4)
+                  if (editCell.isVirtual) {
+                    nl.splice(editCell.lineIndex + 1, 0, mainLine, bodyIndent, ...extraLines)
+                  } else {
+                    nl.splice(editCell.lineIndex, 1, mainLine, bodyIndent, ...extraLines)
+                  }
+                  const nt = nl.join('\n')
+                  setCurrentText(nt); prevRef.current = nt; onChange(nt)
+                  const baseLi = editCell.isVirtual ? editCell.lineIndex + 1 : editCell.lineIndex
+                  const cursorLi = baseLi + 1
                   flowMarkRef.current = ''
+                  flowIndentRef.current = bodyIndent
+                  wasFlowStartRef.current = false
                   setEditCell({ lineIndex: cursorLi, cellIndex: -1, fieldIdx: -1, sliceField: false })
-                  setEditVal(targetLine)
+                  setEditVal('')
+                } else {
+                  // 非循环类（如果/如果真/判断）：光标移到分支标记行
+                  if (editCell.isVirtual) {
+                    nl.splice(editCell.lineIndex + 1, 0, mainLine, ...extraLines)
+                  } else {
+                    nl.splice(editCell.lineIndex, 1, mainLine, ...extraLines)
+                  }
+                  const nt = nl.join('\n')
+                  setCurrentText(nt); prevRef.current = nt; onChange(nt)
+                  const baseLi = editCell.isVirtual ? editCell.lineIndex + 1 : editCell.lineIndex
+                  const cursorLi = baseLi + 1
+                  const targetLine = nl[cursorLi] || ''
+                  const strippedTarget = targetLine.replace(/^ +/, '')
+                  if (strippedTarget.startsWith('\u200C') || strippedTarget.startsWith('\u200D') || strippedTarget.startsWith('\u2060')) {
+                    flowMarkRef.current = targetLine.slice(0, targetLine.length - strippedTarget.length + 1)
+                    setEditCell({ lineIndex: cursorLi, cellIndex: -1, fieldIdx: -1, sliceField: false })
+                    setEditVal(strippedTarget.slice(1))
+                  } else {
+                    flowMarkRef.current = ''
+                    setEditCell({ lineIndex: cursorLi, cellIndex: -1, fieldIdx: -1, sliceField: false })
+                    setEditVal(targetLine)
+                  }
                 }
                 setTimeout(() => { inputRef.current?.focus(); if (inputRef.current) { inputRef.current.selectionStart = 0; inputRef.current.selectionEnd = 0 } }, 0)
                 return
@@ -1764,8 +1922,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         } else if (flowMarkRef.current && (flowMarkRef.current.trimStart().startsWith('\u200D') || flowMarkRef.current.trimStart().startsWith('\u2060'))) {
           // 标记结束行（\u200D/\u2060）：在当前行前插入空行，标记下移
           const markerChar = flowMarkRef.current.trimStart().charAt(0)
-          nl[editCell.lineIndex] = flowMarkRef.current + before
           const indent = flowMarkRef.current.slice(0, flowMarkRef.current.length - 1) // 去掉末尾标记字符保留缩进
+          // 格式化当前行内容（自动补全括号和参数）
+          const fmtBefore = after.trim() === '' ? formatCommandLine(indent + before)[0].slice(indent.length) : before
+          nl[editCell.lineIndex] = flowMarkRef.current + fmtBefore
           nl.splice(editCell.lineIndex + 1, 0, indent + markerChar + after)
           const nt = nl.join('\n')
           setCurrentText(nt); prevRef.current = nt; onChange(nt)
@@ -1773,20 +1933,43 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           flowMarkRef.current = indent + markerChar
           setEditCell({ lineIndex: newLi, cellIndex: -1, fieldIdx: -1, sliceField: false })
           setEditVal(after)
+        } else if (flowMarkRef.current && flowMarkRef.current.trimStart().startsWith('\u200C') && after.trim() === '') {
+          // \u200C 标记行上输入非流程命令后回车：格式化命令 + 在下方插入新 \u200C 行
+          const markerIndent = flowMarkRef.current.slice(0, flowMarkRef.current.length - 1)
+          const fmtLines = formatCommandLine(markerIndent + before)
+          const fmtContent = fmtLines[0].slice(markerIndent.length)
+          nl[editCell.lineIndex] = flowMarkRef.current + fmtContent
+          nl.splice(editCell.lineIndex + 1, 0, flowMarkRef.current)
+          const nt = nl.join('\n')
+          setCurrentText(nt); prevRef.current = nt; onChange(nt)
+          const newLi = editCell.lineIndex + 1
+          // 新行是 \u200C 标记行，保持 flowMark
+          setEditCell({ lineIndex: newLi, cellIndex: -1, fieldIdx: -1, sliceField: false })
+          setEditVal('')
         } else {
           // 代码行：在光标位置拆行，插入新行
+          const fi = flowIndentRef.current
+          // 如果当前行是流程结束行（如循环尾），新行应在该流程块外部，缩进减少一层
+          const curSegs = flowLines.map.get(editCell.lineIndex) || []
+          const hasFlowEnd = curSegs.some(s => s.type === 'end')
+          const newFi = hasFlowEnd && fi.length >= 4 ? fi.slice(0, fi.length - 4) : fi
+          // 格式化当前行内容（自动补全括号和参数）
+          const fmtBefore = after.trim() === '' ? formatCommandLine(fi + before)[0].slice(fi.length) : before
           if (flowMarkRef.current) {
-            nl[editCell.lineIndex] = flowMarkRef.current + before
+            nl[editCell.lineIndex] = flowMarkRef.current + fmtBefore
             nl.splice(editCell.lineIndex + 1, 0, flowMarkRef.current + after)
           } else {
-            nl[editCell.lineIndex] = before
-            nl.splice(editCell.lineIndex + 1, 0, after)
+            nl[editCell.lineIndex] = fi + fmtBefore
+            nl.splice(editCell.lineIndex + 1, 0, newFi + after)
           }
           const nt = nl.join('\n')
           setCurrentText(nt); prevRef.current = nt; onChange(nt)
           const newLi = editCell.lineIndex + 1
           setEditCell({ lineIndex: newLi, cellIndex: -1, fieldIdx: -1, sliceField: false })
           setEditVal(after)
+          // 更新 flowIndentRef 为新行实际的流程缩进，防止旧值残留导致后续命令多缩进
+          flowIndentRef.current = flowMarkRef.current ? '' : newFi
+          wasFlowStartRef.current = false
         }
         setTimeout(() => {
           if (inputRef.current) {
@@ -1837,6 +2020,23 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         }
       } else {
         commit()
+      }
+    } else if (e.key === 'Backspace' || e.key === 'Delete') {
+      // 输入为空时按退格/删除键：删除当前空行
+      if (editCell && editCell.cellIndex < 0 && editVal.trim() === '' && !flowMarkRef.current) {
+        const li = editCell.lineIndex
+        if (lines.length > 1) {
+          e.preventDefault()
+          pushUndo(currentText)
+          const nl = [...lines]
+          nl.splice(li, 1)
+          const nt = nl.join('\n')
+          setCurrentText(nt); prevRef.current = nt; onChange(nt)
+          setEditCell(null)
+          flowIndentRef.current = ''
+          // 焦点回到 wrapper
+          setTimeout(() => wrapperRef.current?.focus(), 0)
+        }
       }
     } else if (e.key === 'Escape') { setAcVisible(false); setEditCell(null) }
   }, [commit, editCell, editVal, lines, onChange, acVisible, acItems, acIndex, applyCompletion, currentText, pushUndo])
@@ -2005,6 +2205,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if ((s.cls === 'funccolor' || s.cls === 'comecolor') && validCommandNames.has(s.text)) {
         const cmd = allCommandsRef.current.find(c => c.name === s.text)
         if (cmd && cmd.params.length > 0) return cmd
+        // 内置流程关键字可能不在 allCommandsRef 中，对有参数的流程尾命令做兜底
+        if (s.text === '循环判断尾') {
+          return { name: '循环判断尾', englishName: 'loop', description: '本命令根据提供的逻辑参数的值，来决定是否返回到循环首部继续进行循环。', returnType: '', category: '流程控制', libraryName: '系统核心支持库', isMember: false, ownerTypeName: '', params: [{ name: '条件', type: '逻辑型', description: '本条件值的结果决定下一步程序执行位置。', optional: false, isVariable: false, isArray: false }] }
+        }
       }
     }
     return null
@@ -2058,26 +2262,37 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const replaceCallArg = useCallback((codeLine: string, argIdx: number, newVal: string): string => {
     const openIdx = codeLine.search(/[(（]/)
     if (openIdx < 0) return codeLine
-    // 找到各参数的位置范围
-    const ranges: { start: number; end: number }[] = []
-    let depth = 0
-    let start = openIdx + 1
-    let inStr = false
-    let closeIdx = codeLine.length
-    for (let i = openIdx; i < codeLine.length; i++) {
-      const ch = codeLine[i]
-      if (inStr) { if (ch === '"' || ch === '\u201d') inStr = false; continue }
-      if (ch === '"' || ch === '\u201c') { inStr = true; continue }
-      if (ch === '(' || ch === '（') {
-        if (depth === 0) start = i + 1
-        depth++
-      } else if (ch === ')' || ch === '）') {
-        depth--
-        if (depth === 0) { ranges.push({ start, end: i }); closeIdx = i; break }
-      } else if ((ch === ',' || ch === '，') && depth === 1) {
-        ranges.push({ start, end: i })
-        start = i + 1
+    // 解析参数位置范围，skipStr 控制是否跳过字符串内容
+    const parseRanges = (skipStr: boolean) => {
+      const ranges: { start: number; end: number }[] = []
+      let depth = 0
+      let start = openIdx + 1
+      let inStr = false
+      let closeIdx = codeLine.length
+      let found = false
+      for (let i = openIdx; i < codeLine.length; i++) {
+        const ch = codeLine[i]
+        if (skipStr) {
+          if (inStr) { if (ch === '"' || ch === '\u201d') inStr = false; continue }
+          if (ch === '"' || ch === '\u201c') { inStr = true; continue }
+        }
+        if (ch === '(' || ch === '（') {
+          if (depth === 0) start = i + 1
+          depth++
+        } else if (ch === ')' || ch === '）') {
+          depth--
+          if (depth === 0) { ranges.push({ start, end: i }); closeIdx = i; found = true; break }
+        } else if ((ch === ',' || ch === '，') && depth === 1) {
+          ranges.push({ start, end: i })
+          start = i + 1
+        }
       }
+      return { ranges, closeIdx, found }
+    }
+    // 先尝试带字符串检测的解析，失败则回退不检测字符串
+    let { ranges, closeIdx, found } = parseRanges(true)
+    if (!found) {
+      ({ ranges, closeIdx, found } = parseRanges(false))
     }
     if (argIdx < ranges.length) {
       return codeLine.slice(0, ranges[argIdx].start) + newVal + codeLine.slice(ranges[argIdx].end)
@@ -2109,7 +2324,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     if (editCell.cellIndex < 0) {
       if (editCell.isVirtual) return
-      const nl = [...lines]; nl[editCell.lineIndex] = flowMarkRef.current + val
+      const nl = [...lines]; nl[editCell.lineIndex] = flowIndentRef.current + flowMarkRef.current + val
       const nt = nl.join('\n')
       setCurrentText(nt); prevRef.current = nt; onChange(nt)
       return
@@ -2138,7 +2353,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       node: (
         <>
           {slots.map((seg, d) => (
-            <span key={d} className={`eyc-flow-seg ${seg ? `eyc-flow-${seg.type}` : ''} ${seg?.isLoop ? 'eyc-flow-loop' : ''} ${seg?.isMarker ? 'eyc-flow-marker' : ''}${(seg?.isInnerThrough || seg?.isInnerEnd) ? ' eyc-flow-no-outer' : ''}${seg?.hasPrevFlowEnd ? ' eyc-flow-has-prev-end' : ''}${seg?.hasOuterLink ? ' eyc-flow-has-outer-link' : ''}${seg?.outerHidden ? ' eyc-flow-outer-hidden' : ''}${seg?.hasInnerLink ? ' eyc-flow-has-inner-link' : ''}`}>
+            <span key={d} className={`eyc-flow-seg ${seg ? `eyc-flow-${seg.type}` : ''} ${seg?.isLoop ? 'eyc-flow-loop' : ''} ${seg?.isMarker ? 'eyc-flow-marker' : ''}${(seg?.isInnerThrough || seg?.isInnerEnd) ? ' eyc-flow-no-outer' : ''}${seg?.hasPrevFlowEnd ? ' eyc-flow-has-prev-end' : ''}${seg?.hasOuterLink ? ' eyc-flow-has-outer-link' : ''}${seg?.outerHidden ? ' eyc-flow-outer-hidden' : ''}${seg?.hasInnerLink ? ' eyc-flow-has-inner-link' : ''}${seg?.isStraightEnd ? ' eyc-flow-straight-end' : ''}`}>
               {seg?.isMarker && seg.type === 'branch' && !seg?.outerHidden && <span className="eyc-flow-inner-vert" />}
               {seg?.type === 'branch' && !seg?.isMarker && seg?.hasInnerVert && <span className="eyc-flow-inner-vert eyc-flow-inner-through" />}
               {seg?.type === 'branch' && !seg?.isMarker && seg?.hasInnerLink && <span className="eyc-flow-outer-resume" />}
@@ -2149,7 +2364,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               {seg?.isMarker && seg.type === 'end' && !seg?.hasExtraEnds && seg?.hasNextFlow && !seg?.outerHidden && <><span className="eyc-flow-inner-vert eyc-flow-inner-through" /><span className="eyc-flow-arrow-right" /></>}
               {seg?.isMarker && seg.type === 'end' && seg?.hasExtraEnds && !seg?.outerHidden && <><span className="eyc-flow-inner-vert eyc-flow-inner-through" /><span className="eyc-flow-arrow-right" /></>}
               {seg?.type === 'start' && seg?.hasPrevFlowEnd && <><span className="eyc-flow-link-vert" /><span className="eyc-flow-link-horz" /><span className="eyc-flow-link-arrow" /></>}
-              {seg?.type === 'end' && !seg?.isMarker && <span className="eyc-flow-arrow-down" />}
+              {seg?.type === 'start' && seg?.isLoop && <span className="eyc-flow-arrow-right" />}
+              {seg?.type === 'end' && !seg?.isMarker && !seg?.isStraightEnd && !seg?.isLoop && <span className="eyc-flow-arrow-down" />}
+              {seg?.isStraightEnd && <span className="eyc-flow-arrow-down" />}
               {seg?.hasInnerVert && !seg?.hasInnerLink && <span className="eyc-flow-inner-vert eyc-flow-inner-through" />}
               {seg?.hasInnerVert && seg?.hasInnerLink && seg?.type !== 'branch' && <><span className="eyc-flow-inner-vert eyc-flow-inner-through" /><span className="eyc-flow-inner-link-horz" /><span className="eyc-flow-inner-link-arrow" /></>}
               {seg?.isInnerThrough && <span className="eyc-flow-inner-vert eyc-flow-inner-through" />}
@@ -2160,6 +2377,37 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       ),
       skipTreeLines: lineMaxDepth,
     }
+  }
+
+  /** 渲染参数展开区域的流程线延续（只绘制纵向穿越线） */
+  const renderFlowContinuation = (lineIndex: number): React.ReactNode => {
+    if (flowLines.maxDepth === 0) return null
+    const segs = flowLines.map.get(lineIndex) || []
+    if (segs.length === 0) return null
+    const lineMaxDepth = Math.max(...segs.map(s => s.depth)) + 1
+    const slots: (FlowSegment | null)[] = Array(lineMaxDepth).fill(null)
+    for (const s of segs) slots[s.depth] = s
+    // 只绘制有纵向延续的线段（start/through/branch 都有竖线穿过）
+    const hasAny = slots.some(seg => seg && (seg.type === 'start' || seg.type === 'through' || seg.type === 'branch'))
+    if (!hasAny) return null
+    return (
+      <div className="eyc-param-flow-cont">
+        {slots.map((seg, d) => {
+          const hasCont = seg && (seg.type === 'start' || seg.type === 'through' || seg.type === 'branch') && !seg.outerHidden
+          // 内侧竖线延续：标记分支/标记结束/hasInnerVert 的 through 行
+          const hasInnerCont = seg && (
+            (seg.isMarker && (seg.type === 'branch' || (seg.type === 'end' && seg.hasExtraEnds)))
+            || (seg.hasInnerVert)
+            || (seg.isInnerThrough)
+          )
+          return (
+            <span key={d} className={`eyc-flow-seg eyc-flow-cont-seg ${hasCont ? 'eyc-flow-through' : ''} ${seg?.isLoop && hasCont ? 'eyc-flow-loop' : ''}`}>
+              {hasInnerCont && <span className="eyc-flow-inner-vert eyc-flow-inner-through" />}
+            </span>
+          )
+        })}
+      </div>
+    )
   }
 
   // 点击空白区域：清除选择和编辑状态
@@ -2187,7 +2435,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   return (
     <div className="eyc-table-editor ebackcolor1" onClick={() => onCommandClear?.()}>
-      <div className="eyc-table-wrapper" ref={wrapperRef} onMouseDown={handleWrapperMouseDown}>
+      <div className="eyc-table-wrapper" ref={wrapperRef} onMouseDown={handleWrapperMouseDown} tabIndex={0} style={{ outline: 'none' }}>
         {blocks.map((blk, bi) => {
           if (blk.kind === 'table') {
             // 表格行中所有数据行的行号
@@ -2254,7 +2502,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           }
 
           // 代码行
-          const isAutoFlowLine = !blk.isVirtual && (blk.codeLine || '').includes(FLOW_AUTO_TAG)
+          const codeLineRaw = blk.codeLine || ''
+          const isLoopEnd = /[\u200B]?(判断循环尾|循环判断尾|计次循环尾|变量循环尾)/.test(codeLineRaw)
+          const isAutoFlowLine = !blk.isVirtual && codeLineRaw.includes(FLOW_AUTO_TAG) && !isLoopEnd
           const spans = colorize((blk.codeLine || '').replace(FLOW_AUTO_TAG, ''))
           const lineCmd = blk.isVirtual ? null : findCmdWithParams((blk.codeLine || '').replace(FLOW_AUTO_TAG, ''))
           const isExpanded = expandedLines.has(blk.lineIndex)
@@ -2270,7 +2520,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 <div className="eyc-gutter-cell">
                   <span className="eyc-gutter-linenum">{blk.isVirtual ? '' : blk.lineIndex + 1}</span>
                   <span className="eyc-gutter-fold-area">
-                    {lineCmd && (
+                    {lineCmd && (isLineSelected || (editCell && editCell.lineIndex === blk.lineIndex && editCell.paramIdx === undefined)) && (
                       <span
                         className="eyc-gutter-fold"
                         onClick={(e) => {
@@ -2290,10 +2540,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               <div
                 className={`eyc-code-line${editCell && editCell.lineIndex === blk.lineIndex && editCell.isVirtual === blk.isVirtual && editCell.paramIdx === undefined ? ' eyc-code-line-editing' : ''}`}
                 onClick={(e) => {
-                  // 点击代码行时触发命令提示
+                  // 点击代码行时触发命令提示（显示命令全部信息）
                   const rawCode = (blk.codeLine || '').replace(FLOW_AUTO_TAG, '')
                   const cmdName = findFirstCommandName(rawCode)
-                  if (cmdName) onCommandClick?.(cmdName)
+                  if (cmdName) {
+                    e.stopPropagation()
+                    onCommandClick?.(cmdName)
+                  }
                   startEditLine(blk.lineIndex, e.clientX, e.currentTarget.getBoundingClientRect().left, blk.isVirtual)
                 }}
               >
@@ -2338,11 +2591,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                             return (
                               <span
                                 key={si}
-                                className={`${s.cls} eyc-cmd-clickable${isInvalid ? ' eyc-cmd-invalid' : ''}`}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  onCommandClick?.(s.text)
-                                }}
+                                className={`${s.cls}${isInvalid ? ' eyc-cmd-invalid' : ''}`}
                               >{s.text}</span>
                             )
                           }
@@ -2357,13 +2606,27 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               {/* 展开的参数详情 */}
               {lineCmd && isExpanded && (() => {
                 const argVals = parseCallArgs(blk.codeLine || '')
+                // 计算代码行前导空格数，用于参数面板缩进
+                const codeLine = (blk.codeLine || '').replace(FLOW_AUTO_TAG, '')
+                const leadingSpaces = codeLine.length - codeLine.replace(/^ +/, '').length
+                // 基础左边距 = gutter(80px) + 缩进空格(ch) + 命令名约1.5个字符居中位置
+                const baseLeft = 80 + 8  // gutter + padding
+                const indentCh = leadingSpaces + 1.5  // 缩进 + 命令名中间约1.5字符
+                const arrowLeftStyle = `calc(${baseLeft}px + ${indentCh}ch)`
+                const expandPadding = `calc(${baseLeft + 20}px + ${leadingSpaces}ch)`
                 return (
-                  <div className="eyc-param-expand">
-                    <div className="eyc-param-expand-inner">
+                  <div className="eyc-param-expand" style={{ paddingLeft: expandPadding }}>
+                    {renderFlowContinuation(blk.lineIndex)}
+                    <span className="eyc-param-expand-arrow" style={{ left: arrowLeftStyle }} />
+                    <div className="eyc-param-expand-inner" style={{ '--vline-offset': 'calc(-20px + 1.5ch)' } as React.CSSProperties}>
                       {lineCmd.params.map((p, pi) => {
                         const isEditingParam = editCell && editCell.lineIndex === blk.lineIndex && editCell.paramIdx === pi
                         const startParamEdit = (e: React.MouseEvent) => {
                           e.stopPropagation()
+                          // 点击参数行时提示该参数的信息
+                          const rawCode = (blk.codeLine || '').replace(FLOW_AUTO_TAG, '')
+                          const cmdName = findFirstCommandName(rawCode)
+                          if (cmdName) onCommandClick?.(cmdName, pi)
                           setEditCell({ lineIndex: blk.lineIndex, cellIndex: -2, fieldIdx: -1, sliceField: false, paramIdx: pi })
                           setEditVal(argVals[pi] !== undefined ? argVals[pi] : '')
                           setTimeout(() => paramInputRef.current?.focus(), 0)

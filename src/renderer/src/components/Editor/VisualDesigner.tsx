@@ -707,7 +707,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           onClick={() => setActiveTool(null)}
           title="选择工具"
         >
-          <span className="vd-tool-icon"><Icon name="select-object" size={16} /></span>
+          <span className="vd-tool-icon"><Icon name="cursor" size={16} /></span>
           {toolboxViewMode === 'list' && <span className="vd-tool-label">选择</span>}
         </button>
         {filteredTools.map(unit => (
@@ -730,9 +730,6 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
   return (
     <div className="vd">
-      {/* 工具箱：固定模式在左侧渲染，浮动模式悬浮在整个设计器上方 */}
-      {renderToolbox()}
-
       {/* 画布区域 */}
       <div className="vd-canvas-area">
 
@@ -799,6 +796,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           )}
         </div>
       </div>
+
+      {/* 工具箱：固定模式在右侧渲染，浮动模式悬浮在整个设计器上方 */}
+      {renderToolbox()}
     </div>
   )
 }

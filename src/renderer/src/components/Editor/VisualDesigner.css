@@ -12,7 +12,7 @@
 .vd-toolbox {
   width: 130px;
   background: var(--bg-secondary);
-  border-right: 1px solid var(--border-color);
+  border-left: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -178,7 +178,7 @@
   flex: 1;
   overflow: auto;
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 24px;
   background:
     linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px),

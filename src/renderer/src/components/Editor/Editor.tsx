@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect, useImperativeHandle, forwardR
 import MonacoEditor, { OnMount, OnChange, type Monaco } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import EycTableEditor, { type EycTableEditorHandle, type FileProblem } from './EycTableEditor'
-import VisualDesigner, { type DesignForm, type SelectionTarget, type LibWindowUnit, type AlignAction } from './VisualDesigner'
+import VisualDesigner, { type DesignForm, type DesignControl, type SelectionTarget, type LibWindowUnit, type LibUnitEvent, type AlignAction } from './VisualDesigner'
 import Icon from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './Editor.css'
@@ -199,7 +199,7 @@ export interface EditorHandle {
   navigateToLine: (line: number) => void
 }
 
-const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange }, ref) {
+const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number) => void; onDocTypeChange?: (docType: string) => void }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange }, ref) {
   const [tabs, setTabs] = useState<EditorTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
@@ -342,6 +342,13 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 
   useEffect(() => {
     onActiveTabChange?.(activeTabId)
+    const activeTab = tabs.find(t => t.id === activeTabId)
+    if (activeTab) {
+      const langMap: Record<string, string> = { eyc: '易语言源码', efw: '窗口设计', typescript: 'TypeScript', javascript: 'JavaScript', html: 'HTML', css: 'CSS', json: 'JSON', python: 'Python', plaintext: '纯文本' }
+      onDocTypeChange?.(langMap[activeTab.language] || activeTab.language)
+    } else {
+      onDocTypeChange?.('')
+    }
   }, [activeTabId])
 
   // 双击可视化设计器控件 → 跳转到 .eyc 文件并定位/创建事件子程序
@@ -412,9 +419,14 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       )
     })
 
+    // 光标位置变化通知
+    editorInstance.onDidChangeCursorPosition((e) => {
+      onCursorChange?.(e.position.lineNumber, e.position.column)
+    })
+
     // 编辑器获取焦点
     editorInstance.focus()
-  }, [activeTabId])
+  }, [activeTabId, onCursorChange])
 
   const handleEditorChange: OnChange = useCallback((value) => {
     if (value === undefined) return
@@ -532,6 +544,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             onCommandClick={onCommandClick}
             onCommandClear={onCommandClear}
             onProblemsChange={onProblemsChange}
+            onCursorChange={onCursorChange}
           />
         ) : (
           <MonacoEditor

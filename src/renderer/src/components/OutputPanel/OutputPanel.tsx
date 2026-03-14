@@ -40,12 +40,13 @@ interface OutputPanelProps {
   onClose: () => void
   messages?: OutputMessage[]
   commandDetail?: CommandDetail | null
+  highlightParamIndex?: number
   problems?: FileProblem[]
   forceTab?: OutputTab | null
   onProblemClick?: (problem: FileProblem) => void
 }
 
-function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, problems = [], forceTab, onProblemClick }: OutputPanelProps): React.JSX.Element {
+function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, highlightParamIndex, problems = [], forceTab, onProblemClick }: OutputPanelProps): React.JSX.Element {
   const contentRef = useRef<HTMLDivElement>(null)
   const [activeTab, setActiveTab] = useState<OutputTab>('compile')
 
@@ -130,6 +131,32 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
         <div className="output-content output-hint-content" tabIndex={0}>
           {commandDetail ? (() => {
             const cd = commandDetail
+            // 中文类型名对应的英文名映射
+            const typeEnglishMap: Record<string, string> = {
+              '整数型': 'int', '短整数型': 'short', '长整数型': 'long',
+              '小数型': 'float', '双精度小数型': 'double',
+              '逻辑型': 'bool', '文本型': 'text', '字节型': 'byte',
+              '日期时间型': 'datetime', '字节集': 'bin',
+              '子程序指针': 'subptr', '通用型': 'all',
+            }
+            // 点击参数行时：只显示该参数的详细信息
+            if (highlightParamIndex !== undefined && highlightParamIndex >= 0 && highlightParamIndex < cd.params.length) {
+              const p = cd.params[highlightParamIndex]
+              const eng = typeEnglishMap[p.type]
+              const typeLabel = eng ? `${p.type}（${eng}）` : p.type
+              const arrayInfo = p.isArray ? ' - 数组/非数组' : ''
+              return (
+                <div className="cmd-detail">
+                  <div className="cmd-detail-param-detail">
+                    参数名称为"{p.name}"，数据类型为"{typeLabel}{arrayInfo}"，所处语句为"{cd.name}"。
+                  </div>
+                  {p.description && (
+                    <div className="cmd-detail-param-detail-desc">注明：{p.description}</div>
+                  )}
+                </div>
+              )
+            }
+            // 点击命令行时：显示完整命令信息
             const paramSig = cd.params.length > 0
               ? cd.params.map(p => {
                   let s = ''
@@ -160,7 +187,7 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
                 {cd.params.length > 0 && (
                   <div className="cmd-detail-params">
                     {cd.params.map((p, i) => (
-                      <div key={i} className="cmd-detail-param">
+                      <div key={i} className={`cmd-detail-param${highlightParamIndex === i ? ' cmd-detail-param-highlight' : ''}`}>
                         <span className="cmd-detail-param-head">
                           参数&lt;{i + 1}&gt;的名称为"{p.name}"，类型为"{p.type}{p.isArray ? '(数组)' : ''}{p.isVariable ? '(参考)' : ''}"{p.optional ? '，可以被省略' : ''}。
                         </span>

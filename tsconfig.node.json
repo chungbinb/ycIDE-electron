@@ -8,7 +8,7 @@
     "skipLibCheck": true,
     "composite": true,
     "outDir": "./out/main",
-    "rootDir": "./src/main"
+    "rootDir": "."
   },
   "include": ["src/main/**/*", "src/preload/**/*", "electron.vite.config.ts"]
 }

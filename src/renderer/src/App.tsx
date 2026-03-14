@@ -33,9 +33,12 @@ function App(): React.JSX.Element {
   const [commandDetail, setCommandDetail] = useState<CommandDetail | null>(null)
   const commandCacheRef = useRef<Map<string, CommandDetail | null>>(new Map())
   const [fileProblems, setFileProblems] = useState<FileProblem[]>([])
+  const [cursorLine, setCursorLine] = useState<number | undefined>(undefined)
+  const [cursorColumn, setCursorColumn] = useState<number | undefined>(undefined)
+  const [docType, setDocType] = useState('')
   const [isCompiling, setIsCompiling] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
-  const [forceOutputTab, setForceOutputTab] = useState<'compile' | null>(null)
+  const [forceOutputTab, setForceOutputTab] = useState<'compile' | 'problems' | null>(null)
   const [targetArch, setTargetArch] = useState('x64')
   // 监听编译器输出
   useEffect(() => {
@@ -124,9 +127,12 @@ function App(): React.JSX.Element {
   }, [])
 
   // 命令点击：查找命令详情
-  const handleCommandClick = useCallback(async (commandName: string) => {
+  const [highlightParamIndex, setHighlightParamIndex] = useState<number | undefined>(undefined)
+
+  const handleCommandClick = useCallback(async (commandName: string, paramIndex?: number) => {
     // 对象.方法 形式，取方法名
     const name = commandName.includes('.') ? commandName.split('.').pop()! : commandName
+    setHighlightParamIndex(paramIndex)
 
     // 先查缓存
     if (commandCacheRef.current.has(name)) {
@@ -167,7 +173,7 @@ function App(): React.JSX.Element {
     if (!theme?.colors) return
     const root = document.documentElement
     for (const [key, value] of Object.entries(theme.colors)) {
-      root.style.setProperty(key, value)
+      root.style.setProperty(key, value as string)
     }
     setCurrentTheme(name)
     window.api?.theme?.setCurrent(name)
@@ -255,7 +261,7 @@ function App(): React.JSX.Element {
                 title: efwData.title || '',
                 width: efwData.width || 592,
                 height: efwData.height || 384,
-                controls: (efwData.controls || []).map((c: DesignControl) => ({
+                controls: (efwData.controls || []).map((c: any) => ({
                   id: c.id, type: c.type, name: c.name,
                   left: c.x ?? c.left ?? 0, top: c.y ?? c.top ?? 0,
                   width: c.width ?? 100, height: c.height ?? 30,
@@ -410,7 +416,7 @@ function App(): React.JSX.Element {
         title: efwData.title || '',
         width: efwData.width || 592,
         height: efwData.height || 384,
-        controls: (efwData.controls || []).map((c: DesignControl) => ({
+        controls: (efwData.controls || []).map((c: any) => ({
           id: c.id, type: c.type, name: c.name,
           left: c.x ?? c.left ?? 0, top: c.y ?? c.top ?? 0,
           width: c.width ?? 100, height: c.height ?? 30,
@@ -451,7 +457,7 @@ function App(): React.JSX.Element {
             title: efwData.title || info.name,
             width: efwData.width || 592,
             height: efwData.height || 384,
-            controls: (efwData.controls || []).map((c: DesignControl) => ({
+            controls: (efwData.controls || []).map((c: any) => ({
               id: c.id,
               type: c.type,
               name: c.name,
@@ -560,7 +566,6 @@ function App(): React.JSX.Element {
     <div className="app">
       <TitleBar onMenuAction={handleMenuAction} hasProject={!!currentProjectDir} hasOpenFile={(openProjectFiles?.length ?? 0) > 0} themes={themeList} currentTheme={currentTheme} />
       <Toolbar
-        onOpenLibrary={() => setShowLibrary(true)}
         hasControlSelected={multiSelectCount >= 2}
         onAlign={setAlignAction}
         onCompileRun={handleCompileRun}
@@ -573,6 +578,11 @@ function App(): React.JSX.Element {
           setTargetArch(arch)
           if (currentProjectDir) window.api?.project?.updatePlatform(currentProjectDir, arch)
         }}
+        onNew={() => handleMenuAction('file:newProject')}
+        onOpen={() => handleMenuAction('file:openProject')}
+        onSave={() => handleMenuAction('file:save')}
+        onUndo={() => handleMenuAction('edit:undo')}
+        onRedo={() => handleMenuAction('edit:redo')}
       />
       <div className="app-body">
         <Sidebar width={sidebarWidth} onResize={setSidebarWidth} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} />
@@ -591,6 +601,8 @@ function App(): React.JSX.Element {
             onCommandClick={handleCommandClick}
             onCommandClear={handleCommandClear}
             onProblemsChange={setFileProblems}
+            onCursorChange={(line, col) => { setCursorLine(line); setCursorColumn(col) }}
+            onDocTypeChange={setDocType}
           />
           {showOutput && (
             <OutputPanel
@@ -599,6 +611,7 @@ function App(): React.JSX.Element {
               onClose={() => setShowOutput(false)}
               messages={outputMessages}
               commandDetail={commandDetail}
+              highlightParamIndex={highlightParamIndex}
               problems={fileProblems}
               forceTab={forceOutputTab}
               onProblemClick={(p) => editorRef.current?.navigateToLine(p.line)}
@@ -606,7 +619,14 @@ function App(): React.JSX.Element {
           )}
         </div>
       </div>
-      <StatusBar onToggleOutput={() => setShowOutput(!showOutput)} />
+      <StatusBar
+        onToggleOutput={() => setShowOutput(!showOutput)}
+        errorCount={fileProblems.filter(p => p.severity === 'error').length}
+        warningCount={fileProblems.filter(p => p.severity === 'warning').length}
+        cursorLine={cursorLine}
+        cursorColumn={cursorColumn}
+        docType={docType}
+      />
       <LibraryDialog open={showLibrary} onClose={() => setShowLibrary(false)} />
       <NewProjectDialog open={showNewProject} onClose={() => setShowNewProject(false)} onConfirm={handleNewProjectConfirm} />
     </div>
