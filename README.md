@@ -55,7 +55,7 @@ npm run package:win
 - GitHub：[https://github.com/chungbinb](https://github.com/chungbinb)
 - QQ 群：767523155
 
-感谢你对 ycIDE 的关注和支持！希望这个项目能为继承易语言的开发者们提供一个强大、易用的集成开发环境。
+感谢你对 ycIDE 的关注和支持！希望这个项目能为中文母语和不会英文的开发者们提供一个强大、易用的集成开发环境。
 
 ## 贡献人员名单
 
