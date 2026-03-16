@@ -29,7 +29,7 @@
     ],
     "win": {
       "target": [
-        "nsis"
+        "dir"
       ],
       "icon": "resources/icon.ico"
     },

@@ -283,6 +283,21 @@ function buildCommandMap(): Map<string, LibCommand & { libraryName: string }> {
   return map
 }
 
+// 将全角运算符转换为C运算符
+function convertFullWidthOps(expr: string): string {
+  return expr
+    .replace(/≠/g, '!=')
+    .replace(/≤/g, '<=')
+    .replace(/≥/g, '>=')
+    .replace(/＝/g, '==')
+    .replace(/＜/g, '<')
+    .replace(/＞/g, '>')
+    .replace(/＋/g, '+')
+    .replace(/－/g, '-')
+    .replace(/×/g, '*')
+    .replace(/÷/g, '/')
+}
+
 // 从行中提取命令名称（括号或空格之前的部分）
 function extractCommandName(line: string): string {
   let end = line.length
@@ -395,8 +410,8 @@ function formatArgForC(arg: string): string {
   if (trimmed === '假') return '0'
   // 数值直接传递
   if (/^-?\d+(\.\d+)?$/.test(trimmed)) return trimmed
-  // 变量名或表达式直接传递
-  return trimmed
+  // 变量名或表达式：转换全角运算符
+  return convertFullWidthOps(trimmed)
 }
 
 // 命令 → C代码生成器（直接按命令名索引，不按库名分组）
@@ -460,7 +475,8 @@ function transpileEycContent(eycContent: string, fileName: string): string {
   let subBody = ''
 
   for (const rawLine of lines) {
-    const line = rawLine.trim()
+    // 剥离流程标记零宽字符（\u200C/\u200D/\u2060/\u200B）
+    const line = rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
     if (line.startsWith('.版本') || line.startsWith('.程序集') || line === '') continue
 
     if (line.startsWith('.子程序 ')) {
@@ -486,6 +502,21 @@ function transpileEycContent(eycContent: string, fileName: string): string {
     if (inSub) {
       // 声明行跳过
       if (line.startsWith('.参数 ') || line.startsWith('.支持库 ')) {
+        continue
+      }
+
+      // 注释行
+      if (line.startsWith("'")) {
+        subBody += `    /* ${line.slice(1).trim()} */\n`
+        continue
+      }
+
+      // 赋值表达式：variable ＝ expr（全角等号）
+      const assignMatch = line.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)\s*＝\s*(.+)$/)
+      if (assignMatch) {
+        const varName = assignMatch[1]
+        const expr = convertFullWidthOps(assignMatch[2])
+        subBody += `    ${varName} = ${expr};\n`
         continue
       }
 

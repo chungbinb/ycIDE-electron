@@ -119,6 +119,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const [toolboxPos, setToolboxPos] = useState({ x: 80, y: 40 })
   const [toolboxSize, setToolboxSize] = useState({ w: 160, h: 400 })
   const canvasRef = useRef<HTMLDivElement>(null)
+  const [drawRect, setDrawRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const dragRef = useRef<{
     mode: 'move' | 'resize' | 'create'
     controlId: string
@@ -130,6 +131,13 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     origWidth: number
     origHeight: number
   } | null>(null)
+  // 保持最新 form/onChange 引用，供原生事件回调使用（避免闭包捕获过时值）
+  const formRef = useRef(form)
+  formRef.current = form
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+  // 跟踪刚创建控件的 ID，防止 onSelectControl 因渲染间隙发送 null
+  const pendingNewIdRef = useRef<string | null>(null)
 
   const selectedControl = selectedId && selectedId !== '__form__'
     ? form.controls.find(c => c.id === selectedId) || null
@@ -152,23 +160,32 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     if (selectedId === '__form__') {
       onSelectControl({ kind: 'form', form })
     } else if (selectedControl) {
+      pendingNewIdRef.current = null
       onSelectControl({ kind: 'control', control: selectedControl, form })
-    } else {
+    } else if (!pendingNewIdRef.current) {
+      // 仅在非新建控件等待期间才发送 null（避免 addControl 后渲染间隙闪烁）
       onSelectControl(null)
     }
   }, [selectedId, selectedControl, form, onSelectControl])
 
   const updateControl = useCallback((id: string, patch: Partial<DesignControl>) => {
-    onChange({
-      ...form,
-      controls: form.controls.map(c => c.id === id ? { ...c, ...patch } : c),
+    const latestForm = formRef.current
+    onChangeRef.current({
+      ...latestForm,
+      controls: latestForm.controls.map(c => c.id === id ? { ...c, ...patch } : c),
     })
-  }, [form, onChange])
+  }, [])
 
   const addControl = useCallback((unitName: string, x: number, y: number, w?: number, h?: number) => {
+    const latestForm = formRef.current
     const sizes = DEFAULT_SIZES[unitName] || DEFAULT_SIZE
-    const id = `ctrl_${nextControlId++}`
-    const count = form.controls.filter(c => c.type === unitName).length + 1
+    // 确保 ID 不与现有控件冲突
+    const existingIds = new Set(latestForm.controls.map(c => c.id))
+    let id: string
+    do {
+      id = `ctrl_${nextControlId++}`
+    } while (existingIds.has(id))
+    const count = latestForm.controls.filter(c => c.type === unitName).length + 1
     // 某些组件默认带文字
     const hasText = ['按钮', '标签', '选择框', '单选框', '分组框'].includes(unitName)
     const newCtrl: DesignControl = {
@@ -184,22 +201,25 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       enabled: true,
       properties: {},
     }
-    onChange({ ...form, controls: [...form.controls, newCtrl] })
+    pendingNewIdRef.current = id
+    onChangeRef.current({ ...latestForm, controls: [...latestForm.controls, newCtrl] })
     setSelectedId(id)
+    setSelectedIds(new Set())
     setActiveTool(null)
-  }, [form, onChange])
+  }, [])
 
   const deleteSelected = useCallback(() => {
+    const latestForm = formRef.current
     if (selectedIds.size > 0) {
-      onChange({ ...form, controls: form.controls.filter(c => !selectedIds.has(c.id)) })
+      onChangeRef.current({ ...latestForm, controls: latestForm.controls.filter(c => !selectedIds.has(c.id)) })
       setSelectedIds(new Set())
       setSelectedId(null)
       return
     }
     if (!selectedId) return
-    onChange({ ...form, controls: form.controls.filter(c => c.id !== selectedId) })
+    onChangeRef.current({ ...latestForm, controls: latestForm.controls.filter(c => c.id !== selectedId) })
     setSelectedId(null)
-  }, [selectedId, selectedIds, form, onChange])
+  }, [selectedId, selectedIds])
 
   // 通知父组件多选数量变化
   useEffect(() => {
@@ -265,12 +285,46 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     if (e.button !== 0) return
     const canvas = canvasRef.current!
     const rect = canvas.getBoundingClientRect()
-    const x = e.clientX - rect.left - canvas.clientLeft
-    const y = e.clientY - rect.top - canvas.clientTop
+    const bx = canvas.clientLeft
+    const by = canvas.clientTop
+    const startX = e.clientX - rect.left - bx
+    const startY = e.clientY - rect.top - by
 
     if (activeTool) {
-      // 创建新控件（在鼠标处放下默认大小）
-      addControl(activeTool, x, y)
+      // 拖拽绘制控件：按住鼠标拖动定义大小
+      const tool = activeTool
+      setDrawRect({ x: snap(startX), y: snap(startY), w: 0, h: 0 })
+
+      const handleMouseMove = (ev: MouseEvent): void => {
+        const mx = ev.clientX - rect.left - bx
+        const my = ev.clientY - rect.top - by
+        const x1 = Math.min(startX, mx)
+        const y1 = Math.min(startY, my)
+        const x2 = Math.max(startX, mx)
+        const y2 = Math.max(startY, my)
+        setDrawRect({ x: snap(x1), y: snap(y1), w: snap(x2 - x1), h: snap(y2 - y1) })
+      }
+
+      const handleMouseUp = (ev: MouseEvent): void => {
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+        const mx = ev.clientX - rect.left - bx
+        const my = ev.clientY - rect.top - by
+        const x1 = Math.min(startX, mx)
+        const y1 = Math.min(startY, my)
+        const drawW = snap(Math.abs(mx - startX))
+        const drawH = snap(Math.abs(my - startY))
+        setDrawRect(null)
+        // 拖拽距离足够则使用拖拽大小，否则使用默认大小
+        if (drawW >= 8 && drawH >= 8) {
+          addControl(tool, x1, y1, drawW, drawH)
+        } else {
+          addControl(tool, snap(startX), snap(startY))
+        }
+      }
+
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
     } else {
       // 点击空白选中窗口自身
       setSelectedId('__form__')
@@ -300,7 +354,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       let w = origW, h = origH
       if (handle.includes('e')) w = Math.max(80, origW + dx)
       if (handle.includes('s')) h = Math.max(60, origH + dy)
-      onChange({ ...form, width: snap(w), height: snap(h) })
+      onChangeRef.current({ ...formRef.current, width: snap(w), height: snap(h) })
     }
 
     const handleMouseUp = (): void => {
@@ -313,7 +367,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     document.body.style.cursor = cursorMap[handle]
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-  }, [form, onChange])
+  }, [form])
 
   // 控件双击 — 跳转到默认事件子程序
   const handleControlDblClick = useCallback((e: React.MouseEvent, ctrl: DesignControl) => {
@@ -377,9 +431,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const my = ev.clientY - rect.top - by
         const dx = mx - startX
         const dy = my - startY
-        onChange({
-          ...form,
-          controls: form.controls.map(c => {
+        const latestForm = formRef.current
+        onChangeRef.current({
+          ...latestForm,
+          controls: latestForm.controls.map(c => {
             const orig = origPositions.get(c.id)
             if (!orig) return c
             return { ...c, left: snap(Math.max(0, orig.left + dx)), top: snap(Math.max(0, orig.top + dy)) }
@@ -434,7 +489,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
     }
-  }, [updateControl, selectedIds, form, onChange])
+  }, [updateControl, selectedIds])
 
   // 句柄鼠标按下 — 开始缩放
   const handleResizeMouseDown = useCallback((e: React.MouseEvent, ctrl: DesignControl, handle: HandleDir) => {
@@ -760,6 +815,31 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             style={{ width: form.width, height: form.height }}
             onMouseDown={handleCanvasMouseDown}
           >
+            {/* 拖拽绘制预览 — 直接显示组件外观 */}
+            {drawRect && drawRect.w > 0 && drawRect.h > 0 && activeTool && (
+              <div
+                className="vd-draw-preview"
+                style={{
+                  left: drawRect.x,
+                  top: drawRect.y,
+                  width: drawRect.w,
+                  height: drawRect.h,
+                }}
+              >
+                {renderControlPreview({
+                  id: '__preview__',
+                  type: activeTool,
+                  name: activeTool,
+                  left: 0, top: 0,
+                  width: drawRect.w,
+                  height: drawRect.h,
+                  text: ['按钮', '标签', '选择框', '单选框', '分组框'].includes(activeTool) ? activeTool : '',
+                  visible: true,
+                  enabled: true,
+                  properties: {},
+                })}
+              </div>
+            )}
             {form.controls.map(ctrl => {
               const isSelected = ctrl.id === selectedId
               const isMultiSelected = selectedIds.has(ctrl.id)

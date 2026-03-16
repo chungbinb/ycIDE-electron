@@ -504,6 +504,10 @@
   width: 4ch;
   position: relative;
 }
+/* 参数展开区延续内侧竖线：将外侧线位置移到内侧 */
+.eyc-param-flow-cont .eyc-flow-cont-inner.eyc-flow-through::before {
+  left: calc(1ch + 4px);
+}
 /* 向上指向命令的三角箭头 */
 .eyc-param-expand-arrow {
   position: absolute;

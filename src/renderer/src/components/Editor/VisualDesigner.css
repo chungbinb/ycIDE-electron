@@ -278,6 +278,14 @@
   cursor: crosshair;
 }
 
+/* 拖拽绘制预览矩形 */
+.vd-draw-preview {
+  position: absolute;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.7;
+}
+
 /* 控件容器 */
 .vd-control {
   position: absolute;

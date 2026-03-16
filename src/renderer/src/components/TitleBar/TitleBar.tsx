@@ -205,7 +205,7 @@ function TitleBar({ onMenuAction, hasProject = false, hasOpenFile = false, theme
             </div>
           ))}
         </nav>
-        <div className="titlebar-title">ycIDE - 易语言集成开发环境</div>
+        <div className="titlebar-title">ycIDE - 易承语言集成开发环境</div>
       </div>
       <div className="titlebar-controls" aria-label="窗口控制">
         <button
