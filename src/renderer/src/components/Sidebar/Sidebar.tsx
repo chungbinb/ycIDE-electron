@@ -748,7 +748,7 @@ function Sidebar({ width, onResize, selection, activeTab, onTabChange, onSelectC
     return `_${normalized}_${eventName}`
   }, [])
 
-  const [selectedEvent, setSelectedEvent] = useState('')
+  const [selectedEventIndex, setSelectedEventIndex] = useState('')
   const [existingEventSubs, setExistingEventSubs] = useState<Set<string>>(new Set())
 
   // 读取当前窗口对应 .eyc，解析已存在的 .子程序 名称
@@ -780,12 +780,13 @@ function Sidebar({ width, onResize, selection, activeTab, onTabChange, onSelectC
   // 选中组件变化时，自动选择默认事件
   useEffect(() => {
     if (selectedEvents.length === 0) {
-      setSelectedEvent('')
+      setSelectedEventIndex('')
       return
     }
     const defaultName = defaultEventMap[selectedTypeName]
-    const hasDefault = defaultName && selectedEvents.some(e => e.name === defaultName)
-    setSelectedEvent(hasDefault ? defaultName : selectedEvents[0].name)
+    const defaultIdx = defaultName ? selectedEvents.findIndex(e => e.name === defaultName) : -1
+    const targetIdx = defaultIdx >= 0 ? defaultIdx : 0
+    setSelectedEventIndex(String(targetIdx))
   }, [selectedEvents, selectedTypeName])
 
   return (
@@ -812,14 +813,14 @@ function Sidebar({ width, onResize, selection, activeTab, onTabChange, onSelectC
         <div className="sidebar-event-bar">
           <select
             className="sidebar-event-selector"
-            value={selectedEvent}
+            value={selectedEventIndex}
             onChange={(e) => {
-              const name = e.target.value
-              setSelectedEvent(name)
-              if (selection && name && onEventNavigate) {
-                const ev = selectedEvents.find(ev => ev.name === name)
-                onEventNavigate(selection, name, ev?.args ?? [])
-                const subName = getEventSubName(selection, name)
+              const idx = parseInt(e.target.value, 10)
+              setSelectedEventIndex(e.target.value)
+              const ev = Number.isNaN(idx) ? undefined : selectedEvents[idx]
+              if (selection && ev && onEventNavigate) {
+                onEventNavigate(selection, ev.name, ev.args ?? [])
+                const subName = getEventSubName(selection, ev.name)
                 setExistingEventSubs(prev => {
                   const next = new Set(prev)
                   next.add(subName)
@@ -831,8 +832,8 @@ function Sidebar({ width, onResize, selection, activeTab, onTabChange, onSelectC
           >
             {selectedEvents.length === 0
               ? <option value="">(无事件)</option>
-              : selectedEvents.map(ev => (
-                  <option key={ev.name} value={ev.name} title={ev.description}>
+              : selectedEvents.map((ev, idx) => (
+                  <option key={`${ev.name}-${idx}`} value={String(idx)} title={ev.description}>
                     {((selection && existingEventSubs.has(getEventSubName(selection, ev.name))) ? EVENT_PREFIX_CHECKED : EVENT_PREFIX_EMPTY) + ev.name}
                   </option>
                 ))

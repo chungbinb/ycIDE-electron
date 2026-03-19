@@ -1,10 +1,25 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join, dirname } from 'path'
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync } from 'fs'
 import { libraryManager } from './library-manager'
 import { compileProject, runExecutable, stopExecutable, isRunning } from './compiler'
 
 const isDev = !app.isPackaged
+
+function getRendererErrorLogPath(): string {
+  const logDir = join(app.getPath('userData'), 'logs')
+  if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true })
+  return join(logDir, 'renderer-errors.log')
+}
+
+function appendRendererErrorLog(payload: { source?: string; message: string; stack?: string; extra?: unknown }): void {
+  const now = new Date().toISOString()
+  const source = payload.source || 'renderer'
+  const stack = payload.stack ? `\n${payload.stack}` : ''
+  const extra = payload.extra === undefined ? '' : `\nextra=${JSON.stringify(payload.extra)}`
+  const line = `[${now}] [${source}] ${payload.message}${stack}${extra}\n\n`
+  appendFileSync(getRendererErrorLogPath(), line, 'utf-8')
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -407,6 +422,22 @@ app.whenReady().then(() => {
 
   ipcMain.handle('compiler:isRunning', () => {
     return isRunning()
+  })
+
+  // 渲染进程诊断日志
+  ipcMain.handle('debug:logRendererError', (_event, payload: { source?: string; message: string; stack?: string; extra?: unknown }) => {
+    try {
+      appendRendererErrorLog(payload)
+      console.error('[renderer-error]', payload)
+      return { success: true }
+    } catch (error) {
+      console.error('[renderer-error] failed to persist log', error)
+      return { success: false }
+    }
+  })
+
+  ipcMain.handle('debug:getRendererErrorLogPath', () => {
+    return getRendererErrorLogPath()
   })
 
   // 启动时自动扫描并加载上次已加载的支持库

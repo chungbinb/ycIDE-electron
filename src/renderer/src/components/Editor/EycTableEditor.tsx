@@ -1501,6 +1501,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   acVisibleRef.current = acVisible
   const acItemsRef = useRef<AcDisplayItem[]>([])
   acItemsRef.current = acItems
+  const userVarCompletionItemsRef = useRef<CompletionItem[]>([])
 
   // 加载所有命令（用于补全），含流程关键字
   const reloadCommands = useCallback(() => {
@@ -1562,7 +1563,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     acWordStartRef.current = wordStart
 
     // 检查是否在"组件名."后面 → 显示成员命令
-    let sourceList: CompletionItem[] = [...userVarCompletionItems, ...allCommandsRef.current]
+    let sourceList: CompletionItem[] = [...userVarCompletionItemsRef.current, ...allCommandsRef.current]
     if (wordStart > 0 && val[wordStart - 1] === '.') {
       // 提取点号前的组件名
       let objEnd = wordStart - 1
@@ -1609,7 +1610,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setAcItems(matches)
     setAcIndex(0)
     setAcVisible(true)
-  }, [editCell, userVarCompletionItems])
+  }, [editCell])
 
   /** 应用补全项：替换当前输入词为命令名 */
   const applyCompletion = useCallback((displayItem: AcDisplayItem) => {
@@ -1703,8 +1704,28 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   }, [value])
 
   const lines = useMemo(() => currentText.split('\n'), [currentText])
-  const blocks = useMemo(() => buildBlocks(currentText), [currentText])
-  const flowLines = useMemo(() => computeFlowLines(blocks), [blocks])
+  const blocks = useMemo<RenderBlock[]>(() => {
+    try {
+      return buildBlocks(currentText)
+    } catch (error) {
+      console.error('[EycTableEditor] buildBlocks failed, fallback to line blocks', error)
+      return currentText.split('\n').map((line, idx): RenderBlock => ({
+        kind: 'codeline' as const,
+        rows: [],
+        codeLine: line,
+        lineIndex: idx,
+        isVirtual: false,
+      }))
+    }
+  }, [currentText])
+  const flowLines = useMemo(() => {
+    try {
+      return computeFlowLines(blocks)
+    } catch (error) {
+      console.error('[EycTableEditor] computeFlowLines failed, disable flow rendering for current content', error)
+      return { map: new Map<number, FlowSegment[]>(), maxDepth: 0 }
+    }
+  }, [blocks])
 
   // 只对实际渲染的可见行按顺序分配连续行号（跳过 isHeader / isVirtual）
   const lineNumMap = useMemo<Map<number, number>>(() => {
@@ -1814,6 +1835,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     return items
   }, [currentText, editCell?.lineIndex])
+  useEffect(() => {
+    userVarCompletionItemsRef.current = userVarCompletionItems
+  }, [userVarCompletionItems])
 
   // 有效命令名集合（支持库命令 + 用户子程序 + 流程关键字 + 变量名）
   const validCommandNames = useMemo(() => {

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useImperativeHandle, forwardRef } from 'react'
+import { useState, useRef, useCallback, useEffect, useImperativeHandle, forwardRef, Component, type ErrorInfo, type ReactNode } from 'react'
 import MonacoEditor, { OnMount, OnChange, type Monaco } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import EycTableEditor, { type EycTableEditorHandle, type FileProblem } from './EycTableEditor'
@@ -204,9 +204,43 @@ export interface EditorHandle {
   navigateToEventSub: (sel: SelectionTarget, eventName: string, eventArgs: Array<{ name: string; description: string; dataType: string; isByRef: boolean }>) => void
 }
 
+interface EycEditorErrorBoundaryProps {
+  tabId: string
+  onError: (tabId: string, error: Error, info: ErrorInfo) => void
+  children: ReactNode
+}
+
+interface EycEditorErrorBoundaryState {
+  hasError: boolean
+}
+
+class EycEditorErrorBoundary extends Component<EycEditorErrorBoundaryProps, EycEditorErrorBoundaryState> {
+  state: EycEditorErrorBoundaryState = { hasError: false }
+
+  static getDerivedStateFromError(): EycEditorErrorBoundaryState {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    this.props.onError(this.props.tabId, error, info)
+  }
+
+  componentDidUpdate(prevProps: EycEditorErrorBoundaryProps): void {
+    if (prevProps.tabId !== this.props.tabId && this.state.hasError) {
+      this.setState({ hasError: false })
+    }
+  }
+
+  render(): ReactNode {
+    if (this.state.hasError) return null
+    return this.props.children
+  }
+}
+
 const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh }, ref) {
   const [tabs, setTabs] = useState<EditorTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
+  const [eycFallbackTabs, setEycFallbackTabs] = useState<Record<string, true>>({})
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const eycEditorRef = useRef<EycTableEditorHandle | null>(null)
   const [windowUnits, setWindowUnits] = useState<LibWindowUnit[]>([])
@@ -298,6 +332,12 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         setActiveTabId(newActive.id)
       }
       onOpenTabsChange?.(newTabs)
+      setEycFallbackTabs(prevFallback => {
+        if (!prevFallback[tabId]) return prevFallback
+        const next = { ...prevFallback }
+        delete next[tabId]
+        return next
+      })
       return newTabs
     })
   }, [tabs, activeTabId, onOpenTabsChange])
@@ -848,15 +888,141 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             onFormDoubleClick={handleFormDblClick}
           />
         ) : (activeTab.language === 'eyc' || activeTab.language === 'egv') ? (
-          <EycTableEditor
-            ref={eycEditorRef}
-            value={activeTab.value}
-            onChange={handleEycChange}
-            onCommandClick={onCommandClick}
-            onCommandClear={onCommandClear}
-            onProblemsChange={onProblemsChange}
-            onCursorChange={onCursorChange}
-          />
+          eycFallbackTabs[activeTab.id] ? (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#2d2d2d', borderBottom: '1px solid #3a3a3a' }}>
+                <span style={{ color: '#f2c97d', fontSize: 12 }}>表格模式异常，已临时切换到文本模式</span>
+                <button
+                  type="button"
+                  style={{
+                    padding: '2px 10px',
+                    borderRadius: 4,
+                    border: '1px solid #5a5a5a',
+                    background: '#3a3a3a',
+                    color: '#d4d4d4',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                  }}
+                  onClick={() => {
+                    setEycFallbackTabs(prev => {
+                      const next = { ...prev }
+                      delete next[activeTab.id]
+                      return next
+                    })
+                  }}
+                >
+                  重试表格模式
+                </button>
+              </div>
+              <div style={{ flex: 1 }}>
+                <MonacoEditor
+                  key={activeTab.id}
+                  language="eyc"
+                  value={activeTab.value}
+                  theme="ycide-dark"
+                  onChange={handleEditorChange}
+                  onMount={handleEditorMount}
+                  beforeMount={(monaco) => {
+                    registerEycLanguage(monaco)
+                    monaco.editor.defineTheme('ycide-dark', {
+                      base: 'vs-dark',
+                      inherit: true,
+                      rules: [
+                        { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
+                        { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
+                        { token: 'keyword.declaration', foreground: 'C586C0', fontStyle: 'bold' },
+                        { token: 'string', foreground: 'CE9178' },
+                        { token: 'number', foreground: 'B5CEA8' },
+                        { token: 'number.float', foreground: 'B5CEA8' },
+                        { token: 'type', foreground: '4EC9B0' },
+                        { token: 'predefined', foreground: 'DCDCAA' },
+                        { token: 'constant', foreground: '569CD6', fontStyle: 'bold' },
+                        { token: 'identifier', foreground: '9CDCFE' },
+                        { token: 'operator', foreground: 'D4D4D4' },
+                        { token: 'delimiter.parenthesis', foreground: 'FFD700' },
+                        { token: 'delimiter', foreground: 'D4D4D4' },
+                      ],
+                      colors: {
+                        'editor.background': '#1e1e1e',
+                        'editor.foreground': '#d4d4d4',
+                        'editorLineNumber.foreground': '#858585',
+                        'editorLineNumber.activeForeground': '#c6c6c6',
+                        'editor.selectionBackground': '#264f78',
+                        'editor.lineHighlightBackground': '#2a2d2e',
+                        'editorCursor.foreground': '#aeafad',
+                        'editor.findMatchBackground': '#515c6a',
+                        'editor.findMatchHighlightBackground': '#ea5c0055',
+                      },
+                    })
+                  }}
+                  options={{
+                    fontSize: 14,
+                    fontFamily: '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace',
+                    fontLigatures: true,
+                    minimap: { enabled: true, scale: 1 },
+                    scrollBeyondLastLine: false,
+                    smoothScrolling: true,
+                    cursorBlinking: 'smooth',
+                    cursorSmoothCaretAnimation: 'on',
+                    renderLineHighlight: 'all',
+                    renderWhitespace: 'selection',
+                    bracketPairColorization: { enabled: true },
+                    autoIndent: 'full',
+                    formatOnPaste: true,
+                    wordWrap: 'off',
+                    lineNumbers: 'on',
+                    glyphMargin: true,
+                    folding: true,
+                    foldingStrategy: 'indentation',
+                    links: true,
+                    contextmenu: true,
+                    mouseWheelZoom: true,
+                    padding: { top: 8, bottom: 8 },
+                    suggest: {
+                      showKeywords: true,
+                      showSnippets: true,
+                      preview: true,
+                    },
+                    tabSize: 4,
+                    insertSpaces: true,
+                    automaticLayout: true,
+                  }}
+                  loading={
+                    <div className="editor-loading">
+                      <span>编辑器加载中...</span>
+                    </div>
+                  }
+                />
+              </div>
+            </div>
+          ) : (
+            <EycEditorErrorBoundary
+              tabId={activeTab.id}
+              onError={(tabId, error, info) => {
+                console.error('[Editor] EycTableEditor render failed, fallback to Monaco', { tabId, error, info })
+                void window.api?.debug?.logRendererError({
+                  source: 'EycEditorErrorBoundary',
+                  message: error.message || 'EycTableEditor render failed',
+                  stack: error.stack,
+                  extra: {
+                    tabId,
+                    componentStack: info.componentStack,
+                  },
+                })
+                setEycFallbackTabs(prev => ({ ...prev, [tabId]: true }))
+              }}
+            >
+              <EycTableEditor
+                ref={eycEditorRef}
+                value={activeTab.value}
+                onChange={handleEycChange}
+                onCommandClick={onCommandClick}
+                onCommandClear={onCommandClear}
+                onProblemsChange={onProblemsChange}
+                onCursorChange={onCursorChange}
+              />
+            </EycEditorErrorBoundary>
+          )
         ) : (
           <MonacoEditor
           key={activeTab.id}
@@ -973,7 +1139,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 })
 
 /** 根据语言返回文件图标 */
-function getFileIcon(language: string): React.ReactNode {
+function getFileIcon(language: string): ReactNode {
   const iconNameMap: Record<string, string> = {
     eyc: 'edit',
     eyw: 'windows-form',

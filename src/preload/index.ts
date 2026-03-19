@@ -68,6 +68,13 @@ const api = {
     confirmSaveBeforeClose: (fileLabel: string) =>
       ipcRenderer.invoke('dialog:confirmSaveBeforeClose', fileLabel) as Promise<'save' | 'discard' | 'cancel'>,
   },
+  // 诊断日志
+  debug: {
+    logRendererError: (payload: { source?: string; message: string; stack?: string; extra?: unknown }) =>
+      ipcRenderer.invoke('debug:logRendererError', payload) as Promise<{ success: boolean }>,
+    getRendererErrorLogPath: () =>
+      ipcRenderer.invoke('debug:getRendererErrorLogPath') as Promise<string>,
+  },
   // 通用 IPC
   on: (channel: string, callback: (...args: unknown[]) => void) => {
     ipcRenderer.on(channel, (_event, ...args) => callback(...args))
