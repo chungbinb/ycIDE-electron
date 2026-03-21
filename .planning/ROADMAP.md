@@ -30,7 +30,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Maintainer can check one authoritative manifest/report and immediately see migration coverage percentage and remaining count.
 **Plans**: 1 plans
 Plans:
-- [ ] 01-01-PLAN.md — Build deterministic inventory baseline pipeline (generator + classifiers + tests + authoritative manifest)
+- [x] 01-01-PLAN.md — Build deterministic inventory baseline pipeline (generator + classifiers + tests + authoritative manifest)
 
 ### Phase 2: Deterministic Encoding Conversion
 **Goal**: Maintainers can reliably convert targeted library content to UTF-8 without silent corruption.

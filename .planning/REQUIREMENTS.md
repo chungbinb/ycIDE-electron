@@ -7,9 +7,9 @@
 
 ### Inventory & Scope
 
-- [ ] **INVT-01**: Maintainer can generate a complete list of 易语言功能库/界面库 under `第三方相关文件` that are not yet present in `支持库源码`.
-- [ ] **INVT-02**: Maintainer can classify each unmigrated library with architecture state (`x86-only`, `mixed`, `x64-ready`) and encoding state (`gbk`, `mixed`, `utf-8`).
-- [ ] **INVT-03**: Maintainer can track migration coverage (%) and remaining library count from a single authoritative manifest/report.
+- [x] **INVT-01**: Maintainer can generate a complete list of 易语言功能库/界面库 under `第三方相关文件` that are not yet present in `支持库源码`.
+- [x] **INVT-02**: Maintainer can classify each unmigrated library with architecture state (`x86-only`, `mixed`, `x64-ready`) and encoding state (`gbk`, `mixed`, `utf-8`).
+- [x] **INVT-03**: Maintainer can track migration coverage (%) and remaining library count from a single authoritative manifest/report.
 
 ### Encoding Conversion
 
@@ -63,9 +63,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INVT-01 | Phase 1 | Pending |
-| INVT-02 | Phase 1 | Pending |
-| INVT-03 | Phase 1 | Pending |
+| INVT-01 | Phase 1 | Complete |
+| INVT-02 | Phase 1 | Complete |
+| INVT-03 | Phase 1 | Complete |
 | ENCD-01 | Phase 2 | Pending |
 | ENCD-02 | Phase 2 | Pending |
 | ENCD-03 | Phase 2 | Pending |
