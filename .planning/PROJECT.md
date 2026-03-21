@@ -19,10 +19,10 @@ All targeted third-party libraries are migrated into `支持库源码` with UTF-
 - ✓ Windows-oriented compiler/toolchain packaging flow exists (`compiler/`, `lib/`, `static_lib/`, `themes/`) — existing
 - ✓ Basic UI automation baseline exists (Playwright Electron startup smoke test) — existing
 - ✓ Identify all 易语言功能库/界面库 in `第三方相关文件` that are not yet migrated into `支持库源码` — Validated in Phase 01: inventory-baseline-lock
+- ✓ Convert identified GBK/mixed textual artifacts into canonical UTF-8 with deterministic, blocker-first workflow and per-library reports — Validated in Phase 02: deterministic-encoding-conversion
 
 ### Active
 
-- [ ] Convert all identified GBK-encoded source/content artifacts to UTF-8 without functional regression
 - [ ] Complete x64 adaptation for each identified unmigrated library
 - [ ] Place migrated/adapted outputs into `支持库源码` in a maintainable structure consistent with existing conventions
 - [ ] Verify every targeted library migration result can be consumed by current ycIDE support-library workflow
@@ -38,7 +38,8 @@ All targeted third-party libraries are migrated into `支持库源码` with UTF-
 This is a brownfield repository with an existing Electron + React + TypeScript IDE architecture and an established support-library loading/compilation pipeline.  
 A codebase map already exists under `.planning/codebase/` and confirms the app’s current capabilities and integration points.  
 The user’s current intent is narrowly scoped: finish migration of remaining third-party 易语言 libraries from GBK/x32 state into UTF-8/x64 form under `支持库源码`, before pursuing broader product work.
-Phase 01 is complete: inventory and baseline lock artifacts now provide a deterministic, authoritative scope view (including migration coverage and remaining counts) for subsequent conversion and x64 phases.
+Phase 01 is complete: inventory and baseline lock artifacts now provide a deterministic, authoritative scope view (including migration coverage and remaining counts) for subsequent conversion and x64 phases.  
+Phase 02 is complete: deterministic encoding conversion tooling and reports are available, with human-approved readability spot-check recorded in phase UAT artifacts.
 
 ## Constraints
 
@@ -56,6 +57,7 @@ Phase 01 is complete: inventory and baseline lock artifacts now provide a determ
 | Define completion as “all unmigrated libraries converted to UTF-8 and adapted to x64” | User gave explicit completion criteria | — Pending |
 | Exclude non-migration IDE enhancements from this cycle | Keeps execution focused and prevents scope creep | — Pending |
 | Establish `.planning/baselines/inventory-baseline.json` as the authoritative phase baseline artifact | Gives one source of truth for migration scope and coverage tracking | ✓ Good |
+| Use blocker-first deterministic conversion with strict report reconciliation for encoding migration | Prevent silent corruption and keep conversion outcomes auditable/repeatable | ✓ Good |
 
 ## Evolution
 
@@ -75,4 +77,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-21 after Phase 01 completion*
+*Last updated: 2026-03-21 after Phase 02 completion*
