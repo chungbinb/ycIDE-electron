@@ -1,0 +1,477 @@
+{
+  "generatedAt": "2026-03-21T03:52:04.085Z",
+  "roots": {
+    "thirdParty": [
+      "第三方相关文件/易语言的功能库",
+      "第三方相关文件/易语言的界面库"
+    ],
+    "migrated": "支持库源码"
+  },
+  "totals": {
+    "candidateCount": 67,
+    "migratedCount": 5,
+    "remainingCount": 62,
+    "coveragePct": 7.46
+  },
+  "libraries": [
+    {
+      "name": "bmpoperate",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": true
+    },
+    {
+      "name": "btdownload",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": true
+    },
+    {
+      "name": "cncalendar",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "cncnv",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": true
+    },
+    {
+      "name": "cnvpe",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": true
+    },
+    {
+      "name": "codestyleedit",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "commobj",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": true
+    },
+    {
+      "name": "console",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "deelxregex",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "downlib",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "dp1",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "eapi",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "ecalc",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "echartbar",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "ecompress",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "edatastructure",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "edb",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "edirectx",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "edroptarget",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "eexcel2000",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "egrid",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "eimgconverter",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "einterprocess",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "elogopanel",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "emmedia",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "enetintercept",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "eoalib",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "eppt2000",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "erawsock",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "espeechengine",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "esslayer",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "ethread",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "evectoraframe",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "ewizard",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "eword2000",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "exmlparser",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "exmlrpc",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "extmenu",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "figures",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "htmlview",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "iconv",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "iext",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "iext2",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "iext3",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "iext5",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "iext6",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "internet",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "isapi",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "javalib",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "jedi",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "mysql",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "ogrelib",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "opengl",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "phonecortrol",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "pop3",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "portio",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "regex",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "script",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "shell",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "shellex",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "sock",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "sqlite3",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "sqlitedb",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "twain",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "vclbase",
+      "sourceRoot": "易语言的界面库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "wnet",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    },
+    {
+      "name": "xplib",
+      "sourceRoot": "易语言的功能库",
+      "isMigrated": false,
+      "archState": "x86-only",
+      "encodingState": "mixed"
+    }
+  ]
+}
