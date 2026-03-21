@@ -1,0 +1,18 @@
+{
+  "totalLibraries": 62,
+  "completedLibraries": 0,
+  "blockedLibraries": 62,
+  "remainingLibraries": 0,
+  "progressThermometer": "0/62 completed, 62 blocked, 0 remaining",
+  "blockedReasonStats": {
+    "missing_x64_artifact": 62,
+    "x64_lane_failed": 62,
+    "missing_x86_artifact": 62,
+    "x86_lane_failed": 62,
+    "abi_pointer_mismatch": 62,
+    "abi_layout_mismatch": 62,
+    "abi_callback_signature_mismatch": 62,
+    "abi_evidence_incomplete": 62
+  },
+  "phaseGatePassed": false
+}
