@@ -11,8 +11,11 @@ const TREE_ICON_MAP: Record<string, string> = {
   'folder-expanded': 'folder-opened',
   module: 'module',
   class: 'class',
-  sub: 'procedure',
+  sub: 'method',
   func: 'method',
+  field: 'field',
+  dll: 'dll',
+  constant: 'constant',
   window: 'windows-form',
   resource: 'resource-view',
 }
@@ -46,7 +49,7 @@ interface LibItem {
 export interface TreeNode {
   id: string
   label: string
-  type: 'folder' | 'module' | 'class' | 'sub' | 'func' | 'window' | 'resource'
+  type: 'folder' | 'module' | 'class' | 'sub' | 'func' | 'field' | 'dll' | 'constant' | 'window' | 'resource'
   children?: TreeNode[]
   expanded?: boolean
   // 子节点（如子程序）可指向其所属源码文件

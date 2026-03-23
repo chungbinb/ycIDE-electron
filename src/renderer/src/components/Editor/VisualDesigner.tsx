@@ -97,9 +97,67 @@ const HANDLES: HandleDir[] = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']
 
 // 网格吸附
 const GRID = 4
+const ALIGN_SNAP_TOLERANCE = 6
 
 function snap(v: number): number {
   return Math.round(v / GRID) * GRID
+}
+
+type AxisSnapResult = { pos: number; guide: number } | null
+
+function resolveAxisSnap(basePos: number, size: number, references: number[]): AxisSnapResult {
+  const anchors = [0, size / 2, size]
+  let bestDiff = Number.POSITIVE_INFINITY
+  let bestGuide: number | null = null
+
+  for (const ref of references) {
+    for (const anchor of anchors) {
+      const current = basePos + anchor
+      const diff = ref - current
+      const dist = Math.abs(diff)
+      if (dist <= ALIGN_SNAP_TOLERANCE && dist < bestDiff) {
+        bestDiff = dist
+        bestGuide = ref
+      }
+    }
+  }
+
+  if (bestGuide === null) return null
+
+  for (const anchor of anchors) {
+    const current = basePos + anchor
+    const diff = bestGuide - current
+    if (Math.abs(diff) === bestDiff) {
+      return { pos: basePos + diff, guide: bestGuide }
+    }
+  }
+
+  return null
+}
+
+function buildReferenceLines(
+  controls: DesignControl[],
+  excludedIds: Set<string>,
+  formWidth: number,
+  formHeight: number,
+): { x: number[]; y: number[] } {
+  const x = new Set<number>([0, formWidth / 2, formWidth])
+  const y = new Set<number>([0, formHeight / 2, formHeight])
+
+  for (const c of controls) {
+    if (excludedIds.has(c.id)) continue
+    x.add(c.left)
+    x.add(c.left + c.width / 2)
+    x.add(c.left + c.width)
+    y.add(c.top)
+    y.add(c.top + c.height / 2)
+    y.add(c.top + c.height)
+  }
+
+  return {
+    x: [...x],
+    y: [...y],
+  }
 }
 
 let nextControlId = 1
@@ -120,6 +178,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const [toolboxSearch, setToolboxSearch] = useState('')
   const [toolboxPos, setToolboxPos] = useState({ x: 80, y: 40 })
   const [toolboxSize, setToolboxSize] = useState({ w: 160, h: 400 })
+  const [alignGuides, setAlignGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] })
   const canvasRef = useRef<HTMLDivElement>(null)
   const [drawRect, setDrawRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const dragRef = useRef<{
@@ -434,26 +493,56 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const c = form.controls.find(cc => cc.id === id)
         if (c) origPositions.set(id, { left: c.left, top: c.top })
       }
+      const selectedControls = form.controls.filter(c => selectedIds.has(c.id))
+      const minLeft = Math.min(...selectedControls.map(c => c.left))
+      const minTop = Math.min(...selectedControls.map(c => c.top))
+      const maxRight = Math.max(...selectedControls.map(c => c.left + c.width))
+      const maxBottom = Math.max(...selectedControls.map(c => c.top + c.height))
+      const groupWidth = maxRight - minLeft
+      const groupHeight = maxBottom - minTop
+      const refs = buildReferenceLines(form.controls, selectedIds, form.width, form.height)
       const startX = e.clientX - rect.left - bx
       const startY = e.clientY - rect.top - by
 
       const handleMouseMove = (ev: MouseEvent): void => {
         const mx = ev.clientX - rect.left - bx
         const my = ev.clientY - rect.top - by
-        const dx = mx - startX
-        const dy = my - startY
+        let dx = snap(mx - startX)
+        let dy = snap(my - startY)
+
+        let snappedLeft = minLeft + dx
+        let snappedTop = minTop + dy
+
+        const xSnap = resolveAxisSnap(snappedLeft, groupWidth, refs.x)
+        const ySnap = resolveAxisSnap(snappedTop, groupHeight, refs.y)
+
+        if (xSnap) snappedLeft = xSnap.pos
+        if (ySnap) snappedTop = ySnap.pos
+
+        snappedLeft = Math.max(0, snappedLeft)
+        snappedTop = Math.max(0, snappedTop)
+
+        dx = snappedLeft - minLeft
+        dy = snappedTop - minTop
+
+        setAlignGuides({
+          x: xSnap ? [xSnap.guide] : [],
+          y: ySnap ? [ySnap.guide] : [],
+        })
+
         const latestForm = formRef.current
         onChangeRef.current({
           ...latestForm,
           controls: latestForm.controls.map(c => {
             const orig = origPositions.get(c.id)
             if (!orig) return c
-            return { ...c, left: snap(Math.max(0, orig.left + dx)), top: snap(Math.max(0, orig.top + dy)) }
+            return { ...c, left: Math.max(0, orig.left + dx), top: Math.max(0, orig.top + dy) }
           }),
         })
       }
 
       const handleMouseUp = (): void => {
+        setAlignGuides({ x: [], y: [] })
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
         document.body.style.cursor = ''
@@ -480,17 +569,33 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         if (!d) return
         const mx = ev.clientX - rect.left - bx
         const my = ev.clientY - rect.top - by
-        const dx = mx - d.startX
-        const dy = my - d.startY
+        const dx = snap(mx - d.startX)
+        const dy = snap(my - d.startY)
+
+        let nextLeft = Math.max(0, d.origLeft + dx)
+        let nextTop = Math.max(0, d.origTop + dy)
+
+        const refs = buildReferenceLines(formRef.current.controls, new Set([d.controlId]), formRef.current.width, formRef.current.height)
+        const xSnap = resolveAxisSnap(nextLeft, d.origWidth, refs.x)
+        const ySnap = resolveAxisSnap(nextTop, d.origHeight, refs.y)
+
+        if (xSnap) nextLeft = Math.max(0, xSnap.pos)
+        if (ySnap) nextTop = Math.max(0, ySnap.pos)
+
+        setAlignGuides({
+          x: xSnap ? [xSnap.guide] : [],
+          y: ySnap ? [ySnap.guide] : [],
+        })
 
         updateControl(d.controlId, {
-          left: snap(Math.max(0, d.origLeft + dx)),
-          top: snap(Math.max(0, d.origTop + dy)),
+          left: nextLeft,
+          top: nextTop,
         })
       }
 
       const handleMouseUp = (): void => {
         dragRef.current = null
+        setAlignGuides({ x: [], y: [] })
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
         document.body.style.cursor = ''
@@ -500,7 +605,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
     }
-  }, [updateControl, selectedIds])
+  }, [updateControl, selectedIds, selectedId, form.controls, form.width, form.height])
 
   // 句柄鼠标按下 — 开始缩放
   const handleResizeMouseDown = useCallback((e: React.MouseEvent, ctrl: DesignControl, handle: HandleDir) => {
@@ -848,6 +953,21 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             onMouseDown={handleCanvasMouseDown}
             onDoubleClick={handleFormDblClick}
           >
+            {alignGuides.x.map(x => (
+              <div
+                key={`guide-x-${x}`}
+                className="vd-align-guide vd-align-guide-v"
+                style={{ left: x }}
+              />
+            ))}
+            {alignGuides.y.map(y => (
+              <div
+                key={`guide-y-${y}`}
+                className="vd-align-guide vd-align-guide-h"
+                style={{ top: y }}
+              />
+            ))}
+
             {/* 拖拽绘制预览 — 直接显示组件外观 */}
             {drawRect && drawRect.w > 0 && drawRect.h > 0 && activeTool && (
               <div

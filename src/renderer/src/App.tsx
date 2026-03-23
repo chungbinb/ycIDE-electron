@@ -462,7 +462,7 @@ function App(): React.JSX.Element {
       nodes.push({
         id: `${fileName}::global::${i}`,
         label: name,
-        type: 'func',
+        type: 'field',
         fileId: fileName,
         fileName,
       })
@@ -482,7 +482,7 @@ function App(): React.JSX.Element {
       nodes.push({
         id: `${fileName}::const::${i}`,
         label: name,
-        type: 'func',
+        type: 'constant',
         fileId: fileName,
         fileName,
       })
@@ -522,7 +522,7 @@ function App(): React.JSX.Element {
       nodes.push({
         id: `${fileName}::dll::${i}`,
         label: name,
-        type: 'func',
+        type: 'dll',
         fileId: fileName,
         fileName,
       })

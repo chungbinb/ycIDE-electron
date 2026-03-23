@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect, useRef, useMemo, forwardRef, useImper
 import { matchScore, isEnglishMatch } from '../../utils/pinyin'
 import { eycToYiFormat, sanitizePastedTextForCurrent, normalizeEycText } from './eycFormat'
 import type { LibWindowUnit } from './VisualDesigner'
+import Icon from '../Icon/Icon'
+import '../Icon/Icon.css'
 import closeIcon from '../../assets/icons/Close.svg'
 import './EycTableEditor.css'
 
@@ -1250,7 +1252,7 @@ interface EycTableEditorProps {
   windowControlNames?: string[]
   windowControlTypes?: Array<{ name: string; type: string }>
   windowUnits?: LibWindowUnit[]
-  projectConstants?: Array<{ name: string; value: string }>
+  projectConstants?: Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>
   projectDllCommands?: Array<{ name: string; returnType: string; description: string; params: CompletionParam[] }>
   projectDataTypes?: Array<{ name: string }>
   projectClassNames?: Array<{ name: string }>
@@ -1305,6 +1307,9 @@ function getCmdIconClass(category: string): string {
   if (cat.includes('窗口') || cat.includes('组件') || cat.includes('控件')) return 'eyc-ac-icon-widget'
   if (cat.includes('事件')) return 'eyc-ac-icon-event'
   if (cat.includes('属性')) return 'eyc-ac-icon-prop'
+  if (cat.includes('全局变量')) return 'eyc-ac-icon-field'
+  if (cat.includes('dll')) return 'eyc-ac-icon-dll'
+  if (cat.includes('资源')) return 'eyc-ac-icon-resource'
   if (cat.includes('常量')) return 'eyc-ac-icon-const'
   if (cat.includes('数据') || cat.includes('类型')) return 'eyc-ac-icon-type'
   if (cat.includes('流程') || cat.includes('控制')) return 'eyc-ac-icon-flow'
@@ -2012,7 +2017,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           : hashMode
           ? (word.length === 0
             ? (cmd.name.length > 0 ? 1 : 0)
-            : (cmd.name.includes(word) ? (1000 - cmd.name.length) : 0))
+            : matchScore(word, cmd.name, cmd.englishName))
           : (allowEmptyWord
             ? (cmd.name.length > 0 ? 1 : 0)
             : matchScore(word, cmd.name, cmd.englishName))
@@ -2440,18 +2445,26 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const items: CompletionItem[] = []
     const seen = new Set<string>()
 
-    const addConstant = (name: string, constantValue: string, englishName = '', description = '', libraryName = '用户定义'): void => {
+    const addConstant = (
+      name: string,
+      constantValue: string,
+      englishName = '',
+      description = '',
+      libraryName = '用户定义',
+      category: '常量' | '资源' = '常量',
+    ): void => {
       const nm = (name || '').trim()
       if (!nm || seen.has(nm)) return
       seen.add(nm)
       const val = (constantValue || '').trim()
       const desc = description.trim()
+      const typeLabel = category === '资源' ? '资源' : '常量'
       items.push({
         name: nm,
         englishName: (englishName || '').trim(),
-        description: desc || (val ? `常量（值：${val}）` : '常量'),
+        description: desc || (val ? `${typeLabel}（值：${val}）` : typeLabel),
         returnType: '',
-        category: '常量',
+        category,
         libraryName,
         isMember: false,
         ownerTypeName: '',
@@ -2466,7 +2479,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     for (const c of projectConstants) {
-      addConstant(c.name, c.value || '')
+      addConstant(c.name, c.value || '', '', '', '用户定义', c.kind === 'resource' ? '资源' : '常量')
     }
 
     for (const c of libraryConstants) {
@@ -4929,13 +4942,27 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                   if (item.isMore) expandMoreCompletion(i)
                 }}
               >
-                <span className={`eyc-ac-icon ${item.isMore ? 'eyc-ac-icon-flow' : getCmdIconClass(item.cmd.category)}`}>{item.isMore ? '…' : getCmdIconLabel(item.cmd.category)}</span>
+                <span className={`eyc-ac-icon ${item.isMore ? 'eyc-ac-icon-flow' : getCmdIconClass(item.cmd.category)}`}>
+                  {item.isMore
+                    ? '…'
+                    : item.cmd.category.includes('资源')
+                      ? <Icon name="resource-view" size={14} />
+                    : item.cmd.category.includes('子程序')
+                      ? <Icon name="method" size={14} />
+                    : item.cmd.category.includes('常量')
+                      ? <Icon name="constant" size={14} />
+                    : item.cmd.category.includes('全局变量')
+                      ? <Icon name="field" size={14} />
+                      : item.cmd.category.toLowerCase().includes('dll')
+                        ? <Icon name="dll-command" size={14} />
+                      : getCmdIconLabel(item.cmd.category)}
+                </span>
                 <span className="eyc-ac-name">
                   {item.isMore
                     ? `...（双击显示剩余 ${item.remainCount || 0} 项）`
                     : `${item.cmd.name}${item.engMatch && item.cmd.englishName ? `（${item.cmd.englishName}）` : ''}`}
                 </span>
-                {!item.isMore && item.cmd.category.includes('常量') && item.cmd.libraryName && (
+                {!item.isMore && (item.cmd.category.includes('常量') || item.cmd.category.includes('资源')) && item.cmd.libraryName && (
                   <span className="eyc-ac-source">{item.cmd.libraryName}</span>
                 )}
                 {!item.isMore && item.cmd.returnType && <span className="eyc-ac-return">{item.cmd.returnType}</span>}

@@ -213,6 +213,13 @@
 .output-problem-row:hover {
   background: var(--bg-hover);
 }
+.output-terminal-content {
+  font-family: var(--font-mono);
+}
+.output-terminal-empty {
+  color: var(--text-secondary);
+  font-style: italic;
+  padding: var(--spacing-md) 0;
 
 @keyframes output-problem-flash {
   0% { background: rgba(255, 200, 0, 0); border-left-color: transparent; }

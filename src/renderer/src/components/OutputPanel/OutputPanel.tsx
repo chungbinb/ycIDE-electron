@@ -37,7 +37,7 @@ export interface FileProblem {
   file?: string
 }
 
-type OutputTab = 'compile' | 'hint' | 'problems'
+type OutputTab = 'compile' | 'hint' | 'problems' | 'terminal'
 
 interface OutputPanelProps {
   height: number
@@ -116,7 +116,13 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
             role="tab"
             aria-selected={activeTab === 'compile'}
             onClick={() => setActiveTab('compile')}
-          >编译输出</button>
+          >输出</button>
+          <button
+            className={`output-tab ${activeTab === 'terminal' ? 'active' : ''}`}
+            role="tab"
+            aria-selected={activeTab === 'terminal'}
+            onClick={() => setActiveTab('terminal')}
+          >终端</button>
           <button
             className={`output-tab ${activeTab === 'hint' ? 'active' : ''}`}
             role="tab"
@@ -139,6 +145,13 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
           {messages.map((msg, i) => (
             <div key={i} className={`output-line ${msg.type}`}>{msg.text}</div>
           ))}
+        </div>
+      )}
+
+      {/* 终端内容（预留） */}
+      {activeTab === 'terminal' && (
+        <div className="output-content output-terminal-content" tabIndex={0}>
+          <div className="output-terminal-empty">终端功能正在开发中</div>
         </div>
       )}
 

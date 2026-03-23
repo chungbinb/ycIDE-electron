@@ -222,6 +222,9 @@ interface ProjectDllCommand {
   params: ProjectDllParam[]
 }
 
+type TabBarPosition = 'top' | 'bottom'
+const EDITOR_TAB_BAR_POS_KEY = 'ycide.editor.tabbar.position'
+
 interface EycEditorErrorBoundaryProps {
   tabId: string
   onError: (tabId: string, error: Error, info: ErrorInfo) => void
@@ -258,9 +261,18 @@ class EycEditorErrorBoundary extends Component<EycEditorErrorBoundaryProps, EycE
 const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh }, ref) {
   const [tabs, setTabs] = useState<EditorTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
+  const [tabBarPosition, setTabBarPosition] = useState<TabBarPosition>(() => {
+    try {
+      const saved = localStorage.getItem(EDITOR_TAB_BAR_POS_KEY)
+      return saved === 'top' ? 'top' : 'bottom'
+    } catch {
+      return 'bottom'
+    }
+  })
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [eycFallbackTabs, setEycFallbackTabs] = useState<Record<string, true>>({})
   const [projectGlobalVars, setProjectGlobalVars] = useState<Array<{ name: string; type: string }>>([])
-  const [projectConstants, setProjectConstants] = useState<Array<{ name: string; value: string }>>([])
+  const [projectConstants, setProjectConstants] = useState<Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>>([])
   const [projectDllCommands, setProjectDllCommands] = useState<ProjectDllCommand[]>([])
   const [projectDataTypes, setProjectDataTypes] = useState<Array<{ name: string }>>([])
   const [projectClassNames, setProjectClassNames] = useState<Array<{ name: string }>>([])
@@ -992,17 +1004,27 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     return () => { cancelled = true }
   }, [projectDir, tabs])
 
-  // 收集项目内常量（.ecs + 已打开标签页），用于 #常量 补全
+  // 收集项目内常量与资源名（.ecs/.erc + 已打开标签页），用于 #补全
   useEffect(() => {
     let cancelled = false
 
-    const parseConstants = (content: string, out: Map<string, string>) => {
+    const parseConstants = (content: string, out: Map<string, { value: string; kind: 'constant' | 'resource' }>) => {
       const re = /^\s*\.常量\s+([^,\s]+)(?:\s*,\s*([^,\s]+))?/gm
       let m: RegExpExecArray | null
       while ((m = re.exec(content)) !== null) {
         const name = (m[1] || '').trim()
         const value = (m[2] || '').trim()
-        if (name && !out.has(name)) out.set(name, value)
+        if (name && !out.has(name)) out.set(name, { value, kind: 'constant' })
+      }
+    }
+
+    const parseResources = (content: string, out: Map<string, { value: string; kind: 'constant' | 'resource' }>) => {
+      const re = /^\s*\.资源\s+([^,\s]+)(?:\s*,\s*([^,\s]+))?/gm
+      let m: RegExpExecArray | null
+      while ((m = re.exec(content)) !== null) {
+        const name = (m[1] || '').trim()
+        const file = (m[2] || '').trim()
+        if (name && !out.has(name)) out.set(name, { value: file, kind: 'resource' })
       }
     }
 
@@ -1012,30 +1034,36 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         return
       }
 
-      const constants = new Map<string, string>()
+      const constants = new Map<string, { value: string; kind: 'constant' | 'resource' }>()
 
       // 优先使用已打开标签页中的最新内容（含未保存修改）
       for (const t of tabs) {
-        if ((t.language === 'ecs' || t.language === 'eyc' || t.language === 'egv') && t.value) {
-          parseConstants(eycToYiFormat(t.value), constants)
+        if ((t.language === 'ecs' || t.language === 'eyc' || t.language === 'egv' || t.language === 'erc') && t.value) {
+          const yi = eycToYiFormat(t.value)
+          parseConstants(yi, constants)
+          parseResources(yi, constants)
         }
       }
 
-      // 读取磁盘上的 .ecs 文件，补齐未打开文件中的常量
+      // 读取磁盘上的 .ecs/.erc 文件，补齐未打开文件中的常量与资源名
       const openedPaths = new Set(tabs.filter(t => t.filePath).map(t => t.filePath!))
       const files = await window.api?.file?.readDir(projectDir)
       if (files) {
         for (const f of files as string[]) {
-          if (!f.toLowerCase().endsWith('.ecs')) continue
+          const lower = f.toLowerCase()
+          if (!lower.endsWith('.ecs') && !lower.endsWith('.erc')) continue
           const fp = projectDir + '\\' + f
           if (openedPaths.has(fp)) continue
           const content = await window.api?.project?.readFile(fp)
-          if (content) parseConstants(content, constants)
+          if (content) {
+            parseConstants(content, constants)
+            parseResources(content, constants)
+          }
         }
       }
 
       if (!cancelled) {
-        setProjectConstants([...constants.entries()].map(([name, value]) => ({ name, value })))
+        setProjectConstants([...constants.entries()].map(([name, info]) => ({ name, value: info.value, kind: info.kind })))
       }
     })()
 
@@ -1140,6 +1168,15 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     return () => { cancelled = true }
   }, [projectDir, tabs])
 
+  // 设计器双击创建事件子程序后，同步保存并刷新项目树。
+  // navigateOrCreateSub 在表格编辑器内更新文本状态，需要稍等一拍再读取最新内容保存。
+  const syncProjectTreeAfterEventSubChange = useCallback(() => {
+    setTimeout(() => {
+      saveCurrentFile()
+      onProjectTreeRefresh?.()
+    }, 180)
+  }, [saveCurrentFile, onProjectTreeRefresh])
+
   // 双击可视化设计器控件 → 跳转到 .eyc 文件并定位/创建事件子程序
   const handleControlDblClick = useCallback(async (ctrl: DesignControl, defaultEvent: LibUnitEvent | null) => {
     const activeT = tabs.find(t => t.id === activeTabId)
@@ -1164,6 +1201,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       if (existingTab.id === activeTabId) {
         // 已在该标签页上，直接导航
         eycEditorRef.current?.navigateOrCreateSub(subName, params)
+        syncProjectTreeAfterEventSubChange()
       } else {
         onSidebarTab?.('project')
         pendingNavigateRef.current = { subName, params }
@@ -1187,7 +1225,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       pendingNavigateRef.current = { subName, params }
       setActiveTabId(eycPath)
     }
-  }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, onSidebarTab])
+  }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, onSidebarTab, syncProjectTreeAfterEventSubChange])
 
   // 双击可视化设计器窗口 → 跳转到 .eyc 文件并定位/创建窗口默认事件子程序
   const handleFormDblClick = useCallback(async (formData: DesignForm, defaultEvent: LibUnitEvent | null) => {
@@ -1211,6 +1249,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     if (existingTab) {
       if (existingTab.id === activeTabId) {
         eycEditorRef.current?.navigateOrCreateSub(subName, params)
+        syncProjectTreeAfterEventSubChange()
       } else {
         pendingNavigateRef.current = { subName, params }
         setActiveTabId(existingTab.id)
@@ -1231,7 +1270,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       pendingNavigateRef.current = { subName, params }
       setActiveTabId(eycPath)
     }
-  }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName])
+  }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, syncProjectTreeAfterEventSubChange])
 
   // 标签切换后执行挂起的子程序导航
   useEffect(() => {
@@ -1242,8 +1281,9 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     pendingNavigateRef.current = null
     setTimeout(() => {
       eycEditorRef.current?.navigateOrCreateSub(pending.subName, pending.params)
+      syncProjectTreeAfterEventSubChange()
     }, 100)
-  }, [activeTabId, tabs])
+  }, [activeTabId, tabs, syncProjectTreeAfterEventSubChange])
 
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0] || null
   const activeWindowControls = useMemo(() => {
@@ -1350,8 +1390,43 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 
   const isModified = (tab: EditorTab) => isTabModified(tab)
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(EDITOR_TAB_BAR_POS_KEY, tabBarPosition)
+    } catch {
+      // ignore storage failures
+    }
+  }, [tabBarPosition])
+
+  useEffect(() => {
+    if (!tabContextMenu) return
+    const close = (): void => setTabContextMenu(null)
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('contextmenu', close)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('contextmenu', close)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [tabContextMenu])
+
+  const handleTabContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setTabContextMenu({ x: e.clientX, y: e.clientY })
+  }, [])
+
+  const toggleTabBarPosition = useCallback(() => {
+    setTabBarPosition(prev => prev === 'bottom' ? 'top' : 'bottom')
+    setTabContextMenu(null)
+  }, [])
+
   return (
-    <div className="editor" role="main" aria-label="代码编辑器">
+    <div className={`editor ${tabBarPosition === 'top' ? 'editor-tabs-top' : 'editor-tabs-bottom'}`} role="main" aria-label="代码编辑器">
       {/* 编辑区 */}
       <div className="editor-content">
         {!activeTab ? (
@@ -1606,7 +1681,12 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       </div>
 
       {/* 标签页 */}
-      <div className="editor-tabs" role="tablist" aria-label="打开的文件">
+      <div
+        className="editor-tabs"
+        role="tablist"
+        aria-label="打开的文件"
+        onContextMenu={handleTabContextMenu}
+      >
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -1614,6 +1694,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             role="tab"
             aria-selected={tab.id === activeTabId}
             onClick={() => switchTab(tab.id)}
+            onContextMenu={handleTabContextMenu}
             title={tab.filePath || tab.label}
           >
             <span className="editor-tab-icon">
@@ -1631,6 +1712,23 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
           </button>
         ))}
       </div>
+
+      {tabContextMenu && (
+        <div
+          className="editor-tab-context-menu"
+          style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
+          onClick={e => e.stopPropagation()}
+          onContextMenu={e => e.preventDefault()}
+        >
+          <button
+            type="button"
+            className="editor-tab-context-item"
+            onClick={toggleTabBarPosition}
+          >
+            {tabBarPosition === 'bottom' ? '将文件标签移到编辑器上边' : '将文件标签移到编辑器下边'}
+          </button>
+        </div>
+      )}
     </div>
   )
 })

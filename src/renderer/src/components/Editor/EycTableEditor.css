@@ -899,17 +899,21 @@
   height: 18px;
   font-size: 11px;
   font-weight: bold;
-  border-radius: 3px;
+  border-radius: 0;
+  background: transparent;
   flex-shrink: 0;
   line-height: 1;
 }
-.eyc-ac-icon-func   { background: #3c7dca; color: #fff; }
-.eyc-ac-icon-widget { background: #4caf50; color: #fff; }
-.eyc-ac-icon-event  { background: #e6a817; color: #1e1e1e; }
-.eyc-ac-icon-prop   { background: #7e57c2; color: #fff; }
-.eyc-ac-icon-const  { background: #2196f3; color: #fff; }
-.eyc-ac-icon-type   { background: #00897b; color: #fff; }
-.eyc-ac-icon-flow   { background: #e06c75; color: #fff; }
+.eyc-ac-icon-func   { color: #8cb4ff; }
+.eyc-ac-icon-widget { color: #7dd67f; }
+.eyc-ac-icon-event  { color: #f2c14e; }
+.eyc-ac-icon-prop   { color: #b694f8; }
+.eyc-ac-icon-field  { color: #86d993; }
+.eyc-ac-icon-dll    { color: #9ec5ff; }
+.eyc-ac-icon-resource { color: #7ec8ff; }
+.eyc-ac-icon-const  { color: #6bb8ff; }
+.eyc-ac-icon-type   { color: #59c4b5; }
+.eyc-ac-icon-flow   { color: #f28b93; }
 
 .eyc-ac-item {
   display: flex;

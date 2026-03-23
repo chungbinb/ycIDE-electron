@@ -18,6 +18,9 @@ import ZoomSvg from '../../assets/icons/Zoom.svg?raw'
 import BranchSvg from '../../assets/icons/Branch.svg?raw'
 import ExtensionApplicationSvg from '../../assets/icons/ExtensionApplication.svg?raw'
 import UserSvg from '../../assets/icons/User.svg?raw'
+import FieldSvg from '../../assets/icons/Field.svg?raw'
+import MeasureTreeSvg from '../../assets/icons/MeasureTree.svg?raw'
+import ConePreviewSvg from '../../assets/icons/ConePreview.svg?raw'
 
 // Debug icons
 import StopSvg from '../../assets/icons/Stop.svg?raw'
@@ -105,6 +108,7 @@ export const ICON_MAP: Record<string, string> = {
   'source-control': BranchSvg,
   'extension': ExtensionApplicationSvg,
   'account': UserSvg,
+  'dll-command': MeasureTreeSvg,
 
   // Alignment
   'align-left': AlignLeftSvg,
@@ -125,6 +129,9 @@ export const ICON_MAP: Record<string, string> = {
   'windows-form': WindowsFormSvg,
   'procedure': ProcedureSvg,
   'class': ClassSvg,
+  'field': FieldSvg,
+  'dll': MeasureTreeSvg,
+  'constant': ConePreviewSvg,
   'resource-view': DocumentCollectionSvg,
   'event': EventSvg,
   'property': PropertySvg,

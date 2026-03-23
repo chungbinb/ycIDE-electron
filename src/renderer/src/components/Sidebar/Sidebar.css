@@ -166,6 +166,7 @@
   background: var(--bg-active, #37373d);
   color: var(--accent, #007acc);
   font-weight: 600;
+  box-shadow: inset 0 -1px 0 var(--accent, #007acc);
 }
 
 /* Library icon */
