@@ -206,6 +206,13 @@ export interface EditorHandle {
   navigateToEventSub: (sel: SelectionTarget, eventName: string, eventArgs: Array<{ name: string; description: string; dataType: string; isByRef: boolean }>) => void
 }
 
+function joinPathByBaseDir(baseDir: string, fileName: string): string {
+  const separator = baseDir.includes('/') ? '/' : '\\'
+  const normalizedBaseDir = (baseDir || '').replace(/[\\/]+$/, '')
+  const normalizedFileName = (fileName || '').replace(/^[\\/]+/, '')
+  return `${normalizedBaseDir}${separator}${normalizedFileName}`
+}
+
 interface ProjectDllParam {
   name: string
   type: string
@@ -533,11 +540,11 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
           // 计算新旧文件路径
           const oldEfwPath = tab.filePath
           const efwDir = oldEfwPath ? oldEfwPath.replace(/[/\\][^/\\]+$/, '') : projectDir
-          const newEfwPath = efwDir ? efwDir + '\\' + newName + '.efw' : undefined
+          const newEfwPath = efwDir ? joinPathByBaseDir(efwDir, newName + '.efw') : undefined
           const oldEycPath = efwDir
-            ? efwDir + '\\' + (form.sourceFile || oldName + '.eyc')
+            ? joinPathByBaseDir(efwDir, form.sourceFile || oldName + '.eyc')
             : undefined
-          const newEycPath = efwDir ? efwDir + '\\' + newName + '.eyc' : undefined
+          const newEycPath = efwDir ? joinPathByBaseDir(efwDir, newName + '.eyc') : undefined
 
           // 更新所有 .eyc 标签页中的内容引用
           const openEycPaths: string[] = []
@@ -669,7 +676,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     if (!efwTab || !efwTab.filePath) return
     const efwDir = efwTab.filePath.replace(/[/\\][^/\\]+$/, '')
     const eycPath = form.sourceFile
-      ? efwDir + '\\' + form.sourceFile
+      ? joinPathByBaseDir(efwDir, form.sourceFile)
       : efwTab.filePath.replace(/\.efw$/i, '.eyc')
     let subName: string
     if (sel.kind === 'form') {
@@ -1186,7 +1193,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     const efwDir = activeT.filePath.replace(/[/\\][^/\\]+$/, '')
     const sourceFileName = activeT.formData?.sourceFile
     const eycPath = sourceFileName
-      ? efwDir + '\\' + sourceFileName
+      ? joinPathByBaseDir(efwDir, sourceFileName)
       : activeT.filePath.replace(/\.efw$/i, '.eyc')
     const eventName = defaultEvent?.name || '被单击'
     const subName = buildEventSubName(ctrl.name, eventName)
@@ -1235,7 +1242,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     const efwDir = activeT.filePath.replace(/[/\\][^/\\]+$/, '')
     const sourceFileName = activeT.formData?.sourceFile
     const eycPath = sourceFileName
-      ? efwDir + '\\' + sourceFileName
+      ? joinPathByBaseDir(efwDir, sourceFileName)
       : activeT.filePath.replace(/\.efw$/i, '.eyc')
     const eventName = defaultEvent?.name || '被创建完毕'
     const subName = `_${formData.name}_${eventName}`

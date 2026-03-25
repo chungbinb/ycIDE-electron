@@ -2,8 +2,10 @@ import './Toolbar.css'
 import Icon from '../Icon/Icon'
 import '../Icon/Icon.css'
 import type { AlignAction } from '../Editor/VisualDesigner'
+import { getPrimaryModifierLabel, getRedoShortcutLabel, type RuntimePlatform } from '../../utils/shortcuts'
 
 interface ToolbarProps {
+  runtimePlatform?: RuntimePlatform
   hasControlSelected?: boolean
   onAlign?: (action: AlignAction) => void
   onCompileRun?: () => void
@@ -20,18 +22,21 @@ interface ToolbarProps {
   onRedo?: () => void
 }
 
-function Toolbar({ hasControlSelected = false, onAlign, onCompileRun, onStop, hasProject = false, isCompiling = false, isRunning = false, arch = 'x64', onArchChange, onNew, onOpen, onSave, onUndo, onRedo }: ToolbarProps): React.JSX.Element {
+function Toolbar({ runtimePlatform = 'windows', hasControlSelected = false, onAlign, onCompileRun, onStop, hasProject = false, isCompiling = false, isRunning = false, arch = 'x64', onArchChange, onNew, onOpen, onSave, onUndo, onRedo }: ToolbarProps): React.JSX.Element {
+  const mod = getPrimaryModifierLabel(runtimePlatform)
+  const redoShortcut = getRedoShortcutLabel(runtimePlatform)
+  const runToCursorShortcut = `${mod}+F10`
 
   return (
     <div className="toolbar" role="toolbar" aria-label="工具栏">
       <div className="toolbar-group">
-        <button className="toolbar-btn" aria-label="新建" title="新建 (Ctrl+N)" onClick={onNew}>
+        <button className="toolbar-btn" aria-label="新建" title={`新建 (${mod}+Shift+N)`} onClick={onNew}>
           <Icon name="new-document" size={16} />
         </button>
-        <button className="toolbar-btn" aria-label="打开" title="打开 (Ctrl+O)" onClick={onOpen}>
+        <button className="toolbar-btn" aria-label="打开" title={`打开 (${mod}+Shift+O)`} onClick={onOpen}>
           <Icon name="open-folder" size={16} />
         </button>
-        <button className="toolbar-btn" aria-label="保存" title="保存 (Ctrl+S)" onClick={onSave}>
+        <button className="toolbar-btn" aria-label="保存" title={`保存 (${mod}+S)`} onClick={onSave}>
           <Icon name="save" size={16} />
         </button>
       </div>
@@ -39,10 +44,10 @@ function Toolbar({ hasControlSelected = false, onAlign, onCompileRun, onStop, ha
       <div className="toolbar-separator" aria-hidden="true" />
 
       <div className="toolbar-group">
-        <button className="toolbar-btn" aria-label="撤销" title="撤销 (Ctrl+Z)" onClick={onUndo}>
+        <button className="toolbar-btn" aria-label="撤销" title={`撤销 (${mod}+Z)`} onClick={onUndo}>
           <Icon name="undo" size={16} />
         </button>
-        <button className="toolbar-btn" aria-label="重做" title="重做 (Ctrl+Y)" onClick={onRedo}>
+        <button className="toolbar-btn" aria-label="重做" title={`重做 (${redoShortcut})`} onClick={onRedo}>
           <Icon name="redo" size={16} />
         </button>
       </div>
@@ -83,7 +88,7 @@ function Toolbar({ hasControlSelected = false, onAlign, onCompileRun, onStop, ha
         <button className="toolbar-btn" aria-label="跟踪返回" title="跟踪返回 (Shift+F11)" disabled={!hasProject || !isRunning}>
           <Icon name="step-out" size={16} />
         </button>
-        <button className="toolbar-btn" aria-label="运行到光标处" title="运行到光标处 (Ctrl+F10)" disabled={!hasProject || !isRunning}>
+        <button className="toolbar-btn" aria-label="运行到光标处" title={`运行到光标处 (${runToCursorShortcut})`} disabled={!hasProject || !isRunning}>
           <Icon name="run-to-cursor" size={16} />
         </button>
       </div>

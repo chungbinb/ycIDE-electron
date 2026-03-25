@@ -1,10 +1,30 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, Menu, dialog, ipcMain, shell, type BrowserWindowConstructorOptions, type MenuItemConstructorOptions } from 'electron'
 import { join, dirname, basename, extname } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync } from 'fs'
 import { libraryManager } from './library-manager'
 import { compileProject, runExecutable, stopExecutable, isRunning } from './compiler'
+import { normalizeRuntimePlatform } from '../shared/platform'
+import { getActionAccelerator } from '../shared/shortcut-config'
 
 const isDev = !app.isPackaged
+const runtimePlatform = normalizeRuntimePlatform(process.platform)
+const APP_DISPLAY_NAME = 'ycIDE'
+
+type RecentOpenedItem = {
+  type: 'project' | 'file'
+  path: string
+  label: string
+}
+
+type ThemeMenuState = {
+  themes: string[]
+  currentTheme: string
+}
+
+let recentOpenedItems: RecentOpenedItem[] = []
+let themeMenuState: ThemeMenuState = { themes: [], currentTheme: '' }
+
+app.setName(APP_DISPLAY_NAME)
 
 function getRendererErrorLogPath(): string {
   const logDir = join(app.getPath('userData'), 'logs')
@@ -22,13 +42,22 @@ function appendRendererErrorLog(payload: { source?: string; message: string; sta
 }
 
 function createWindow(): void {
+  const chromeOptions: Pick<BrowserWindowConstructorOptions, 'frame' | 'titleBarStyle'> = runtimePlatform === 'macos'
+    ? {
+      frame: true,
+      titleBarStyle: 'hiddenInset',
+    }
+    : {
+      frame: false,
+      titleBarStyle: 'hidden',
+    }
+
   const mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 800,
     minHeight: 600,
-    frame: false, // 无边框，使用自定义标题栏
-    titleBarStyle: 'hidden',
+    ...chromeOptions,
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -56,7 +85,199 @@ function createWindow(): void {
   }
 }
 
+function emitMenuAction(action: string): void {
+  const targetWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+  targetWindow?.webContents.send('menu:action', action)
+}
+
+function setupNativeMenu(): void {
+  if (runtimePlatform !== 'macos') {
+    return
+  }
+
+  const actionItem = (label: string, action: string, accelerator?: string): MenuItemConstructorOptions => ({
+    label,
+    accelerator,
+    click: () => emitMenuAction(action),
+  })
+
+  const recentSubmenu: MenuItemConstructorOptions[] = recentOpenedItems.length > 0
+    ? recentOpenedItems.slice(0, 10).map(item => ({
+      label: `${item.type === 'project' ? '项目' : '文件'}: ${item.label}`,
+      click: () => emitMenuAction(`file:openRecent:${encodeURIComponent(JSON.stringify({ type: item.type, path: item.path }))}`),
+    }))
+    : [{ label: '(空)', enabled: false }]
+
+  const themeSubmenu: MenuItemConstructorOptions[] = themeMenuState.themes.length > 0
+    ? themeMenuState.themes.map(themeName => ({
+      label: themeName,
+      type: 'radio',
+      checked: themeName === themeMenuState.currentTheme,
+      click: () => emitMenuAction(`theme:${themeName}`),
+    }))
+    : [{ label: '(空)', enabled: false }]
+
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: APP_DISPLAY_NAME,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ]
+    },
+    {
+      label: '文件',
+      submenu: [
+        actionItem('新建项目', 'file:newProject', getActionAccelerator('file:newProject')),
+        actionItem('打开项目', 'file:openProject', getActionAccelerator('file:openProject')),
+        { label: '最近打开', submenu: recentSubmenu },
+        { type: 'separator' },
+        actionItem('保存', 'file:save', getActionAccelerator('file:save')),
+        actionItem('保存全部', 'file:saveAll', getActionAccelerator('file:saveAll')),
+        { type: 'separator' },
+        actionItem('关闭文件', 'file:closeFile', getActionAccelerator('file:closeFile')),
+        actionItem('关闭项目', 'file:closeProject'),
+        { type: 'separator' },
+        actionItem('退出', 'file:exit', getActionAccelerator('file:exit')),
+      ]
+    },
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'delete' },
+        { type: 'separator' },
+        { role: 'selectAll' },
+        actionItem('查找', 'edit:find', getActionAccelerator('edit:find')),
+        actionItem('替换', 'edit:replace', getActionAccelerator('edit:replace')),
+      ]
+    },
+    {
+      label: '查看',
+      submenu: [
+        actionItem('属性面板', 'view:property'),
+        actionItem('输出面板', 'view:output'),
+        actionItem('支持库', 'view:library'),
+        { type: 'separator' },
+        actionItem('项目管理器', 'view:project'),
+        { type: 'separator' },
+        { label: '主题', submenu: themeSubmenu },
+      ]
+    },
+    {
+      label: '插入',
+      submenu: [
+        actionItem('全局变量', 'insert:globalVar'),
+        actionItem('常量', 'insert:constant'),
+        actionItem('自定义数据类型', 'insert:dataType'),
+        actionItem('DLL命令', 'insert:dllCmd'),
+        { type: 'separator' },
+        actionItem('类模块', 'insert:classModule'),
+        actionItem('程序集', 'insert:module'),
+        actionItem('子程序', 'insert:sub'),
+        { type: 'separator' },
+        actionItem('窗口', 'insert:window'),
+        actionItem('资源', 'insert:resource'),
+      ]
+    },
+    {
+      label: '编译',
+      submenu: [
+        actionItem('普通编译', 'build:compile', getActionAccelerator('build:compile')),
+        actionItem('静态编译', 'build:compile-static'),
+        { type: 'separator' },
+        actionItem('编译运行', 'build:run', 'F5'),
+      ]
+    },
+    {
+      label: '调试',
+      submenu: [
+        actionItem('运行', 'debug:run', 'F5'),
+        actionItem('停止', 'debug:stop', 'Shift+F5'),
+        { type: 'separator' },
+        actionItem('逐过程', 'debug:stepOver', 'F10'),
+        actionItem('逐语句', 'debug:stepInto', 'F11'),
+        actionItem('跳出', 'debug:stepOut', 'Shift+F11'),
+        actionItem('运行到光标处', 'debug:runToCursor', getActionAccelerator('debug:runToCursor')),
+        { type: 'separator' },
+        actionItem('切换断点', 'debug:toggleBreakpoint', 'F9'),
+        actionItem('清除所有断点', 'debug:clearBreakpoints'),
+      ]
+    },
+    {
+      label: '工具',
+      submenu: [
+        actionItem('支持库配置', 'tools:library'),
+        actionItem('系统配置', 'tools:settings'),
+      ]
+    },
+    {
+      label: '帮助',
+      submenu: [
+        actionItem('帮助主题', 'help:topics', 'F1'),
+        { type: 'separator' },
+        actionItem('关于', 'help:about'),
+      ]
+    },
+    {
+      label: '窗口',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { type: 'separator' },
+        { role: 'front' },
+      ]
+    }
+  ]
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
 app.whenReady().then(() => {
+  setupNativeMenu()
+
+  ipcMain.on('menu:updateRecentOpened', (_event, items: unknown) => {
+    if (!Array.isArray(items)) return
+    recentOpenedItems = items
+      .filter((item): item is RecentOpenedItem => !!item
+        && typeof item === 'object'
+        && ((item as RecentOpenedItem).type === 'project' || (item as RecentOpenedItem).type === 'file')
+        && typeof (item as RecentOpenedItem).path === 'string'
+        && typeof (item as RecentOpenedItem).label === 'string')
+      .slice(0, 10)
+
+    if (runtimePlatform === 'macos') {
+      setupNativeMenu()
+    }
+  })
+
+  ipcMain.on('menu:updateThemes', (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') return
+    const state = payload as { themes?: unknown; currentTheme?: unknown }
+    const themes = Array.isArray(state.themes)
+      ? state.themes.filter((item): item is string => typeof item === 'string')
+      : []
+    const currentTheme = typeof state.currentTheme === 'string' ? state.currentTheme : ''
+
+    themeMenuState = { themes, currentTheme }
+
+    if (runtimePlatform === 'macos') {
+      setupNativeMenu()
+    }
+  })
+
   // 窗口控制 IPC
   ipcMain.on('window:minimize', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize()

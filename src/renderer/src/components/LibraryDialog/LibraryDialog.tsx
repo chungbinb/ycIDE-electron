@@ -37,6 +37,8 @@ interface LibraryDialogProps {
 }
 
 function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element | null {
+  const runtimePlatform = window.api?.system?.getRuntimePlatform?.() ?? 'windows'
+  const canLoadFneLibraries = runtimePlatform === 'windows'
   const [libs, setLibs] = useState<LibItem[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
@@ -113,6 +115,10 @@ function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element
   }
 
   const handleApplySelection = async (): Promise<void> => {
+    if (!canLoadFneLibraries) {
+      setStatusText('当前平台暂不支持加载 .fne 支持库（仅 Windows 可用）。请在 Windows 端执行支持库加载与调试。')
+      return
+    }
     setLoading(true)
     setStatusText('正在应用支持库选择...')
     const result = await window.api.library.applySelection(Array.from(selected))
@@ -150,6 +156,12 @@ function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element
           <button className="lib-btn" onClick={selectNone} disabled={loading || libs.length === 0}>全不选（保留核心）</button>
           <button className="lib-btn lib-btn-primary" onClick={handleApplySelection} disabled={loading || libs.length === 0}>应用选择</button>
         </div>
+
+        {!canLoadFneLibraries && (
+          <div className="lib-dialog-tip" role="note">
+            当前为 {runtimePlatform} 平台：.fne 支持库仅能在 Windows 下加载，当前页面仅支持查看信息。
+          </div>
+        )}
 
         <div className="lib-dialog-list">
           <table className="lib-table">

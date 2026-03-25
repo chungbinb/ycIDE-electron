@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import './TitleBar.css'
+import { getPrimaryModifierLabel, getQuitShortcutLabel, getRedoShortcutLabel, isMacOSPlatform, type RuntimePlatform } from '../../utils/shortcuts'
 
 interface MenuItem {
   label: string
@@ -22,9 +23,12 @@ interface RecentOpenedItem {
   label: string
 }
 
-function buildMenus(hasProject: boolean, hasOpenFile: boolean, themes: string[], currentTheme: string, recentOpened: RecentOpenedItem[]): MenuDef[] {
+function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasOpenFile: boolean, themes: string[], currentTheme: string, recentOpened: RecentOpenedItem[]): MenuDef[] {
   const np = !hasProject
   const nf = !hasOpenFile
+  const mod = getPrimaryModifierLabel(runtimePlatform)
+  const redoShortcut = getRedoShortcutLabel(runtimePlatform)
+  const quitShortcut = getQuitShortcutLabel(runtimePlatform)
   const recentSubmenu: MenuItem[] = recentOpened.length > 0
     ? recentOpened.slice(0, 10).map(item => ({
       label: `${item.type === 'project' ? '项目' : '文件'}: ${item.label}`,
@@ -33,31 +37,31 @@ function buildMenus(hasProject: boolean, hasOpenFile: boolean, themes: string[],
     : [{ label: '(空)', disabled: true }]
   return [
     { label: '文件(F)', items: [
-      { label: '新建项目(N)', shortcut: 'Ctrl+Shift+N', action: 'file:newProject' },
+      { label: '新建项目(N)', shortcut: `${mod}+Shift+N`, action: 'file:newProject' },
       { label: '', divider: true },
-      { label: '打开项目(P)', shortcut: 'Ctrl+Shift+O', action: 'file:openProject' },
+      { label: '打开项目(P)', shortcut: `${mod}+Shift+O`, action: 'file:openProject' },
       { label: '最近打开', submenu: recentSubmenu },
       { label: '', divider: true },
-      { label: '保存(S)', shortcut: 'Ctrl+S', action: 'file:save', disabled: nf },
-      { label: '保存全部(L)', shortcut: 'Ctrl+Shift+S', action: 'file:saveAll', disabled: nf },
+      { label: '保存(S)', shortcut: `${mod}+S`, action: 'file:save', disabled: nf },
+      { label: '保存全部(L)', shortcut: `${mod}+Shift+S`, action: 'file:saveAll', disabled: nf },
       { label: '', divider: true },
-      { label: '关闭文件(C)', shortcut: 'Ctrl+W', action: 'file:closeFile', disabled: nf },
+      { label: '关闭文件(C)', shortcut: `${mod}+W`, action: 'file:closeFile', disabled: nf },
       { label: '关闭项目', action: 'file:closeProject', disabled: np },
       { label: '', divider: true },
-      { label: '退出(X)', shortcut: 'Alt+F4', action: 'file:exit' },
+      { label: '退出(X)', shortcut: quitShortcut, action: 'file:exit' },
     ]},
     { label: '编辑(E)', items: [
-      { label: '撤销(U)', shortcut: 'Ctrl+Z', action: 'edit:undo', disabled: nf },
-      { label: '重做(R)', shortcut: 'Ctrl+Y', action: 'edit:redo', disabled: nf },
+      { label: '撤销(U)', shortcut: `${mod}+Z`, action: 'edit:undo', disabled: nf },
+      { label: '重做(R)', shortcut: redoShortcut, action: 'edit:redo', disabled: nf },
       { label: '', divider: true },
-      { label: '剪切(T)', shortcut: 'Ctrl+X', action: 'edit:cut', disabled: nf },
-      { label: '复制(C)', shortcut: 'Ctrl+C', action: 'edit:copy', disabled: nf },
-      { label: '粘贴(P)', shortcut: 'Ctrl+V', action: 'edit:paste', disabled: nf },
+      { label: '剪切(T)', shortcut: `${mod}+X`, action: 'edit:cut', disabled: nf },
+      { label: '复制(C)', shortcut: `${mod}+C`, action: 'edit:copy', disabled: nf },
+      { label: '粘贴(P)', shortcut: `${mod}+V`, action: 'edit:paste', disabled: nf },
       { label: '删除(D)', shortcut: 'Delete', action: 'edit:delete', disabled: nf },
       { label: '', divider: true },
-      { label: '全选(A)', shortcut: 'Ctrl+A', action: 'edit:selectAll', disabled: nf },
-      { label: '查找(F)', shortcut: 'Ctrl+F', action: 'edit:find', disabled: nf },
-      { label: '替换(H)', shortcut: 'Ctrl+H', action: 'edit:replace', disabled: nf },
+      { label: '全选(A)', shortcut: `${mod}+A`, action: 'edit:selectAll', disabled: nf },
+      { label: '查找(F)', shortcut: `${mod}+F`, action: 'edit:find', disabled: nf },
+      { label: '替换(H)', shortcut: `${mod}+H`, action: 'edit:replace', disabled: nf },
     ]},
     { label: '查看(V)', items: [
       { label: '属性面板', action: 'view:property' },
@@ -86,7 +90,7 @@ function buildMenus(hasProject: boolean, hasOpenFile: boolean, themes: string[],
       { label: '资源(R)', action: 'insert:resource', disabled: np },
     ]},
     { label: '编译(B)', items: [
-      { label: '普通编译(C)', shortcut: 'Ctrl+F7', action: 'build:compile', disabled: np },
+      { label: '普通编译(C)', shortcut: `${mod}+F7`, action: 'build:compile', disabled: np },
       { label: '静态编译(S)', action: 'build:compile-static', disabled: np },
       { label: '', divider: true },
       { label: '编译运行(R)', shortcut: 'F5', action: 'build:run', disabled: np },
@@ -98,7 +102,7 @@ function buildMenus(hasProject: boolean, hasOpenFile: boolean, themes: string[],
       { label: '逐过程(O)', shortcut: 'F10', action: 'debug:stepOver', disabled: np },
       { label: '逐语句(I)', shortcut: 'F11', action: 'debug:stepInto', disabled: np },
       { label: '跳出(U)', shortcut: 'Shift+F11', action: 'debug:stepOut', disabled: np },
-      { label: '运行到光标处(C)', shortcut: 'Ctrl+F10', action: 'debug:runToCursor', disabled: np },
+      { label: '运行到光标处(C)', shortcut: `${mod}+F10`, action: 'debug:runToCursor', disabled: np },
       { label: '', divider: true },
       { label: '切换断点(B)', shortcut: 'F9', action: 'debug:toggleBreakpoint', disabled: np },
       { label: '清除所有断点', action: 'debug:clearBreakpoints', disabled: np },
@@ -118,6 +122,7 @@ function buildMenus(hasProject: boolean, hasOpenFile: boolean, themes: string[],
 interface TitleBarProps {
   onMenuAction?: (action: string) => void
   onWindowClose?: () => void
+  runtimePlatform?: RuntimePlatform
   hasProject?: boolean
   hasOpenFile?: boolean
   themes?: string[]
@@ -125,8 +130,9 @@ interface TitleBarProps {
   recentOpened?: RecentOpenedItem[]
 }
 
-function TitleBar({ onMenuAction, onWindowClose, hasProject = false, hasOpenFile = false, themes = [], currentTheme = '', recentOpened = [] }: TitleBarProps): React.JSX.Element {
-  const menus = buildMenus(hasProject, hasOpenFile, themes, currentTheme, recentOpened)
+function TitleBar({ onMenuAction, onWindowClose, runtimePlatform = 'windows', hasProject = false, hasOpenFile = false, themes = [], currentTheme = '', recentOpened = [] }: TitleBarProps): React.JSX.Element {
+  const menus = buildMenus(runtimePlatform, hasProject, hasOpenFile, themes, currentTheme, recentOpened)
+  const isMacOS = isMacOSPlatform(runtimePlatform)
   const [openMenu, setOpenMenu] = useState<number | null>(null)
   const menuBarRef = useRef<HTMLDivElement>(null)
 
@@ -154,15 +160,18 @@ function TitleBar({ onMenuAction, onWindowClose, hasProject = false, hasOpenFile
   return (
     <header className="titlebar" role="banner">
       <div className="titlebar-drag">
-        <div className="titlebar-icon" aria-hidden="true">
+        {!isMacOS && (
+          <div className="titlebar-icon" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
             <rect x="1" y="1" width="6" height="6" rx="1" />
             <rect x="9" y="1" width="6" height="6" rx="1" />
             <rect x="1" y="9" width="6" height="6" rx="1" />
             <rect x="9" y="9" width="6" height="6" rx="1" />
           </svg>
-        </div>
-        <nav className="titlebar-menu" role="menubar" aria-label="主菜单" ref={menuBarRef}>
+          </div>
+        )}
+        {!isMacOS && (
+          <nav className="titlebar-menu" role="menubar" aria-label="主菜单" ref={menuBarRef}>
           {menus.map((menu, idx) => (
             <div key={menu.label} className="titlebar-menu-item">
               <button
@@ -224,10 +233,12 @@ function TitleBar({ onMenuAction, onWindowClose, hasProject = false, hasOpenFile
               )}
             </div>
           ))}
-        </nav>
+          </nav>
+        )}
         <div className="titlebar-title">ycIDE - 易承语言集成开发环境</div>
       </div>
-      <div className="titlebar-controls" aria-label="窗口控制">
+      {!isMacOS && (
+        <div className="titlebar-controls" aria-label="窗口控制">
         <button
           className="titlebar-btn"
           onClick={handleMinimize}
@@ -259,7 +270,8 @@ function TitleBar({ onMenuAction, onWindowClose, hasProject = false, hasOpenFile
             <line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" strokeWidth="1.2" />
           </svg>
         </button>
-      </div>
+        </div>
+      )}
     </header>
   )
 }

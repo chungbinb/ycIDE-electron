@@ -9,7 +9,7 @@
     "composite": true,
     "jsx": "react-jsx",
     "outDir": "./out/renderer",
-    "rootDir": "./src/renderer/src"
+    "rootDir": "."
   },
-  "include": ["src/renderer/src/**/*"]
+  "include": ["src/renderer/src/**/*", "src/shared/**/*"]
 }

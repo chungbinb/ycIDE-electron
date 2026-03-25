@@ -1581,7 +1581,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
 
       // Ctrl+Z / Ctrl+Y：撤销/重做（编辑器区域内）
-      if (ctrl && e.key === 'z' && inEditor) {
+      const key = e.key.toLowerCase()
+      if (ctrl && key === 'z' && !e.shiftKey && inEditor) {
         e.preventDefault()
         if (undoStack.current.length > 0) {
           const prev = undoStack.current.pop()!
@@ -1590,7 +1591,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         }
         return
       }
-      if (ctrl && e.key === 'y' && inEditor) {
+      if (ctrl && (key === 'y' || (e.shiftKey && key === 'z')) && inEditor) {
         e.preventDefault()
         if (redoStack.current.length > 0) {
           const next = redoStack.current.pop()!
@@ -3391,7 +3392,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     // ===== Ctrl 快捷键 =====
     const ctrl = e.ctrlKey || e.metaKey
-    if (ctrl && e.key === 'z') {
+    const key = e.key.toLowerCase()
+    if (ctrl && key === 'z' && !e.shiftKey) {
       e.preventDefault()
       if (undoStack.current.length > 0) {
         const prev = undoStack.current.pop()!
@@ -3400,7 +3402,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
       return
     }
-    if (ctrl && e.key === 'y') {
+    if (ctrl && (key === 'y' || (e.shiftKey && key === 'z'))) {
       e.preventDefault()
       if (redoStack.current.length > 0) {
         const next = redoStack.current.pop()!
@@ -3409,7 +3411,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
       return
     }
-    if (ctrl && e.key === 'a') {
+    if (ctrl && key === 'a') {
       e.preventDefault()
       const ls = prevRef.current.split('\n')
       const all = new Set<number>()
@@ -3421,7 +3423,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       wrapperRef.current?.focus()
       return
     }
-    if (ctrl && e.key === 'v') {
+    if (ctrl && key === 'v') {
       e.preventDefault()
       setAcVisible(false)
       navigator.clipboard.readText().then(clipText => {

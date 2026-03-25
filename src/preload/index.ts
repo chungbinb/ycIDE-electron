@@ -1,4 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { normalizeRuntimePlatform } from '../shared/platform'
+
+const runtimePlatform = normalizeRuntimePlatform(process.platform)
+type RecentOpenedItem = { type: 'project' | 'file'; path: string; label: string }
+type ThemeMenuState = { themes: string[]; currentTheme: string }
 
 // 向渲染进程安全暴露的 API
 const api = {
@@ -100,6 +105,12 @@ const api = {
       ipcRenderer.invoke('debug:logRendererError', payload) as Promise<{ success: boolean }>,
     getRendererErrorLogPath: () =>
       ipcRenderer.invoke('debug:getRendererErrorLogPath') as Promise<string>,
+  },
+  // 平台信息
+  system: {
+    getRuntimePlatform: () => runtimePlatform,
+    updateRecentOpened: (items: RecentOpenedItem[]) => ipcRenderer.send('menu:updateRecentOpened', items),
+    updateThemes: (state: ThemeMenuState) => ipcRenderer.send('menu:updateThemes', state),
   },
   // 通用 IPC
   on: (channel: string, callback: (...args: unknown[]) => void) => {
