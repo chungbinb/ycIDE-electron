@@ -2585,8 +2585,17 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
     sendMessage({ type: 'info', text: `正在编译项目: ${project.projectName}` })
 
-    // 确定架构：优先使用工具栏选择的架构，其次是项目文件中的配置
-    const arch = options.arch || project.platform || 'x64'
+    // 确定架构：优先使用工具栏选择的架构；兼容旧项目可能把架构写在 Platform 字段；
+    // 若 Platform 为 windows/macos/linux，则按平台给默认架构（macOS=arm64，其它=x64）
+    const normalizeArch = (value?: string | null): 'x86' | 'x64' | 'arm64' | null => {
+      const normalized = (value || '').trim().toLowerCase()
+      if (normalized === 'x86' || normalized === 'x64' || normalized === 'arm64') return normalized
+      return null
+    }
+    const projectPlatform = (project.platform || '').trim().toLowerCase()
+    const arch = normalizeArch(options.arch)
+      || normalizeArch(project.platform)
+      || (projectPlatform === 'macos' ? 'arm64' : 'x64')
 
     // 查找编译器
     const clangPath = findClangCompiler()
