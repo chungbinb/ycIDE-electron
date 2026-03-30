@@ -86,6 +86,12 @@ interface ConstantDef {
   value: string
 }
 
+interface SubprogramDef {
+  name: string
+  params: Array<{ name: string; type: string }>
+  isClassModule: boolean
+}
+
 interface LibraryConstantDef extends ConstantDef {
   type: 'null' | 'number' | 'bool' | 'text'
 }
@@ -575,7 +581,13 @@ function loadCompileProtocols(): LoadedCompileProtocols {
   const libs = libraryManager.getList().filter(l => l.loaded)
 
   for (const lib of libs) {
-    const dir = dirname(lib.filePath)
+    const dir = (() => {
+      try {
+        return statSync(lib.filePath).isDirectory() ? lib.filePath : dirname(lib.filePath)
+      } catch {
+        return dirname(lib.filePath)
+      }
+    })()
     const candidates = [
       join(dir, `${lib.name}.events.json`),
       join(dir, `${lib.name}.protocol.json`),
@@ -1118,8 +1130,9 @@ function buildCommandSignatureMap(): Map<string, CommandSignatureDef> {
   return map
 }
 
-function collectProjectSubprogramNames(project: ProjectInfo, editorFiles?: Map<string, string>): Set<string> {
-  const names = new Set<string>()
+function collectProjectSubprogramDefs(project: ProjectInfo, editorFiles?: Map<string, string>): SubprogramDef[] {
+  const result: SubprogramDef[] = []
+  const seen = new Set<string>()
   for (const f of project.files) {
     if (f.type !== 'EYC' && f.type !== 'EGV' && f.type !== 'ECS' && f.type !== 'EDT' && f.type !== 'ELL') continue
     const sourcePath = join(project.projectDir, f.fileName)
@@ -1127,15 +1140,46 @@ function collectProjectSubprogramNames(project: ProjectInfo, editorFiles?: Map<s
     const content = editorContent || (existsSync(sourcePath) ? readFileSync(sourcePath, 'utf-8') : '')
     if (!content) continue
 
+    let currentSub: SubprogramDef | null = null
     for (const rawLine of content.split('\n')) {
       const line = rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
-      if (!line.startsWith('.子程序 ')) continue
-      const parts = line.substring(4).split(',').map(s => s.trim())
-      const name = (parts[0] || '').trim()
-      if (name) names.add(name)
+      if (line.startsWith('.子程序 ')) {
+        const parts = line.substring(4).split(',').map(s => s.trim())
+        const name = (parts[0] || '').trim()
+        if (!name) {
+          currentSub = null
+          continue
+        }
+        if (!seen.has(name)) {
+          currentSub = {
+            name,
+            params: [],
+            isClassModule: /\.ecc$/i.test(f.fileName),
+          }
+          result.push(currentSub)
+          seen.add(name)
+        } else {
+          currentSub = result.find(sub => sub.name === name) || null
+        }
+        continue
+      }
+      if (line.startsWith('.参数 ') && currentSub) {
+        const parts = splitDeclParts(line.substring(3))
+        const paramName = (parts[0] || '').trim()
+        const paramType = (parts[1] || '整数型').trim()
+        if (paramName) currentSub.params.push({ name: paramName, type: paramType })
+        continue
+      }
+      if (line.startsWith('.程序集 ') || line.startsWith('.版本 ') || line.startsWith('.全局变量 ') || line.startsWith('.程序集变量 ')) {
+        currentSub = null
+      }
     }
   }
-  return names
+  return result
+}
+
+function collectProjectSubprogramNames(project: ProjectInfo, editorFiles?: Map<string, string>): Set<string> {
+  return new Set(collectProjectSubprogramDefs(project, editorFiles).map(sub => sub.name))
 }
 
 function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Map<string, string>): string[] {
@@ -1210,6 +1254,7 @@ function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Ma
 // 将全角运算符转换为C运算符
 function convertFullWidthOps(expr: string): string {
   return expr
+    .replace(/<>/g, '!=')
     .replace(/≠/g, '!=')
     .replace(/≤/g, '<=')
     .replace(/≥/g, '>=')
@@ -1224,6 +1269,152 @@ function convertFullWidthOps(expr: string): string {
 
 function replaceConstantRefs(expr: string): string {
   return expr.replace(/#([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)/g, '$1')
+}
+
+function replaceBooleanLiterals(expr: string): string {
+  return expr
+    .replace(/(^|[^\u4e00-\u9fa5A-Za-z0-9_])真(?=$|[^\u4e00-\u9fa5A-Za-z0-9_])/g, '$11')
+    .replace(/(^|[^\u4e00-\u9fa5A-Za-z0-9_])假(?=$|[^\u4e00-\u9fa5A-Za-z0-9_])/g, '$10')
+}
+
+function replaceLogicalOperatorAliases(expr: string): string {
+  return expr
+    .replace(/(^|[^\u4e00-\u9fa5A-Za-z0-9_])且(?=$|[^\u4e00-\u9fa5A-Za-z0-9_])/g, '$1&&')
+    .replace(/(^|[^\u4e00-\u9fa5A-Za-z0-9_])或(?=$|[^\u4e00-\u9fa5A-Za-z0-9_])/g, '$1||')
+    .replace(/\bAnd\b/gi, '&&')
+    .replace(/\bOr\b/gi, '||')
+}
+
+function replaceControlTextPropertyRefs(expr: string): string {
+  return expr.replace(
+    /([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*)\.(内容|文本|标题|text)\b/gi,
+    (_match, ctrlName: string) => `yc_get_control_text(L"${escapeCString(ctrlName)}")`,
+  )
+}
+
+function isTextExpression(expr: string): boolean {
+  const trimmed = expr.trim()
+  return /^L"(?:[^"\\]|\\.)*"$/.test(trimmed)
+    || /^yc_get_control_text\(/.test(trimmed)
+}
+
+function findTopLevelComparison(expr: string): { left: string; operator: string; right: string } | null {
+  let depth = 0
+  let inString = false
+  let stringChar = ''
+
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]
+    if (inString) {
+      if ((stringChar === '"' && ch === '"') || (stringChar === '\u201c' && ch === '\u201d')) inString = false
+      continue
+    }
+    if (ch === '"' || ch === '\u201c') {
+      inString = true
+      stringChar = ch
+      continue
+    }
+    if (ch === '(' || ch === '\uff08') {
+      depth++
+      continue
+    }
+    if (ch === ')' || ch === '\uff09') {
+      depth = Math.max(0, depth - 1)
+      continue
+    }
+    if (depth !== 0) continue
+
+    const twoChars = expr.slice(i, i + 2)
+    if (twoChars === '==' || twoChars === '!=' || twoChars === '<=' || twoChars === '>=') {
+      return {
+        left: expr.slice(0, i).trim(),
+        operator: twoChars,
+        right: expr.slice(i + 2).trim(),
+      }
+    }
+
+    if (ch === '=' || ch === '<' || ch === '>') {
+      return {
+        left: expr.slice(0, i).trim(),
+        operator: ch,
+        right: expr.slice(i + 1).trim(),
+      }
+    }
+  }
+
+  return null
+}
+
+function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedCommand>): string {
+  const trimmed = (expr || '').trim()
+  if (!trimmed) return '0'
+
+  const chineseStrMatch = trimmed.match(/^\u201c(.*)\u201d$/)
+  if (chineseStrMatch) {
+    const content = chineseStrMatch[1].replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    return `L"${content}"`
+  }
+
+  const englishStrMatch = trimmed.match(/^"(.*)"$/)
+  if (englishStrMatch) {
+    const content = englishStrMatch[1].replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    return `L"${content}"`
+  }
+
+  if (trimmed === '真') return '1'
+  if (trimmed === '假') return '0'
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return trimmed
+
+  if (commandMap) {
+    const call = parseCommandCall(trimmed)
+    if (call && call.name) {
+      const resolved = commandMap.get(call.name)
+      if (resolved) {
+        const exprGenerator = COMMAND_EXPR_GENERATORS[resolved.name]
+        if (exprGenerator) return exprGenerator(call.args || [], commandMap)
+        return generateYcGenericCommandExpr(resolved, call.args || [])
+      }
+    }
+  }
+
+  let translated = replaceConstantRefs(convertFullWidthOps(trimmed))
+  translated = replaceBooleanLiterals(translated)
+  translated = replaceLogicalOperatorAliases(translated)
+  translated = replaceControlTextPropertyRefs(translated)
+
+  const comparison = findTopLevelComparison(translated)
+  if (comparison && comparison.left && comparison.right) {
+    const left = translateExpressionToC(comparison.left, commandMap)
+    const right = translateExpressionToC(comparison.right, commandMap)
+    const normalizedOperator = comparison.operator === '=' ? '==' : comparison.operator
+
+    if ((normalizedOperator === '==' || normalizedOperator === '!=') && (isTextExpression(left) || isTextExpression(right))) {
+      return `(yc_text_compare(${left}, ${right}) ${normalizedOperator} 0)`
+    }
+
+    return `(${left} ${normalizedOperator} ${right})`
+  }
+
+  return translated
+}
+
+function buildComparisonExpression(leftArg: string, rightArg: string, operator: '==' | '!=' | '<' | '>' | '<=' | '>=', commandMap?: Map<string, ResolvedCommand>): string {
+  const left = translateExpressionToC(leftArg, commandMap)
+  const right = translateExpressionToC(rightArg, commandMap)
+  if (isTextExpression(left) || isTextExpression(right)) {
+    return `(yc_text_compare(${left}, ${right}) ${operator} 0)`
+  }
+  return `(${left} ${operator} ${right})`
+}
+
+function buildLogicChainExpression(args: string[], operator: '&&' | '||', commandMap?: Map<string, ResolvedCommand>): string {
+  const parts = args
+    .map(arg => (arg || '').trim())
+    .filter(Boolean)
+    .map(arg => `(${translateExpressionToC(arg, commandMap)})`)
+  if (parts.length === 0) return '0'
+  if (parts.length === 1) return parts[0]
+  return `(${parts.join(` ${operator} `)})`
 }
 
 // 从行中提取命令名称（括号或空格之前的部分）
@@ -1345,38 +1536,14 @@ function generateYcGenericCommandExpr(cmd: ResolvedCommand, args: string[]): str
 
 function formatArgForC(arg: string, commandMap?: Map<string, ResolvedCommand>): string {
   if (!arg) return '0'
-  const trimmed = arg.trim()
-  // 中文引号字符串 → C宽字符串
-  const chineseStrMatch = trimmed.match(/^\u201c(.*)\u201d$/)
-  if (chineseStrMatch) {
-    const content = chineseStrMatch[1].replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-    return `L"${content}"`
-  }
-  // 英文引号字符串 → C宽字符串
-  const englishStrMatch = trimmed.match(/^"(.*)"$/)
-  if (englishStrMatch) {
-    const content = englishStrMatch[1].replace(/\\/g, '\\\\')
-    return `L"${content}"`
-  }
-  // 布尔值
-  if (trimmed === '真') return '1'
-  if (trimmed === '假') return '0'
-  // 数值直接传递
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return trimmed
-  // 命令调用参数：支持表达式生成器或通用支持库返回表达式
-  if (commandMap) {
-    const call = parseCommandCall(trimmed)
-    if (call && call.name) {
-      const resolved = commandMap.get(call.name)
-      if (resolved) {
-        const exprGenerator = COMMAND_EXPR_GENERATORS[resolved.name]
-        if (exprGenerator) return exprGenerator(call.args || [])
-        return generateYcGenericCommandExpr(resolved, call.args || [])
-      }
-    }
-  }
-  // 变量名或表达式：转换全角运算符
-  return replaceConstantRefs(convertFullWidthOps(trimmed))
+  return translateExpressionToC(arg, commandMap)
+}
+
+function wrapConditionForC(expr: string): string {
+  const trimmed = (expr || '').trim()
+  if (!trimmed) return '(0)'
+  if (trimmed.startsWith('(') && trimmed.endsWith(')')) return trimmed
+  return `(${trimmed})`
 }
 
 function mapParamTypeToYcDataType(typeName: string): { dtConst: string; field: string } {
@@ -1409,7 +1576,7 @@ function formatArgForYcCommand(arg: string, field: string): string {
   if (field === 'm_bool') {
     if (trimmed === '真') return '1'
     if (trimmed === '假') return '0'
-    return `(${replaceConstantRefs(convertFullWidthOps(trimmed))} ? 1 : 0)`
+    return `(${translateExpressionToC(trimmed, buildCommandMap())} ? 1 : 0)`
   }
 
   return replaceConstantRefs(convertFullWidthOps(trimmed))
@@ -1477,11 +1644,41 @@ function generateYcGenericCommandAssign(cmd: LibCommand & { libraryName: string;
 // 命令属于哪个支持库由 buildCommandMap() 自动获取
 // 这里只定义命令的C代码翻译规则
 type CommandCodeGenerator = (args: string[], commandMap?: Map<string, ResolvedCommand>) => string
-type CommandExprGenerator = (args: string[]) => string
+type CommandExprGenerator = (args: string[], commandMap?: Map<string, ResolvedCommand>) => string
+
+function escapeCWideString(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function buildDebugTextLine(args: string[], commandMap?: Map<string, ResolvedCommand>): string {
+  const parts = args.filter(arg => (arg || '').trim().length > 0)
+  const lines: string[] = []
+  lines.push('do {')
+  lines.push('#if YC_DEBUG_BUILD')
+  lines.push('    yc_debug_line_begin();')
+  for (const part of parts) {
+    lines.push(`    yc_debug_line_part(${translateExpressionToC(part, commandMap)});`)
+  }
+  lines.push('    yc_debug_line_end();')
+  lines.push('#endif')
+  lines.push('} while (0);')
+  return lines.join('\n')
+}
 
 const COMMAND_EXPR_GENERATORS: Record<string, CommandExprGenerator> = {
   '取本机名': (_args) => 'yc_get_local_hostname()',
   '取主机名': (_args) => 'yc_get_local_hostname()',
+  '等于': (args, commandMap) => buildComparisonExpression(args[0] || '0', args[1] || '0', '==', commandMap),
+  '不等于': (args, commandMap) => buildComparisonExpression(args[0] || '0', args[1] || '0', '!=', commandMap),
+  '小于': (args, commandMap) => buildComparisonExpression(args[0] || '0', args[1] || '0', '<', commandMap),
+  '大于': (args, commandMap) => buildComparisonExpression(args[0] || '0', args[1] || '0', '>', commandMap),
+  '小于或等于': (args, commandMap) => buildComparisonExpression(args[0] || '0', args[1] || '0', '<=', commandMap),
+  '大于或等于': (args, commandMap) => buildComparisonExpression(args[0] || '0', args[1] || '0', '>=', commandMap),
+  '近似等于': (args, commandMap) => `yc_text_starts_with(${translateExpressionToC(args[0] || '""', commandMap)}, ${translateExpressionToC(args[1] || '""', commandMap)})`,
+  '并且': (args, commandMap) => buildLogicChainExpression(args, '&&', commandMap),
+  '或者': (args, commandMap) => buildLogicChainExpression(args, '||', commandMap),
+  '取反': (args, commandMap) => `(!(${translateExpressionToC(args[0] || '0', commandMap)}))`,
+  '是否为调试版': () => '(YC_DEBUG_BUILD ? 1 : 0)',
 }
 
 const COMMAND_CODE_GENERATORS: Record<string, CommandCodeGenerator> = {
@@ -1499,15 +1696,42 @@ const COMMAND_CODE_GENERATORS: Record<string, CommandCodeGenerator> = {
     const arg = args[0] || '0'
     return `yc_debug_output_value(${formatArgForC(arg, commandMap)});`
   },
-  '输出调试文本': (args) => {
-    return COMMAND_CODE_GENERATORS['调试输出'](args)
+  '输出调试文本': (args, commandMap) => buildDebugTextLine(args, commandMap),
+  '暂停': () => ['do {', '#if YC_DEBUG_BUILD', '    DebugBreak();', '#endif', '} while (0);'].join('\n'),
+  '检查': (args, commandMap) => {
+    const cond = translateExpressionToC(args[0] || '0', commandMap)
+    const rawCond = escapeCWideString((args[0] || '').trim() || '0')
+    return [
+      'do {',
+      '#if YC_DEBUG_BUILD',
+      `    if (!(${cond})) {`,
+      '        yc_debug_line_begin();',
+      '        yc_debug_line_part(L"检查失败: ");',
+      `        yc_debug_line_part(L"${rawCond}");`,
+      '        yc_debug_line_end();',
+      '        DebugBreak();',
+      '    }',
+      '#endif',
+      '} while (0);',
+    ].join('\n')
   },
+  '是否为调试版': () => `(void)${COMMAND_EXPR_GENERATORS['是否为调试版']([])};`,
   '取本机名': (args) => {
     return `(void)${COMMAND_EXPR_GENERATORS['取本机名'](args)};`
   },
   '取主机名': (args) => {
     return `(void)${COMMAND_EXPR_GENERATORS['取主机名'](args)};`
   },
+  '等于': (args, commandMap) => `(void)${COMMAND_EXPR_GENERATORS['等于'](args, commandMap)};`,
+  '不等于': (args, commandMap) => `(void)${COMMAND_EXPR_GENERATORS['不等于'](args, commandMap)};`,
+  '小于': (args, commandMap) => `(void)${COMMAND_EXPR_GENERATORS['小于'](args, commandMap)};`,
+  '大于': (args, commandMap) => `(void)${COMMAND_EXPR_GENERATORS['大于'](args, commandMap)};`,
+  '小于或等于': (args, commandMap) => `(void)${COMMAND_EXPR_GENERATORS['小于或等于'](args, commandMap)};`,
+  '大于或等于': (args, commandMap) => `(void)${COMMAND_EXPR_GENERATORS['大于或等于'](args, commandMap)};`,
+  '近似等于': (args, commandMap) => `(void)${COMMAND_EXPR_GENERATORS['近似等于'](args, commandMap)};`,
+  '并且': (args, commandMap) => `(void)${COMMAND_EXPR_GENERATORS['并且'](args, commandMap)};`,
+  '或者': (args, commandMap) => `(void)${COMMAND_EXPR_GENERATORS['或者'](args, commandMap)};`,
+  '取反': (args, commandMap) => `(void)${COMMAND_EXPR_GENERATORS['取反'](args, commandMap)};`,
 }
 
 // 为支持库命令生成C代码
@@ -1537,7 +1761,7 @@ function generateCCodeForCommand(cmd: ResolvedCommand, args: string[], commandMa
 // .eyc 转 C 代码转译器
 // 将易语言源代码中的子程序转译成 C 函数
 // 命令识别基于已加载的支持库，支持第三方支持库扩展
-function transpileEycContent(eycContent: string, fileName: string, projectGlobals: GlobalVarDef[] = [], projectConstants: ConstantDef[] = [], libraryConstants: LibraryConstantDef[] = []): string {
+function transpileEycContent(eycContent: string, fileName: string, projectGlobals: GlobalVarDef[] = [], projectConstants: ConstantDef[] = [], libraryConstants: LibraryConstantDef[] = [], projectSubprograms: SubprogramDef[] = [], debugBuild = false): string {
   // 从已加载的支持库构建命令查找表
   const commandMap = buildCommandMap()
   const isClassModuleSource = /\.ecc$/i.test(fileName)
@@ -1545,6 +1769,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   const lines = eycContent.split('\n')
   let result = `/* 由 ycIDE 自动从 ${fileName} 生成 */\n`
   result += '#include <windows.h>\n#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n\n'
+  result += `#define YC_DEBUG_BUILD ${debugBuild ? 1 : 0}\n\n`
   result += '#define YC_SDT_BYTE 0x80000101u\n'
   result += '#define YC_SDT_SHORT 0x80000201u\n'
   result += '#define YC_SDT_INT 0x80000301u\n'
@@ -1568,7 +1793,10 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    YC_DATA_TYPE m_dtDataType;\n'
   result += '} YC_MDATA_INF;\n\n'
   result += 'extern "C" void yc_invoke_support_cmd(const char* libName, int cmdIndex, YC_MDATA_INF* pRetData, int argCount, YC_MDATA_INF* pArgs);\n'
-  result += 'extern void yc_set_control_text(const wchar_t* ctrlName, const wchar_t* text);\n\n'
+  result += 'extern void yc_set_control_text(const wchar_t* ctrlName, const wchar_t* text);\n'
+  result += 'extern const wchar_t* yc_get_control_text(const wchar_t* ctrlName);\n'
+  result += 'extern int yc_text_compare(const wchar_t* left, const wchar_t* right);\n'
+  result += 'extern int yc_text_starts_with(const wchar_t* text, const wchar_t* prefix);\n\n'
   result += 'static void yc_debug_output_value(const wchar_t* s) {\n'
   result += '    wprintf(L"%ls\\n", s ? s : L"");\n'
   result += '}\n'
@@ -1583,6 +1811,41 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '}\n'
   result += 'template <typename T> static void yc_debug_output_value(T v) {\n'
   result += '    printf("%lld\\n", (long long)(v));\n'
+  result += '}\n\n'
+  result += 'static void yc_debug_line_begin(void) {\n'
+  result += '#if YC_DEBUG_BUILD\n'
+  result += '    wprintf(L"* ");\n'
+  result += '#endif\n'
+  result += '}\n'
+  result += 'static void yc_debug_line_part(const wchar_t* s) {\n'
+  result += '#if YC_DEBUG_BUILD\n'
+  result += '    wprintf(L"%ls", s ? s : L"");\n'
+  result += '#endif\n'
+  result += '}\n'
+  result += 'static void yc_debug_line_part(wchar_t* s) {\n'
+  result += '#if YC_DEBUG_BUILD\n'
+  result += '    yc_debug_line_part((const wchar_t*)s);\n'
+  result += '#endif\n'
+  result += '}\n'
+  result += 'static void yc_debug_line_part(const char* s) {\n'
+  result += '#if YC_DEBUG_BUILD\n'
+  result += '    printf("%s", s ? s : "");\n'
+  result += '#endif\n'
+  result += '}\n'
+  result += 'static void yc_debug_line_part(char* s) {\n'
+  result += '#if YC_DEBUG_BUILD\n'
+  result += '    yc_debug_line_part((const char*)s);\n'
+  result += '#endif\n'
+  result += '}\n'
+  result += 'template <typename T> static void yc_debug_line_part(T v) {\n'
+  result += '#if YC_DEBUG_BUILD\n'
+  result += '    printf("%lld", (long long)(v));\n'
+  result += '#endif\n'
+  result += '}\n'
+  result += 'static void yc_debug_line_end(void) {\n'
+  result += '#if YC_DEBUG_BUILD\n'
+  result += '    printf("\\n");\n'
+  result += '#endif\n'
   result += '}\n\n'
   result += 'static wchar_t* yc_utf8_to_wide(const char* s) {\n'
   result += '    if (!s) {\n'
@@ -1637,6 +1900,18 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     result += '\n'
   }
 
+  const externalSubprograms = projectSubprograms.filter(sub => !sub.isClassModule)
+  if (externalSubprograms.length > 0) {
+    result += '/* 项目子程序前置声明 */\n'
+    for (const sub of externalSubprograms) {
+      const params = sub.params.length === 0
+        ? 'void'
+        : sub.params.map(p => `${mapTypeToCType(p.type)} ${p.name}`).join(', ')
+      result += `extern void ${sub.name}(${params});\n`
+    }
+    result += '\n'
+  }
+
   // ---- 第一遍：收集并输出 自定义数据类型 ----
   {
     let inDataType = false
@@ -1657,12 +1932,12 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       }
       if (inDataType) {
         // 遇到新的块（子程序/程序集/版本）则结束当前结构体
-        if (line.startsWith('.子程序 ') || line.startsWith('.程序集') || line.startsWith('.版本')) {
-          result += `struct ${structName} {\n${structFields}};\n\n`
-          inDataType = false
-          structName = ''
-          structFields = ''
-          continue
+      if (line.startsWith('.子程序 ') || line.startsWith('.程序集 ') || line.startsWith('.版本')) {
+        result += `struct ${structName} {\n${structFields}};\n\n`
+        inDataType = false
+        structName = ''
+        structFields = ''
+        continue
         }
         if (line.startsWith('.成员 ')) {
           const parts = line.substring(3).split(',').map(s => s.trim())
@@ -1686,7 +1961,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   let blockIndent = 1
   let loopTempIndex = 0
 
-  const buildSubSignature = (name: string, params: Array<{ name: string; type: string }>): string => {
+  const buildSubSignature = (_name: string, params: Array<{ name: string; type: string }>): string => {
     if (params.length === 0) return 'void'
     return params.map(p => `${mapTypeToCType(p.type)} ${p.name}`).join(', ')
   }
@@ -1698,7 +1973,17 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   for (const rawLine of lines) {
     // 剥离流程标记零宽字符（\u200C/\u200D/\u2060/\u200B）
     const line = rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
-    if (line.startsWith('.版本') || line.startsWith('.程序集') || line === '') continue
+    if (line === '') continue
+
+    if (!inSub && line.startsWith('.程序集变量 ')) {
+      const parts = splitDeclParts(line.substring(6))
+      const varName = parts[0] || 'assemblyVar'
+      const varType = parts[1] || '整数型'
+      result += `static ${mapTypeToCType(varType)} ${varName};\n`
+      continue
+    }
+
+    if (line.startsWith('.版本') || line.startsWith('.程序集 ')) continue
 
     if (line.startsWith('.子程序 ')) {
       // 如果之前有子程序，先输出
@@ -1752,7 +2037,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
 
         if (flowName === '如果' || flowName === '如果真' || flowName === '判断') {
           const cond = formatArgForC(flowCall?.args?.[0] || '0')
-          emitSubLine(`if (${cond}) {`)
+          emitSubLine(`if ${wrapConditionForC(cond)} {`)
           blockIndent++
           continue
         }
@@ -1784,6 +2069,70 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         if (flowName === '计次循环尾') {
           blockIndent = Math.max(1, blockIndent - 1)
           emitSubLine('}')
+          continue
+        }
+
+        if (flowName === '判断循环首') {
+          const cond = formatArgForC(flowCall?.args?.[0] || '0')
+          emitSubLine(`while ${wrapConditionForC(cond)} {`)
+          blockIndent++
+          continue
+        }
+
+        if (flowName === '判断循环尾') {
+          blockIndent = Math.max(1, blockIndent - 1)
+          emitSubLine('}')
+          continue
+        }
+
+        if (flowName === '循环判断首') {
+          emitSubLine('do {')
+          blockIndent++
+          continue
+        }
+
+        if (flowName === '循环判断尾') {
+          const cond = formatArgForC(flowCall?.args?.[0] || '0')
+          blockIndent = Math.max(1, blockIndent - 1)
+          emitSubLine(`} while ${wrapConditionForC(cond)};`)
+          continue
+        }
+
+        if (flowName === '变量循环首') {
+          const startExpr = formatArgForC(flowCall?.args?.[0] || '1')
+          const endExpr = formatArgForC(flowCall?.args?.[1] || '0')
+          const stepExpr = formatArgForC(flowCall?.args?.[2] || '1')
+          const userVar = (flowCall?.args?.[3] || '').trim()
+          const loopVar = userVar || `__for_${loopTempIndex++}`
+          const initExpr = userVar ? `${loopVar} = (${startExpr})` : `int64_t ${loopVar} = (${startExpr})`
+          emitSubLine(`for (${initExpr}; ((${stepExpr}) >= 0 ? ${loopVar} <= (${endExpr}) : ${loopVar} >= (${endExpr})); ${loopVar} += (${stepExpr})) {`)
+          blockIndent++
+          continue
+        }
+
+        if (flowName === '变量循环尾') {
+          blockIndent = Math.max(1, blockIndent - 1)
+          emitSubLine('}')
+          continue
+        }
+
+        if (flowName === '到循环尾') {
+          emitSubLine('continue;')
+          continue
+        }
+
+        if (flowName === '跳出循环') {
+          emitSubLine('break;')
+          continue
+        }
+
+        if (flowName === '返回') {
+          emitSubLine('return;')
+          continue
+        }
+
+        if (flowName === '结束') {
+          emitSubLine('ExitProcess(0);')
           continue
         }
       }
@@ -1879,17 +2228,19 @@ function generateMainC(
   editorFiles?: Map<string, string>,
   linkedLibraries?: Array<{ name: string; libraryPath: string; libName: string }>,
   commandDispatchLibs?: string[],
+  debugBuild = false,
 ): string[] {
   const mainCPath = join(tempDir, 'main.cpp')
   const additionalCFiles: string[] = []
 
   let mainCode = '/* 由 ycIDE 自动生成 */\n'
   mainCode += `/* 项目名称: ${project.projectName} */\n\n`
-  mainCode += '#include <windows.h>\n#include <commctrl.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <io.h>\n#include <fcntl.h>\n\n'
+  mainCode += '#include <windows.h>\n#include <commctrl.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n#include <io.h>\n#include <fcntl.h>\n\n'
 
   const isWindowsApp = project.outputType === 'WindowsApp'
   const projectGlobals = collectProjectGlobalVars(project, editorFiles)
   const projectConstants = collectProjectConstants(project, editorFiles)
+  const projectSubprograms = collectProjectSubprogramDefs(project, editorFiles)
   const librariesForBuild = linkedLibraries || libraryManager.getLoadedLibraryFiles()
   const usedLibraryNames = new Set(librariesForBuild.map(l => l.name))
   const libraryConstants = collectLibraryConstants(usedLibraryNames)
@@ -2037,6 +2388,40 @@ function generateMainC(
     mainCode += '    return NULL;\n'
     mainCode += '}\n\n'
 
+    mainCode += 'static wchar_t* g_yc_text_buffers[4] = { NULL, NULL, NULL, NULL };\n'
+    mainCode += 'static int g_yc_text_buffer_sizes[4] = { 0, 0, 0, 0 };\n'
+    mainCode += 'static int g_yc_text_buffer_index = 0;\n\n'
+    mainCode += 'const wchar_t* yc_get_control_text(const wchar_t* ctrlName) {\n'
+    mainCode += '    HWND hCtrl = yc_get_control_handle_by_name(ctrlName);\n'
+    mainCode += '    if (!hCtrl) return L"";\n'
+    mainCode += '    int slot = g_yc_text_buffer_index++ % 4;\n'
+    mainCode += '    int len = GetWindowTextLengthW(hCtrl);\n'
+    mainCode += '    int need = len + 1;\n'
+    mainCode += '    if (need < 1) need = 1;\n'
+    mainCode += '    if (g_yc_text_buffer_sizes[slot] < need) {\n'
+    mainCode += '        wchar_t* resized = (wchar_t*)realloc(g_yc_text_buffers[slot], sizeof(wchar_t) * (size_t)need);\n'
+    mainCode += '        if (!resized) return L"";\n'
+    mainCode += '        g_yc_text_buffers[slot] = resized;\n'
+    mainCode += '        g_yc_text_buffer_sizes[slot] = need;\n'
+    mainCode += '    }\n'
+    mainCode += '    g_yc_text_buffers[slot][0] = L\'\\0\';\n'
+    mainCode += '    GetWindowTextW(hCtrl, g_yc_text_buffers[slot], need);\n'
+    mainCode += '    return g_yc_text_buffers[slot];\n'
+    mainCode += '}\n\n'
+
+    mainCode += 'int yc_text_compare(const wchar_t* left, const wchar_t* right) {\n'
+    mainCode += '    const wchar_t* lhs = left ? left : L"";\n'
+    mainCode += '    const wchar_t* rhs = right ? right : L"";\n'
+    mainCode += '    return lstrcmpW(lhs, rhs);\n'
+    mainCode += '}\n\n'
+
+    mainCode += 'int yc_text_starts_with(const wchar_t* text, const wchar_t* prefix) {\n'
+    mainCode += '    const wchar_t* src = text ? text : L"";\n'
+    mainCode += '    const wchar_t* pre = prefix ? prefix : L"";\n'
+    mainCode += '    size_t preLen = wcslen(pre);\n'
+    mainCode += '    return wcsncmp(src, pre, preLen) == 0 ? 1 : 0;\n'
+    mainCode += '}\n\n'
+
     mainCode += 'void yc_set_control_text(const wchar_t* ctrlName, const wchar_t* text) {\n'
     mainCode += '    HWND hCtrl = yc_get_control_handle_by_name(ctrlName);\n'
     mainCode += '    if (!hCtrl) return;\n'
@@ -2053,7 +2438,7 @@ function generateMainC(
       if (!content) continue
 
       sendMessage({ type: 'info', text: `正在转换源文件: ${f.fileName}` })
-      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, libraryConstants)
+      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, libraryConstants, projectSubprograms, debugBuild)
       const cFileName = f.fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
       const cFilePath = join(tempDir, cFileName)
       writeFileSync(cFilePath, cCode, 'utf-8')
@@ -2065,7 +2450,7 @@ function generateMainC(
     const compileProtocols = loadCompileProtocols()
     const protocolBindings = compileProtocols.events
     const controlProtocolBindings = compileProtocols.controls
-    const loadedLibs = librariesForBuild
+    const loadedLibs = libraryManager.getList().filter(l => l.loaded)
     const libNameToFileName = new Map<string, string>()
     for (const lib of loadedLibs) {
       libNameToFileName.set(normalizeKey(lib.libName || ''), lib.name)
@@ -2492,7 +2877,7 @@ function generateMainC(
       if (!content) continue
 
       sendMessage({ type: 'info', text: `正在转换源文件: ${f.fileName}` })
-      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants)
+      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, [], projectSubprograms, debugBuild)
       const cFileName = f.fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
       const cFilePath = join(tempDir, cFileName)
       writeFileSync(cFilePath, cCode, 'utf-8')
@@ -2629,7 +3014,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
     // 生成C++代码
     sendMessage({ type: 'info', text: '正在生成C++代码...' })
-    const additionalCFiles = generateMainC(project, tempDir, editorFiles, libsToLink, staticCmdDispatchLibs)
+    const additionalCFiles = generateMainC(project, tempDir, editorFiles, libsToLink, staticCmdDispatchLibs, !!options.debug)
     const outputName = project.projectName
     const outputFileName = getBinaryFileName(outputName, project.outputType, targetPlatform)
     const outputBinary = join(outputDir, outputFileName)
@@ -2647,7 +3032,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       if (targetPlatform !== 'windows') {
         sendMessage({ type: 'warning', text: `警告: 窗口程序当前仅支持 Windows 目标，已按 ${targetPlatform} 继续尝试编译` })
       }
-      args.push('-mwindows')
+      args.push('-Xlinker', '--subsystem', '-Xlinker', 'windows')
       sendMessage({ type: 'info', text: '项目类型: Windows窗口程序' })
     } else if (project.outputType === 'DynamicLibrary') {
       args.push('-shared')

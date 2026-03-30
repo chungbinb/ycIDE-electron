@@ -1,0 +1,74 @@
+{
+  "version": "1.0",
+  "controlBindings": [
+    {
+      "unit": "按钮",
+      "unitEnglishName": "Button",
+      "className": "BUTTON",
+      "style": "WS_CHILD | BS_PUSHBUTTON"
+    },
+    {
+      "unit": "标签",
+      "unitEnglishName": "Static",
+      "className": "STATIC",
+      "style": "WS_CHILD | SS_LEFT | SS_NOTIFY"
+    },
+    {
+      "unit": "编辑框",
+      "unitEnglishName": "Edit",
+      "className": "EDIT",
+      "style": "WS_CHILD | WS_BORDER | ES_AUTOHSCROLL"
+    }
+  ],
+  "eventBindings": [
+    {
+      "unit": "按钮",
+      "unitEnglishName": "Button",
+      "event": "被单击",
+      "channel": "WM_COMMAND",
+      "code": "BN_CLICKED"
+    },
+    {
+      "unit": "按钮",
+      "unitEnglishName": "Button",
+      "event": "得到焦点",
+      "channel": "WM_COMMAND",
+      "code": "BN_SETFOCUS"
+    },
+    {
+      "unit": "按钮",
+      "unitEnglishName": "Button",
+      "event": "失去焦点",
+      "channel": "WM_COMMAND",
+      "code": "BN_KILLFOCUS"
+    },
+    {
+      "unit": "标签",
+      "unitEnglishName": "Static",
+      "event": "被单击",
+      "channel": "WM_COMMAND",
+      "code": "STN_CLICKED"
+    },
+    {
+      "unit": "编辑框",
+      "unitEnglishName": "Edit",
+      "event": "内容被改变",
+      "channel": "WM_COMMAND",
+      "code": "EN_CHANGE"
+    },
+    {
+      "unit": "编辑框",
+      "unitEnglishName": "Edit",
+      "event": "得到焦点",
+      "channel": "WM_COMMAND",
+      "code": "EN_SETFOCUS"
+    },
+    {
+      "unit": "编辑框",
+      "unitEnglishName": "Edit",
+      "event": "失去焦点",
+      "channel": "WM_COMMAND",
+      "code": "EN_KILLFOCUS"
+    }
+  ]
+}

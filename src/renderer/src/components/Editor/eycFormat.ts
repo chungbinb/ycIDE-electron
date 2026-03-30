@@ -128,9 +128,7 @@ function convertYiFlowToInternal(src: string): string {
       const outIndent = mapFlowCommandIndent(indent)
       result.push(' '.repeat(outIndent) + trimmed.slice(1))
       const branchType = kw as '如果' | '如果真' | '判断'
-      const marker = kw === '如果真' ? FLOW_ELSE_MARK
-        : kw === '判断' ? FLOW_TRUE_MARK
-        : FLOW_TRUE_MARK
+      const marker = kw === '判断' ? FLOW_TRUE_MARK : FLOW_TRUE_MARK
       stack.push({
         kind: 'branch',
         type: branchType,
@@ -300,6 +298,7 @@ function eycToYiFormat(text: string): string {
 
   const srcLines = normalizeEycText(text).split('\n')
   const out: string[] = []
+  const branchStack: Array<'如果' | '如果真' | '判断'> = []
 
   for (let i = 0; i < srcLines.length; i++) {
     const raw = srcLines[i]
@@ -330,7 +329,9 @@ function eycToYiFormat(text: string): string {
         out.push(indent + rest)
         if (!nextTrimmed.startsWith(FLOW_ELSE_MARK)) out.push(indent + '.如果结束')
       } else {
-        out.push(indent + '.如果结束')
+        const currentBranch = branchStack[branchStack.length - 1]
+        out.push(indent + (currentBranch === '如果真' ? '.如果真结束' : '.如果结束'))
+        if (currentBranch === '如果' || currentBranch === '如果真') branchStack.pop()
       }
       continue
     }
@@ -342,11 +343,19 @@ function eycToYiFormat(text: string): string {
         if (!nextTrimmed.startsWith(FLOW_JUDGE_END_MARK)) out.push(indent + '.判断结束')
       } else {
         out.push(indent + '.判断结束')
+        if (branchStack[branchStack.length - 1] === '判断') branchStack.pop()
       }
       continue
     }
 
     const kw = trimmed.split(/[\s(（]/)[0]
+    if (kw === '如果' || kw === '如果真' || kw === '判断') {
+      branchStack.push(kw)
+    } else if (kw === '如果结束' || kw === '如果真结束') {
+      if (branchStack[branchStack.length - 1] === '如果' || branchStack[branchStack.length - 1] === '如果真') branchStack.pop()
+    } else if (kw === '判断结束') {
+      if (branchStack[branchStack.length - 1] === '判断') branchStack.pop()
+    }
     if (flowKeywords.has(kw) && !trimmed.startsWith('.')) {
       out.push(indent + '.' + trimmed)
       continue
