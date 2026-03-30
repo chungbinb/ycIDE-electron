@@ -55,7 +55,7 @@ The current focus is a brownfield conversion effort: convert GBK-encoded librari
 - Playwright test runtime config: `playwright.config.js`.
 ## Platform Requirements
 - Node.js + npm for scripts in `package.json`.
-- Windows-oriented native toolchain assets expected under `compiler/` (e.g., `compiler/llvm/bin/clang.exe`, `compiler/MSVCSDK/**`) and consumed by compiler flow in `src/main/compiler.ts`.
+- Windows-oriented native toolchain assets expected under `compiler/` (e.g., `compiler/zig/zig.exe`) and consumed by compiler flow in `src/main/compiler.ts`.
 - Local resource folders required by packaging and runtime: `compiler/`, `lib/`, `static_lib/`, `themes/` (from `package.json` `build.extraFiles`).
 - Desktop distribution target via Electron Builder to `dist/` (`package.json` `build.directories.output`).
 - Targets configured: Windows `dir`, macOS `dmg`, Linux `AppImage` and `deb` (`package.json` `build.win|mac|linux`).
@@ -121,9 +121,9 @@ The current focus is a brownfield conversion effort: convert GBK-encoded librari
 - Contains: `app.whenReady`, `createWindow`, all `ipcMain.on` and `ipcMain.handle` channel registrations (project/file/library/theme/compiler/debug/dialog/window).
 - Depends on: Electron APIs (`app`, `BrowserWindow`, `ipcMain`, `dialog`, `shell`), Node FS/path modules, `compileProject` from `src/main/compiler.ts`, and `libraryManager` from `src/main/library-manager.ts`.
 - Used by: `src/preload/index.ts` invokes these handlers via `ipcRenderer.invoke/send`.
-- Purpose: Parse `.epp`, transform Yi-language source + form metadata into generated C/C++, invoke Clang/MSVC SDK toolchain, copy runtime dependencies, and run/stop executable processes.
+- Purpose: Parse `.epp`, transform Yi-language source + form metadata into generated C/C++, invoke Zig/MSVC SDK toolchain, copy runtime dependencies, and run/stop executable processes.
 - Location: `src/main/compiler.ts`
-- Contains: toolchain discovery (`findClangCompiler`, `findMSVCSDK`), project parsing (`parseEppFile`), code generation (`generateMainC`, command/event generation helpers), compile orchestration (`compileProject`), runtime execution (`runExecutable`, `stopExecutable`, `isRunning`).
+- Contains: toolchain discovery (`findZigCompiler`), project parsing (`parseEppFile`), code generation (`generateMainC`, command/event generation helpers), compile orchestration (`compileProject`), runtime execution (`runExecutable`, `stopExecutable`, `isRunning`).
 - Depends on: filesystem, child process execution, and loaded support-library metadata (`libraryManager.getLoadedLibraryFiles`, `libraryManager.getAllCommands`, `libraryManager.getAllWindowUnits`).
 - Used by: IPC handlers `compiler:compile`, `compiler:run`, `compiler:stop`, `compiler:isRunning` in `src/main/index.ts`.
 - Purpose: Discover and load `.fne` libraries, parse metadata, persist loaded state, detect GUID/command conflicts, and provide command/window-unit metadata to UI and compiler.

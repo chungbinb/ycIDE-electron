@@ -951,12 +951,12 @@ app.whenReady().then(() => {
   // 编译器 IPC
   ipcMain.handle('compiler:compile', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string) => {
     const editorFiles = editorFilesObj ? new Map(Object.entries(editorFilesObj)) : undefined
-    return compileProject({ projectDir, debug: true, arch }, editorFiles)
+    return compileProject({ projectDir, debug: true, arch, mode: 'compile' }, editorFiles)
   })
 
   ipcMain.handle('compiler:run', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string) => {
     const editorFiles = editorFilesObj ? new Map(Object.entries(editorFilesObj)) : undefined
-    const result = await compileProject({ projectDir, debug: true, arch }, editorFiles)
+    const result = await compileProject({ projectDir, debug: true, arch, mode: 'run' }, editorFiles)
     if (result.success && result.outputFile) {
       runExecutable(result.outputFile)
     }

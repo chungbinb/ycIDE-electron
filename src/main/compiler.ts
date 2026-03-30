@@ -17,6 +17,7 @@ export interface CompileOptions {
   projectDir: string
   debug?: boolean
   arch?: string                    // 目标架构（优先于 .epp 中的 platform）
+  mode?: 'compile' | 'run'         // compile: 按 .epp 目标平台；run: 按宿主平台
 }
 
 // 编译结果
@@ -173,7 +174,7 @@ function localizeCompilerMessage(line: string): string {
     return `链接器错误: 未定义符号: ${undefSymbol[1]}`
   }
 
-  const linkerFail = text.match(/^clang:\s*error:\s*linker command failed with exit code\s+(\d+)\s*\(use -v to see invocation\)$/i)
+  const linkerFail = text.match(/^(?:clang|zig):\s*error:\s*linker command failed with exit code\s+(\d+)\s*\(use -v to see invocation\)$/i)
   if (linkerFail) {
     return `编译器错误: 链接命令失败，退出码 ${linkerFail[1]}（使用 -v 可查看调用详情）`
   }
@@ -187,6 +188,8 @@ function localizeCompilerMessage(line: string): string {
   text = text.replace(/^lld-link:\s*warning:\s*/i, '链接器警告: ')
   text = text.replace(/^clang:\s*error:\s*/i, '编译器错误: ')
   text = text.replace(/^clang:\s*warning:\s*/i, '编译器警告: ')
+  text = text.replace(/^zig:\s*error:\s*/i, '编译器错误: ')
+  text = text.replace(/^zig:\s*warning:\s*/i, '编译器警告: ')
   return text
 }
 
@@ -198,6 +201,60 @@ function getAppDirectory(): string {
   return dirname(process.execPath)
 }
 
+type TargetPlatform = 'windows' | 'linux' | 'macos'
+type TargetArch = 'x86' | 'x64' | 'arm64'
+
+function getHostTargetPlatform(): TargetPlatform {
+  if (process.platform === 'win32') return 'windows'
+  if (process.platform === 'darwin') return 'macos'
+  return 'linux'
+}
+
+function getHostTargetArch(): TargetArch {
+  if (process.arch === 'ia32') return 'x86'
+  if (process.arch === 'arm64') return 'arm64'
+  return 'x64'
+}
+
+function normalizeTargetPlatform(value?: string | null): TargetPlatform | null {
+  const normalized = (value || '').trim().toLowerCase()
+  if (normalized === 'windows' || normalized === 'linux' || normalized === 'macos') return normalized
+  return null
+}
+
+function normalizeTargetArch(value?: string | null): TargetArch | null {
+  const normalized = (value || '').trim().toLowerCase()
+  if (normalized === 'x86' || normalized === 'x64' || normalized === 'arm64') return normalized
+  return null
+}
+
+function buildZigTargetTriple(platform: TargetPlatform, arch: TargetArch): string {
+  if (platform === 'windows') {
+    if (arch === 'x86') return 'x86-windows-gnu'
+    if (arch === 'arm64') return 'aarch64-windows-gnu'
+    return 'x86_64-windows-gnu'
+  }
+  if (platform === 'linux') {
+    if (arch === 'x86') return 'x86-linux-gnu'
+    if (arch === 'arm64') return 'aarch64-linux-gnu'
+    return 'x86_64-linux-gnu'
+  }
+
+  // macOS 目标不支持 x86；回退到 x64 以避免无效目标。
+  if (arch === 'arm64') return 'aarch64-macos'
+  return 'x86_64-macos'
+}
+
+function getBinaryFileName(projectName: string, outputType: string, platform: TargetPlatform): string {
+  if (outputType === 'DynamicLibrary') {
+    if (platform === 'windows') return `${projectName}.dll`
+    if (platform === 'macos') return `lib${projectName}.dylib`
+    return `lib${projectName}.so`
+  }
+  if (platform === 'windows') return `${projectName}.exe`
+  return projectName
+}
+
 function getHostExecutableCandidates(baseName: string): string[] {
   if (process.platform === 'win32') {
     return [`${baseName}.exe`, baseName]
@@ -205,86 +262,18 @@ function getHostExecutableCandidates(baseName: string): string[] {
   return [baseName, `${baseName}.exe`]
 }
 
-// 查找 Clang 编译器
-function findClangCompiler(): string | null {
+// 查找 Zig 编译器
+function findZigCompiler(): string | null {
   const appDir = getAppDirectory()
   const searchDirs = [
-    join(appDir, 'compiler', 'llvm', 'bin'),
+    join(appDir, 'compiler', 'zig'),
+    join(appDir, 'compiler', 'zig', 'bin'),
     join(appDir, 'compiler', 'bin'),
   ]
   for (const dir of searchDirs) {
-    for (const fileName of getHostExecutableCandidates('clang')) {
+    for (const fileName of getHostExecutableCandidates('zig')) {
       const fullPath = join(dir, fileName)
       if (existsSync(fullPath)) return fullPath
-    }
-  }
-  return null
-}
-
-function findToolNearClang(clangPath: string, toolName: string): string | null {
-  const toolDir = dirname(clangPath)
-  for (const fileName of getHostExecutableCandidates(toolName)) {
-    const fullPath = join(toolDir, fileName)
-    if (existsSync(fullPath)) return fullPath
-  }
-  return null
-}
-
-// 查找 MSVC SDK 路径
-interface MSVCSDKPaths {
-  msvcInclude: string
-  msvcLib: string
-  ucrtInclude: string
-  ucrtLib: string
-  umInclude: string
-  sharedInclude: string
-  umLib: string
-}
-
-function findMSVCSDK(arch: string): MSVCSDKPaths | null {
-  const appDir = getAppDirectory()
-  const searchRoots = [
-    join(appDir, 'compiler', 'MSVCSDK'),
-    join(appDir, 'MSVCSDK'),
-  ]
-
-  for (const root of searchRoots) {
-    if (!existsSync(root)) continue
-
-    // 检测 MSVC 版本号
-    const msvcBase = join(root, 'MSVC')
-    if (!existsSync(msvcBase)) continue
-    const msvcVersions = readdirSync(msvcBase).filter(d => {
-      try { return statSync(join(msvcBase, d)).isDirectory() } catch { return false }
-    })
-    if (msvcVersions.length === 0) continue
-    const msvcVer = msvcVersions[msvcVersions.length - 1]
-    const msvcRoot = join(msvcBase, msvcVer)
-
-    // 检测 SDK 版本号
-    const sdkBase = join(root, 'WindowsKits', '10')
-    const sdkIncDir = join(sdkBase, 'Include')
-    if (!existsSync(sdkIncDir)) continue
-    const sdkVersions = readdirSync(sdkIncDir).filter(d => d.startsWith('10.'))
-    if (sdkVersions.length === 0) continue
-    const sdkVer = sdkVersions[sdkVersions.length - 1]
-
-    const sdkIncBase = join(sdkBase, 'Include', sdkVer)
-    const sdkLibBase = join(sdkBase, 'Lib', sdkVer)
-
-    // 验证关键文件
-    if (!existsSync(join(msvcRoot, 'include', 'vcruntime.h'))) continue
-    if (!existsSync(join(sdkIncBase, 'um', 'windows.h'))) continue
-
-    const archDir = arch === 'x86' ? 'x86' : 'x64'
-    return {
-      msvcInclude: join(msvcRoot, 'include'),
-      msvcLib: join(msvcRoot, 'lib', archDir),
-      ucrtInclude: join(sdkIncBase, 'ucrt'),
-      ucrtLib: join(sdkLibBase, 'ucrt', archDir),
-      umInclude: join(sdkIncBase, 'um'),
-      sharedInclude: join(sdkIncBase, 'shared'),
-      umLib: join(sdkLibBase, 'um', archDir),
     }
   }
   return null
@@ -2585,45 +2574,42 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
     sendMessage({ type: 'info', text: `正在编译项目: ${project.projectName}` })
 
-    // 确定架构：优先使用工具栏选择的架构；兼容旧项目可能把架构写在 Platform 字段；
-    // 若 Platform 为 windows/macos/linux，则按平台给默认架构（macOS=arm64，其它=x64）
-    const normalizeArch = (value?: string | null): 'x86' | 'x64' | 'arm64' | null => {
-      const normalized = (value || '').trim().toLowerCase()
-      if (normalized === 'x86' || normalized === 'x64' || normalized === 'arm64') return normalized
-      return null
+    const buildMode = options.mode || 'compile'
+    const hostPlatform = getHostTargetPlatform()
+    const hostArch = getHostTargetArch()
+    const projectPlatform = normalizeTargetPlatform(project.platform)
+
+    // 运行按钮固定编译为宿主平台；编译按钮按 .epp 目标平台。
+    const targetPlatform: TargetPlatform = buildMode === 'run'
+      ? hostPlatform
+      : (projectPlatform || hostPlatform)
+
+    // 编译按钮允许工具栏架构覆盖；运行按钮固定宿主架构。
+    const targetArch: TargetArch = buildMode === 'run'
+      ? hostArch
+      : (normalizeTargetArch(options.arch)
+        || normalizeTargetArch(project.platform)
+        || (targetPlatform === 'macos' ? 'arm64' : 'x64'))
+
+    const targetTriple = buildZigTargetTriple(targetPlatform, targetArch)
+    if (buildMode === 'compile' && !projectPlatform) {
+      sendMessage({ type: 'warning', text: `警告: .epp 的 Platform 非法或缺失，已回退为宿主平台 ${targetPlatform}` })
     }
-    const projectPlatform = (project.platform || '').trim().toLowerCase()
-    const arch = normalizeArch(options.arch)
-      || normalizeArch(project.platform)
-      || (projectPlatform === 'macos' ? 'arm64' : 'x64')
+    sendMessage({ type: 'info', text: `构建模式: ${buildMode === 'run' ? '运行(宿主平台)' : '编译(项目平台)'}` })
+    sendMessage({ type: 'info', text: `目标平台: ${targetPlatform}, 目标架构: ${targetArch}` })
 
     // 查找编译器
-    const clangPath = findClangCompiler()
-    if (!clangPath) {
-      sendMessage({ type: 'error', text: '错误: 找不到 Clang 编译器\n请确保 compiler/llvm/bin 目录下有 clang（Windows 可为 clang.exe）' })
+    const zigPath = findZigCompiler()
+    if (!zigPath) {
+      sendMessage({ type: 'error', text: '错误: 找不到 Zig 编译器\n请确保 compiler/zig 目录下有 zig（Windows 可为 zig.exe）' })
       result.errorCount++
       return result
     }
-    sendMessage({ type: 'info', text: `编译器: ${clangPath}` })
-
-    const lldLinkPath = findToolNearClang(clangPath, 'lld-link')
-    if (!lldLinkPath) {
-      sendMessage({ type: 'error', text: '错误: 找不到 lld-link\n请确保 compiler/llvm/bin 目录下有 lld-link（Windows 可为 lld-link.exe）' })
-      result.errorCount++
-      return result
-    }
-
-    // 查找 MSVC SDK
-    const sdk = findMSVCSDK(arch)
-    if (!sdk) {
-      sendMessage({ type: 'error', text: '错误: 找不到 MSVC SDK\n请确保 compiler\\MSVCSDK 目录下有 MSVC 和 WindowsKits 文件' })
-      result.errorCount++
-      return result
-    }
+    sendMessage({ type: 'info', text: `编译器: ${zigPath}` })
 
     // 准备目录
     const tempDir = join(projectDir, 'temp')
-    const outputDir = join(projectDir, 'output')
+    const outputDir = join(projectDir, 'output', targetPlatform)
     mkdirSync(tempDir, { recursive: true })
     mkdirSync(outputDir, { recursive: true })
 
@@ -2645,11 +2631,12 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     sendMessage({ type: 'info', text: '正在生成C++代码...' })
     const additionalCFiles = generateMainC(project, tempDir, editorFiles, libsToLink, staticCmdDispatchLibs)
     const outputName = project.projectName
-    const outputExe = join(outputDir, outputName + '.exe')
+    const outputFileName = getBinaryFileName(outputName, project.outputType, targetPlatform)
+    const outputBinary = join(outputDir, outputFileName)
     const mainC = join(tempDir, 'main.cpp')
 
     const args: string[] = [
-      '-o', outputExe,
+      '-o', outputBinary,
       mainC,
       ...additionalCFiles,
     ]
@@ -2657,18 +2644,22 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     // 项目类型
     const isWindowsApp = project.outputType === 'WindowsApp'
     if (isWindowsApp) {
-      args.push('-Wl,/SUBSYSTEM:WINDOWS')
+      if (targetPlatform !== 'windows') {
+        sendMessage({ type: 'warning', text: `警告: 窗口程序当前仅支持 Windows 目标，已按 ${targetPlatform} 继续尝试编译` })
+      }
+      args.push('-mwindows')
       sendMessage({ type: 'info', text: '项目类型: Windows窗口程序' })
     } else if (project.outputType === 'DynamicLibrary') {
       args.push('-shared')
       sendMessage({ type: 'info', text: '项目类型: 动态链接库(DLL)' })
     } else {
-      args.push('-Wl,/SUBSYSTEM:CONSOLE')
       sendMessage({ type: 'info', text: '项目类型: 控制台程序' })
     }
 
-    // 链接 Windows API 库
-    args.push('-lkernel32', '-luser32', '-lgdi32', '-lmsvcrt', '-lucrt', '-lvcruntime')
+    // 平台系统库
+    if (targetPlatform === 'windows') {
+      args.push('-lkernel32', '-luser32', '-lgdi32')
+    }
 
     // ========== 支持库链接 ==========
     if (loadedLibs.length > 0) {
@@ -2676,13 +2667,13 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     }
 
     for (const lib of libsToLink) {
-      const staticLib = libraryManager.findStaticLib(lib.name, arch)
+      const staticLib = libraryManager.findStaticLib(lib.name, targetArch)
 
       // 窗口组件静态库需要额外链接的系统库
       const winUnitExtraDeps: Record<string, string[]> = {
         ycui: ['d2d1.lib', 'dwrite.lib'],
       }
-      const extraDeps = (staticLib && winUnitExtraDeps[lib.name]) ? winUnitExtraDeps[lib.name] : []
+      const extraDeps = (targetPlatform === 'windows' && staticLib && winUnitExtraDeps[lib.name]) ? winUnitExtraDeps[lib.name] : []
 
       if (staticLib) {
         args.push(staticLib, ...extraDeps)
@@ -2692,26 +2683,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       }
     }
 
-    // 目标架构
-    if (arch === 'x86') {
-      args.push('--target=i686-pc-windows-msvc')
-    } else {
-      args.push('--target=x86_64-pc-windows-msvc')
-    }
-
-    // 链接器
-    args.push(`-fuse-ld=${lldLinkPath}`)
-
-    // MSVC SDK 路径
-    args.push(
-      `-isystem`, sdk.msvcInclude,
-      `-isystem`, sdk.ucrtInclude,
-      `-isystem`, sdk.umInclude,
-      `-isystem`, sdk.sharedInclude,
-      `-Wl,/LIBPATH:${sdk.msvcLib}`,
-      `-Wl,/LIBPATH:${sdk.ucrtLib}`,
-      `-Wl,/LIBPATH:${sdk.umLib}`,
-    )
+    args.push('-target', targetTriple)
 
     // 源文件/执行字符集均使用 UTF-8，确保中文字符串字面量不被 MSVC 模式按 GBK 解析
     args.push('-finput-charset=utf-8', '-fexec-charset=utf-8')
@@ -2721,7 +2693,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       args.push('-g')
     } else {
       args.push('-O2', '-fno-ident', '-ffunction-sections', '-fdata-sections')
-      args.push('-Wl,/OPT:REF,/OPT:ICF')
+      args.push('-Wl,--gc-sections')
     }
 
     sendMessage({ type: 'info', text: '正在编译...' })
@@ -2729,10 +2701,11 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     const commandSourceLocations = collectCommandSourceLocationsByLibrary(project, editorFiles)
     const unresolvedCmdLibReported = new Set<string>()
 
-    // 调用 clang
+    // 调用 zig c++
     const compileSuccess = await new Promise<boolean>((resolve) => {
-      const clangDir = dirname(clangPath)
-      const proc = execFile(clangPath, args, { cwd: clangDir, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
+      const zigDir = dirname(zigPath)
+      const zigArgs = ['c++', ...args]
+      const proc = execFile(zigPath, zigArgs, { cwd: zigDir, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
         if (stderr) {
           const lines = stderr.split('\n').filter(l => l.trim())
           for (const line of lines) {
@@ -2779,29 +2752,19 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       })
     })
 
-    if (!compileSuccess || !existsSync(outputExe)) {
+    if (!compileSuccess || !existsSync(outputBinary)) {
       sendMessage({ type: 'error', text: '编译失败!' })
       result.errorCount++
       result.elapsedMs = Date.now() - startTime
       return result
     }
 
-    // strip（非调试模式）
-    if (!options.debug) {
-      const stripPath = findToolNearClang(clangPath, 'llvm-strip')
-      if (stripPath && existsSync(stripPath)) {
-        await new Promise<void>((resolve) => {
-          execFile(stripPath, ['--strip-all', outputExe], () => resolve())
-        })
-      }
-    }
-
     result.success = true
-    result.outputFile = outputExe
+    result.outputFile = outputBinary
     result.elapsedMs = Date.now() - startTime
 
     sendMessage({ type: 'success', text: `编译成功 (${result.elapsedMs} 毫秒)` })
-    sendMessage({ type: 'info', text: `输出文件: ${outputExe}` })
+    sendMessage({ type: 'info', text: `输出文件: ${outputBinary}` })
 
   } catch (e) {
     sendMessage({ type: 'error', text: `编译异常: ${e instanceof Error ? e.message : String(e)}` })

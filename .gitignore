@@ -6,7 +6,6 @@ dist/
 Thumbs.db
 .ycide-session.json
 第三方相关文件/
-compiler/
 .vs/
 *.vsidx
 *.tsbuildinfo

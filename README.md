@@ -7,7 +7,7 @@
 - **前端**：React 19 + TypeScript + Vite
 - **桌面框架**：Electron 34
 - **编辑器**：Monaco Editor（文本文件）+ 自研表格式代码编辑器（.eyc 源码）
-- **编译器**：内置 Clang + MSVC SDK
+- **编译器**：内置 Zig（Windows GNU 目标）
 - **构建工具**：electron-vite + electron-builder
 
 📋 [版本更新说明](版本更新说明.md)
