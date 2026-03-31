@@ -68,7 +68,8 @@
 
 .output-content {
   flex: 1;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   min-height: 0;
   padding: var(--spacing-sm) var(--spacing-md);
   font-family: var(--font-mono);
@@ -83,8 +84,8 @@
 
 .output-line {
   padding: 1px 0;
-  white-space: pre-wrap;
-  word-break: break-all;
+  white-space: pre;
+  word-break: normal;
 }
 .output-line.info {
   color: var(--info);

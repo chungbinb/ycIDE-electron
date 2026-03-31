@@ -91,6 +91,42 @@ const BUILTIN_TYPE_ITEMS: Array<{ name: string; englishName: string; description
   { name: '通用型', englishName: 'any', description: '可存放不同类型的数据，适用于需要接收多种类型值的场景。' },
 ]
 
+const BUILTIN_LITERAL_COMPLETION_ITEMS: CompletionItem[] = [
+  {
+    name: '真',
+    englishName: 'true',
+    description: '逻辑真常量',
+    returnType: '逻辑型',
+    category: '常量',
+    libraryName: '系统核心支持库',
+    isMember: false,
+    ownerTypeName: '',
+    params: [],
+  },
+  {
+    name: '假',
+    englishName: 'false',
+    description: '逻辑假常量',
+    returnType: '逻辑型',
+    category: '常量',
+    libraryName: '系统核心支持库',
+    isMember: false,
+    ownerTypeName: '',
+    params: [],
+  },
+  {
+    name: '空',
+    englishName: 'null',
+    description: '空常量',
+    returnType: '',
+    category: '常量',
+    libraryName: '系统核心支持库',
+    isMember: false,
+    ownerTypeName: '',
+    params: [],
+  },
+]
+
 const AC_PAGE_SIZE = 30
 
 function colorize(raw: string): Span[] {
@@ -275,6 +311,35 @@ function rebuildLineField(rawLine: string, fieldIdx: number, newValue: string, i
   return rawLine
 }
 
+function parseFlagFieldTokens(rawValue: string): string[] {
+  return (rawValue || '')
+    .split(/[,\s]+/)
+    .map(token => token.trim())
+    .filter(Boolean)
+}
+
+function rebuildLineFlagField(rawLine: string, fieldIdx: number, flag: string): string {
+  const line = rawLine.replace(/\r/g, '')
+  const stripped = line.replace(/^ +/, '')
+  const indent = line.length - stripped.length
+
+  for (const pf of DECL_PREFIXES) {
+    if (!stripped.startsWith(pf)) continue
+    const fieldsStr = stripped.slice(pf.length)
+    const fields = splitCSV(fieldsStr)
+    while (fields.length <= fieldIdx) fields.push('')
+    const tokens = parseFlagFieldTokens(fields[fieldIdx] || '')
+    const nextTokens = tokens.includes(flag)
+      ? tokens.filter(token => token !== flag)
+      : [...tokens, flag]
+    fields[fieldIdx] = nextTokens.join(' ')
+    while (fields.length > 0 && fields[fields.length - 1] === '') fields.pop()
+    return ' '.repeat(indent) + pf + fields.join(', ')
+  }
+
+  return rawLine
+}
+
 // ========== 组件 ==========
 
 export interface EycTableEditorHandle {
@@ -454,6 +519,55 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (undoStack.current.length > 200) undoStack.current.shift()
     redoStack.current = []
   }, [])
+
+  const applySingleLineUpdate = useCallback((lineIndex: number, updater: (rawLine: string) => string | null): boolean => {
+    const ls = currentText.split('\n')
+    if (lineIndex < 0 || lineIndex >= ls.length) return false
+    const nextLine = updater(ls[lineIndex])
+    if (nextLine == null || nextLine === ls[lineIndex]) return false
+    pushUndo(currentText)
+    ls[lineIndex] = nextLine
+    const nextText = ls.join('\n')
+    setCurrentText(nextText)
+    prevRef.current = nextText
+    onChange(nextText)
+    return true
+  }, [currentText, onChange, pushUndo])
+
+  const tryToggleTableBooleanCell = useCallback((tableType: string | undefined, lineIndex: number, cellIndex: number): boolean => {
+    return applySingleLineUpdate(lineIndex, (rawLine) => {
+      const parsed = parseLines(rawLine)[0]
+      if (!parsed) return null
+
+      if (parsed.type === 'dll' && cellIndex === 2) {
+        return rebuildLineField(rawLine, 4, (parsed.fields[4] || '').trim() === '公开' ? '' : '公开', false)
+      }
+      if (parsed.type === 'sub' && cellIndex === 2) {
+        return rebuildLineField(rawLine, 2, (parsed.fields[2] || '').trim() === '公开' ? '' : '公开', false)
+      }
+      if (parsed.type === 'localVar' && cellIndex === 2) {
+        return rebuildLineField(rawLine, 2, (parsed.fields[2] || '').trim() === '静态' ? '' : '静态', false)
+      }
+      if (parsed.type === 'globalVar' && cellIndex === 3) {
+        return rebuildLineField(rawLine, 2, (parsed.fields[2] || '').includes('公开') ? '' : '公开', false)
+      }
+      if (parsed.type === 'dataTypeMember' && cellIndex === 2) {
+        return rebuildLineField(rawLine, 2, (parsed.fields[2] || '').trim() === '传址' ? '' : '传址', false)
+      }
+      if (parsed.type === 'subParam') {
+        if (tableType === 'dll') {
+          if (cellIndex === 2) return rebuildLineFlagField(rawLine, 2, '传址')
+          if (cellIndex === 3) return rebuildLineFlagField(rawLine, 2, '数组')
+          return null
+        }
+        if (cellIndex === 2) return rebuildLineFlagField(rawLine, 2, '参考')
+        if (cellIndex === 3) return rebuildLineFlagField(rawLine, 2, '可空')
+        if (cellIndex === 4) return rebuildLineFlagField(rawLine, 2, '数组')
+      }
+
+      return null
+    })
+  }, [applySingleLineUpdate])
 
   // ===== 行选择：拖选逻辑 =====
   // 从行号到实际元素的映射（用于鼠标位置判定）
@@ -980,7 +1094,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     acPrefixRef.current = hashMode ? '#' : ''
 
     // 检查是否在"组件名."后面 → 显示成员命令
-    let sourceList: CompletionItem[] = [...userVarCompletionItemsRef.current, ...userSubCompletionItemsRef.current, ...dllCompletionItemsRef.current, ...allCommandsRef.current]
+    let sourceList: CompletionItem[] = [
+      ...BUILTIN_LITERAL_COMPLETION_ITEMS,
+      ...userVarCompletionItemsRef.current,
+      ...userSubCompletionItemsRef.current,
+      ...dllCompletionItemsRef.current,
+      ...allCommandsRef.current,
+    ]
     if (isClassNameCellEdit) {
       sourceList = [...classNameCompletionItemsRef.current]
     } else if (isTypeCellEdit) {
@@ -1556,6 +1676,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         ownerTypeName: '',
         params: [],
       })
+    }
+
+    for (const item of BUILTIN_LITERAL_COMPLETION_ITEMS) {
+      addConstant(
+        item.name,
+        '',
+        item.englishName,
+        item.description,
+        item.libraryName,
+        '常量',
+      )
     }
 
     for (const ln of parsed) {
@@ -3800,6 +3931,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           onClick={(e) => {
                             e.stopPropagation()
                             if (row.isHeader) return
+                            if (tryToggleTableBooleanCell(blk.tableType, row.lineIndex, ci)) return
                             if (isResourceTableDoc && blk.tableType === 'constant' && cell.fieldIdx === 1) return
                             handleTableCellHint(row.lineIndex, cell.fieldIdx ?? -1, cell.text)
                             startEditCell(row.lineIndex, ci, cell.text, cell.fieldIdx, cell.sliceField)

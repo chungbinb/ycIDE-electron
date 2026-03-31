@@ -14,6 +14,7 @@ export interface LibraryParam {
   optional: boolean
   isVariable: boolean
   isArray: boolean
+  repeatable?: boolean
 }
 
 export interface LibraryCommand {
@@ -612,7 +613,7 @@ const CORE_LOGIC_COMMANDS: LibraryCommand[] = [
     category: '逻辑比较',
     params: [
       { name: '逻辑值一', type: '逻辑型', description: '参与运算的逻辑值。', optional: false, isVariable: false, isArray: false },
-      { name: '逻辑值二', type: '逻辑型', description: '参与运算的逻辑值。', optional: false, isVariable: false, isArray: false },
+      { name: '逻辑值二', type: '逻辑型', description: '参与运算的逻辑值。', optional: false, isVariable: false, isArray: false, repeatable: true },
     ],
     isHidden: false,
     isMember: false,
@@ -631,7 +632,7 @@ const CORE_LOGIC_COMMANDS: LibraryCommand[] = [
     category: '逻辑比较',
     params: [
       { name: '逻辑值一', type: '逻辑型', description: '参与运算的逻辑值。', optional: false, isVariable: false, isArray: false },
-      { name: '逻辑值二', type: '逻辑型', description: '参与运算的逻辑值。', optional: false, isVariable: false, isArray: false },
+      { name: '逻辑值二', type: '逻辑型', description: '参与运算的逻辑值。', optional: false, isVariable: false, isArray: false, repeatable: true },
     ],
     isHidden: false,
     isMember: false,
@@ -670,7 +671,7 @@ const CORE_DEBUG_COMMANDS: LibraryCommand[] = [
     returnType: '',
     category: '程序调试',
     params: [
-      { name: '准备输出的调试文本信息', type: '通用型', description: '要输出的调试文本或值。', optional: false, isVariable: false, isArray: false },
+      { name: '准备输出的调试文本信息', type: '通用型', description: '要输出的调试文本或值。', optional: false, isVariable: false, isArray: false, repeatable: true },
     ],
     isHidden: false,
     isMember: false,
@@ -730,6 +731,445 @@ const CORE_DEBUG_COMMANDS: LibraryCommand[] = [
     libraryFileName: 'krnln',
     source: 'core',
     manifestPath: '',
+  },
+]
+
+const CORE_DISK_COMMANDS: LibraryCommand[] = [
+  {
+    name: '取磁盘总空间',
+    englishName: 'GetDiskTotalSpace',
+    description: '返回以 1024 字节为单位的指定磁盘全部空间；失败返回 -1。',
+    returnType: '整数型',
+    category: '磁盘操作',
+    params: [
+      { name: '磁盘驱动器字符', type: '文本型', description: '类似“A”“C”，只取首字符；省略时使用当前驱动器。', optional: true, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '取磁盘剩余空间',
+    englishName: 'GetDiskFreeSpace',
+    description: '返回以 1024 字节为单位的指定磁盘剩余空间；失败返回 -1。',
+    returnType: '整数型',
+    category: '磁盘操作',
+    params: [
+      { name: '磁盘驱动器字符', type: '文本型', description: '类似“A”“C”，只取首字符；省略时使用当前驱动器。', optional: true, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '取磁盘卷标',
+    englishName: 'GetDiskLabel',
+    description: '返回指定磁盘的卷标文本；失败返回空文本。',
+    returnType: '文本型',
+    category: '磁盘操作',
+    params: [
+      { name: '磁盘驱动器字符', type: '文本型', description: '类似“A”“C”，只取首字符；省略时使用当前驱动器。', optional: true, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '置磁盘卷标',
+    englishName: 'SetDiskLabel',
+    description: '设置指定磁盘的卷标文本。成功返回真，失败返回假。',
+    returnType: '逻辑型',
+    category: '磁盘操作',
+    params: [
+      { name: '磁盘驱动器字符', type: '文本型', description: '类似“A”“C”，只取首字符；省略时使用当前驱动器。', optional: true, isVariable: false, isArray: false },
+      { name: '欲置入的卷标文本', type: '文本型', description: '新的卷标文本。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '改变驱动器',
+    englishName: 'ChDrive',
+    description: '改变当前的缺省驱动器。成功返回真，失败返回假。',
+    returnType: '逻辑型',
+    category: '磁盘操作',
+    params: [
+      { name: '欲改变到的驱动器', type: '文本型', description: '类似“A”“C”，只取首字符。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '改变目录',
+    englishName: 'ChDir',
+    description: '改变当前目录。成功返回真，失败返回假。',
+    returnType: '逻辑型',
+    category: '磁盘操作',
+    params: [
+      { name: '欲改变到的目录', type: '文本型', description: '目标目录。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '取当前目录',
+    englishName: 'CurDir',
+    description: '返回当前目录；失败返回空文本。',
+    returnType: '文本型',
+    category: '磁盘操作',
+    params: [],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '创建目录',
+    englishName: 'MkDir',
+    description: '创建目录。成功返回真，失败返回假。',
+    returnType: '逻辑型',
+    category: '磁盘操作',
+    params: [
+      { name: '欲创建的目录名称', type: '文本型', description: '要创建的目录。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '删除目录',
+    englishName: 'RmDir',
+    description: '递归删除目录及其中的所有文件和子目录。成功返回真，失败返回假。',
+    returnType: '逻辑型',
+    category: '磁盘操作',
+    params: [
+      { name: '欲删除的目录名称', type: '文本型', description: '要删除的目录。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '复制文件',
+    englishName: 'FileCopy',
+    description: '复制文件。成功返回真，失败返回假。',
+    returnType: '逻辑型',
+    category: '磁盘操作',
+    params: [
+      { name: '被复制的文件名', type: '文本型', description: '源文件。', optional: false, isVariable: false, isArray: false },
+      { name: '复制到的文件名', type: '文本型', description: '目标文件。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '移动文件',
+    englishName: 'FileMove',
+    description: '移动文件。成功返回真，失败返回假。',
+    returnType: '逻辑型',
+    category: '磁盘操作',
+    params: [
+      { name: '被移动的文件', type: '文本型', description: '源文件。', optional: false, isVariable: false, isArray: false },
+      { name: '移动到的位置', type: '文本型', description: '目标位置。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '删除文件',
+    englishName: 'kill',
+    description: '删除文件。成功返回真，失败返回假。',
+    returnType: '逻辑型',
+    category: '磁盘操作',
+    params: [
+      { name: '欲删除的文件名', type: '文本型', description: '目标文件。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '文件更名',
+    englishName: 'name',
+    description: '重命名文件或目录。成功返回真，失败返回假。',
+    returnType: '逻辑型',
+    category: '磁盘操作',
+    params: [
+      { name: '欲更名的原文件或目录名', type: '文本型', description: '原路径。', optional: false, isVariable: false, isArray: false },
+      { name: '欲更改为的现文件或目录名', type: '文本型', description: '新路径。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '文件是否存在',
+    englishName: 'IsFileExist',
+    description: '判断指定文件是否存在。存在返回真，否则返回假。',
+    returnType: '逻辑型',
+    category: '磁盘操作',
+    params: [
+      { name: '欲测试的文件名称', type: '文本型', description: '目标文件。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '寻找文件',
+    englishName: 'dir',
+    description: '按通配符顺序枚举匹配的文件或目录名；第一次调用应提供匹配模式。',
+    returnType: '文本型',
+    category: '磁盘操作',
+    params: [
+      { name: '欲寻找的文件或目录名称', type: '文本型', description: '支持 * 和 ?；后续继续枚举时可省略。', optional: true, isVariable: false, isArray: false },
+      { name: '欲寻找文件的属性', type: '整数型', description: 'Windows 文件属性过滤。省略时默认匹配非目录项。', optional: true, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '取文件尺寸',
+    englishName: 'FileLen',
+    description: '返回文件长度，单位字节；文件不存在时返回 -1。',
+    returnType: '整数型',
+    category: '磁盘操作',
+    params: [
+      { name: '文件名', type: '文本型', description: '目标文件。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '取文件属性',
+    englishName: 'GetAttr',
+    description: '返回文件或目录属性；失败返回 -1。',
+    returnType: '整数型',
+    category: '磁盘操作',
+    params: [
+      { name: '文件名', type: '文本型', description: '目标文件或目录。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '置文件属性',
+    englishName: 'SetAttr',
+    description: '设置文件属性。成功返回真，失败返回假。',
+    returnType: '逻辑型',
+    category: '磁盘操作',
+    params: [
+      { name: '欲设置其属性的文件名称', type: '文本型', description: '目标文件或目录。', optional: false, isVariable: false, isArray: false },
+      { name: '欲设置为的属性值', type: '整数型', description: 'Windows 文件属性值。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '取临时文件名',
+    englishName: 'GetTempFileName',
+    description: '返回一个在目标目录中不存在的 .TMP 全路径文件名。',
+    returnType: '文本型',
+    category: '磁盘操作',
+    params: [
+      { name: '目录名', type: '文本型', description: '省略时使用系统临时目录。', optional: true, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+]
+
+const CORE_BIN_COMMANDS: LibraryCommand[] = [
+  {
+    name: '取字节集长度',
+    englishName: 'BinLen',
+    description: '取字节集型数据的长度。',
+    returnType: '整数型',
+    category: '字节集操作',
+    params: [{ name: '字节集数据', type: '字节集', description: '欲检查长度的字节集数据。', optional: false, isVariable: false, isArray: false }],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '到字节集',
+    englishName: 'ToBin',
+    description: '将指定数据转换为字节集后返回转换结果。',
+    returnType: '字节集',
+    category: '字节集操作',
+    params: [{ name: '欲转换为字节集的数据', type: '通用型', description: '只能为基本数据类型数据或数值型数组。当前版本优先支持基础标量与文本。', optional: false, isVariable: false, isArray: false }],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '取字节集左边',
+    englishName: 'BinLeft',
+    description: '返回字节集左边指定数量的字节。',
+    returnType: '字节集',
+    category: '字节集操作',
+    params: [
+      { name: '欲取其部分的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
+      { name: '欲取出字节的数目', type: '整数型', description: '要取出的字节数。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '取字节集右边',
+    englishName: 'BinRight',
+    description: '返回字节集右边指定数量的字节。',
+    returnType: '字节集',
+    category: '字节集操作',
+    params: [
+      { name: '欲取其部分的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
+      { name: '欲取出字节的数目', type: '整数型', description: '要取出的字节数。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '取字节集中间',
+    englishName: 'BinMid',
+    description: '返回字节集中从指定位置开始的指定数量字节。',
+    returnType: '字节集',
+    category: '字节集操作',
+    params: [
+      { name: '欲取其部分的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
+      { name: '起始取出位置', type: '整数型', description: '从 1 开始。', optional: false, isVariable: false, isArray: false },
+      { name: '欲取出字节的数目', type: '整数型', description: '要取出的字节数。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '寻找字节集',
+    englishName: 'InBin',
+    description: '返回一个字节集在另一字节集中最先出现的位置，位置值从 1 开始；未找到返回 -1。',
+    returnType: '整数型',
+    category: '字节集操作',
+    params: [
+      { name: '被搜寻的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
+      { name: '欲寻找的字节集', type: '字节集', description: '待查找的子字节集。', optional: false, isVariable: false, isArray: false },
+      { name: '起始搜寻位置', type: '整数型', description: '从 1 开始。', optional: true, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '倒找字节集',
+    englishName: 'InBinRev',
+    description: '返回一个字节集在另一字节集中最后出现的位置，位置值从 1 开始；未找到返回 -1。',
+    returnType: '整数型',
+    category: '字节集操作',
+    params: [
+      { name: '被搜寻的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
+      { name: '欲寻找的字节集', type: '字节集', description: '待查找的子字节集。', optional: false, isVariable: false, isArray: false },
+      { name: '起始搜寻位置', type: '整数型', description: '从 1 开始。', optional: true, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '字节集替换',
+    englishName: 'RpBin',
+    description: '将字节集指定位置和长度的部分替换为另一字节集，并返回替换后的结果。',
+    returnType: '字节集',
+    category: '字节集操作',
+    params: [
+      { name: '欲替换其部分的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
+      { name: '起始替换位置', type: '整数型', description: '从 1 开始。', optional: false, isVariable: false, isArray: false },
+      { name: '替换长度', type: '整数型', description: '欲替换的字节数。', optional: false, isVariable: false, isArray: false },
+      { name: '用作替换的字节集', type: '字节集', description: '省略时删除指定部分。', optional: true, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '子字节集替换',
+    englishName: 'RpSubBin',
+    description: '返回一个字节集，其中指定子字节集已被替换为另一子字节集。',
+    returnType: '字节集',
+    category: '字节集操作',
+    params: [
+      { name: '欲被替换的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
+      { name: '欲被替换的子字节集', type: '字节集', description: '待查找并替换的子字节集。', optional: false, isVariable: false, isArray: false },
+      { name: '用作替换的子字节集', type: '字节集', description: '省略时默认为空字节集。', optional: true, isVariable: false, isArray: false },
+      { name: '进行替换的起始位置', type: '整数型', description: '从 1 开始。', optional: true, isVariable: false, isArray: false },
+      { name: '替换进行的次数', type: '整数型', description: '省略时替换所有可能位置。', optional: true, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '取空白字节集',
+    englishName: 'SpaceBin',
+    description: '返回具有特定数目 0 字节的字节集。',
+    returnType: '字节集',
+    category: '字节集操作',
+    params: [{ name: '零字节数目', type: '整数型', description: '返回字节集的字节数。', optional: false, isVariable: false, isArray: false }],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '取重复字节集',
+    englishName: 'bin',
+    description: '返回包含指定次数字节集重复结果的字节集。',
+    returnType: '字节集',
+    category: '字节集操作',
+    params: [
+      { name: '重复次数', type: '整数型', description: '重复次数。', optional: false, isVariable: false, isArray: false },
+      { name: '待重复的字节集', type: '字节集', description: '待重复的字节集。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '指针到字节集',
+    englishName: 'pbin',
+    description: '返回指定内存指针地址处的一段数据。',
+    returnType: '字节集',
+    category: '字节集操作',
+    params: [
+      { name: '内存数据指针', type: '整数型', description: '指向内存地址的指针值。', optional: false, isVariable: false, isArray: false },
+      { name: '内存数据长度', type: '整数型', description: '要读取的字节数。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '指针到整数',
+    englishName: 'p2int',
+    description: '返回指定内存指针地址处的一个整数值。',
+    returnType: '整数型',
+    category: '字节集操作',
+    params: [{ name: '内存数据指针', type: '整数型', description: '指向内存地址的指针值。', optional: false, isVariable: false, isArray: false }],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '指针到小数',
+    englishName: 'p2float',
+    description: '返回指定内存指针地址处的一个小数值。',
+    returnType: '小数型',
+    category: '字节集操作',
+    params: [{ name: '内存数据指针', type: '整数型', description: '指向内存地址的指针值。', optional: false, isVariable: false, isArray: false }],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '指针到双精度小数',
+    englishName: 'p2double',
+    description: '返回指定内存指针地址处的一个双精度小数值。',
+    returnType: '双精度小数型',
+    category: '字节集操作',
+    params: [{ name: '内存数据指针', type: '整数型', description: '指向内存地址的指针值。', optional: false, isVariable: false, isArray: false }],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '取字节集内整数',
+    englishName: 'GetIntInsideBin',
+    description: '返回字节集中所指定偏移处的整数值。',
+    returnType: '整数型',
+    category: '字节集操作',
+    params: [
+      { name: '待处理的字节集', type: '字节集', description: '待处理的字节集。', optional: false, isVariable: false, isArray: false },
+      { name: '欲获取整数所处偏移', type: '整数型', description: '整数值在字节集中的偏移位置。', optional: false, isVariable: false, isArray: false },
+      { name: '是否反转字节序', type: '逻辑型', description: '省略时默认为假。', optional: true, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '置字节集内整数',
+    englishName: 'SetIntInsideBin',
+    description: '设置字节集中所指定偏移处的整数值。',
+    returnType: '',
+    category: '字节集操作',
+    params: [
+      { name: '待处理的字节集', type: '字节集', description: '待处理的字节集变量。', optional: false, isVariable: true, isArray: false },
+      { name: '欲设置整数所处偏移', type: '整数型', description: '整数值在字节集中的偏移位置。', optional: false, isVariable: false, isArray: false },
+      { name: '欲设置的整数值', type: '整数型', description: '要写入的整数值。', optional: false, isVariable: false, isArray: false },
+      { name: '是否反转字节序', type: '逻辑型', description: '省略时默认为假。', optional: true, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '读入文件',
+    englishName: 'ReadFile',
+    description: '返回一个字节集，其中包含指定文件的所有数据。',
+    returnType: '字节集',
+    category: '磁盘操作',
+    params: [
+      { name: '文件名', type: '文本型', description: '要读入的文件路径。', optional: false, isVariable: false, isArray: false },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
+  },
+  {
+    name: '写到文件',
+    englishName: 'WriteFile',
+    description: '将一个或数个字节集顺序写到指定文件中，文件原有内容被覆盖。成功返回真，失败返回假。',
+    returnType: '逻辑型',
+    category: '磁盘操作',
+    params: [
+      { name: '文件名', type: '文本型', description: '目标文件路径。', optional: false, isVariable: false, isArray: false },
+      { name: '欲写入文件的数据', type: '字节集', description: '要顺序写入的字节集数据。', optional: false, isVariable: false, isArray: false, repeatable: true },
+    ],
+    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
   },
 ]
 
@@ -1067,7 +1507,7 @@ class LibraryManager {
     if (this.libraries.length === 0) this.scan()
     const loadedSet = new Set(this.libraries.filter(l => l.loaded).map(l => l.name))
     const commands: LibraryCommand[] = [
-      ...(loadedSet.has(LibraryManager.CORE_LIBRARY_FILE_NAME) ? [...CORE_FLOW_COMMANDS, ...CORE_LOGIC_COMMANDS, ...CORE_DEBUG_COMMANDS] : []),
+      ...(loadedSet.has(LibraryManager.CORE_LIBRARY_FILE_NAME) ? [...CORE_FLOW_COMMANDS, ...CORE_LOGIC_COMMANDS, ...CORE_DEBUG_COMMANDS, ...CORE_DISK_COMMANDS, ...CORE_BIN_COMMANDS] : []),
       ...getYcmdCommands()
       .filter(cmd => loadedSet.has(cmd.libraryFileName))
       .map(cmd => this.mapYcmdCommand(cmd)),
@@ -1090,7 +1530,7 @@ class LibraryManager {
   getLibInfo(name: string): LibraryInfo | null {
     const isCoreLibrary = name === LibraryManager.CORE_LIBRARY_FILE_NAME || name === CORE_LIBRARY_NAME
     const commands = [
-      ...(isCoreLibrary ? [...CORE_FLOW_COMMANDS, ...CORE_LOGIC_COMMANDS, ...CORE_DEBUG_COMMANDS] : []),
+      ...(isCoreLibrary ? [...CORE_FLOW_COMMANDS, ...CORE_LOGIC_COMMANDS, ...CORE_DEBUG_COMMANDS, ...CORE_DISK_COMMANDS, ...CORE_BIN_COMMANDS] : []),
       ...getYcmdCommands()
       .map(cmd => this.mapYcmdCommand(cmd))
       .filter(cmd => cmd.libraryFileName === name || cmd.libraryName === name),
