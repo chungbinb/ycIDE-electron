@@ -2243,7 +2243,7 @@ function getProjectDllDefaultReturn(type: string): string {
 
 function generateProjectDataTypeStructCode(projectDataTypes: ProjectDataTypeDef[]): string {
   if (projectDataTypes.length === 0) return ''
-  let result = '/* 椤圭洰鑷畾涔夋暟鎹被鍨?*/\n'
+  let result = '/* 项目自定义数据类型 */\n'
   for (const dataType of projectDataTypes) {
     result += `struct ${dataType.name} {\n`
     if (dataType.fields.length === 0) {
