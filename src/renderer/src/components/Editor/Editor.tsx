@@ -4,6 +4,7 @@ import type { editor } from 'monaco-editor'
 import EycTableEditor, { type EycTableEditorHandle, type FileProblem } from './EycTableEditor'
 import VisualDesigner, { type DesignForm, type DesignControl, type SelectionTarget, type LibWindowUnit, type LibUnitEvent, type AlignAction } from './VisualDesigner'
 import { eycToInternalFormat, eycToYiFormat } from './eycFormat'
+import { parseLines } from './eycBlocks'
 import Icon from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './Editor.css'
@@ -281,7 +282,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const [projectGlobalVars, setProjectGlobalVars] = useState<Array<{ name: string; type: string }>>([])
   const [projectConstants, setProjectConstants] = useState<Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>>([])
   const [projectDllCommands, setProjectDllCommands] = useState<ProjectDllCommand[]>([])
-  const [projectDataTypes, setProjectDataTypes] = useState<Array<{ name: string }>>([])
+  const [projectDataTypes, setProjectDataTypes] = useState<Array<{ name: string; fields: Array<{ name: string; type: string }> }>>([])
   const [projectClassNames, setProjectClassNames] = useState<Array<{ name: string }>>([])
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const eycEditorRef = useRef<EycTableEditorHandle | null>(null)
@@ -1081,12 +1082,36 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   useEffect(() => {
     let cancelled = false
 
-    const parseDataTypes = (content: string, out: Set<string>) => {
-      const re = /^\s*\.数据类型\s+([^,\s]+)/gm
-      let m: RegExpExecArray | null
-      while ((m = re.exec(content)) !== null) {
-        const name = (m[1] || '').trim()
-        if (name) out.add(name)
+    const parseDataTypes = (
+      content: string,
+      out: Map<string, { name: string; fields: Array<{ name: string; type: string }> }>,
+    ) => {
+      const parsed = parseLines(content)
+      let currentTypeName = ''
+      for (const ln of parsed) {
+        if (ln.type === 'dataType') {
+          currentTypeName = (ln.fields[0] || '').trim()
+          if (!currentTypeName) continue
+          if (!out.has(currentTypeName)) {
+            out.set(currentTypeName, { name: currentTypeName, fields: [] })
+          }
+          continue
+        }
+        if (ln.type === 'dataTypeMember') {
+          if (!currentTypeName) continue
+          const fieldName = (ln.fields[0] || '').trim()
+          const fieldType = (ln.fields[1] || '').trim()
+          if (!fieldName) continue
+          const item = out.get(currentTypeName)
+          if (!item) continue
+          if (!item.fields.some(field => field.name === fieldName)) {
+            item.fields.push({ name: fieldName, type: fieldType })
+          }
+          continue
+        }
+        if (ln.type !== 'blank' && ln.type !== 'comment') {
+          currentTypeName = ''
+        }
       }
     }
 
@@ -1096,12 +1121,12 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         return
       }
 
-      const names = new Set<string>()
+      const dataTypeMap = new Map<string, { name: string; fields: Array<{ name: string; type: string }> }>()
 
       // 优先使用已打开标签页中的最新内容（含未保存修改）
       for (const t of tabs) {
         if ((t.language === 'edt' || t.language === 'eyc') && t.value) {
-          parseDataTypes(eycToYiFormat(t.value), names)
+          parseDataTypes(eycToYiFormat(t.value), dataTypeMap)
         }
       }
 
@@ -1114,12 +1139,12 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
           const fp = projectDir + '\\' + f
           if (openedPaths.has(fp)) continue
           const content = await window.api?.project?.readFile(fp)
-          if (content) parseDataTypes(content, names)
+          if (content) parseDataTypes(content, dataTypeMap)
         }
       }
 
       if (!cancelled) {
-        setProjectDataTypes([...names].map(name => ({ name })))
+        setProjectDataTypes([...dataTypeMap.values()])
       }
     })()
 

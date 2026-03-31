@@ -276,6 +276,13 @@ function isValidVariableLikeName(name: string): boolean {
   return /^[\u4e00-\u9fa5A-Za-z_]/.test(name.trim())
 }
 
+function normalizeMemberTypeName(s: string): string {
+  const t = (s || '').trim()
+  if (!t) return ''
+  const parts = t.split(/[.:]/).map(p => p.trim()).filter(Boolean)
+  return (parts.length > 0 ? parts[parts.length - 1] : t).toLowerCase()
+}
+
 // ========== 行重建 ==========
 
 const DECL_PREFIXES = [
@@ -362,7 +369,7 @@ interface EycTableEditorProps {
   windowUnits?: LibWindowUnit[]
   projectConstants?: Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>
   projectDllCommands?: Array<{ name: string; returnType: string; description: string; params: CompletionParam[] }>
-  projectDataTypes?: Array<{ name: string }>
+  projectDataTypes?: Array<{ name: string; fields: Array<{ name: string; type: string }> }>
   projectClassNames?: Array<{ name: string }>
   onClassNameRename?: (oldName: string, newName: string) => void
   onChange: (value: string) => void
@@ -926,6 +933,92 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return map
   }, [windowControlTypes])
 
+  const userVarTypeMap = useMemo(() => {
+    const parsed = parseLines(currentText)
+    const cursorLine = editCell?.lineIndex ?? -1
+    let subStart = -1
+    let subEnd = parsed.length
+
+    if (cursorLine >= 0 && cursorLine < parsed.length) {
+      for (let i = cursorLine; i >= 0; i--) {
+        const t = parsed[i].type
+        if (t === 'sub') { subStart = i; break }
+        if (t === 'assembly') break
+      }
+      if (subStart >= 0) {
+        for (let i = subStart + 1; i < parsed.length; i++) {
+          const t = parsed[i].type
+          if (t === 'sub' || t === 'assembly') { subEnd = i; break }
+        }
+      }
+    }
+
+    const map = new Map<string, string>()
+    const addVar = (name: string, varType: string): void => {
+      const nm = (name || '').trim()
+      const tp = (varType || '').trim()
+      if (!nm || !tp) return
+      map.set(nm, tp)
+    }
+
+    if (subStart >= 0) {
+      for (let i = subStart + 1; i < subEnd; i++) {
+        const ln = parsed[i]
+        if ((ln.type === 'subParam' || ln.type === 'localVar') && ln.fields[0]) {
+          addVar(ln.fields[0], ln.fields[1] || '')
+        }
+      }
+    }
+
+    for (const ln of parsed) {
+      if ((ln.type === 'assemblyVar' || ln.type === 'globalVar') && ln.fields[0]) {
+        addVar(ln.fields[0], ln.fields[1] || '')
+      }
+    }
+
+    for (const v of projectGlobalVars) addVar(v.name, v.type || '')
+    for (const item of windowControlTypes) addVar(item?.name || '', item?.type || '')
+    return map
+  }, [currentText, editCell?.lineIndex, projectGlobalVars, windowControlTypes])
+
+  const customDataTypeFieldMap = useMemo(() => {
+    const map = new Map<string, Array<{ name: string; type: string }>>()
+    const addField = (typeName: string, fieldName: string, fieldType: string): void => {
+      const tn = normalizeMemberTypeName(typeName)
+      const fn = (fieldName || '').trim()
+      if (!tn || !fn) return
+      if (!map.has(tn)) map.set(tn, [])
+      const fields = map.get(tn)!
+      if (!fields.some(field => field.name === fn)) {
+        fields.push({ name: fn, type: (fieldType || '').trim() })
+      }
+    }
+
+    for (const dt of projectDataTypes) {
+      for (const field of dt.fields || []) {
+        addField(dt.name, field.name, field.type)
+      }
+    }
+
+    const parsed = parseLines(currentText)
+    let currentTypeName = ''
+    for (const ln of parsed) {
+      if (ln.type === 'dataType') {
+        currentTypeName = (ln.fields[0] || '').trim()
+        continue
+      }
+      if (ln.type === 'dataTypeMember') {
+        addField(currentTypeName, ln.fields[0] || '', ln.fields[1] || '')
+        continue
+      }
+      if (ln.type !== 'blank' && ln.type !== 'comment') {
+        currentTypeName = ''
+      }
+    }
+
+    return map
+  }, [currentText, projectDataTypes])
+
   // 加载所有命令（用于补全），含流程关键字
   const reloadCommands = useCallback(() => {
     window.api.library.getAllCommands().then((cmds: CompletionItem[]) => {
@@ -1129,9 +1222,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           return base.replace(/(类型|类|组件|控件)$/u, '')
         }
 
-        const mappedType = windowControlTypeMap.get(objName)
-        const inferredType = objName.replace(/[0-9]+$/, '')
-        const typeName = normalizeTypeName(mappedType || inferredType || objName)
+        const completionVarType = userVarCompletionItemsRef.current.find(item => item.name === objName)?.returnType || ''
+        const mappedType = userVarTypeMap.get(objName) || completionVarType || windowControlTypeMap.get(objName)
+        const inferredType = mappedType ? '' : objName.replace(/[0-9]+$/, '')
+        const typeName = normalizeMemberTypeName(mappedType || inferredType || objName)
 
         const toMemberItem = (name: string, englishName: string, description: string, category: string, returnType: string, ownerTypeName: string, libraryName: string, params: CompletionParam[] = []): CompletionItem => ({
           name,
@@ -1148,8 +1242,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         // 1) 来自窗口组件定义的属性（最可靠，最相关）
         const unitMembers: CompletionItem[] = []
         for (const unit of windowUnits) {
-          const unitName = normalizeTypeName(unit.name)
-          const unitEn = normalizeTypeName(unit.englishName || '')
+          const unitName = normalizeMemberTypeName(unit.name)
+          const unitEn = normalizeMemberTypeName(unit.englishName || '')
           if (typeName && unitName !== typeName && unitEn !== typeName) continue
 
           for (const p of unit.properties || []) {
@@ -1168,8 +1262,20 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         }
 
         // 2) 来自成员命令的同类型方法/成员（排除事件）
+        const customMembers = (customDataTypeFieldMap.get(typeName) || []).map(field =>
+          toMemberItem(
+            field.name,
+            '',
+            field.type ? `成员（${field.type}）` : '成员',
+            '成员',
+            field.type || '',
+            mappedType || typeName,
+            '用户定义',
+          ),
+        )
+
         const commandMembers = memberCommandsRef.current.filter(c => {
-          const owner = normalizeTypeName(c.ownerTypeName)
+          const owner = normalizeMemberTypeName(c.ownerTypeName)
           if (!owner || !typeName) return false
           if (owner !== typeName) return false
           return !(c.category || '').includes('事件')
@@ -1180,7 +1286,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           .filter(c => WINDOW_METHOD_WHITELIST.has((c.name || '').trim()))
           .filter(c => !((c.category || '').includes('事件')))
 
-        const merged = [...unitMembers, ...commandMembers, ...windowMethods]
+        const merged = [...customMembers, ...unitMembers, ...commandMembers, ...windowMethods]
         const seen = new Set<string>()
         sourceList = merged.filter(item => {
           const key = `${item.category}:${item.name}`
@@ -3267,7 +3373,6 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     prevRef.current = nt
     onChange(nt)
     setSelectedLines(new Set())
-    setContextMenu(null)
     return true
   }, [currentText, onChange, pushUndo])
 

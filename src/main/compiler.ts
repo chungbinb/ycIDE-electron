@@ -806,6 +806,7 @@ function parseWindowFile(efwPath: string): WindowFileInfo {
 function mapTypeToCType(type: string): string {
   const trimmed = (type || '').trim()
   if (activeProjectCustomTypeNames.has(trimmed)) return `struct ${trimmed}`
+  if (trimmed.includes('指针') || trimmed.includes('ptr') || trimmed.includes('PTR')) return 'intptr_t'
   const map: Record<string, string> = {
     '整数型': 'int', '长整数型': 'long long', '小数型': 'float',
     '双精度小数型': 'double', '文本型': 'wchar_t*', '逻辑型': 'int', '字节集': 'YC_BIN',
@@ -2271,7 +2272,8 @@ function generateProjectDllWrapperCode(projectDllCommands: ProjectDllCommandDef[
     const wrapperParams = dllCmd.params.length > 0 ? dllCmd.params.map(getProjectDllWrapperParamDecl).join(', ') : 'void'
     const callArgs = dllCmd.params.map((param, idx) => getProjectDllCallArg(param, idx)).join(', ')
     const dllFileName = escapeCString(dllCmd.dllFileName || '')
-    const entryName = escapeCString(dllCmd.entryName || dllCmd.name)
+    const rawEntryName = dllCmd.entryName || dllCmd.name
+    const entryName = escapeCString(rawEntryName.startsWith('@') ? rawEntryName.slice(1) : rawEntryName)
     const defaultReturn = getProjectDllDefaultReturn(dllCmd.returnType)
 
     result += `typedef ${procReturnType} (WINAPI *YC_EXT_PFN_${symbolBase})(${procParams});\n`
@@ -4049,7 +4051,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
     // 准备目录
     const tempDir = join(projectDir, 'temp')
-    const outputDir = join(projectDir, 'output', targetPlatform)
+    const outputDir = join(projectDir, 'output', targetPlatform, targetArch)
     mkdirSync(tempDir, { recursive: true })
     mkdirSync(outputDir, { recursive: true })
 
