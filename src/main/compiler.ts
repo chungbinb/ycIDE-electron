@@ -1288,7 +1288,7 @@ function parseProjectDataTypes(content: string): ProjectDataTypeDef[] {
     const line = rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
     if (!line || line.startsWith("'")) continue
 
-    if (line.startsWith('.鏁版嵁绫诲瀷 ')) {
+    if (line.startsWith('.数据类型 ')) {
       const parts = splitDeclParts(line.substring(5))
       const name = (parts[0] || '').trim()
       if (!name) {
@@ -1300,15 +1300,15 @@ function parseProjectDataTypes(content: string): ProjectDataTypeDef[] {
       continue
     }
 
-    if (line.startsWith('.鎴愬憳 ') && current) {
+    if (line.startsWith('.成员 ') && current) {
       const parts = splitDeclParts(line.substring(3))
       const fieldName = (parts[0] || '').trim()
-      const fieldType = (parts[1] || '鏁存暟鍨?').trim()
+      const fieldType = (parts[1] || '整数型').trim()
       if (fieldName) current.fields.push({ name: fieldName, type: fieldType })
       continue
     }
 
-    if (line.startsWith('.瀛愮▼搴?') || line.startsWith('.绋嬪簭闆?') || line.startsWith('.DLL鍛戒护 ')) {
+    if (line.startsWith('.子程序 ') || line.startsWith('.程序集 ') || line.startsWith('.DLL命令 ')) {
       current = null
     }
   }
