@@ -2237,7 +2237,7 @@ function getProjectDllCallArg(param: ProjectDllParamDef, index: number): string 
 function getProjectDllDefaultReturn(type: string): string {
   const cType = mapProjectDllTypeToCType(type)
   if (cType === 'void') return ''
-  if (cType === 'wchar_t*') return 'NULL'
+  if (cType === 'wchar_t*') return 'yc_empty_text()'
   return '0'
 }
 
@@ -2278,9 +2278,23 @@ function generateProjectDllWrapperCode(projectDllCommands: ProjectDllCommandDef[
     result += `static HMODULE g_ext_dll_mod_${symbolBase} = NULL;\n`
     result += `static YC_EXT_PFN_${symbolBase} g_ext_dll_fn_${symbolBase} = NULL;\n`
     result += `static YC_EXT_PFN_${symbolBase} yc_resolve_ext_dll_${symbolBase}(void) {\n`
-    result += `    if (!g_ext_dll_mod_${symbolBase}) g_ext_dll_mod_${symbolBase} = LoadLibraryW(L"${dllFileName}");\n`
-    result += `    if (!g_ext_dll_mod_${symbolBase}) return NULL;\n`
-    result += `    if (!g_ext_dll_fn_${symbolBase}) g_ext_dll_fn_${symbolBase} = (YC_EXT_PFN_${symbolBase})GetProcAddress(g_ext_dll_mod_${symbolBase}, "${entryName}");\n`
+    result += `    if (!g_ext_dll_mod_${symbolBase}) {\n`
+    result += `        SetLastError(0);\n`
+    result += `        g_ext_dll_mod_${symbolBase} = LoadLibraryW(L"${dllFileName}");\n`
+    result += `        if (!g_ext_dll_mod_${symbolBase}) {\n`
+    result += `            yc_runtime_report_dll_error(L"加载DLL", L"${dllFileName}", "${entryName}", GetLastError());\n`
+    result += '            return NULL;\n'
+    result += '        }\n'
+    result += '    }\n'
+    result += `    if (!g_ext_dll_fn_${symbolBase}) {\n`
+    result += '        SetLastError(0);\n'
+    result += `        FARPROC __yc_proc = GetProcAddress(g_ext_dll_mod_${symbolBase}, "${entryName}");\n`
+    result += '        if (!__yc_proc) {\n'
+    result += `            yc_runtime_report_dll_error(L"查找导出", L"${dllFileName}", "${entryName}", GetLastError());\n`
+    result += '            return NULL;\n'
+    result += '        }\n'
+    result += `        g_ext_dll_fn_${symbolBase} = (YC_EXT_PFN_${symbolBase})__yc_proc;\n`
+    result += '    }\n'
     result += `    return g_ext_dll_fn_${symbolBase};\n`
     result += '}\n'
     result += `static ${wrapperReturnType} ${dllCmd.name}(${wrapperParams}) {\n`
@@ -2292,6 +2306,10 @@ function generateProjectDllWrapperCode(projectDllCommands: ProjectDllCommandDef[
       result += `    if (!__yc_fn) return ${defaultReturn};\n`
       if (wrapperReturnType === 'wchar_t*' && procReturnType === 'const char*') {
         result += `    const char* __yc_ret = __yc_fn(${callArgs});\n`
+        result += `    if (!__yc_ret) {\n`
+        result += `        yc_runtime_report_dll_text_result(L"${dllFileName}", "${entryName}");\n`
+        result += '        return yc_empty_text();\n'
+        result += '    }\n'
         result += '    return yc_utf8_to_wide(__yc_ret);\n'
       } else {
         result += `    return __yc_fn(${callArgs});\n`
@@ -2346,7 +2364,18 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'extern const wchar_t* yc_get_control_text(const wchar_t* ctrlName);\n'
   result += 'extern int yc_text_compare(const wchar_t* left, const wchar_t* right);\n'
   result += 'extern int yc_text_starts_with(const wchar_t* text, const wchar_t* prefix);\n\n'
-  result += 'static wchar_t* yc_utf8_to_wide(const char* s);\n\n'
+  result += 'static wchar_t* yc_wcsdup_text(const wchar_t* s);\n'
+  result += 'static wchar_t* yc_empty_text(void);\n'
+  result += 'static wchar_t* yc_utf8_to_wide(const char* s);\n'
+  result += 'static wchar_t* yc_format_win32_error(DWORD errorCode);\n'
+  result += 'static void yc_runtime_note_begin(void);\n'
+  result += 'static void yc_runtime_note_part(const wchar_t* s);\n'
+  result += 'static void yc_runtime_note_part(const char* s);\n'
+  result += 'static void yc_runtime_note_part(float v);\n'
+  result += 'static void yc_runtime_note_part(double v);\n'
+  result += 'static void yc_runtime_note_end(void);\n'
+  result += 'static void yc_runtime_report_dll_error(const wchar_t* stage, const wchar_t* dllName, const char* entryName, DWORD errorCode);\n'
+  result += 'static void yc_runtime_report_dll_text_result(const wchar_t* dllName, const char* entryName);\n\n'
   result += 'static void yc_write_utf8_wide(const wchar_t* s) {\n'
   result += '    if (!s) return;\n'
   result += '    int n = WideCharToMultiByte(CP_UTF8, 0, s, -1, NULL, 0, NULL, NULL);\n'
@@ -2454,19 +2483,39 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    fflush(stdout);\n'
   result += '#endif\n'
   result += '}\n\n'
+  result += 'static void yc_runtime_note_begin(void) {\n'
+  result += '    printf("! ");\n'
+  result += '}\n'
+  result += 'static void yc_runtime_note_part(const wchar_t* s) {\n'
+  result += '    yc_write_utf8_wide_single_line(s ? s : L"");\n'
+  result += '}\n'
+  result += 'static void yc_runtime_note_part(const char* s) {\n'
+  result += '    yc_write_utf8_single_line(s ? s : "");\n'
+  result += '}\n'
+  result += 'static void yc_runtime_note_part(float v) {\n'
+  result += '    printf("%.6g", v);\n'
+  result += '}\n'
+  result += 'static void yc_runtime_note_part(double v) {\n'
+  result += '    printf("%.12g", v);\n'
+  result += '}\n'
+  result += 'template <typename T> static void yc_runtime_note_part(T v) {\n'
+  result += '    printf("%lld", (long long)(v));\n'
+  result += '}\n'
+  result += 'static void yc_runtime_note_end(void) {\n'
+  result += '    printf("\\n");\n'
+  result += '    fflush(stdout);\n'
+  result += '}\n\n'
   result += 'static wchar_t* yc_utf8_to_wide(const char* s) {\n'
   result += '    if (!s) {\n'
-  result += '        wchar_t* emptyText = (wchar_t*)malloc(sizeof(wchar_t));\n'
-  result += '        if (emptyText) emptyText[0] = L\'\\0\';\n'
-  result += '        return emptyText;\n'
+  result += '        return yc_empty_text();\n'
   result += '    }\n'
   result += '    int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);\n'
-  result += '    if (n <= 0) return NULL;\n'
+  result += '    if (n <= 0) return yc_empty_text();\n'
   result += '    wchar_t* out = (wchar_t*)malloc(sizeof(wchar_t) * (size_t)n);\n'
-  result += '    if (!out) return NULL;\n'
+  result += '    if (!out) return yc_empty_text();\n'
   result += '    if (MultiByteToWideChar(CP_UTF8, 0, s, -1, out, n) <= 0) {\n'
   result += '        free(out);\n'
-  result += '        return NULL;\n'
+  result += '        return yc_empty_text();\n'
   result += '    }\n'
   result += '    return out;\n'
   result += '}\n\n'
@@ -2485,6 +2534,41 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    if (!out) return NULL;\n'
   result += '    memcpy(out, src, sizeof(wchar_t) * (len + 1));\n'
   result += '    return out;\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_empty_text(void) {\n'
+  result += '    return yc_wcsdup_text(L"");\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_format_win32_error(DWORD errorCode) {\n'
+  result += '    if (errorCode == 0) return yc_empty_text();\n'
+  result += '    LPWSTR sysMsg = NULL;\n'
+  result += '    DWORD len = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,\n'
+  result += '        NULL, errorCode, 0, (LPWSTR)&sysMsg, 0, NULL);\n'
+  result += '    if (!len || !sysMsg) return yc_empty_text();\n'
+  result += '    while (len > 0 && (sysMsg[len - 1] == L\'\\r\' || sysMsg[len - 1] == L\'\\n\' || sysMsg[len - 1] == L\' \' || sysMsg[len - 1] == L\'\\t\')) {\n'
+  result += '        sysMsg[--len] = 0;\n'
+  result += '    }\n'
+  result += '    wchar_t* out = yc_wcsdup_text(sysMsg);\n'
+  result += '    LocalFree(sysMsg);\n'
+  result += '    return out ? out : yc_empty_text();\n'
+  result += '}\n\n'
+  result += 'static void yc_runtime_report_dll_error(const wchar_t* stage, const wchar_t* dllName, const char* entryName, DWORD errorCode) {\n'
+  result += '    wchar_t* winMsg = yc_format_win32_error(errorCode);\n'
+  result += '    yc_runtime_note_begin();\n'
+  result += '    yc_runtime_note_part(L"DLL调用失败");\n'
+  result += '    if (stage && *stage) { yc_runtime_note_part(L"|"); yc_runtime_note_part(stage); }\n'
+  result += '    if (dllName && *dllName) { yc_runtime_note_part(L"|"); yc_runtime_note_part(dllName); }\n'
+  result += '    if (entryName && *entryName) { yc_runtime_note_part(L"|"); yc_runtime_note_part(entryName); }\n'
+  result += '    if (errorCode != 0) { yc_runtime_note_part(L"|"); yc_runtime_note_part((long long)errorCode); }\n'
+  result += '    if (winMsg && *winMsg) { yc_runtime_note_part(L"|"); yc_runtime_note_part(winMsg); }\n'
+  result += '    yc_runtime_note_end();\n'
+  result += '    if (winMsg) free(winMsg);\n'
+  result += '}\n\n'
+  result += 'static void yc_runtime_report_dll_text_result(const wchar_t* dllName, const char* entryName) {\n'
+  result += '    yc_runtime_note_begin();\n'
+  result += '    yc_runtime_note_part(L"DLL返回空文本");\n'
+  result += '    if (dllName && *dllName) { yc_runtime_note_part(L"|"); yc_runtime_note_part(dllName); }\n'
+  result += '    if (entryName && *entryName) { yc_runtime_note_part(L"|"); yc_runtime_note_part(entryName); }\n'
+  result += '    yc_runtime_note_end();\n'
   result += '}\n\n'
   result += 'static wchar_t* yc_text_concat(const wchar_t* left, const wchar_t* right) {\n'
   result += '    const wchar_t* lhs = left ? left : L"";\n'
