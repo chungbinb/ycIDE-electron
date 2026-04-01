@@ -282,3 +282,90 @@
   border-bottom: 1px solid var(--border-color);
   margin-bottom: 4px;
 }
+
+.output-debug-table-wrap {
+  margin-top: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: auto;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.output-debug-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.output-debug-filter {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  color: var(--text-primary);
+  background: var(--bg-input, #3c3c3c);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  outline: none;
+}
+
+.output-debug-filter:focus {
+  border-color: var(--accent, #007acc);
+}
+
+.output-debug-count {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.output-debug-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.output-debug-table th,
+.output-debug-table td {
+  border-bottom: 1px solid var(--border-color);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.output-debug-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.output-debug-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.output-debug-name {
+  width: 26%;
+  color: #7cc6ff;
+  word-break: break-word;
+}
+
+.output-debug-type {
+  width: 16%;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.output-debug-value {
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

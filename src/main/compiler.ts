@@ -5,6 +5,7 @@ import { app, BrowserWindow } from 'electron'
 import { libraryManager } from './libraryManager'
 import type { LibraryCommand as LibCommand, LibraryConstant as LibConstant, LibraryWindowUnit as LibWindowUnit } from './libraryManager'
 import { getYcmdCommands } from './ycmd-registry'
+import { generateDebugRuntimeCode } from './debug-runtime'
 
 // 编译消息类型
 export interface CompileMessage {
@@ -18,6 +19,7 @@ export interface CompileOptions {
   debug?: boolean
   arch?: string                    // 目标架构（优先于 .epp 中的 platform）
   mode?: 'compile' | 'run'         // compile: 按 .epp 目标平台；run: 按宿主平台
+  breakpoints?: Record<string, number[]>
 }
 
 // 编译结果
@@ -190,12 +192,32 @@ let activeProjectCustomTypeNames: Set<string> = new Set()
 
 // 正在运行的进程
 let runningProcess: ChildProcess | null = null
+let runningDebugCmdFile: string | null = null
+let runningDebugResumeToken = 0
 
 // 发送编译消息到渲染进程
 function sendMessage(msg: CompileMessage): void {
   BrowserWindow.getAllWindows().forEach(w => {
     w.webContents.send('compiler:output', msg)
   })
+}
+
+function focusIdeWindow(): void {
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+  if (!win || win.isDestroyed()) return
+  if (win.isMinimized()) win.restore()
+  if (!win.isVisible()) win.show()
+  win.focus()
+  if (process.platform === 'win32') {
+    try {
+      win.moveTop()
+      win.setAlwaysOnTop(true)
+      win.setAlwaysOnTop(false)
+      win.focus()
+    } catch {
+      // ignore focus promotion failures
+    }
+  }
 }
 
 function emitBufferedOutputChunk(
@@ -207,6 +229,9 @@ function emitBufferedOutputChunk(
   const parts = merged.split('\n')
   const remainder = parts.pop() ?? ''
   for (const part of parts) {
+    if (part === '__YCDBG_BREAK_END__') {
+      focusIdeWindow()
+    }
     sendMessage({ type, text: part })
   }
   return remainder
@@ -813,6 +838,17 @@ function mapTypeToCType(type: string): string {
     '字节型': 'unsigned char', '短整数型': 'short',
   }
   return map[trimmed] || 'int'
+}
+
+function getTypeDefaultInitializer(type: string): string {
+  const trimmed = (type || '').trim()
+  if (activeProjectCustomTypeNames.has(trimmed)) return '{}'
+  const cType = mapTypeToCType(trimmed)
+  if (cType === 'wchar_t*') return 'NULL'
+  if (cType === 'YC_BIN') return 'YC_BIN()'
+  if (cType === 'float') return '0.0f'
+  if (cType === 'double') return '0.0'
+  return '0'
 }
 
 function splitDeclParts(text: string): string[] {
@@ -2326,7 +2362,7 @@ function generateProjectDllWrapperCode(projectDllCommands: ProjectDllCommandDef[
 // .eyc 转 C 代码转译器
 // 将易语言源代码中的子程序转译成 C 函数
 // 命令识别基于已加载的支持库，支持第三方支持库扩展
-function transpileEycContent(eycContent: string, fileName: string, projectGlobals: GlobalVarDef[] = [], projectConstants: ConstantDef[] = [], libraryConstants: LibraryConstantDef[] = [], projectSubprograms: SubprogramDef[] = [], projectDataTypes: ProjectDataTypeDef[] = [], projectDllCommands: ProjectDllCommandDef[] = [], debugBuild = false): string {
+function transpileEycContent(eycContent: string, fileName: string, projectGlobals: GlobalVarDef[] = [], projectConstants: ConstantDef[] = [], libraryConstants: LibraryConstantDef[] = [], projectSubprograms: SubprogramDef[] = [], projectDataTypes: ProjectDataTypeDef[] = [], projectDllCommands: ProjectDllCommandDef[] = [], debugBuild = false, breakpoints: Record<string, number[]> = {}, targetPlatform: TargetPlatform = 'windows'): string {
   // 从已加载的支持库构建命令查找表
   const commandMap = buildCommandMap()
   const isClassModuleSource = /\.ecc$/i.test(fileName)
@@ -2572,6 +2608,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    if (entryName && *entryName) { yc_runtime_note_part(L"|"); yc_runtime_note_part(entryName); }\n'
   result += '    yc_runtime_note_end();\n'
   result += '}\n\n'
+  result += generateDebugRuntimeCode(targetPlatform)
   result += 'static wchar_t* yc_text_concat(const wchar_t* left, const wchar_t* right) {\n'
   result += '    const wchar_t* lhs = left ? left : L"";\n'
   result += '    const wchar_t* rhs = right ? right : L"";\n'
@@ -3009,23 +3046,66 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     }
   }
 
+  const breakpointLines = new Set<number>(breakpoints[fileName] || [])
+  const projectDataTypeMap = new Map(projectDataTypes.map(dt => [dt.name, dt.fields]))
+  const assemblyVars: Array<{ name: string; type: string }> = []
   let inSub = false
   let subName = ''
   let subParams: Array<{ name: string; type: string }> = []
   let subBody = ''
   let blockIndent = 1
   let loopTempIndex = 0
+  let pendingBreakpointLine: number | null = null
+  let visibleDebugVars: Array<{ name: string; type: string }> = []
 
   const buildSubSignature = (_name: string, params: Array<{ name: string; type: string }>): string => {
     if (params.length === 0) return 'void'
     return params.map(p => `${mapTypeToCType(p.type)} ${p.name}`).join(', ')
   }
 
-  const emitSubLine = (code: string) => {
+  const appendSubLine = (code: string) => {
     subBody += `${'    '.repeat(Math.max(1, blockIndent))}${code}\n`
   }
 
-  for (const rawLine of lines) {
+  const pushVisibleDebugVar = (name: string, type: string) => {
+    if (!name) return
+    if (visibleDebugVars.some(v => v.name === name)) return
+    visibleDebugVars.push({ name, type })
+  }
+
+  const emitDebugVarSnapshot = (displayName: string, typeName: string, expr: string, depth = 0) => {
+    const trimmedType = (typeName || '').trim()
+    if (depth < 1) {
+      const fields = projectDataTypeMap.get(trimmedType)
+      if (fields && fields.length > 0) {
+        for (const field of fields) {
+          emitDebugVarSnapshot(`${displayName}.${field.name}`, field.type, `${expr}.${field.name}`, depth + 1)
+        }
+        return
+      }
+    }
+    appendSubLine(`yc_dbg_emit_var("${escapeCString(displayName)}", "${escapeCString(trimmedType || 'unknown')}", ${expr});`)
+  }
+
+  const emitBreakpointProbe = (lineNo: number) => {
+    appendSubLine(`yc_dbg_break_begin("${escapeCString(fileName)}", ${lineNo});`)
+    for (const visibleVar of visibleDebugVars) {
+      emitDebugVarSnapshot(visibleVar.name, visibleVar.type, visibleVar.name)
+    }
+    appendSubLine('yc_dbg_wait_for_resume();')
+  }
+
+  const emitSubLine = (code: string) => {
+    if (pendingBreakpointLine !== null) {
+      emitBreakpointProbe(pendingBreakpointLine)
+      pendingBreakpointLine = null
+    }
+    appendSubLine(code)
+  }
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const rawLine = lines[lineIndex]
+    pendingBreakpointLine = inSub && breakpointLines.has(lineIndex + 1) ? (lineIndex + 1) : null
     // 剥离流程标记零宽字符（\u200C/\u200D/\u2060/\u200B）
     const line = rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
     if (line === '') continue
@@ -3033,6 +3113,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     if (!inSub && line.startsWith('.程序集变量 ')) {
       const parts = splitDeclParts(line.substring(6))
       const varName = parts[0] || 'assemblyVar'
+      assemblyVars.push({ name: varName, type: parts[1] || '整数型' })
       const varType = parts[1] || '整数型'
       result += `static ${mapTypeToCType(varType)} ${varName};\n`
       continue
@@ -3052,6 +3133,10 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       subBody = ''
       blockIndent = 1
       inSub = true
+      visibleDebugVars = [
+        ...projectGlobals.map(gv => ({ name: gv.name, type: gv.type })),
+        ...assemblyVars.map(av => ({ name: av.name, type: av.type })),
+      ]
       continue
     }
 
@@ -3059,7 +3144,10 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       const parts = splitDeclParts(line.substring(3))
       const paramName = (parts[0] || '').trim()
       const paramType = (parts[1] || '整数型').trim()
-      if (paramName) subParams.push({ name: paramName, type: paramType })
+      if (paramName) {
+        subParams.push({ name: paramName, type: paramType })
+        pushVisibleDebugVar(paramName, paramType)
+      }
       continue
     }
 
@@ -3067,7 +3155,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       const parts = splitDeclParts(line.substring(5))
       const varName = parts[0] || 'v'
       const varType = parts[1] || '整数型'
-      emitSubLine(`${mapTypeToCType(varType)} ${varName};`)
+      emitSubLine(`${mapTypeToCType(varType)} ${varName} = ${getTypeDefaultInitializer(varType)};`)
+      pushVisibleDebugVar(varName, varType)
       continue
     }
 
@@ -3282,6 +3371,8 @@ function generateMainC(
   linkedLibraries?: Array<{ name: string; libraryPath: string; libName: string }>,
   commandDispatchLibs?: string[],
   debugBuild = false,
+  breakpoints: Record<string, number[]> = {},
+  targetPlatform: TargetPlatform = 'windows',
 ): string[] {
   const mainCPath = join(tempDir, 'main.cpp')
   const additionalCFiles: string[] = []
@@ -3494,7 +3585,7 @@ function generateMainC(
       if (!content) continue
 
       sendMessage({ type: 'info', text: `正在转换源文件: ${f.fileName}` })
-      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, libraryConstants, projectSubprograms, projectDataTypes, projectDllCommands, debugBuild)
+      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, libraryConstants, projectSubprograms, projectDataTypes, projectDllCommands, debugBuild, breakpoints, targetPlatform)
       const cFileName = f.fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
       const cFilePath = join(tempDir, cFileName)
       writeFileSync(cFilePath, cCode, 'utf-8')
@@ -3933,7 +4024,7 @@ function generateMainC(
       if (!content) continue
 
       sendMessage({ type: 'info', text: `正在转换源文件: ${f.fileName}` })
-      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, [], projectSubprograms, projectDataTypes, projectDllCommands, debugBuild)
+      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, [], projectSubprograms, projectDataTypes, projectDllCommands, debugBuild, breakpoints, targetPlatform)
       const cFileName = f.fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
       const cFilePath = join(tempDir, cFileName)
       writeFileSync(cFilePath, cCode, 'utf-8')
@@ -4071,7 +4162,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
     // 生成C++代码
     sendMessage({ type: 'info', text: '正在生成C++代码...' })
-    const additionalCFiles = generateMainC(project, tempDir, editorFiles, libsToLink, staticCmdDispatchLibs, !!options.debug)
+    const additionalCFiles = generateMainC(project, tempDir, editorFiles, libsToLink, staticCmdDispatchLibs, !!options.debug, options.breakpoints || {}, targetPlatform)
     const outputName = project.projectName
     const outputFileName = getBinaryFileName(outputName, project.outputType, targetPlatform)
     const outputBinary = join(outputDir, outputFileName)
@@ -4233,8 +4324,12 @@ export function runExecutable(exePath: string): boolean {
   sendMessage({ type: 'info', text: '==========================================' })
 
   const workDir = dirname(exePath)
+  const debugCmdFile = join(workDir, '.ycdbg_cmd')
 
   try {
+    writeFileSync(debugCmdFile, '0', 'utf-8')
+    runningDebugCmdFile = debugCmdFile
+    runningDebugResumeToken = 0
     const proc = execFile(exePath, [], {
       cwd: workDir,
       maxBuffer: 10 * 1024 * 1024,
@@ -4255,6 +4350,8 @@ export function runExecutable(exePath: string): boolean {
 
     proc.on('exit', (code) => {
       runningProcess = null
+      runningDebugCmdFile = null
+      runningDebugResumeToken = 0
       flushBufferedOutputRemainder(stdoutBuffer, 'info')
       flushBufferedOutputRemainder(stderrBuffer, 'warning')
       sendMessage({ type: 'info', text: '' })
@@ -4270,6 +4367,8 @@ export function runExecutable(exePath: string): boolean {
 
     proc.on('error', (err) => {
       runningProcess = null
+      runningDebugCmdFile = null
+      runningDebugResumeToken = 0
       sendMessage({ type: 'error', text: `启动程序失败: ${err.message}` })
     })
 
@@ -4291,10 +4390,23 @@ export function stopExecutable(): boolean {
   } catch { /* ignore */ }
 
   runningProcess = null
+  runningDebugCmdFile = null
+  runningDebugResumeToken = 0
   return true
 }
 
 // 检查是否有程序在运行
 export function isRunning(): boolean {
   return runningProcess !== null
+}
+
+export function continueDebugExecutable(): boolean {
+  if (!runningProcess || !runningDebugCmdFile) return false
+  try {
+    runningDebugResumeToken += 1
+    writeFileSync(runningDebugCmdFile, String(runningDebugResumeToken), 'utf-8')
+    return true
+  } catch {
+    return false
+  }
 }

@@ -10,9 +10,14 @@ interface ToolbarProps {
   onAlign?: (action: AlignAction) => void
   onCompileRun?: () => void
   onStop?: () => void
+  onDebugStepOver?: () => void
+  onDebugStepInto?: () => void
+  onDebugStepOut?: () => void
+  onDebugRunToCursor?: () => void
   hasProject?: boolean
   isCompiling?: boolean
   isRunning?: boolean
+  isDebugPaused?: boolean
   platform?: string
   arch?: string
   onPlatformChange?: (platform: string) => void
@@ -24,10 +29,37 @@ interface ToolbarProps {
   onRedo?: () => void
 }
 
-function Toolbar({ runtimePlatform = 'windows', hasControlSelected = false, onAlign, onCompileRun, onStop, hasProject = false, isCompiling = false, isRunning = false, platform = 'windows', arch = 'x64', onPlatformChange, onArchChange, onNew, onOpen, onSave, onUndo, onRedo }: ToolbarProps): React.JSX.Element {
+function Toolbar({
+  runtimePlatform = 'windows',
+  hasControlSelected = false,
+  onAlign,
+  onCompileRun,
+  onStop,
+  onDebugStepOver,
+  onDebugStepInto,
+  onDebugStepOut,
+  onDebugRunToCursor,
+  hasProject = false,
+  isCompiling = false,
+  isRunning = false,
+  isDebugPaused = false,
+  platform = 'windows',
+  arch = 'x64',
+  onPlatformChange,
+  onArchChange,
+  onNew,
+  onOpen,
+  onSave,
+  onUndo,
+  onRedo,
+}: ToolbarProps): React.JSX.Element {
   const mod = getPrimaryModifierLabel(runtimePlatform)
   const redoShortcut = getRedoShortcutLabel(runtimePlatform)
   const runToCursorShortcut = `${mod}+F10`
+  const canStartOrContinue = !!hasProject && !isCompiling && (!isRunning || isDebugPaused)
+  const canStop = !!isRunning
+  const canStep = !!hasProject && !!isDebugPaused
+  const canRunToCursor = !!hasProject && !isCompiling && !isRunning
   const archOptions = platform === 'macos'
     ? [{ value: 'arm64', label: 'arm64' }]
     : [
@@ -90,10 +122,22 @@ function Toolbar({ runtimePlatform = 'windows', hasControlSelected = false, onAl
       </div>
 
       <div className="toolbar-group">
-        <button className="toolbar-btn toolbar-btn-run" aria-label="编译运行" title="编译运行 (F5)" onClick={onCompileRun} disabled={!hasProject || isCompiling || isRunning}>
+        <button
+          className="toolbar-btn toolbar-btn-run"
+          aria-label={isDebugPaused ? '继续运行' : '编译运行'}
+          title={isDebugPaused ? '继续运行 (F5)' : '编译运行 (F5)'}
+          onClick={onCompileRun}
+          disabled={!canStartOrContinue}
+        >
           <Icon name="run" size={16} />
         </button>
-        <button className="toolbar-btn toolbar-btn-stop" aria-label="停止" title="停止" onClick={onStop} disabled={!isRunning}>
+        <button
+          className="toolbar-btn toolbar-btn-stop"
+          aria-label="停止"
+          title="停止 (Shift+F5)"
+          onClick={onStop}
+          disabled={!canStop}
+        >
           <Icon name="stop" size={16} />
         </button>
       </div>
@@ -101,16 +145,16 @@ function Toolbar({ runtimePlatform = 'windows', hasControlSelected = false, onAl
       <div className="toolbar-separator" aria-hidden="true" />
 
       <div className="toolbar-group">
-        <button className="toolbar-btn" aria-label="单步" title="单步 (F10)" disabled={!hasProject || !isRunning}>
+        <button className="toolbar-btn" aria-label="逐过程" title="逐过程 (F10)" disabled={!canStep} onClick={onDebugStepOver}>
           <Icon name="step-over" size={16} />
         </button>
-        <button className="toolbar-btn" aria-label="跟踪" title="跟踪 (F11)" disabled={!hasProject || !isRunning}>
+        <button className="toolbar-btn" aria-label="逐语句" title="逐语句 (F11)" disabled={!canStep} onClick={onDebugStepInto}>
           <Icon name="step-into" size={16} />
         </button>
-        <button className="toolbar-btn" aria-label="跟踪返回" title="跟踪返回 (Shift+F11)" disabled={!hasProject || !isRunning}>
+        <button className="toolbar-btn" aria-label="跳出" title="跳出 (Shift+F11)" disabled={!canStep} onClick={onDebugStepOut}>
           <Icon name="step-out" size={16} />
         </button>
-        <button className="toolbar-btn" aria-label="运行到光标处" title={`运行到光标处 (${runToCursorShortcut})`} disabled={!hasProject || !isRunning}>
+        <button className="toolbar-btn" aria-label="运行到光标处" title={`运行到光标处 (${runToCursorShortcut})`} disabled={!canRunToCursor} onClick={onDebugRunToCursor}>
           <Icon name="run-to-cursor" size={16} />
         </button>
       </div>

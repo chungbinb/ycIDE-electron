@@ -37,7 +37,19 @@ export interface FileProblem {
   file?: string
 }
 
-type OutputTab = 'compile' | 'hint' | 'problems' | 'terminal'
+export interface DebugVariable {
+  name: string
+  type: string
+  value: string
+}
+
+export interface DebugPauseState {
+  file: string
+  line: number
+  variables: DebugVariable[]
+}
+
+type OutputTab = 'compile' | 'hint' | 'problems' | 'terminal' | 'debug'
 
 interface OutputPanelProps {
   height: number
@@ -47,14 +59,19 @@ interface OutputPanelProps {
   commandDetail?: CommandDetail | null
   highlightParamIndex?: number
   problems?: FileProblem[]
+  debugPause?: DebugPauseState | null
+  debugDisplayLine?: number | null
+  isDebugPaused?: boolean
+  onDebugContinue?: () => void
   forceTab?: OutputTab | null
   onProblemClick?: (problem: FileProblem) => void
 }
 
-function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, highlightParamIndex, problems = [], forceTab, onProblemClick }: OutputPanelProps): React.JSX.Element {
+function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, highlightParamIndex, problems = [], debugPause = null, debugDisplayLine = null, isDebugPaused = false, onDebugContinue, forceTab, onProblemClick }: OutputPanelProps): React.JSX.Element {
   const contentRef = useRef<HTMLDivElement>(null)
   const [activeTab, setActiveTab] = useState<OutputTab>('compile')
   const [flashProblemIndex, setFlashProblemIndex] = useState<number>(-1)
+  const [debugFilter, setDebugFilter] = useState('')
 
   // 外部强制切换标签（编译/运行时自动切到编译输出）
   useEffect(() => {
@@ -75,6 +92,10 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
   useEffect(() => {
     if (commandDetail) setActiveTab('hint')
   }, [commandDetail])
+
+  useEffect(() => {
+    setDebugFilter('')
+  }, [debugPause?.file, debugPause?.line])
 
   // 自动滚动到底部（仅编译输出）
   useEffect(() => {
@@ -106,6 +127,13 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
     document.addEventListener('mouseup', handleMouseUp)
   }, [height, onResize])
 
+  const filteredDebugVariables = (() => {
+    if (!debugPause) return []
+    const keyword = debugFilter.trim().toLowerCase()
+    if (!keyword) return debugPause.variables
+    return debugPause.variables.filter(variable => variable.name.toLowerCase().includes(keyword))
+  })()
+
   return (
     <div className="output-panel" style={{ height: `${height}px` }} role="region" aria-label="输出面板">
       <div className="output-resizer" onMouseDown={handleMouseDown} role="separator" aria-orientation="horizontal" />
@@ -135,6 +163,12 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
             aria-selected={activeTab === 'problems'}
             onClick={() => setActiveTab('problems')}
           >问题{problems.length > 0 ? ` (${problems.length})` : ''}</button>
+          <button
+            className={`output-tab ${activeTab === 'debug' ? 'active' : ''}`}
+            role="tab"
+            aria-selected={activeTab === 'debug'}
+            onClick={() => setActiveTab('debug')}
+          >调试{isDebugPaused ? ' (暂停)' : ''}</button>
         </div>
         <button className="output-close" onClick={onClose} aria-label="关闭输出面板">×</button>
       </div>
@@ -274,6 +308,65 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
                 </div>
               ))}
             </>
+          )}
+        </div>
+      )}
+      {activeTab === 'debug' && (
+        <div className="output-content output-hint-content" tabIndex={0}>
+          {debugPause ? (
+            <div className="cmd-detail">
+              <div className="cmd-detail-call">
+                <span className="cmd-detail-label">断点位置：</span>{debugPause.file}:{debugPause.line}
+              </div>
+              <div className="cmd-detail-desc">{isDebugPaused ? '已暂停，可查看当前可见变量值。' : '程序正在继续运行，下面显示上一次断点快照。'}</div>
+              <div className="output-debug-table-wrap">
+                {debugPause.variables.length === 0 ? (
+                  <div className="cmd-detail-param">当前断点未采集到变量。</div>
+                ) : (
+                  <>
+                    <div className="output-debug-toolbar">
+                      <input
+                        className="output-debug-filter"
+                        type="text"
+                        value={debugFilter}
+                        onChange={(e) => setDebugFilter(e.target.value)}
+                        placeholder="按变量名筛选"
+                      />
+                      <span className="output-debug-count">{filteredDebugVariables.length}/{debugPause.variables.length}</span>
+                    </div>
+                    {filteredDebugVariables.length === 0 ? (
+                      <div className="cmd-detail-param">没有匹配的变量名。</div>
+                    ) : (
+                      <table className="output-debug-table">
+                        <thead>
+                          <tr>
+                            <th>名称</th>
+                            <th>类型</th>
+                            <th>值</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredDebugVariables.map((variable, index) => (
+                            <tr key={`${variable.name}:${index}`}>
+                              <td className="output-debug-name">{variable.name}</td>
+                              <td className="output-debug-type">{variable.type}</td>
+                              <td className="output-debug-value">{variable.value}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </>
+                )}
+              </div>
+              {isDebugPaused && (
+                <div style={{ marginTop: 12 }}>
+                  <button className="output-tab active" onClick={onDebugContinue}>继续运行</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="cmd-detail-empty">当前未在断点处暂停。</div>
           )}
         </div>
       )}

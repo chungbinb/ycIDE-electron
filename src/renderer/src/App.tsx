@@ -5,7 +5,7 @@ import Sidebar from './components/Sidebar/Sidebar'
 import type { TreeNode } from './components/Sidebar/Sidebar'
 import Icon from './components/Icon/Icon'
 import Editor, { type EditorTab, type EditorHandle } from './components/Editor/Editor'
-import OutputPanel, { type OutputMessage, type CommandDetail, type FileProblem } from './components/OutputPanel/OutputPanel'
+import OutputPanel, { type OutputMessage, type CommandDetail, type FileProblem, type DebugPauseState } from './components/OutputPanel/OutputPanel'
 import StatusBar from './components/StatusBar/StatusBar'
 import LibraryDialog from './components/LibraryDialog/LibraryDialog'
 import NewProjectDialog from './components/NewProjectDialog/NewProjectDialog'
@@ -22,6 +22,12 @@ type RecentOpenedItem = {
   type: 'project' | 'file'
   path: string
   label: string
+}
+
+type DebugBreakAccumulator = {
+  file: string
+  line: number
+  variables: DebugPauseState['variables']
 }
 
 const RECENT_OPENED_KEY = 'ycide.recentOpened.v1'
@@ -99,6 +105,9 @@ function App(): React.JSX.Element {
   const [currentTheme, setCurrentTheme] = useState<string>('')
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
   const [outputMessages, setOutputMessages] = useState<OutputMessage[]>([])
+  const [debugPause, setDebugPause] = useState<DebugPauseState | null>(null)
+  const [debugDisplayLine, setDebugDisplayLine] = useState<number | null>(null)
+  const [debugResumePending, setDebugResumePending] = useState(false)
   const [commandDetail, setCommandDetail] = useState<CommandDetail | null>(null)
   const commandCacheRef = useRef<Map<string, CommandDetail | null>>(new Map())
   const [fileProblems, setFileProblems] = useState<FileProblem[]>([])
@@ -106,11 +115,15 @@ function App(): React.JSX.Element {
   const openTabsRef = useRef<EditorTab[]>([])
   const activeFileIdRef = useRef<string | null>(null)
   const [cursorLine, setCursorLine] = useState<number | undefined>(undefined)
+  const [cursorSourceLine, setCursorSourceLine] = useState<number | undefined>(undefined)
   const [cursorColumn, setCursorColumn] = useState<number | undefined>(undefined)
   const [docType, setDocType] = useState('')
   const [isCompiling, setIsCompiling] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
-  const [forceOutputTab, setForceOutputTab] = useState<'compile' | 'problems' | null>(null)
+  const [forceOutputTab, setForceOutputTab] = useState<'compile' | 'problems' | 'debug' | null>(null)
+  const [breakpointsByFile, setBreakpointsByFile] = useState<Record<string, number[]>>({})
+  const debugBreakAccumRef = useRef<DebugBreakAccumulator | null>(null)
+  const openFileByPathRef = useRef<(filePath: string, targetLine?: number) => Promise<boolean>>(async () => false)
   const [targetPlatform, setTargetPlatform] = useState<TargetPlatform>('windows')
   const [targetArch, setTargetArch] = useState<TargetArch>('x64')
   const [recentOpened, setRecentOpened] = useState<RecentOpenedItem[]>([])
@@ -160,23 +173,124 @@ function App(): React.JSX.Element {
     window.api?.system?.updateThemes?.({ themes: themeList, currentTheme })
   }, [themeList, currentTheme, runtimePlatform])
 
+  const toggleBreakpoint = useCallback((tabId?: string | null, line?: number) => {
+    const fileId = tabId || activeFileIdRef.current
+    if (!fileId || !line || line <= 0) return
+    const fileKey = getBaseName(fileId)
+    const editorFiles = editorRef.current?.getEditorFiles?.() || {}
+    const content = editorFiles[fileKey]
+    const normalizedLine = (() => {
+      if (!content) return line
+      const lines = content.replace(/\r\n/g, '\n').split('\n')
+      const normalizeLineText = (raw: string) => raw.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
+      const startIndex = Math.max(0, Math.min(lines.length - 1, line - 1))
+      for (let i = startIndex; i < lines.length; i++) {
+        if (normalizeLineText(lines[i]) !== '') return i + 1
+      }
+      for (let i = startIndex - 1; i >= 0; i--) {
+        if (normalizeLineText(lines[i]) !== '') return i + 1
+      }
+      return line
+    })()
+    setBreakpointsByFile(prev => {
+      const current = prev[fileKey] || []
+      const exists = current.includes(normalizedLine)
+      const nextLines = exists ? current.filter(v => v !== normalizedLine) : [...current, normalizedLine].sort((a, b) => a - b)
+      const next = { ...prev }
+      if (nextLines.length > 0) next[fileKey] = nextLines
+      else delete next[fileKey]
+      return next
+    })
+  }, [])
+
+  const continueDebugRun = useCallback(async () => {
+    const ok = await window.api.debug.continue()
+    if (ok) {
+      setDebugResumePending(true)
+      setShowOutput(true)
+    }
+  }, [])
+
+  const syncDebugDisplayLine = useCallback((sourceLine: number) => {
+    if (!sourceLine || sourceLine <= 0) {
+      setDebugDisplayLine(null)
+      return
+    }
+    const update = () => {
+      const visibleLine = editorRef.current?.getVisibleLineForSourceLine(sourceLine) ?? sourceLine
+      setDebugDisplayLine(visibleLine)
+    }
+    update()
+    window.setTimeout(update, 80)
+    window.setTimeout(update, 180)
+  }, [])
+
   // 监听编译器输出
   useEffect(() => {
     const handleOutput = (msg: OutputMessage) => {
+      const text = msg.text || ''
+      if (text.startsWith('__YCDBG_BREAK_BEGIN__|')) {
+        const [, file = '', lineText = '0'] = text.split('|')
+        setDebugResumePending(true)
+        debugBreakAccumRef.current = {
+          file,
+          line: Number.parseInt(lineText, 10) || 0,
+          variables: [],
+        }
+        return
+      }
+      if (text.startsWith('__YCDBG_VAR__|')) {
+        const current = debugBreakAccumRef.current
+        if (current) {
+          const [, name = '', type = '', ...rest] = text.split('|')
+          current.variables.push({ name, type, value: rest.join('|') })
+        }
+        return
+      }
+      if (text === '__YCDBG_BREAK_END__') {
+        const current = debugBreakAccumRef.current
+        if (current) {
+          debugBreakAccumRef.current = null
+          const pauseState: DebugPauseState = {
+            file: current.file,
+            line: current.line,
+            variables: current.variables,
+          }
+          setDebugResumePending(false)
+          setDebugPause(pauseState)
+          setShowOutput(true)
+          const projectDir = currentProjectDirRef.current
+          if (projectDir && current.file) {
+            void openFileByPathRef.current(joinPath(projectDir, current.file), current.line)
+          }
+          syncDebugDisplayLine(current.line)
+        }
+        return
+      }
       setOutputMessages(prev => [...prev, msg])
     }
     window.api.on('compiler:output', handleOutput)
     return () => { window.api.off('compiler:output') }
-  }, [])
+  }, [joinPath, syncDebugDisplayLine])
 
   // 监听程序退出
   useEffect(() => {
     const handleExit = () => {
       setIsRunning(false)
+      setDebugDisplayLine(null)
+      setDebugResumePending(false)
+      setDebugPause(null)
+      debugBreakAccumRef.current = null
     }
     window.api.on('compiler:processExit', handleExit)
     return () => { window.api.off('compiler:processExit') }
   }, [])
+
+  useEffect(() => {
+    if (!debugPause || !activeFileId) return
+    if (getBaseName(activeFileId).toLowerCase() !== debugPause.file.toLowerCase()) return
+    syncDebugDisplayLine(debugPause.line)
+  }, [activeFileId, debugPause, syncDebugDisplayLine])
 
   // 检查设计时诊断：扫描所有 efw 标签页中的控件类型，找出依赖库未加载的
   const checkDesignProblems = useCallback(async (tabs: EditorTab[]) => {
@@ -214,6 +328,10 @@ function App(): React.JSX.Element {
   // 编译运行
   const handleCompileRun = useCallback(async () => {
     if (!currentProjectDir || isCompiling) return
+    if (debugPause) {
+      await continueDebugRun()
+      return
+    }
     // 有无效命令时阻断运行，切换到问题面板
     if (fileProblems.length > 0 || designProblems.length > 0) {
       setShowOutput(true)
@@ -226,12 +344,16 @@ function App(): React.JSX.Element {
     setOutputMessages([])
     setShowOutput(true)
     setForceOutputTab('compile')
+    setDebugResumePending(false)
+    setDebugDisplayLine(null)
+    setDebugPause(null)
+    debugBreakAccumRef.current = null
     const editorFiles = editorRef.current?.getEditorFiles()
-    const result = await window.api.compiler.run(currentProjectDir, editorFiles, targetArch)
+    const result = await window.api.compiler.run(currentProjectDir, editorFiles, targetArch, { breakpoints: breakpointsByFile })
     setIsCompiling(false)
     setForceOutputTab(null)
     if (result?.success) setIsRunning(true)
-  }, [currentProjectDir, isCompiling, targetArch, fileProblems, designProblems])
+  }, [currentProjectDir, isCompiling, targetArch, fileProblems, designProblems, debugPause, continueDebugRun, breakpointsByFile])
 
   // 普通编译
   const handleCompile = useCallback(async () => {
@@ -257,6 +379,10 @@ function App(): React.JSX.Element {
   const handleStop = useCallback(() => {
     window.api.compiler.stop()
     setIsRunning(false)
+    setDebugResumePending(false)
+    setDebugDisplayLine(null)
+    setDebugPause(null)
+    debugBreakAccumRef.current = null
   }, [])
 
   // 命令点击：查找命令详情
@@ -806,6 +932,10 @@ function App(): React.JSX.Element {
     return true
   }, [buildTabFromPath, getBaseName, openProjectByEppPath, pushRecentOpened])
 
+  useEffect(() => {
+    openFileByPathRef.current = openFileByPath
+  }, [openFileByPath])
+
   const handleMenuAction = useCallback(async (action: string) => {
     if (action.startsWith('file:openRecent:')) {
       const encoded = action.substring('file:openRecent:'.length)
@@ -887,6 +1017,59 @@ function App(): React.JSX.Element {
         break
       case 'debug:stop':
         handleStop()
+        break
+      case 'debug:toggleBreakpoint':
+        toggleBreakpoint(activeFileIdRef.current, cursorSourceLine ?? cursorLine)
+        break
+      case 'debug:clearBreakpoints':
+        setBreakpointsByFile({})
+        break
+      case 'debug:runToCursor':
+        if (!currentProjectDir || !(cursorSourceLine || cursorLine)) break
+        {
+          const fileId = activeFileIdRef.current
+          if (!fileId) break
+          const fileKey = getBaseName(fileId)
+          const requestedLine = cursorSourceLine ?? cursorLine!
+          const editorFiles = editorRef.current?.getEditorFiles?.() || {}
+          const content = editorFiles[fileKey]
+          const targetLine = (() => {
+            if (!content) return requestedLine
+            const lines = content.replace(/\r\n/g, '\n').split('\n')
+            const normalizeLineText = (raw: string) => raw.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
+            const startIndex = Math.max(0, Math.min(lines.length - 1, requestedLine - 1))
+            for (let i = startIndex; i < lines.length; i++) {
+              if (normalizeLineText(lines[i]) !== '') return i + 1
+            }
+            for (let i = startIndex - 1; i >= 0; i--) {
+              if (normalizeLineText(lines[i]) !== '') return i + 1
+            }
+            return requestedLine
+          })()
+          const mergedBreakpoints: Record<string, number[]> = { ...breakpointsByFile }
+          const current = new Set(mergedBreakpoints[fileKey] || [])
+          current.add(targetLine)
+          mergedBreakpoints[fileKey] = Array.from(current).sort((a, b) => a - b)
+          setIsCompiling(true)
+          editorRef.current?.save()
+          setOutputMessages([])
+          setShowOutput(true)
+          setForceOutputTab('compile')
+          setDebugResumePending(false)
+          setDebugDisplayLine(null)
+          setDebugPause(null)
+          debugBreakAccumRef.current = null
+          const freshEditorFiles = editorRef.current?.getEditorFiles()
+          const result = await window.api.compiler.run(currentProjectDir, freshEditorFiles, targetArch, { breakpoints: mergedBreakpoints })
+          setIsCompiling(false)
+          setForceOutputTab(null)
+          if (result?.success) setIsRunning(true)
+        }
+        break
+      case 'debug:stepOver':
+      case 'debug:stepInto':
+      case 'debug:stepOut':
+        await continueDebugRun()
         break
 
       // 查看/工具菜单
@@ -1244,7 +1427,7 @@ function App(): React.JSX.Element {
         }
         break
     }
-  }, [openProjectByEppPath, openFileByPath, extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, applyTheme, handleCompile, handleCompileRun, handleStop, handleAppClose, joinPath, projectTree, refreshProjectTree])
+  }, [openProjectByEppPath, openFileByPath, extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, applyTheme, handleCompile, handleCompileRun, handleStop, handleAppClose, joinPath, projectTree, refreshProjectTree, toggleBreakpoint, cursorLine, cursorSourceLine, currentProjectDir, breakpointsByFile, targetArch, continueDebugRun, getBaseName])
 
   useEffect(() => {
     const handleNativeMenuAction = (action: unknown) => {
@@ -1449,9 +1632,14 @@ function App(): React.JSX.Element {
         onAlign={setAlignAction}
         onCompileRun={handleCompileRun}
         onStop={handleStop}
+        onDebugStepOver={() => { void handleMenuAction('debug:stepOver') }}
+        onDebugStepInto={() => { void handleMenuAction('debug:stepInto') }}
+        onDebugStepOut={() => { void handleMenuAction('debug:stepOut') }}
+        onDebugRunToCursor={() => { void handleMenuAction('debug:runToCursor') }}
         hasProject={!!currentProjectDir}
         isCompiling={isCompiling}
         isRunning={isRunning}
+        isDebugPaused={!!debugPause && !debugResumePending}
         platform={targetPlatform}
         arch={targetArch}
         onPlatformChange={(platform: string) => {
@@ -1548,10 +1736,13 @@ function App(): React.JSX.Element {
                 onCommandClick={handleCommandClick}
                 onCommandClear={handleCommandClear}
                 onProblemsChange={setFileProblems}
-                onCursorChange={(line, col) => { setCursorLine(line); setCursorColumn(col) }}
+                onCursorChange={(line, col, sourceLine) => { setCursorLine(line); setCursorColumn(col); setCursorSourceLine(sourceLine) }}
                 onDocTypeChange={setDocType}
                 projectDir={currentProjectDir}
                 onProjectTreeRefresh={refreshProjectTree}
+                breakpointsByFile={breakpointsByFile}
+                debugLocation={debugPause ? { file: debugPause.file, line: debugPause.line } : null}
+                debugVariables={debugPause?.variables || []}
               />
             </div>
           </div>
@@ -1564,6 +1755,9 @@ function App(): React.JSX.Element {
               commandDetail={commandDetail}
               highlightParamIndex={highlightParamIndex}
               problems={[...fileProblems, ...designProblems]}
+              debugPause={debugPause ? { ...debugPause, line: debugDisplayLine ?? debugPause.line } : null}
+              isDebugPaused={!!debugPause && !debugResumePending}
+              onDebugContinue={() => { void continueDebugRun() }}
               forceTab={forceOutputTab}
               onProblemClick={(p) => editorRef.current?.navigateToLine(p.line)}
             />

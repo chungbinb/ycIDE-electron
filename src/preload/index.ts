@@ -69,8 +69,12 @@ const api = {
   compiler: {
     compile: (projectDir: string, editorFiles?: Record<string, string>, arch?: string) =>
       ipcRenderer.invoke('compiler:compile', projectDir, editorFiles, arch),
-    run: (projectDir: string, editorFiles?: Record<string, string>, arch?: string) =>
-      ipcRenderer.invoke('compiler:run', projectDir, editorFiles, arch),
+    run: (
+      projectDir: string,
+      editorFiles?: Record<string, string>,
+      arch?: string,
+      debugOptions?: { breakpoints?: Record<string, number[]> },
+    ) => ipcRenderer.invoke('compiler:run', projectDir, editorFiles, arch, debugOptions),
     stop: () => ipcRenderer.invoke('compiler:stop'),
     isRunning: () => ipcRenderer.invoke('compiler:isRunning') as Promise<boolean>,
   },
@@ -122,6 +126,8 @@ const api = {
       ipcRenderer.invoke('debug:logRendererError', payload) as Promise<{ success: boolean }>,
     getRendererErrorLogPath: () =>
       ipcRenderer.invoke('debug:getRendererErrorLogPath') as Promise<string>,
+    continue: () =>
+      ipcRenderer.invoke('debug:continue') as Promise<boolean>,
   },
   // 平台信息
   system: {

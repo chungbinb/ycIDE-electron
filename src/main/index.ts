@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, dialog, ipcMain, shell, type BrowserWindowCon
 import { join, dirname, basename, extname } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync } from 'fs'
 import { libraryManager } from './libraryManager'
-import { compileProject, runExecutable, stopExecutable, isRunning } from './compiler'
+import { compileProject, runExecutable, stopExecutable, isRunning, continueDebugExecutable } from './compiler'
 import { normalizeRuntimePlatform } from '../shared/platform'
 import { getActionAccelerator } from '../shared/shortcut-config'
 import { scanYcmdRegistry } from './ycmd-registry'
@@ -954,9 +954,9 @@ app.whenReady().then(() => {
     return compileProject({ projectDir, debug: true, arch, mode: 'compile' }, editorFiles)
   })
 
-  ipcMain.handle('compiler:run', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string) => {
+  ipcMain.handle('compiler:run', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string, debugOptions?: { breakpoints?: Record<string, number[]> }) => {
     const editorFiles = editorFilesObj ? new Map(Object.entries(editorFilesObj)) : undefined
-    const result = await compileProject({ projectDir, debug: true, arch, mode: 'run' }, editorFiles)
+    const result = await compileProject({ projectDir, debug: true, arch, mode: 'run', breakpoints: debugOptions?.breakpoints || {} }, editorFiles)
     if (result.success && result.outputFile) {
       runExecutable(result.outputFile)
     }
@@ -985,6 +985,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle('debug:getRendererErrorLogPath', () => {
     return getRendererErrorLogPath()
+  })
+
+  ipcMain.handle('debug:continue', () => {
+    return continueDebugExecutable()
   })
 
   // 启动时自动扫描并加载上次已加载的支持库

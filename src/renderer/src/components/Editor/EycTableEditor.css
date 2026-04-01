@@ -61,6 +61,67 @@
   padding-right: 4px;
 }
 
+.eyc-breakpoint-dot {
+  width: 12px;
+  min-width: 12px;
+  color: transparent;
+  font-size: 11px;
+  line-height: 1;
+  margin-right: 4px;
+  text-align: center;
+  user-select: none;
+}
+
+.eyc-breakpoint-dot.active {
+  color: #e24d4d;
+}
+
+.eyc-debug-hoverable {
+  cursor: help;
+  text-decoration: underline dotted rgba(78, 201, 176, 0.6);
+  text-underline-offset: 2px;
+}
+
+.eyc-debug-hover-tooltip {
+  position: fixed;
+  z-index: 3000;
+  min-width: 180px;
+  max-width: 420px;
+  pointer-events: none;
+  background: rgba(23, 27, 31, 0.97);
+  border: 1px solid rgba(78, 201, 176, 0.45);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  padding: 8px 10px;
+  color: #d6f7f1;
+}
+
+.eyc-debug-hover-name {
+  font-weight: 700;
+  color: #8fe3d1;
+  margin-bottom: 2px;
+}
+
+.eyc-debug-hover-type {
+  font-size: 12px;
+  color: #8ca8a2;
+  margin-bottom: 6px;
+}
+
+.eyc-debug-hover-value {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #f5f7f7;
+}
+
+.eyc-debug-line .eyc-code-line {
+  background-color: rgba(78, 201, 176, 0.12);
+}
+
+.eyc-debug-line .eyc-gutter-linenum {
+  color: #d7fff8;
+}
+
 .eyc-gutter-fold-area {
   width: 20px;
   flex-shrink: 0;

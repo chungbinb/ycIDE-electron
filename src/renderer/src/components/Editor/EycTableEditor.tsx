@@ -283,6 +283,21 @@ function normalizeMemberTypeName(s: string): string {
   return (parts.length > 0 ? parts[parts.length - 1] : t).toLowerCase()
 }
 
+function splitDebugRenderableText(text: string): Array<{ text: string; token?: string }> {
+  if (!text) return [{ text }]
+  const parts: Array<{ text: string; token?: string }> = []
+  const regex = /([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) parts.push({ text: text.slice(lastIndex, match.index) })
+    parts.push({ text: match[0], token: match[0] })
+    lastIndex = match.index + match[0].length
+  }
+  if (lastIndex < text.length) parts.push({ text: text.slice(lastIndex) })
+  return parts.length > 0 ? parts : [{ text }]
+}
+
 // ========== 行重建 ==========
 
 const DECL_PREFIXES = [
@@ -355,6 +370,7 @@ export interface EycTableEditorHandle {
   insertConstant: () => void
   navigateOrCreateSub: (subName: string, params: Array<{ name: string; dataType: string; isByRef: boolean }>) => void
   navigateToLine: (line: number) => void
+  getVisibleLineForSourceLine: (line: number) => number
   editorAction: (action: string) => void
 }
 
@@ -376,7 +392,10 @@ interface EycTableEditorProps {
   onCommandClick?: (commandName: string, paramIndex?: number) => void
   onCommandClear?: () => void
   onProblemsChange?: (problems: FileProblem[]) => void
-  onCursorChange?: (line: number, column: number) => void
+  onCursorChange?: (line: number, column: number, sourceLine?: number) => void
+  breakpointLines?: number[]
+  debugSourceLine?: number
+  debugVariables?: Array<{ name: string; type: string; value: string }>
 }
 
 export interface FileProblem {
@@ -450,7 +469,7 @@ function getOuterParenRange(text: string): { start: number; end: number } | null
   return null
 }
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', projectDir, isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange }, ref) {
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', projectDir, isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, breakpointLines = [], debugSourceLine, debugVariables = [] }, ref) {
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -481,6 +500,32 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const [resourcePreviewMsg, setResourcePreviewMsg] = useState('')
   const [resourcePreviewMeta, setResourcePreviewMeta] = useState<{ mime: string; ext: string; filePath: string; sizeBytes: number; modifiedAtMs: number } | null>(null)
   const [resourcePreviewMediaMeta, setResourcePreviewMediaMeta] = useState<{ width?: number; height?: number; durationSec?: number }>({})
+  const [debugHover, setDebugHover] = useState<{ x: number; y: number; variable: { name: string; type: string; value: string } } | null>(null)
+  const breakpointLineSet = useMemo(() => new Set(breakpointLines), [breakpointLines])
+  const debugVariableMap = useMemo(() => {
+    const map = new Map<string, { name: string; type: string; value: string }>()
+    for (const variable of debugVariables) map.set(variable.name, variable)
+    return map
+  }, [debugVariables])
+
+  const renderDebugAwareSpan = useCallback((text: string, className: string, keyPrefix: string) => {
+    const parts = splitDebugRenderableText(text)
+    return parts.map((part, index) => {
+      const variable = part.token ? debugVariableMap.get(part.token) : undefined
+      if (!variable) {
+        return <span key={`${keyPrefix}-${index}`} className={className}>{part.text}</span>
+      }
+      return (
+        <span
+          key={`${keyPrefix}-${index}`}
+          className={`${className} eyc-debug-hoverable`}
+          onMouseEnter={(e) => setDebugHover({ x: e.clientX + 12, y: e.clientY + 12, variable })}
+          onMouseMove={(e) => setDebugHover({ x: e.clientX + 12, y: e.clientY + 12, variable })}
+          onMouseLeave={() => setDebugHover(current => (current?.variable.name === variable.name ? null : current))}
+        >{part.text}</span>
+      )
+    })
+  }, [debugVariableMap])
 
   const formatFileSize = useCallback((bytes: number): string => {
     if (!Number.isFinite(bytes) || bytes < 0) return '未知'
@@ -1577,6 +1622,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const lineNumMaps = useMemo(() => {
     const tableRowNumMap = new Map<string, number>()
     const codeLineNumMap = new Map<number, number>()
+    const sourceLineNumMap = new Map<number, number>()
     let display = 0
     for (let bi = 0; bi < blocks.length; bi++) {
       const blk = blocks[bi]
@@ -1586,15 +1632,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           if (row.isHeader) continue
           display++
           tableRowNumMap.set(`${bi}:${ri}`, display)
+          sourceLineNumMap.set(row.lineIndex, display)
         }
       } else {
         if (!blk.isVirtual) {
           display++
           codeLineNumMap.set(blk.lineIndex, display)
+          sourceLineNumMap.set(blk.lineIndex, display)
         }
       }
     }
-    return { tableRowNumMap, codeLineNumMap }
+    return { tableRowNumMap, codeLineNumMap, sourceLineNumMap }
   }, [blocks])
 
   const getSelectedSourceText = useCallback((): string => {
@@ -2397,9 +2445,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   useEffect(() => {
     if (editCell && editCell.lineIndex >= 0) {
       const col = inputRef.current?.selectionStart ?? 1
-      onCursorChange?.(editCell.lineIndex + 1, col + 1)
+      const displayLine = lineNumMaps.sourceLineNumMap.get(editCell.lineIndex) ?? (editCell.lineIndex + 1)
+      onCursorChange?.(displayLine, col + 1, editCell.lineIndex + 1)
     }
-  }, [editCell, onCursorChange])
+  }, [editCell, onCursorChange, lineNumMaps])
 
   // commitRef: 始终指向最新的 commit 函数，供 mouseDown 等闭包调用
   const commitRef = useRef<(overrideVal?: string) => void>(commit)
@@ -3585,6 +3634,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         }
       }, 50)
     },
+    getVisibleLineForSourceLine: (line: number) => {
+      if (!Number.isFinite(line) || line <= 0) return line
+      return lineNumMaps.sourceLineNumMap.get(line - 1) ?? line
+    },
     editorAction: (action: string) => {
       if (action === 'copy') {
         if (selectedLines.size > 0) {
@@ -3604,7 +3657,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         return
       }
     },
-  }), [currentText, onChange, pushUndo, selectedLines, getSelectedSourceText, getMouseRangeSelectedSourceText, isResourceTableDoc, shouldUseNativeInputPaste])
+  }), [currentText, onChange, pushUndo, selectedLines, getSelectedSourceText, getMouseRangeSelectedSourceText, isResourceTableDoc, shouldUseNativeInputPaste, lineNumMaps])
 
   // 查找代码行中第一个有参数的有效命令
   const findCmdWithParams = useCallback((codeLine: string): CompletionItem | null => {
@@ -4002,7 +4055,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                       key={ri}
                       className={row.isHeader ? 'eyc-gutter-cell' : `eyc-gutter-cell${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}`}
                     >
-                      <span className="eyc-gutter-linenum">{row.isHeader ? '' : (lineNumMaps.tableRowNumMap.get(`${bi}:${ri}`) ?? row.lineIndex + 1)}</span>
+                      {(() => {
+                        const actualLine = row.isHeader ? 0 : (lineNumMaps.tableRowNumMap.get(`${bi}:${ri}`) ?? row.lineIndex + 1)
+                        const sourceLine = row.isHeader ? 0 : (row.lineIndex + 1)
+                        const hasBreakpoint = sourceLine > 0 && breakpointLineSet.has(sourceLine)
+                        return (
+                          <>
+                            <span className={`eyc-breakpoint-dot${hasBreakpoint ? ' active' : ''}`}>●</span>
+                            <span className="eyc-gutter-linenum">{row.isHeader ? '' : actualLine}</span>
+                          </>
+                        )
+                      })()}
                       <span className="eyc-gutter-fold-area" />
                     </div>
                   ))}
@@ -4105,16 +4168,21 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           const hasExpandableDetail = !!lineCmd || !!assignDetail
           const isExpanded = expandedLines.has(blk.lineIndex)
           const isLineSelected = selectedLines.has(blk.lineIndex)
+          const actualLine = blk.isVirtual ? 0 : (lineNumMaps.codeLineNumMap.get(blk.lineIndex) ?? blk.lineIndex + 1)
+          const sourceLine = blk.isVirtual ? 0 : (blk.lineIndex + 1)
+          const hasBreakpoint = sourceLine > 0 && breakpointLineSet.has(sourceLine)
+          const isDebugLine = !!debugSourceLine && sourceLine === debugSourceLine
           return (
             <div
               key={bi}
-              className={`eyc-block-row eyc-block-row-wrap${isAutoFlowLine ? ' eyc-flow-auto-line' : ''}${isLineSelected ? ' eyc-line-selected' : ''}`}
+              className={`eyc-block-row eyc-block-row-wrap${isAutoFlowLine ? ' eyc-flow-auto-line' : ''}${isLineSelected ? ' eyc-line-selected' : ''}${isDebugLine ? ' eyc-debug-line' : ''}`}
               data-line-index={blk.lineIndex}
               onMouseDown={(e) => handleLineMouseDown(e, blk.lineIndex)}
             >
               <div className="eyc-line-gutter">
                 <div className="eyc-gutter-cell">
-                  <span className="eyc-gutter-linenum">{blk.isVirtual ? '' : (lineNumMaps.codeLineNumMap.get(blk.lineIndex) ?? blk.lineIndex + 1)}</span>
+                  <span className={`eyc-breakpoint-dot${hasBreakpoint ? ' active' : ''}`}>●</span>
+                  <span className="eyc-gutter-linenum">{blk.isVirtual ? '' : actualLine}</span>
                   <span className="eyc-gutter-fold-area">
                     {hasExpandableDetail && (isLineSelected || (editCell && editCell.lineIndex === blk.lineIndex && editCell.paramIdx === undefined)) && (
                       <span
@@ -4221,14 +4289,16 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           const isInvalid = (isFunc && !validCommandNames.has(s.text)) || (isAssignTarget && !isKnownAssignmentTarget(s.text, allKnownVarNames))
                           const isLineSyntaxInvalid = lineHasMissingRhs && (isAssignTarget || (!isFunc && !isObjMethod && !isFlowKw && s.text.trim() !== ''))
                           if (isFunc || isObjMethod || isFlowKw || isAssignTarget) {
+                            const className = `${isAssignTarget ? 'Variablescolor' : (isUserSubRef ? 'eyc-subrefcolor' : s.cls)}${(isInvalid || isLineSyntaxInvalid) ? ' eyc-cmd-invalid' : ''}`
                             return (
                               <span
                                 key={si}
-                                className={`${isAssignTarget ? 'Variablescolor' : (isUserSubRef ? 'eyc-subrefcolor' : s.cls)}${(isInvalid || isLineSyntaxInvalid) ? ' eyc-cmd-invalid' : ''}`}
-                              >{s.text}</span>
+                                className={className}
+                              >{renderDebugAwareSpan(s.text, className, `code-${blk.lineIndex}-${si}`)}</span>
                             )
                           }
-                          return <span key={si} className={`${s.cls}${isLineSyntaxInvalid ? ' eyc-cmd-invalid' : ''}`}>{s.text}</span>
+                          const className = `${s.cls}${isLineSyntaxInvalid ? ' eyc-cmd-invalid' : ''}`
+                          return <span key={si} className={className}>{renderDebugAwareSpan(s.text, className, `code-${blk.lineIndex}-${si}`)}</span>
                         })}
                       </>
                     )
@@ -4584,6 +4654,16 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               </div>
             )
           })()}
+        </div>
+      )}
+      {debugHover && (
+        <div
+          className="eyc-debug-hover-tooltip"
+          style={{ left: debugHover.x, top: debugHover.y }}
+        >
+          <div className="eyc-debug-hover-name">{debugHover.variable.name}</div>
+          <div className="eyc-debug-hover-type">{debugHover.variable.type}</div>
+          <div className="eyc-debug-hover-value">{debugHover.variable.value || '（空）'}</div>
         </div>
       )}
     </div>
