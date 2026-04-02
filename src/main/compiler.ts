@@ -1,7 +1,8 @@
-import { join, dirname, basename } from 'path'
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync } from 'fs'
+import { join, dirname, basename, extname } from 'path'
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, copyFileSync, rmSync } from 'fs'
 import { execFile, ChildProcess } from 'child_process'
 import { app, BrowserWindow } from 'electron'
+import { tmpdir } from 'os'
 import { libraryManager } from './libraryManager'
 import type { LibraryCommand as LibCommand, LibraryConstant as LibConstant, LibraryWindowUnit as LibWindowUnit } from './libraryManager'
 import { getYcmdCommands } from './ycmd-registry'
@@ -76,6 +77,12 @@ interface ProjectInfo {
   platform: string
   files: ProjectFileEntry[]
   projectDir: string
+}
+
+interface ProjectResourceEntry {
+  name: string
+  fileName: string
+  type: string
 }
 
 interface GlobalVarDef {
@@ -390,6 +397,232 @@ function parseEppFile(eppPath: string): ProjectInfo | null {
     platform: info['Platform'] || 'x64',
     files,
     projectDir: dirname(eppPath)
+  }
+}
+
+function parseProjectResourceEntries(content: string): ProjectResourceEntry[] {
+  const entries: ProjectResourceEntry[] = []
+  const lines = content.split('\n')
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
+    if (!line || line.startsWith("'")) continue
+
+    let body = ''
+    if (line.startsWith('.资源 ')) body = line.substring('.资源 '.length)
+    else if (line.startsWith('.常量 ')) body = line.substring('.常量 '.length)
+    else continue
+
+    const parts = splitDeclParts(body)
+    const name = (parts[0] || '').trim()
+    const fileName = unquoteDeclValue(parts[1] || '')
+    const type = (parts[2] || '').trim()
+    if (!name || !fileName) continue
+
+    entries.push({ name, fileName, type })
+  }
+  return entries
+}
+
+function collectProjectResourceEntries(project: ProjectInfo, editorFiles?: Map<string, string>): ProjectResourceEntry[] {
+  const result: ProjectResourceEntry[] = []
+  const seenName = new Set<string>()
+  const seenFile = new Set<string>()
+  let hasErcDeclarationSource = false
+
+  const addEntry = (entry: ProjectResourceEntry): void => {
+    const normalizedName = entry.name.trim().toLowerCase()
+    const normalizedFile = entry.fileName.trim().toLowerCase()
+    if (!normalizedName || !normalizedFile) return
+    if (seenName.has(normalizedName)) return
+    seenName.add(normalizedName)
+    seenFile.add(normalizedFile)
+    result.push(entry)
+  }
+
+  // Prefer entries declared in .erc.
+  for (const f of project.files) {
+    if (f.type !== 'ERC' && !/\.erc$/i.test(f.fileName)) continue
+    hasErcDeclarationSource = true
+    const sourcePath = join(project.projectDir, f.fileName)
+    const editorContent = editorFiles?.get(f.fileName)
+    const content = editorContent || (existsSync(sourcePath) ? readFileSync(sourcePath, 'utf-8') : '')
+    if (!content) continue
+    for (const entry of parseProjectResourceEntries(content)) {
+      addEntry(entry)
+    }
+  }
+
+  // When .erc exists, only embed resources explicitly declared there.
+  // Fallback to File=RES is kept only for old projects without any .erc file.
+  if (hasErcDeclarationSource) {
+    return result
+  }
+
+  // Fallback to File=RES entries for legacy projects.
+  let autoIndex = 1
+  for (const f of project.files) {
+    if (f.type !== 'RES') continue
+    const normalizedFile = f.fileName.trim().toLowerCase()
+    if (!normalizedFile || seenFile.has(normalizedFile)) continue
+    let autoName = `资源文件${autoIndex}`
+    while (seenName.has(autoName.toLowerCase())) {
+      autoIndex += 1
+      autoName = `资源文件${autoIndex}`
+    }
+    autoIndex += 1
+    addEntry({ name: autoName, fileName: f.fileName, type: '其它' })
+  }
+
+  return result
+}
+
+function resolveProjectResourcePath(projectDir: string, fileName: string): string | null {
+  const normalized = (fileName || '').trim()
+  if (!normalized) return null
+
+  const rcPath = join(projectDir, 'rc', normalized)
+  if (existsSync(rcPath)) return rcPath
+
+  const legacyPath = join(projectDir, normalized)
+  if (existsSync(legacyPath)) return legacyPath
+
+  return null
+}
+
+function escapeRcString(text: string): string {
+  return text.replace(/\\/g, '/').replace(/"/g, '\\"')
+}
+
+function mapRcTargetMachine(arch: TargetArch): string {
+  if (arch === 'x86') return 'x86'
+  if (arch === 'arm64') return 'aarch64'
+  return 'x86_64'
+}
+
+function isAsciiOnlyPath(text: string): boolean {
+  return !/[^\x00-\x7F]/.test(text)
+}
+
+function pickResourceStageRoot(zigPath: string): string {
+  const candidates = [
+    join(tmpdir(), 'ycide-rc-stage'),
+    join(dirname(zigPath), 'ycide-rc-stage'),
+    join(getAppDirectory(), 'temp', 'ycide-rc-stage'),
+  ]
+  for (const candidate of candidates) {
+    if (isAsciiOnlyPath(candidate)) return candidate
+  }
+  return candidates[0]
+}
+
+async function compileProjectResources(
+  project: ProjectInfo,
+  targetPlatform: TargetPlatform,
+  targetArch: TargetArch,
+  tempDir: string,
+  zigPath: string,
+  editorFiles?: Map<string, string>,
+): Promise<{ success: boolean; objectFilePath: string | null }> {
+  const entries = collectProjectResourceEntries(project, editorFiles)
+  if (entries.length === 0) return { success: true, objectFilePath: null }
+
+  if (targetPlatform !== 'windows') {
+    sendMessage({ type: 'warning', text: `警告: 目标平台 ${targetPlatform} 暂不支持编译 .erc 资源，已跳过 ${entries.length} 项资源。` })
+    return { success: true, objectFilePath: null }
+  }
+
+  const stageRoot = pickResourceStageRoot(zigPath)
+  mkdirSync(stageRoot, { recursive: true })
+  const stageDir = join(stageRoot, `build-${Date.now()}-${Math.floor(Math.random() * 1000000)}`)
+  mkdirSync(stageDir, { recursive: true })
+
+  try {
+    const rcLines: string[] = ['// Generated by ycIDE compiler']
+    const usedNames = new Set<string>()
+    let embeddedCount = 0
+
+    for (const entry of entries) {
+      const resourcePath = resolveProjectResourcePath(project.projectDir, entry.fileName)
+      if (!resourcePath) {
+        sendMessage({ type: 'warning', text: `警告: 资源文件不存在，已跳过: ${entry.fileName}` })
+        continue
+      }
+
+      let resourceName = entry.name.trim() || `资源${embeddedCount + 1}`
+      let dedupeIndex = 2
+      while (usedNames.has(resourceName.toLowerCase())) {
+        resourceName = `${entry.name}_${dedupeIndex}`
+        dedupeIndex += 1
+      }
+      usedNames.add(resourceName.toLowerCase())
+
+      const rawExt = extname(entry.fileName).toLowerCase()
+      const safeExt = rawExt && /^[.a-z0-9_-]+$/.test(rawExt) ? rawExt : '.bin'
+      const stagedFileName = `res_${embeddedCount + 1}${safeExt}`
+      const stagedFilePath = join(stageDir, stagedFileName)
+      copyFileSync(resourcePath, stagedFilePath)
+
+      rcLines.push(`"${escapeRcString(resourceName)}" RCDATA "${escapeRcString(stagedFileName)}"`)
+      embeddedCount += 1
+    }
+
+    if (embeddedCount === 0) {
+      sendMessage({ type: 'warning', text: '警告: 没有可用资源被编译进目标文件。' })
+      return { success: true, objectFilePath: null }
+    }
+
+    const stageRcPath = join(stageDir, 'project_resources.rc')
+    const stageObjectPath = join(stageDir, 'project_resources.o')
+    const finalObjectPath = join(tempDir, 'project_resources.o')
+    writeFileSync(stageRcPath, rcLines.join('\n') + '\n', 'utf-8')
+
+    sendMessage({ type: 'info', text: `正在编译资源(${embeddedCount} 项)...` })
+
+    const rcSuccess = await new Promise<boolean>((resolve) => {
+      const rcArgs = [
+        'rc',
+        '/c', '65001',
+        '/:output-format', 'coff',
+        '/:target', mapRcTargetMachine(targetArch),
+        '/fo', stageObjectPath,
+        stageRcPath,
+      ]
+      const proc = execFile(zigPath, rcArgs, { cwd: stageDir, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
+        if (stderr) {
+          const lines = stderr.split('\n').filter(l => l.trim())
+          for (const line of lines) {
+            const lower = line.toLowerCase()
+            if (lower.includes('error')) {
+              sendMessage({ type: 'error', text: line })
+            } else if (lower.includes('warning')) {
+              sendMessage({ type: 'warning', text: line })
+            } else {
+              sendMessage({ type: 'info', text: line })
+            }
+          }
+        }
+        resolve(!error)
+      })
+      proc.on('error', (err) => {
+        sendMessage({ type: 'error', text: `资源编译器启动失败: ${err.message}` })
+        resolve(false)
+      })
+    })
+
+    if (!rcSuccess || !existsSync(stageObjectPath)) {
+      sendMessage({ type: 'error', text: '资源编译失败。' })
+      return { success: false, objectFilePath: null }
+    }
+
+    copyFileSync(stageObjectPath, finalObjectPath)
+    sendMessage({ type: 'success', text: `资源编译成功: ${embeddedCount} 项` })
+    return { success: true, objectFilePath: finalObjectPath }
+  } finally {
+    try {
+      rmSync(stageDir, { recursive: true, force: true })
+    } catch {
+      // ignore cleanup failures
+    }
   }
 }
 
@@ -2362,7 +2595,7 @@ function generateProjectDllWrapperCode(projectDllCommands: ProjectDllCommandDef[
 // .eyc 转 C 代码转译器
 // 将易语言源代码中的子程序转译成 C 函数
 // 命令识别基于已加载的支持库，支持第三方支持库扩展
-function transpileEycContent(eycContent: string, fileName: string, projectGlobals: GlobalVarDef[] = [], projectConstants: ConstantDef[] = [], libraryConstants: LibraryConstantDef[] = [], projectSubprograms: SubprogramDef[] = [], projectDataTypes: ProjectDataTypeDef[] = [], projectDllCommands: ProjectDllCommandDef[] = [], debugBuild = false, breakpoints: Record<string, number[]> = {}, targetPlatform: TargetPlatform = 'windows'): string {
+function transpileEycContent(eycContent: string, fileName: string, projectGlobals: GlobalVarDef[] = [], projectConstants: ConstantDef[] = [], projectResources: ProjectResourceEntry[] = [], libraryConstants: LibraryConstantDef[] = [], projectSubprograms: SubprogramDef[] = [], projectDataTypes: ProjectDataTypeDef[] = [], projectDllCommands: ProjectDllCommandDef[] = [], debugBuild = false, breakpoints: Record<string, number[]> = {}, targetPlatform: TargetPlatform = 'windows'): string {
   // 从已加载的支持库构建命令查找表
   const commandMap = buildCommandMap()
   const isClassModuleSource = /\.ecc$/i.test(fileName)
@@ -2414,6 +2647,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'static void yc_runtime_note_end(void);\n'
   result += 'static void yc_runtime_report_dll_error(const wchar_t* stage, const wchar_t* dllName, const char* entryName, DWORD errorCode);\n'
   result += 'static void yc_runtime_report_dll_text_result(const wchar_t* dllName, const char* entryName);\n\n'
+  result += 'static YC_BIN yc_load_resource_bin(const wchar_t* resourceName);\n\n'
   result += 'static void yc_write_utf8_wide(const wchar_t* s) {\n'
   result += '    if (!s) return;\n'
   result += '    int n = WideCharToMultiByte(CP_UTF8, 0, s, -1, NULL, 0, NULL, NULL);\n'
@@ -2607,6 +2841,32 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    if (dllName && *dllName) { yc_runtime_note_part(L"|"); yc_runtime_note_part(dllName); }\n'
   result += '    if (entryName && *entryName) { yc_runtime_note_part(L"|"); yc_runtime_note_part(entryName); }\n'
   result += '    yc_runtime_note_end();\n'
+  result += '}\n\n'
+  result += 'static YC_BIN yc_load_resource_bin(const wchar_t* resourceName) {\n'
+  result += '    YC_BIN out;\n'
+  result += '    if (!resourceName || !resourceName[0]) return out;\n'
+  result += '    HRSRC hRes = FindResourceW(NULL, resourceName, MAKEINTRESOURCEW(10));\n'
+  result += '    if (!hRes) {\n'
+  result += '        size_t nameLen = wcslen(resourceName);\n'
+  result += '        wchar_t* quotedName = (wchar_t*)malloc(sizeof(wchar_t) * (nameLen + 3));\n'
+  result += '        if (quotedName) {\n'
+  result += '            quotedName[0] = L\'"\';\n'
+  result += '            memcpy(quotedName + 1, resourceName, sizeof(wchar_t) * nameLen);\n'
+  result += '            quotedName[nameLen + 1] = L\'"\';\n'
+  result += '            quotedName[nameLen + 2] = 0;\n'
+  result += '            hRes = FindResourceW(NULL, quotedName, MAKEINTRESOURCEW(10));\n'
+  result += '            free(quotedName);\n'
+  result += '        }\n'
+  result += '    }\n'
+  result += '    if (!hRes) return out;\n'
+  result += '    DWORD size = SizeofResource(NULL, hRes);\n'
+  result += '    if (size == 0) return out;\n'
+  result += '    HGLOBAL hData = LoadResource(NULL, hRes);\n'
+  result += '    if (!hData) return out;\n'
+  result += '    const unsigned char* bytes = (const unsigned char*)LockResource(hData);\n'
+  result += '    if (!bytes) return out;\n'
+  result += '    out.assign(bytes, bytes + size);\n'
+  result += '    return out;\n'
   result += '}\n\n'
   result += generateDebugRuntimeCode(targetPlatform)
   result += 'static wchar_t* yc_text_concat(const wchar_t* left, const wchar_t* right) {\n'
@@ -2984,6 +3244,24 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         result += `#undef ${c.name}\n`
       }
       result += `#define ${c.name} (${cValue})\n`
+    }
+    result += '\n'
+  }
+
+  if (projectResources.length > 0) {
+    const validIdentifier = /^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*$/
+    result += '/* Project resource reference macros (#name -> YC_BIN) */\n'
+    for (const r of projectResources) {
+      const resourceName = (r.name || '').trim()
+      if (!resourceName) continue
+      if (!validIdentifier.test(resourceName)) {
+        sendMessage({ type: 'warning', text: `警告: 资源名“${resourceName}”不是合法标识符，无法用于 #资源引用。` })
+        continue
+      }
+      if (libraryConstants.some(lc => lc.name === resourceName) || projectConstants.some(c => c.name === resourceName)) {
+        result += `#undef ${resourceName}\n`
+      }
+      result += `#define ${resourceName} (yc_load_resource_bin(L"${escapeCString(resourceName)}"))\n`
     }
     result += '\n'
   }
@@ -3384,6 +3662,7 @@ function generateMainC(
   const isWindowsApp = project.outputType === 'WindowsApp'
   const projectGlobals = collectProjectGlobalVars(project, editorFiles)
   const projectConstants = collectProjectConstants(project, editorFiles)
+  const projectResources = collectProjectResourceEntries(project, editorFiles)
   const projectSubprograms = collectProjectSubprogramDefs(project, editorFiles)
   const projectDataTypes = collectProjectDataTypes(project, editorFiles)
   const projectDllCommands = collectProjectDllCommands(project, editorFiles)
@@ -3585,7 +3864,7 @@ function generateMainC(
       if (!content) continue
 
       sendMessage({ type: 'info', text: `正在转换源文件: ${f.fileName}` })
-      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, libraryConstants, projectSubprograms, projectDataTypes, projectDllCommands, debugBuild, breakpoints, targetPlatform)
+      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, projectResources, libraryConstants, projectSubprograms, projectDataTypes, projectDllCommands, debugBuild, breakpoints, targetPlatform)
       const cFileName = f.fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
       const cFilePath = join(tempDir, cFileName)
       writeFileSync(cFilePath, cCode, 'utf-8')
@@ -4024,7 +4303,7 @@ function generateMainC(
       if (!content) continue
 
       sendMessage({ type: 'info', text: `正在转换源文件: ${f.fileName}` })
-      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, [], projectSubprograms, projectDataTypes, projectDllCommands, debugBuild, breakpoints, targetPlatform)
+      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, projectResources, [], projectSubprograms, projectDataTypes, projectDllCommands, debugBuild, breakpoints, targetPlatform)
       const cFileName = f.fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
       const cFilePath = join(tempDir, cFileName)
       writeFileSync(cFilePath, cCode, 'utf-8')
@@ -4173,6 +4452,16 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       mainC,
       ...additionalCFiles,
     ]
+
+    const resourceBuild = await compileProjectResources(project, targetPlatform, targetArch, tempDir, zigPath, editorFiles)
+    if (!resourceBuild.success) {
+      result.errorCount++
+      result.elapsedMs = Date.now() - startTime
+      return result
+    }
+    if (resourceBuild.objectFilePath) {
+      args.push(resourceBuild.objectFilePath)
+    }
 
     // 项目类型
     const isWindowsApp = project.outputType === 'WindowsApp'
