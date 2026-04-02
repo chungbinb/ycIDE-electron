@@ -976,6 +976,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         }
 
         // 命令参数区结束
+        if (t.startsWith('.\u7248\u672C ')) continue
         if (t.startsWith('.')) current = null
       }
     }

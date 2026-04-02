@@ -181,17 +181,20 @@ function colorize(raw: string): Span[] {
       if (m) {
         const ident = m[1]
         const rest = m[2]
+        const nextText = exprSpans.length > 1 ? (exprSpans[1].text || '') : ''
+        const isAssignTargetByRest = /^\s*[=＝]/.test(rest)
+        const isAssignTargetByNext = /^\s*$/.test(rest) && /^\s*[=＝]/.test(nextText)
         // 后面紧跟 = 或 ＝ 的是赋值目标，不是命令调用
-        if (/^\s*[=＝]/.test(rest)) {
+        if (isAssignTargetByRest || isAssignTargetByNext) {
           // 赋值目标：标记为 assignTarget，后续由渲染层检查有效性
           exprSpans.splice(0, 1,
             { text: ident, cls: 'assignTarget' },
-            ...(rest ? [{ text: rest, cls: '' }] : [])
+            ...(rest ? colorExpr(rest) : [])
           )
         } else {
           exprSpans.splice(0, 1,
             { text: ident, cls: ident.includes('.') ? 'cometwolr' : 'funccolor' },
-            ...(rest ? [{ text: rest, cls: '' }] : [])
+            ...(rest ? colorExpr(rest) : [])
           )
         }
       }
@@ -218,7 +221,13 @@ function colorExpr(expr: string): Span[] {
   const out: Span[] = []
   let r = expr
   while (r.length > 0) {
-    // 字符串
+    // 空白
+    const ws = r.match(/^\s+/)
+    if (ws) { out.push({ text: ws[0], cls: '' }); r = r.slice(ws[0].length); continue }
+
+    // 运算符与分隔符（先拆开，避免“= 函数(...)”整体被吞并）
+    const op = r.match(/^(<>|!=|<=|>=|=|＝|<|>|\+|-|\*|\/|,|，)/)
+    if (op) { out.push({ text: op[0], cls: 'conscolor' }); r = r.slice(op[0].length); continue }    // 字符串
     const sm = r.match(/^([""\u201c])(.*?)([""\u201d])/)
     if (sm && r.startsWith(sm[1])) { out.push({ text: sm[0], cls: 'eTxtcolor' }); r = r.slice(sm[0].length); continue }
 
@@ -251,7 +260,7 @@ function colorExpr(expr: string): Span[] {
     }
 
     // 普通文本
-    const pm = r.match(/^[^""\u201c#(（)）{}\[\]]+/)
+    const pm = r.match(/^[^""\u201c#(（)）{}\[\],，=＝<>+\-*/]+/)
     if (pm) { out.push({ text: pm[0], cls: '' }); r = r.slice(pm[0].length); continue }
     out.push({ text: r[0], cls: '' }); r = r.slice(1)
   }
@@ -1427,18 +1436,49 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const cursorPos = inputRef.current?.selectionStart ?? editVal.length
     const before = editVal.slice(0, prefix ? Math.max(0, wordStart - 1) : wordStart)
     const after = editVal.slice(cursorPos)
-    const newVal = before + prefix + item.name + after
+
+    const commandPool = [
+      ...allCommandsRef.current,
+      ...dllCompletionItemsRef.current,
+      ...memberCommandsRef.current,
+    ]
+    const isCodeLineEdit = !!editCell && editCell.cellIndex === -1 && editCell.paramIdx === undefined
+    const isCallable = isCodeLineEdit && (
+      commandPool.some(c => c.name === item.name)
+      || userSubNamesRef.current.has(item.name)
+    )
+    const leadingAfter = after.match(/^\s*/) ? (after.match(/^\s*/)?.[0] || '') : ''
+    const afterNext = after.slice(leadingAfter.length, leadingAfter.length + 1)
+    const hasCallAlready = afterNext === '(' || afterNext === '（'
+    const canInsertCall = !hasCallAlready && !/^[\u4e00-\u9fa5A-Za-z0-9_.]$/.test(afterNext)
+
+    let callSuffix = ''
+    let caretExtra = 0
+    if (isCallable && canInsertCall) {
+      if (item.params.length > 0) {
+        callSuffix = ` (${item.params.map(p => p.optional ? '' : '').join(',')})`
+      } else {
+        callSuffix = ' ()'
+      }
+      caretExtra = 2
+    }
+
+    const normalizedAfter = isCodeLineEdit
+      ? after.replace(/^[\s\u00A0]+(?=[,，\)\）])/, '')
+      : after
+
+    const newVal = before + prefix + item.name + callSuffix + normalizedAfter
     setEditVal(newVal)
     setAcVisible(false)
     setTimeout(() => {
       if (inputRef.current) {
-        const newPos = before.length + prefix.length + item.name.length
+        const newPos = before.length + prefix.length + item.name.length + caretExtra
         inputRef.current.selectionStart = newPos
         inputRef.current.selectionEnd = newPos
         inputRef.current.focus()
       }
     }, 0)
-  }, [editVal])
+  }, [editVal, editCell])
 
   const expandMoreCompletion = useCallback((index: number) => {
     setAcItems(prev => {
@@ -1504,7 +1544,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const argText = trimmed.slice(parenRange.start + 1, parenRange.end).trim()
         mainLine = innerPrefix + cmdName + ' (' + argText + ')'
       } else if (cmd && cmd.params.length > 0) {
-        const paramSlots = cmd.params.map(p => p.optional ? '' : '').join(', ')
+        const paramSlots = cmd.params.map(p => p.optional ? '' : '').join(',')
         mainLine = innerPrefix + cmdName + ' (' + paramSlots + ')'
       } else {
         mainLine = innerPrefix + cmdName + ' ()'
@@ -1516,7 +1556,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         // 流程尾命令也需要括号（如 计次循环尾）
         const tailCmd = allCommandsRef.current.find(c => c.name === kw)
         if (tailCmd && tailCmd.params.length > 0) {
-          const tailSlots = tailCmd.params.map(p => p.optional ? '' : '').join(', ')
+          const tailSlots = tailCmd.params.map(p => p.optional ? '' : '').join(',')
           return innerPrefix + FLOW_AUTO_TAG + kw + ' (' + tailSlots + ')'
         }
         return innerPrefix + FLOW_AUTO_TAG + kw + ' ()'
@@ -1540,7 +1580,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (cmd.params.length === 0) {
       return [prefix + cmdName + ' ()']
     }
-    const paramSlots = cmd.params.map(p => p.optional ? '' : '').join(', ')
+    const paramSlots = cmd.params.map(p => p.optional ? '' : '').join(',')
     return [prefix + cmdName + ' (' + paramSlots + ')']
   }, [])
 
@@ -2897,7 +2937,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         }
         // Backspace：光标在括号内正常删除；光标在命令名区域时剥离括号，回退为裸命令名自由编辑
         if (e.key === 'Backspace') {
-          if (hasSel ? !selInRange : cur <= pS) {
+          const selBeforeRange = hasSel && selE <= pS
+          if (!hasSel && cur === pS) {
             e.preventDefault()
             // 剥离括号及其内容，保留命令名部分供自由编辑
             const rawName = editVal.slice(0, parenRange.start).trimEnd()
@@ -2909,18 +2950,22 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             }
             return
           }
+          if (hasSel && !(selInRange || selBeforeRange)) { e.preventDefault(); return }
         }
         // Delete：光标在括号外或选区跨出括号时阻止
         if (e.key === 'Delete') {
-          if (hasSel ? !selInRange : cur >= pE) { e.preventDefault(); return }
+          const selBeforeRange = hasSel && selE <= pS
+          if (hasSel ? !(selInRange || selBeforeRange) : cur >= pE) { e.preventDefault(); return }
         }
         // Ctrl+X/V：选区跨出括号时阻止
         if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'v')) {
-          if (!selInRange) { e.preventDefault(); return }
+          const selBeforeRange = hasSel && selE <= pS
+          if (!(selInRange || selBeforeRange)) { e.preventDefault(); return }
         }
-        // 可打印字符：光标在括号外时阻止输入
+        // 可打印字符：允许在括号前输入（用于“变量 = 命令(...)”），仅阻止在闭括号右侧输入
         if (e.key.length === 1 && !(e.ctrlKey || e.metaKey)) {
-          if (hasSel ? !selInRange : (cur < pS || cur > pE)) { e.preventDefault(); return }
+          const selBeforeRange = hasSel && selE <= pS
+          if (hasSel ? !(selInRange || selBeforeRange) : cur > pE) { e.preventDefault(); return }
         }
       }
     }
@@ -3684,6 +3729,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return null
   }, [])
 
+  // 代码行点击时，优先取“当前点击到的命令 token”；否则回退到首个命令
+  const findCommandNameFromClickTarget = useCallback((target: EventTarget | null, codeLine: string): string | null => {
+    const el = target instanceof HTMLElement ? target : null
+    if (el) {
+      const tokenEl = el.closest('.funccolor, .comecolor, .cometwolr, .eyc-subrefcolor')
+      const tokenText = (tokenEl?.textContent || '').replace(/\u00A0/g, '').trim()
+      if (tokenText) return tokenText
+    }
+    return findFirstCommandName(codeLine)
+  }, [findFirstCommandName])
+
   /** 识别赋值语句并提取左值/右值（支持对象成员写法） */
   const parseAssignmentDetail = useCallback((codeLine: string): { target: string; value: string } | null => {
     if (!codeLine) return null
@@ -3797,7 +3853,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     // 参数不存在时追加空位到 argIdx
     let result = codeLine.slice(0, closeIdx)
-    const sep = codeLine[openIdx] === '（' ? '，' : ', '
+    const sep = codeLine[openIdx] === '（' ? '，' : ','
     for (let i = ranges.length; i <= argIdx; i++) {
       if (i > 0 || ranges.length > 0) result += sep
       result += (i === argIdx) ? newVal : ''
@@ -4213,7 +4269,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                   setSelectedLines(new Set())
                   // 点击代码行时触发命令提示（显示命令全部信息）
                   const rawCode = (blk.codeLine || '').replace(FLOW_AUTO_TAG, '')
-                  const cmdName = findFirstCommandName(rawCode)
+                  const cmdName = findCommandNameFromClickTarget(e.target, rawCode)
                   if (cmdName) {
                     e.stopPropagation()
                     const ownerAssembly = findOwnerAssemblyName(blk.lineIndex)
@@ -4247,9 +4303,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                         if (oldRange) {
                           const prefix = editVal.slice(0, oldRange.start + 1)
                           const suffix = editVal.slice(oldRange.end)
-                          if (!v.startsWith(prefix) || !v.endsWith(suffix)) {
-                            e.target.value = editVal
-                            return
+                          const caretPos = e.target.selectionStart ?? v.length
+                          const editingBeforeArgs = caretPos <= (oldRange.start + 1)
+                          if (!editingBeforeArgs) {
+                            if (!v.startsWith(prefix) || !v.endsWith(suffix)) {
+                              e.target.value = editVal
+                              return
+                            }
                           }
                         }
                       }
