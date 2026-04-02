@@ -2087,6 +2087,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userSubNames, allKnownVarNames, cmdLoadId, dllCompletionItems])
+  const hasCommandCatalog = useMemo(() => allCommandsRef.current.length > 0, [cmdLoadId])
 
   const missingRhsLineSet = useMemo(() => {
     const set = new Set<number>()
@@ -4346,7 +4347,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           const isFlowKw = s.cls === 'comecolor'
                           const isUserSubRef = isFunc && userSubNamesRef.current.has(s.text)
                           const isAssignTarget = s.cls === 'assignTarget'
-                          const isInvalid = (isFunc && !validCommandNames.has(s.text)) || (isAssignTarget && !isKnownAssignmentTarget(s.text, allKnownVarNames))
+                          const isInvalid = (isFunc && hasCommandCatalog && !validCommandNames.has(s.text)) || (isAssignTarget && !isKnownAssignmentTarget(s.text, allKnownVarNames))
                           const isLineSyntaxInvalid = lineHasMissingRhs && (isAssignTarget || (!isFunc && !isObjMethod && !isFlowKw && s.text.trim() !== ''))
                           if (isFunc || isObjMethod || isFlowKw || isAssignTarget) {
                             const className = `${isAssignTarget ? 'Variablescolor' : (isUserSubRef ? 'eyc-subrefcolor' : s.cls)}${(isInvalid || isLineSyntaxInvalid) ? ' eyc-cmd-invalid' : ''}`
