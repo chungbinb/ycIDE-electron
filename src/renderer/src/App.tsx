@@ -10,6 +10,7 @@ import StatusBar from './components/StatusBar/StatusBar'
 import LibraryDialog from './components/LibraryDialog/LibraryDialog'
 import NewProjectDialog from './components/NewProjectDialog/NewProjectDialog'
 import type { SelectionTarget, AlignAction, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
+import { parseLines } from './components/Editor/eycBlocks'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
 import './App.css'
 
@@ -67,6 +68,225 @@ function normalizeResourceTableContent(raw: string): string {
   if (nonEmptyLines.length === 0) return '.版本 2\n'
 
   return `${nonEmptyLines.join('\n')}\n`
+}
+
+const DLL_DECL_PREFIX = '.DLL\u547D\u4EE4 '
+const PARAM_DECL_PREFIX = '.\u53C2\u6570 '
+const FLAG_OPTIONAL = '\u53EF\u7A7A'
+const FLAG_BYREF = '\u4F20\u5740'
+const FLAG_ARRAY = '\u6570\u7EC4'
+const CATEGORY_DLL = 'DLL\u547D\u4EE4'
+const LIB_CURRENT_PROJECT = '\u5F53\u524D\u9879\u76EE'
+const DLL_DESC_BASE = 'DLL\u547D\u4EE4'
+const NOT_FOUND_DESC = '\u672A\u5728\u5DF2\u52A0\u8F7D\u7684\u652F\u6301\u5E93\u4E2D\u627E\u5230\u6B64\u547D\u4EE4'
+
+type ProjectDllCommandHint = {
+  name: string
+  returnType: string
+  description: string
+  params: CommandDetail['params']
+}
+
+function splitDeclCsv(text: string): string[] {
+  const result: string[] = []
+  let cur = ''
+  let inQuote = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (inQuote) {
+      cur += ch
+      if (ch === '"' || ch === '\u201d') inQuote = false
+      continue
+    }
+    if (ch === '"' || ch === '\u201c') {
+      inQuote = true
+      cur += ch
+      continue
+    }
+    if (ch === ',' || ch === '\uFF0C') {
+      result.push(cur.trim())
+      cur = ''
+      continue
+    }
+    cur += ch
+  }
+  result.push(cur.trim())
+  return result
+}
+
+function unquoteDeclField(value: string): string {
+  const trimmed = (value || '').trim()
+  if (!trimmed) return ''
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith('\u201c') && trimmed.endsWith('\u201d'))) {
+    return trimmed.slice(1, -1).trim()
+  }
+  return trimmed
+}
+
+function normalizeLookupCommandName(raw: string): string {
+  let name = (raw || '').replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
+  if (!name) return ''
+  const fullParen = name.indexOf('\uFF08')
+  if (fullParen >= 0) name = name.slice(0, fullParen).trim()
+  const asciiParen = name.indexOf('(')
+  if (asciiParen >= 0) name = name.slice(0, asciiParen).trim()
+  if (name.includes('\u3002')) name = name.split('\u3002').pop() || name
+  if (name.includes('.')) name = name.split('.').pop() || name
+  return name.trim()
+}
+
+function parseProjectDllCommands(content: string, out: Map<string, ProjectDllCommandHint>, overwrite: boolean): void {
+  const lines = (content || '').replace(/\r\n/g, '\n').split('\n')
+  let currentName = ''
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\t/g, '').trim()
+    if (!line || line.startsWith("'") || line.startsWith('//')) continue
+
+    if (line.startsWith(DLL_DECL_PREFIX)) {
+      const fields = splitDeclCsv(line.slice(DLL_DECL_PREFIX.length))
+      const name = normalizeLookupCommandName(fields[0] || '')
+      if (!name) {
+        currentName = ''
+        continue
+      }
+
+      if (!out.has(name) || overwrite) {
+        out.set(name, {
+          name,
+          returnType: (fields[1] || '').trim(),
+          description: unquoteDeclField(fields.length > 5 ? fields.slice(5).join(',').trim() : ''),
+          params: [],
+        })
+      }
+      currentName = name
+      continue
+    }
+
+    if (line.startsWith(PARAM_DECL_PREFIX)) {
+      if (!currentName) continue
+      const target = out.get(currentName)
+      if (!target) continue
+
+      const fields = splitDeclCsv(line.slice(PARAM_DECL_PREFIX.length))
+      const paramName = (fields[0] || '').trim()
+      if (!paramName) continue
+
+      const flags = (fields[2] || '').trim()
+      target.params.push({
+        name: paramName,
+        type: (fields[1] || '').trim(),
+        description: unquoteDeclField(fields.length > 3 ? fields.slice(3).join(',').trim() : ''),
+        optional: flags.includes(FLAG_OPTIONAL),
+        isVariable: flags.includes(FLAG_BYREF),
+        isArray: flags.includes(FLAG_ARRAY),
+      })
+      continue
+    }
+
+    // 允许 DLL 声明与参数之间插入“.版本 2”分隔行
+    if (line.startsWith('.\u7248\u672C ')) continue
+    if (line.startsWith('.')) currentName = ''
+  }
+}
+
+function parseProjectDllCommandsByParsedLines(content: string, out: Map<string, ProjectDllCommandHint>, overwrite: boolean): void {
+  const parsed = parseLines(content || '')
+  let currentName = ''
+
+  for (const ln of parsed) {
+    if (ln.type === 'dll') {
+      const name = normalizeLookupCommandName((ln.fields[0] || '').trim())
+      if (!name) {
+        currentName = ''
+        continue
+      }
+
+      if (!out.has(name) || overwrite) {
+        out.set(name, {
+          name,
+          returnType: (ln.fields[1] || '').trim(),
+          description: unquoteDeclField(ln.fields.length > 5 ? ln.fields.slice(5).join(',').trim() : ''),
+          params: [],
+        })
+      }
+      currentName = name
+      continue
+    }
+
+    if (ln.type === 'subParam') {
+      if (!currentName) continue
+      const target = out.get(currentName)
+      if (!target) continue
+
+      const paramName = (ln.fields[0] || '').trim()
+      if (!paramName) continue
+      const flags = (ln.fields[2] || '').trim()
+      target.params.push({
+        name: paramName,
+        type: (ln.fields[1] || '').trim(),
+        description: unquoteDeclField(ln.fields.length > 3 ? ln.fields.slice(3).join(',').trim() : ''),
+        optional: flags.includes(FLAG_OPTIONAL),
+        isVariable: flags.includes(FLAG_BYREF),
+        isArray: flags.includes(FLAG_ARRAY),
+      })
+      continue
+    }
+
+    if (ln.type === 'version' || ln.type === 'supportLib') continue
+    if (ln.type !== 'blank' && ln.type !== 'comment' && ln.type !== 'code') currentName = ''
+  }
+}
+
+async function findProjectDllDetail(
+  lookupName: string,
+  projectDir: string,
+  tabs: EditorTab[],
+  joinPath: (dir: string, fileName: string) => string,
+): Promise<CommandDetail | null> {
+  const dllMap = new Map<string, ProjectDllCommandHint>()
+
+  for (const tab of tabs) {
+    if (!tab?.value) continue
+    if (tab.language === 'ell' || tab.language === 'eyc' || tab.language === 'egv' || tab.language === 'ecs' || tab.language === 'edt' || tab.language === 'erc') {
+      parseProjectDllCommandsByParsedLines(tab.value, dllMap, true)
+      parseProjectDllCommands(tab.value, dllMap, true)
+    }
+  }
+
+  if (projectDir) {
+    const openedPaths = new Set(
+      tabs
+        .filter(t => !!t.filePath)
+        .map(t => (t.filePath || '').replace(/\//g, '\\').toLowerCase()),
+    )
+
+    const files = await window.api?.file?.readDir(projectDir) as string[] | undefined
+    if (files) {
+      for (const f of files) {
+        if (!f.toLowerCase().endsWith('.ell')) continue
+        const fp = joinPath(projectDir, f)
+        if (openedPaths.has(fp.replace(/\//g, '\\').toLowerCase())) continue
+        const content = await window.api?.project?.readFile(fp)
+        if (!content) continue
+        parseProjectDllCommandsByParsedLines(content, dllMap, false)
+        parseProjectDllCommands(content, dllMap, false)
+      }
+    }
+  }
+
+  const dll = dllMap.get(lookupName)
+  if (!dll) return null
+
+  return {
+    name: dll.name,
+    englishName: '',
+    description: dll.description || (dll.returnType ? `${DLL_DESC_BASE}\uFF08\u8FD4\u56DE\uFF1A${dll.returnType}\uFF09` : DLL_DESC_BASE),
+    returnType: dll.returnType || '',
+    category: CATEGORY_DLL,
+    libraryName: LIB_CURRENT_PROJECT,
+    params: dll.params,
+  }
 }
 
 function App(): React.JSX.Element {
@@ -322,6 +542,7 @@ function App(): React.JSX.Element {
 
   // 硬件加载或卸载时重新检查
   const handleLibraryChange = useCallback(() => {
+    commandCacheRef.current.clear()
     checkDesignProblems(openTabsRef.current)
   }, [checkDesignProblems])
 
@@ -530,7 +751,8 @@ function App(): React.JSX.Element {
     }
 
     // 对象.方法 形式，取方法名
-    const name = commandName.includes('.') ? commandName.split('.').pop()! : commandName
+    const name = normalizeLookupCommandName(commandName)
+    if (!name) return
     setHighlightParamIndex(paramIndex)
 
     // 先查缓存
@@ -543,7 +765,7 @@ function App(): React.JSX.Element {
 
     // 从支持库加载全部命令并查找
     const allCommands = await window.api.library.getAllCommands()
-    const cmd = allCommands.find((c: CommandDetail) => c.name === name)
+    const cmd = allCommands.find((c: CommandDetail) => c.name === name || (c.englishName || '').trim() === name)
     if (cmd) {
       const detail: CommandDetail = {
         name: cmd.name,
@@ -557,7 +779,12 @@ function App(): React.JSX.Element {
       commandCacheRef.current.set(name, detail)
       setCommandDetail(detail)
     } else {
-      setCommandDetail({ name, englishName: '', description: '未在已加载的支持库中找到此命令', returnType: '', category: '', libraryName: '', params: [] })
+      const projectDllDetail = await findProjectDllDetail(name, currentProjectDirRef.current, openTabsRef.current || [], joinPath)
+      if (projectDllDetail) {
+        setCommandDetail(projectDllDetail)
+      } else {
+        setCommandDetail({ name, englishName: '', description: NOT_FOUND_DESC, returnType: '', category: '', libraryName: '', params: [] })
+      }
     }
     setShowOutput(true)
   }, [])
@@ -773,6 +1000,7 @@ function App(): React.JSX.Element {
   // 标签页变化时保存到项目目录，并重新检查设计时诊断
   const handleOpenTabsChange = useCallback((tabs: EditorTab[]) => {
     openTabsRef.current = tabs
+    commandCacheRef.current.clear()
     const dir = currentProjectDirRef.current
     if (dir) {
       const session: ProjectSessionState = {
