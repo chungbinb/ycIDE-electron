@@ -109,7 +109,7 @@ Plans:
 **Goal:** 支持库管理以商店卡片方式展示，用户可直接区分每个支持库的平台支持范围（Windows/macOS/Linux）及其已下载、已加载状态。
 **Requirements**: TBD
 **Depends on:** Phase 11
-**Plans:** 3/3 plans complete
+**Plans:** 4/4 plans complete
 
 Plans:
 - [x] 12-01-PLAN.md — 建立 StoreLibraryCard 数据契约与 main/preload IPC 通路

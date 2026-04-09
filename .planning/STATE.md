@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 12-03-PLAN.md
-last_updated: "2026-04-09T08:18:54.599Z"
+stopped_at: Completed 12-04-PLAN.md
+last_updated: "2026-04-09T09:04:11.110Z"
 progress:
   total_phases: 7
   completed_phases: 2
-  total_plans: 9
-  completed_plans: 7
+  total_plans: 10
+  completed_plans: 8
 ---
 
 # Project State
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-03-22)
 ## Current Position
 
 Phase: 12 (windows-macos-linux-windows) — EXECUTING
-Plan: 3 of 3
+Plan: 1 of 1
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Plan: 3 of 3
 | Phase 12 P01 | 3384 | 2 tasks | 5 files |
 | Phase 12 P02 | 532 | 2 tasks | 3 files |
 | Phase 12 P03 | 6m | 2 tasks | 5 files |
+| Phase 12 P04 | 253 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,8 @@ Recent decisions affecting current work:
 - [Phase 12]: Render library manager as card grid with platform/download/load badges while preserving batch apply flow.
 - [Phase 12]: Use ipcMain handler replacement for deterministic library store UI fixtures in Electron Playwright tests.
 - [Phase 12]: Enforce smoke-per-task with grep/full UI gates for wave and phase validation.
+- [Phase 12]: 下载态以每库至少一个 valid manifest 为真值来源，避免固定已下载显示。
+- [Phase 12]: UI 回归将下载态与加载态分离，applySelection 仅改变 isLoaded。
 
 ### Roadmap Evolution
 
@@ -102,6 +105,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-04-09T08:18:54.595Z
-Stopped at: Completed 12-03-PLAN.md
+Last session: 2026-04-09T09:04:11.106Z
+Stopped at: Completed 12-04-PLAN.md
 Resume file: None
