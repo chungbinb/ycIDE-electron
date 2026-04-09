@@ -1494,11 +1494,14 @@ class LibraryManager {
     const libraries = this.scan()
     const registry = scanYcmdRegistry(this.getLibFolder())
     const supportedPlatformsById = new Map<string, Platform[]>()
+    const downloadedById = new Map<string, boolean>()
 
     for (const lib of registry.libraries) {
       const platforms = new Set<Platform>()
+      let hasValidManifest = false
       for (const item of lib.manifests) {
         if (!item.valid || !item.manifest) continue
+        hasValidManifest = true
         const implementations = item.manifest.implementations
         if (!implementations || typeof implementations !== 'object') continue
         for (const platform of STORE_PLATFORM_ORDER) {
@@ -1508,6 +1511,7 @@ class LibraryManager {
         }
       }
       supportedPlatformsById.set(lib.name, STORE_PLATFORM_ORDER.filter(platform => platforms.has(platform)))
+      downloadedById.set(lib.name, hasValidManifest)
     }
 
     return libraries.map(lib => ({
@@ -1515,7 +1519,7 @@ class LibraryManager {
       displayName: lib.libName || lib.name,
       version: lib.version || '-',
       supportedPlatforms: supportedPlatformsById.get(lib.name) || [],
-      isDownloaded: true,
+      isDownloaded: downloadedById.get(lib.name) || false,
       isLoaded: lib.loaded,
       isCore: lib.isCore,
     }))
