@@ -1,5 +1,12 @@
 const path = require('node:path')
 const { test, expect, _electron: electron } = require('@playwright/test')
+const { createLibraryStoreFixtures, createLibraryInfoFixture } = require('./helpers/library-store-fixtures')
+
+async function openLibraryDialog(window) {
+  await window.getByRole('menuitem', { name: '查看(V)' }).click()
+  await window.getByRole('menuitem', { name: '支持库', exact: true }).click()
+  await expect(window.getByText('支持库管理')).toBeVisible()
+}
 
 test.describe('library store status', () => {
   test('updates downloaded and loaded status after apply selection', async () => {
@@ -11,36 +18,30 @@ test.describe('library store status', () => {
     })
 
     try {
+      const fixtures = createLibraryStoreFixtures()
+      const details = createLibraryInfoFixture()
+      await electronApp.evaluate(async ({ ipcMain }, { cards, infoMap }) => {
+        let currentCards = cards
+        ipcMain.removeHandler('library:getStoreCards')
+        ipcMain.handle('library:getStoreCards', async () => currentCards)
+        ipcMain.removeHandler('library:getInfo')
+        ipcMain.handle('library:getInfo', async (_event, id) => infoMap[id] ?? null)
+        ipcMain.removeHandler('library:applySelection')
+        ipcMain.handle('library:applySelection', async (_event, selectedNames) => {
+          currentCards = currentCards.map(card => ({ ...card, isLoaded: selectedNames.includes(card.id) }))
+          return { loadedCount: selectedNames.length, unloadedCount: 0, failed: [] }
+        })
+      }, { cards: [fixtures.windowsOnly], infoMap: details })
+
       const window = await electronApp.firstWindow()
       await window.waitForLoadState('domcontentloaded')
-      await window.evaluate(() => {
-        let cards = [
-          {
-            id: 'status-lib',
-            displayName: 'Status Library',
-            version: '1.0.0',
-            supportedPlatforms: ['windows'],
-            isDownloaded: true,
-            isLoaded: false,
-            isCore: false,
-          },
-        ]
-        const original = window.api.library
-        window.api.library = {
-          ...original,
-          getStoreCards: async () => cards,
-          getInfo: async id => ({ name: id, guid: '', version: '1.0.0', description: '', author: '', zipCode: '', address: '', phone: '', qq: '', email: '', homePage: '', otherInfo: '', fileName: '', commands: [], dataTypes: [], constants: [] }),
-          applySelection: async selectedNames => {
-            cards = cards.map(card => ({ ...card, isLoaded: selectedNames.includes(card.id) }))
-            return { loadedCount: selectedNames.length, unloadedCount: 0, failed: [] }
-          },
-        }
+
+      await openLibraryDialog(window)
+
+      const card = window.locator('.lib-card', {
+        has: window.locator('.lib-card-subtitle', { hasText: 'windows-only' }),
       })
-
-      await window.getByRole('menuitem', { name: '查看(V)' }).click()
-      await window.getByRole('menuitem', { name: '支持库' }).click()
-
-      const card = window.locator('[data-testid="status-card"]')
+      await expect(card).toBeVisible()
       await expect(card.getByText('已下载')).toBeVisible()
       await expect(card.getByText('未加载')).toBeVisible()
 
