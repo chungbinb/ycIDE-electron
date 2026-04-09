@@ -26,6 +26,12 @@ interface LibraryDialogProps {
   onClose: () => void
 }
 
+const platformLabelMap: Record<string, string> = {
+  windows: 'Windows',
+  macos: 'macOS',
+  linux: 'Linux',
+}
+
 function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element | null {
   const [libs, setLibs] = useState<StoreLibraryCard[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -139,64 +145,51 @@ function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element
         </div>
 
         <div className="lib-dialog-list">
-          <table className="lib-table">
-            <thead>
-              <tr>
-                <th className="lib-col-check">选择</th>
-                <th>文件名</th>
-                <th>支持库名称</th>
-                <th>版本</th>
-                <th>状态</th>
-              </tr>
-            </thead>
-            <tbody>
-              {libs.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="lib-empty">
-                    未找到支持库清单，请将 *.ycmd.json 文件放入 lib 子目录
-                  </td>
-                </tr>
-              ) : (
-                libs.map(lib => (
-                  <tr key={lib.id} className={lib.isLoaded ? 'lib-loaded' : ''}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        className="lib-checkbox"
-                        checked={selected.has(lib.id)}
-                        disabled={loading || lib.isCore}
-                        onChange={e => toggleOne(lib.id, e.target.checked)}
-                      />
-                    </td>
-                    <td>
-                      <button
-                        className={`lib-link ${selectedLibId === lib.id ? 'lib-link-active' : ''}`}
-                        disabled={loading}
-                        onClick={() => showLibDetail(lib.id)}
-                      >
-                        {lib.id}
-                      </button>
-                    </td>
-                    <td>
-                      <button
-                        className={`lib-link ${selectedLibId === lib.id ? 'lib-link-active' : ''}`}
-                        disabled={loading}
-                        onClick={() => showLibDetail(lib.id)}
-                      >
-                        {lib.displayName || '-'}{lib.isCore ? ' (核心)' : ''}
-                      </button>
-                    </td>
-                    <td>{lib.version || '-'}</td>
-                    <td>
-                      <span className={`lib-status ${lib.isLoaded ? 'lib-status-ok' : ''}`}>
-                        {lib.isLoaded ? '已加载' : '未加载'}
+          {libs.length === 0 ? (
+            <div className="lib-empty">
+              未找到支持库清单，请将 *.ycmd.json 文件放入 lib 子目录
+            </div>
+          ) : (
+            <div className="lib-card-grid">
+              {libs.map(lib => (
+                <div key={lib.id} className={`lib-card ${lib.isLoaded ? 'lib-card-loaded' : ''}`}>
+                  <div className="lib-card-header">
+                    <input
+                      type="checkbox"
+                      className="lib-checkbox"
+                      checked={selected.has(lib.id)}
+                      disabled={loading || lib.isCore}
+                      onChange={e => toggleOne(lib.id, e.target.checked)}
+                    />
+                    <button
+                      className={`lib-link ${selectedLibId === lib.id ? 'lib-link-active' : ''}`}
+                      disabled={loading}
+                      onClick={() => showLibDetail(lib.id)}
+                    >
+                      {lib.displayName || lib.id}{lib.isCore ? ' (核心)' : ''}
+                    </button>
+                  </div>
+                  <div className="lib-card-subtitle">{lib.id}</div>
+                  <div className="lib-card-version">版本：{lib.version || '-'}</div>
+                  <div className="lib-card-platforms">
+                    {lib.supportedPlatforms.map(platform => (
+                      <span key={`${lib.id}-${platform}`} className="lib-platform-tag">
+                        {platformLabelMap[platform] || platform}
                       </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                    ))}
+                  </div>
+                  <div className="lib-card-states">
+                    <span className={`lib-state-badge ${lib.isDownloaded ? 'lib-state-downloaded' : 'lib-state-missing'}`}>
+                      {lib.isDownloaded ? '已下载' : '未下载'}
+                    </span>
+                    <span className={`lib-state-badge ${lib.isLoaded ? 'lib-state-loaded' : ''}`}>
+                      {lib.isLoaded ? '已加载' : '未加载'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <textarea

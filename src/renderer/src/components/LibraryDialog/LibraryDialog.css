@@ -117,35 +117,95 @@
   min-height: 200px;
 }
 
-.lib-table {
-  width: 100%;
-  border-collapse: collapse;
+.lib-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.lib-card {
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  background: #1f1f20;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lib-card-loaded {
+  border-color: #2f7e6d;
+}
+
+.lib-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lib-card-subtitle {
+  color: #9a9a9a;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.lib-card-version {
+  color: #c9c9c9;
   font-size: 12px;
 }
-.lib-table th {
-  text-align: left;
-  padding: 6px 8px;
-  color: #999;
-  border-bottom: 1px solid #3c3c3c;
-  font-weight: normal;
-  white-space: nowrap;
+
+.lib-card-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
-.lib-table td {
-  padding: 5px 8px;
-  color: #ccc;
-  border-bottom: 1px solid #2d2d2d;
+
+.lib-platform-tag {
+  border: 1px solid #2a4d7d;
+  background: #1e2f48;
+  color: #9cc4ff;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
 }
-.lib-table tr:hover td {
-  background: rgba(255, 255, 255, 0.04);
+
+.lib-card-states {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
-.lib-table tr.lib-loaded td {
-  color: #4ec9b0;
+
+.lib-state-badge {
+  border: 1px solid #555;
+  background: #303030;
+  color: #d6d6d6;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+}
+
+.lib-state-downloaded {
+  border-color: #2f7e6d;
+  background: #123d34;
+  color: #8be0cc;
+}
+
+.lib-state-missing {
+  border-color: #7a4b3f;
+  background: #3a231e;
+  color: #ffb7a3;
+}
+
+.lib-state-loaded {
+  border-color: #357a52;
+  background: #173927;
+  color: #86d9a8;
 }
 
 .lib-empty {
   text-align: center;
   color: #666 !important;
-  padding: 24px 8px !important;
+  padding: 24px 8px;
 }
 
 .lib-status {
