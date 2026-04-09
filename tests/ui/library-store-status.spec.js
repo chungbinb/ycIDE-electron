@@ -31,7 +31,7 @@ test.describe('library store status', () => {
           currentCards = currentCards.map(card => ({ ...card, isLoaded: selectedNames.includes(card.id) }))
           return { loadedCount: selectedNames.length, unloadedCount: 0, failed: [] }
         })
-      }, { cards: [fixtures.windowsOnly], infoMap: details })
+      }, { cards: [fixtures.notDownloaded], infoMap: details })
 
       const window = await electronApp.firstWindow()
       await window.waitForLoadState('domcontentloaded')
@@ -39,7 +39,7 @@ test.describe('library store status', () => {
       await openLibraryDialog(window)
 
       const card = window.locator('.lib-card', {
-        has: window.locator('.lib-card-subtitle', { hasText: 'windows-only' }),
+        has: window.locator('.lib-card-subtitle', { hasText: 'missing-library' }),
       })
       await expect(card).toBeVisible()
       await expect(card.getByText('未下载')).toBeVisible()

@@ -9,6 +9,15 @@ function createLibraryStoreFixtures() {
       isLoaded: false,
       isCore: false,
     },
+    notDownloaded: {
+      id: 'missing-library',
+      displayName: 'Missing Library',
+      version: '1.0.0',
+      supportedPlatforms: ['linux'],
+      isDownloaded: false,
+      isLoaded: false,
+      isCore: false,
+    },
     allPlatform: {
       id: 'all-platform',
       displayName: 'All Platform Library',
@@ -47,6 +56,10 @@ function createLibraryInfoFixture() {
     'all-platform': {
       ...base,
       name: 'all-platform',
+    },
+    'missing-library': {
+      ...base,
+      name: 'missing-library',
     },
   }
 }
