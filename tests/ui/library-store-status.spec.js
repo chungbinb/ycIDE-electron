@@ -9,7 +9,7 @@ async function openLibraryDialog(window) {
 }
 
 test.describe('library store status', () => {
-  test('updates downloaded and loaded status after apply selection', async () => {
+  test('keeps not-downloaded badge while loaded status updates after apply selection', async () => {
     const appRoot = path.resolve(__dirname, '..', '..')
     const electronApp = await electron.launch({
       args: [appRoot],
@@ -42,13 +42,14 @@ test.describe('library store status', () => {
         has: window.locator('.lib-card-subtitle', { hasText: 'windows-only' }),
       })
       await expect(card).toBeVisible()
-      await expect(card.getByText('已下载')).toBeVisible()
+      await expect(card.getByText('未下载')).toBeVisible()
       await expect(card.getByText('未加载')).toBeVisible()
 
       await card.locator('input[type="checkbox"]').check()
       await window.getByRole('button', { name: '应用选择' }).click()
 
       await expect(card.getByText('已加载')).toBeVisible()
+      await expect(card.getByText('未下载')).toBeVisible()
     } finally {
       await electronApp.close()
     }
