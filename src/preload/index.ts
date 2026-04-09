@@ -86,6 +86,7 @@ const api = {
     loadAll: () => ipcRenderer.invoke('library:loadAll'),
     applySelection: (selectedNames: string[]) => ipcRenderer.invoke('library:applySelection', selectedNames),
     getList: () => ipcRenderer.invoke('library:getList'),
+    getStoreCards: () => ipcRenderer.invoke('library:getStoreCards'),
     getInfo: (name: string) => ipcRenderer.invoke('library:getInfo', name),
     getAllCommands: () => ipcRenderer.invoke('library:getAllCommands'),
     getAllDataTypes: () => ipcRenderer.invoke('library:getAllDataTypes'),

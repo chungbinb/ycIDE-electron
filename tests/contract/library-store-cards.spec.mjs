@@ -146,6 +146,11 @@ async function loadLibraryManager(ctx) {
         getYcmdCommands: () => [],
       }
     }
+    if (specifier === '../shared/library-store') {
+      return {
+        STORE_PLATFORM_ORDER: ['windows', 'macos', 'linux'],
+      }
+    }
     return require(specifier)
   }
 

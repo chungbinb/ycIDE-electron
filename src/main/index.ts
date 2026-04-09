@@ -897,6 +897,9 @@ app.whenReady().then(() => {
   ipcMain.handle('library:getList', () => {
     return libraryManager.getList()
   })
+  ipcMain.handle('library:getStoreCards', () => {
+    return libraryManager.getStoreCards()
+  })
   ipcMain.handle('library:getInfo', (_event, name: string) => {
     return libraryManager.getLibInfo(name)
   })
