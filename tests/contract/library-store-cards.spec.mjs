@@ -76,6 +76,36 @@ test('store cards: local library is downloaded and loaded status follows saved s
   assert.equal(typeof loadedCard.isCore, 'boolean')
 })
 
+test('store cards: invalid-only manifest library is marked as not downloaded while loaded state still follows selection', async () => {
+  const ctx = await createFixture({
+    loadedLibs: ['lib-missing'],
+    libraries: [
+      createLibrary('lib-valid', [
+        createManifest({ platform: 'windows', displayName: 'Valid Lib', version: '1.0.0' }),
+      ]),
+      createLibrary('lib-missing', [
+        createInvalidManifest({
+          platform: 'linux',
+          displayName: 'Missing Manifest',
+          version: '1.0.0',
+          errors: ['JSON 解析失败: Unexpected token'],
+        }),
+      ]),
+    ],
+  })
+
+  const manager = await loadLibraryManager(ctx)
+  const cards = manager.getStoreCards()
+  const validCard = cards.find(item => item.id === 'lib-valid')
+  const missingCard = cards.find(item => item.id === 'lib-missing')
+
+  assert.ok(validCard)
+  assert.ok(missingCard)
+  assert.equal(validCard.isDownloaded, true)
+  assert.equal(missingCard.isDownloaded, false)
+  assert.equal(missingCard.isLoaded, true)
+})
+
 async function createFixture({ loadedLibs, libraries }) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'store-cards-'))
   const userDataDir = path.join(root, 'userData')
@@ -87,12 +117,23 @@ async function createFixture({ loadedLibs, libraries }) {
     libraries: libraries.map(lib => ({
       name: lib.name,
       folderPath: path.join(root, 'lib', lib.name),
-      manifests: lib.manifests.map((manifest, index) => ({
-        filePath: path.join(root, 'lib', lib.name, `manifest-${index}.ycmd.json`),
-        manifest,
-        valid: true,
-        errors: [],
-      })),
+      manifests: lib.manifests.map((manifest, index) => {
+        if (manifest?.__manifestItem) {
+          return {
+            filePath: path.join(root, 'lib', lib.name, `manifest-${index}.ycmd.json`),
+            manifest: manifest.manifest,
+            valid: manifest.valid,
+            errors: manifest.errors || [],
+          }
+        }
+
+        return {
+          filePath: path.join(root, 'lib', lib.name, `manifest-${index}.ycmd.json`),
+          manifest,
+          valid: true,
+          errors: [],
+        }
+      }),
     })),
     errors: [],
   }
@@ -114,6 +155,15 @@ function createManifest({ platform, displayName, version }) {
     implementations: {
       [platform]: { entry: `${platform}.cpp` },
     },
+  }
+}
+
+function createInvalidManifest({ platform, displayName, version, errors }) {
+  return {
+    __manifestItem: true,
+    manifest: createManifest({ platform, displayName, version }),
+    valid: false,
+    errors,
   }
 }
 
