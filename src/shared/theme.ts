@@ -8,6 +8,8 @@ export const THEME_CONFIG_VERSION = 2 as const
 export const BUILTIN_DARK_THEME_ID = '默认深色'
 
 export type ThemeId = string
+export const CUSTOM_THEME_NAME_MAX_LENGTH = 32
+const CUSTOM_THEME_NAME_RESERVED_CHARS = /[\\/:*?"<>|]/
 
 export interface ThemeDefinition {
   name: ThemeId
@@ -48,6 +50,38 @@ export interface ThemeConfigV2 {
   lastError: ThemeConfigError | null
   retainedInvalidTheme: RetainedInvalidThemeConfig | null
 }
+
+export type CustomThemeNameValidationCode =
+  | 'empty'
+  | 'too_long'
+  | 'reserved_character'
+
+export interface CustomThemeNameValidationResult {
+  valid: boolean
+  normalizedName: ThemeId
+  code: CustomThemeNameValidationCode | null
+  message: string | null
+}
+
+export interface SaveAsCustomThemeRequest {
+  name: string
+  sourceThemeId: ThemeId
+  themePayload: ThemeTokenPayload
+}
+
+export type SaveAsCustomThemeResult =
+  | {
+    success: true
+    themeId: ThemeId
+    themePayload: ThemeTokenPayload
+    config: ThemeConfigV2
+  }
+  | {
+    success: false
+    code: 'invalid_name' | 'duplicate_name' | 'source_theme_missing' | 'save_failed'
+    message: string
+    validation?: CustomThemeNameValidationResult
+  }
 
 export type ThemeResolutionWarningCode =
   | 'config_missing'
@@ -178,4 +212,38 @@ export function isThemeConfigV2(value: unknown): value is ThemeConfigV2 {
     && typeof data.themePayloads === 'object'
     && (data.lastError === null || typeof data.lastError === 'object')
     && (data.retainedInvalidTheme === null || typeof data.retainedInvalidTheme === 'object')
+}
+
+export function validateCustomThemeName(rawName: string): CustomThemeNameValidationResult {
+  const normalizedName = (rawName || '').trim()
+  if (!normalizedName) {
+    return {
+      valid: false,
+      normalizedName,
+      code: 'empty',
+      message: '主题名称不能为空。',
+    }
+  }
+  if (normalizedName.length > CUSTOM_THEME_NAME_MAX_LENGTH) {
+    return {
+      valid: false,
+      normalizedName,
+      code: 'too_long',
+      message: `主题名称长度不能超过${CUSTOM_THEME_NAME_MAX_LENGTH}个字符。`,
+    }
+  }
+  if (CUSTOM_THEME_NAME_RESERVED_CHARS.test(normalizedName)) {
+    return {
+      valid: false,
+      normalizedName,
+      code: 'reserved_character',
+      message: '主题名称包含非法字符（\\ / : * ? \" < > |）。',
+    }
+  }
+  return {
+    valid: true,
+    normalizedName,
+    code: null,
+    message: null,
+  }
 }
