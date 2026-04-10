@@ -60,13 +60,18 @@ function resolveFiles(surface) {
     ]
   }
 
-  const files = SURFACE_FILES[surface]
-  if (!files) {
+  const requestedSurfaces = surface.split(',').map(item => item.trim()).filter(Boolean)
+  const unknownSurfaces = requestedSurfaces.filter(item => !SURFACE_FILES[item])
+  if (unknownSurfaces.length > 0) {
     const supported = Object.keys(SURFACE_FILES).join(', ')
-    throw new Error(`Unknown surface "${surface}". Supported: ${supported}`)
+    throw new Error(`Unknown surface "${unknownSurfaces.join(', ')}". Supported: ${supported}`)
   }
 
-  return [...new Set(files)]
+  return [
+    ...new Set(
+      requestedSurfaces.flatMap(item => SURFACE_FILES[item]),
+    ),
+  ]
 }
 
 function scanFile(relativePath) {
@@ -101,12 +106,18 @@ function main() {
   const violations = scanned.filter(item => item.hits.length > 0)
 
   const summary = {
+    generatedAt: new Date().toISOString(),
     phase: args.phase ?? null,
     surface: args.surface ?? 'all',
+    status: args.strict && violations.length > 0 ? 'fail' : 'pass',
     strict: args.strict,
     scannedFiles: files.length,
     violations: violations.length,
     totalHits: violations.reduce((sum, file) => sum + file.hits.length, 0),
+    summaryByFile: scanned.map(item => ({
+      file: item.file,
+      hits: item.hits.length,
+    })),
     files: scanned,
   }
 
