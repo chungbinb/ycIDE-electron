@@ -4,6 +4,8 @@ import { THEME_CONFIG_VERSION } from '../shared/theme'
 import type {
   SaveAsCustomThemeRequest,
   SaveAsCustomThemeResult,
+  ThemeImportConflictDecision,
+  ThemeImportValidationDiagnostic,
   ThemeConfigV2,
   ThemeDefinition,
   ThemeId,
@@ -21,6 +23,14 @@ type ThemeLifecycleSyncPayload = {
   currentTheme: ThemeId
   menuState: ThemeMenuState
 }
+type ThemeImportPrepareResult =
+  | { status: 'canceled' }
+  | { status: 'invalid'; diagnostics: ThemeImportValidationDiagnostic[]; sourceFilePath: string | null }
+  | { status: 'conflict'; importedTheme: ThemeDefinition; existingThemeId: ThemeId; allowedDecisions: ThemeImportConflictDecision['decision'][]; sourceFilePath: string | null }
+  | { status: 'ready'; importedTheme: ThemeDefinition; targetThemeId: ThemeId; sourceFilePath: string | null }
+type ThemeImportCommitResult =
+  | ({ success: true; importedThemeId: ThemeId; overwritten: boolean } & ThemeLifecycleSyncPayload)
+  | ({ success: false; code: 'invalid_payload' | 'conflict_decision_required' | 'invalid_conflict_decision' | 'duplicate_name' | 'theme_not_found' | 'commit_failed'; message: string; diagnostics?: ThemeImportValidationDiagnostic[] })
 
 // 向渲染进程安全暴露的 API
 const api = {
@@ -157,6 +167,10 @@ const api = {
         | { success: true; filePath: string; fileName: string; themeId: ThemeId }
         | { success: false; canceled?: true; code?: 'theme_not_found' | 'export_failed'; message?: string }
       >,
+    import: (request?: { filePath?: string; fileContent?: string }) =>
+      ipcRenderer.invoke('theme:import', request) as Promise<ThemeImportPrepareResult>,
+    importCommit: (request: { importedTheme: ThemeDefinition; decision?: ThemeImportConflictDecision }) =>
+      ipcRenderer.invoke('theme:importCommit', request) as Promise<ThemeImportCommitResult>,
   },
   // 对话框
   dialog: {

@@ -7,7 +7,9 @@ import { normalizeRuntimePlatform } from '../shared/platform'
 import { getActionAccelerator } from '../shared/shortcut-config'
 import {
   BUILTIN_DARK_THEME_ID,
+  validateThemeImportConflictDecision,
   validateCustomThemeName,
+  validateThemePortabilityImportPayload,
   THEME_CONFIG_VERSION,
   THEME_PORTABILITY_SCHEMA_VERSION,
   createDefaultThemeTokenPayload,
@@ -24,7 +26,9 @@ import {
   type ThemeTokenPayload,
   type ThemeResolutionResult,
   type ThemeResolutionWarningCode,
-  type ThemePortabilityExportDto
+  type ThemePortabilityExportDto,
+  type ThemeImportConflictDecision,
+  type ThemeImportValidationDiagnostic
 } from '../shared/theme'
 import { THEME_TOKEN_GROUPS } from '../shared/theme-tokens'
 import { scanYcmdRegistry } from './ycmd-registry'
@@ -216,6 +220,16 @@ type ThemeExportResult =
   | { success: true; filePath: string; fileName: string; themeId: ThemeId }
   | { success: false; canceled?: true; code?: 'theme_not_found' | 'export_failed'; message?: string }
 
+type ThemeImportPrepareResult =
+  | { status: 'canceled' }
+  | { status: 'invalid'; diagnostics: ThemeImportValidationDiagnostic[]; sourceFilePath: string | null }
+  | { status: 'conflict'; importedTheme: ThemeDefinition; existingThemeId: ThemeId; allowedDecisions: ThemeImportConflictDecision['decision'][]; sourceFilePath: string | null }
+  | { status: 'ready'; importedTheme: ThemeDefinition; targetThemeId: ThemeId; sourceFilePath: string | null }
+
+type ThemeImportCommitResult =
+  | ({ success: true; importedThemeId: ThemeId; overwritten: boolean } & ThemeLifecycleState)
+  | ({ success: false; code: 'invalid_payload' | 'conflict_decision_required' | 'invalid_conflict_decision' | 'duplicate_name' | 'theme_not_found' | 'commit_failed'; message: string; diagnostics?: ThemeImportValidationDiagnostic[] })
+
 function buildThemeLifecycleState(config: ThemeConfigV2): ThemeLifecycleState {
   const menuState = syncThemeMenuState(config.currentThemeId)
   return {
@@ -224,6 +238,12 @@ function buildThemeLifecycleState(config: ThemeConfigV2): ThemeLifecycleState {
     currentTheme: menuState.currentTheme,
     menuState,
   }
+}
+
+function findThemeIdCaseInsensitive(themeId: ThemeId, existingThemeIds: ThemeId[]): ThemeId | null {
+  const normalized = themeId.trim().toLowerCase()
+  const matched = existingThemeIds.find(item => item.trim().toLowerCase() === normalized)
+  return matched || null
 }
 
 function readThemeConfigForWrite(): ThemeConfigV2 {
@@ -1661,6 +1681,207 @@ app.whenReady().then(() => {
         success: false,
         code: 'export_failed',
         message: `导出主题失败：${message}`,
+      }
+    }
+  })
+
+  ipcMain.handle('theme:import', async (_event, request?: { filePath?: string; fileContent?: string }): Promise<ThemeImportPrepareResult> => {
+    let sourceFilePath: string | null = null
+    let rawContent = request?.fileContent
+
+    if (typeof rawContent !== 'string') {
+      sourceFilePath = (request?.filePath || '').trim() || null
+      if (!sourceFilePath) {
+        const targetWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+        const openResult = await dialog.showOpenDialog(targetWindow || undefined, {
+          title: '导入主题',
+          filters: [{ name: 'ycIDE Theme', extensions: ['json'] }],
+          properties: ['openFile'],
+        })
+        if (openResult.canceled || !openResult.filePaths[0]) {
+          return { status: 'canceled' }
+        }
+        sourceFilePath = openResult.filePaths[0]
+      }
+      try {
+        rawContent = readFileSync(sourceFilePath, 'utf-8')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return {
+          status: 'invalid',
+          diagnostics: [{
+            path: '$',
+            code: 'invalid_value',
+            message: `读取导入文件失败：${message}`,
+          }],
+          sourceFilePath,
+        }
+      }
+    }
+
+    let parsedPayload: unknown
+    try {
+      parsedPayload = JSON.parse(rawContent)
+    } catch {
+      return {
+        status: 'invalid',
+        diagnostics: [{
+          path: '$',
+          code: 'invalid_value',
+          message: '导入文件不是有效 JSON。',
+        }],
+        sourceFilePath,
+      }
+    }
+
+    const validation = validateThemePortabilityImportPayload(parsedPayload)
+    if (!validation.success) {
+      return {
+        status: 'invalid',
+        diagnostics: validation.diagnostics,
+        sourceFilePath,
+      }
+    }
+
+    const importedTheme: ThemeDefinition = {
+      name: validation.value.theme.name.trim(),
+      colors: { ...validation.value.theme.colors },
+    }
+    const existingThemeId = findThemeIdCaseInsensitive(importedTheme.name, listThemeIds())
+    if (existingThemeId) {
+      return {
+        status: 'conflict',
+        importedTheme,
+        existingThemeId,
+        allowedDecisions: ['rename-import', 'overwrite'],
+        sourceFilePath,
+      }
+    }
+
+    return {
+      status: 'ready',
+      importedTheme,
+      targetThemeId: importedTheme.name,
+      sourceFilePath,
+    }
+  })
+
+  ipcMain.handle('theme:importCommit', (_event, request: { importedTheme: ThemeDefinition; decision?: ThemeImportConflictDecision }): ThemeImportCommitResult => {
+    const payloadValidation = validateThemePortabilityImportPayload({
+      schemaVersion: THEME_PORTABILITY_SCHEMA_VERSION,
+      theme: request?.importedTheme,
+    })
+    if (!payloadValidation.success) {
+      return {
+        success: false,
+        code: 'invalid_payload',
+        message: '导入主题无效，无法提交。',
+        diagnostics: payloadValidation.diagnostics,
+      }
+    }
+
+    const importedTheme = payloadValidation.value.theme
+    const existingThemeIds = listThemeIds()
+    const existingThemeId = findThemeIdCaseInsensitive(importedTheme.name, existingThemeIds)
+    let targetThemeId = importedTheme.name
+    let overwritten = false
+
+    if (existingThemeId) {
+      if (!request?.decision) {
+        return {
+          success: false,
+          code: 'conflict_decision_required',
+          message: '检测到同名主题，请先选择 rename-import 或 overwrite（overwrite 需 overwriteConfirmed=true）。',
+        }
+      }
+
+      const decisionValidation = validateThemeImportConflictDecision(request.decision)
+      if (!decisionValidation.success) {
+        return {
+          success: false,
+          code: 'invalid_conflict_decision',
+          message: '冲突决策无效，overwrite 必须携带 overwriteConfirmed=true。',
+          diagnostics: decisionValidation.diagnostics,
+        }
+      }
+
+      if (decisionValidation.value.decision === 'rename-import') {
+        const renamedValidation = validateCustomThemeName(decisionValidation.value.newThemeName)
+        if (!renamedValidation.valid) {
+          return {
+            success: false,
+            code: 'duplicate_name',
+            message: renamedValidation.message || '导入名称无效。',
+          }
+        }
+        targetThemeId = renamedValidation.normalizedName
+        if (findThemeIdCaseInsensitive(targetThemeId, existingThemeIds)) {
+          return {
+            success: false,
+            code: 'duplicate_name',
+            message: `主题名称“${targetThemeId}”已存在，请更换名称。`,
+          }
+        }
+      } else {
+        const overwriteTarget = findThemeIdCaseInsensitive(decisionValidation.value.overwriteThemeId, existingThemeIds)
+        if (!overwriteTarget) {
+          return {
+            success: false,
+            code: 'theme_not_found',
+            message: `覆盖目标“${decisionValidation.value.overwriteThemeId}”不存在。`,
+          }
+        }
+        targetThemeId = overwriteTarget
+        overwritten = true
+      }
+    }
+
+    const targetTheme: ThemeDefinition = {
+      name: targetThemeId,
+      colors: { ...importedTheme.colors },
+    }
+    const rollbackTheme = loadThemeDefinition(targetThemeId)
+    const rollbackConfig = readThemeConfigForWrite()
+
+    try {
+      saveThemeDefinition(targetThemeId, targetTheme)
+
+      const config = readThemeConfigForWrite()
+      config.themePayloads[targetThemeId] = normalizeThemePayload(
+        targetThemeId,
+        resolveThemeTokenPayload(undefined, targetTheme.colors)
+      )
+      config.lastError = null
+      if (config.retainedInvalidTheme?.themeId === targetThemeId) {
+        config.retainedInvalidTheme = null
+      }
+      writeThemeConfig(config)
+
+      return {
+        success: true,
+        importedThemeId: targetThemeId,
+        overwritten,
+        ...buildThemeLifecycleState(config),
+      }
+    } catch (error) {
+      try {
+        if (rollbackTheme) {
+          saveThemeDefinition(targetThemeId, rollbackTheme)
+        } else {
+          const targetPath = join(getThemesDirPath(), `${targetThemeId}.json`)
+          if (existsSync(targetPath)) {
+            unlinkSync(targetPath)
+          }
+        }
+        writeThemeConfig(rollbackConfig)
+      } catch {
+        // rollback best-effort
+      }
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        success: false,
+        code: 'commit_failed',
+        message: `导入提交失败，已回滚：${message}`,
       }
     }
   })
