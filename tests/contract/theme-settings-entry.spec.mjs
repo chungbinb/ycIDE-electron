@@ -5,6 +5,7 @@ import path from 'node:path'
 
 const dialogPath = path.resolve(process.cwd(), 'src/renderer/src/components/ThemeSettingsDialog/ThemeSettingsDialog.tsx')
 const tokenMetaPath = path.resolve(process.cwd(), 'src/shared/theme-tokens.ts')
+const appPath = path.resolve(process.cwd(), 'src/renderer/src/App.tsx')
 
 test('theme settings renders four business groups with preview chips and keeps token keys hidden', () => {
   const dialogSource = fs.readFileSync(dialogPath, 'utf-8')
@@ -39,4 +40,26 @@ test('theme settings table/header group exposes full table token set', () => {
   assert.match(source, /表头文本/)
   assert.match(source, /行悬浮/)
   assert.match(source, /行选中/)
+})
+
+test('App wires per-item reset through shared immediate apply handler', () => {
+  const source = fs.readFileSync(appPath, 'utf-8')
+  assert.match(source, /onResetToken=\{handleThemeTokenResetItem\}/)
+  assert.match(source, /const handleThemeTokenResetItem = useCallback\(/)
+  assert.match(source, /window\.api\?\.theme\?\.saveCurrent\(/)
+})
+
+test('App requires confirmations for group and global resets before immediate apply', () => {
+  const source = fs.readFileSync(appPath, 'utf-8')
+  assert.match(source, /onResetGroup=\{handleThemeTokenResetGroup\}/)
+  assert.match(source, /onResetAll=\{handleThemeTokenResetAll\}/)
+  assert.match(source, /window\.confirm\('确定重置该分组令牌吗\?'\)/)
+  assert.match(source, /window\.confirm\('确定恢复全部主题令牌默认值吗\?'\)/)
+})
+
+test('flow-line group reset only resets active mode configuration', () => {
+  const source = fs.readFileSync(appPath, 'utf-8')
+  assert.match(source, /groupId === 'flow-line'/)
+  assert.match(source, /flowLine\.mode === 'multi'/)
+  assert.match(source, /flowLine\.mode === 'single'/)
 })
