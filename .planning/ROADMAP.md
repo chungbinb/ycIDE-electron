@@ -7,7 +7,7 @@
 
 ## Phases
 
-- [ ] **Phase 13: Theme Baseline** - Built-in 深/浅主题可切换且可持久化，浅色具备可读性
+- [x] **Phase 13: Theme Baseline** - Built-in 深/浅主题可切换且可持久化，浅色具备可读性 (completed 2026-04-10)
 - [ ] **Phase 14: Theme Token Coverage** - 所有可见区域接入主题 token 与流程线模式/颜色配置
 - [ ] **Phase 15: Theme Editing Workflow** - 设置页支持实时预览、撤销、保存为自定义主题
 - [ ] **Phase 16: Theme Management & Portability** - 自定义主题本机管理 + 安全导入导出
@@ -70,7 +70,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 13. Theme Baseline | 3/4 | In Progress|  |
+| 13. Theme Baseline | 4/4 | Complete   | 2026-04-10 |
 | 14. Theme Token Coverage | 0/0 | Not started | - |
 | 15. Theme Editing Workflow | 0/0 | Not started | - |
 | 16. Theme Management & Portability | 0/0 | Not started | - |
