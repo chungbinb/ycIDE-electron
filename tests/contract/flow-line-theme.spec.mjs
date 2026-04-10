@@ -3,9 +3,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
+import { createRequire } from 'node:module'
 import ts from 'typescript'
 
 const flowThemePath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/flowLineTheme.ts')
+const runtimeRequire = createRequire(import.meta.url)
 
 function loadFlowLineThemeModule() {
   const source = fs.readFileSync(flowThemePath, 'utf-8')
@@ -20,7 +22,7 @@ function loadFlowLineThemeModule() {
   const context = vm.createContext({
     module,
     exports: module.exports,
-    require,
+    require: runtimeRequire,
     console,
   })
   const script = new vm.Script(compiled, { filename: flowThemePath })
@@ -36,13 +38,11 @@ test('single mode returns one shared color for all flow elements', () => {
     multi: { mainColor: '#4fc1ff', depthHueStep: 16, depthSaturationStep: -4, depthLightnessStep: 5 },
   }, 5)
 
-  assert.deepEqual(colors, {
-    main: '#4fc1ff',
-    branch: '#4fc1ff',
-    loop: '#4fc1ff',
-    arrow: '#4fc1ff',
-    innerLink: '#4fc1ff',
-  })
+  assert.equal(colors.main, '#4fc1ff')
+  assert.equal(colors.branch, '#4fc1ff')
+  assert.equal(colors.loop, '#4fc1ff')
+  assert.equal(colors.arrow, '#4fc1ff')
+  assert.equal(colors.innerLink, '#4fc1ff')
 })
 
 test('multi mode derives depth-based colors from current main color baseline', () => {
