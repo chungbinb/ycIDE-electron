@@ -1,83 +1,87 @@
-# Requirements: ycIDE v1.1 Compiler Standardization
+# Requirements: ycIDE v1.2 主题系统
 
-**Defined:** 2026-03-22  
-**Core Value:** Third-party developers can compile support libraries directly through a stable compiler contract, without requiring compiler updates per new library.
+**Defined:** 2026-04-09
+**Core Value:** 用户可以在 ycIDE 中稳定使用并自定义完整主题体系，实时预览并安全保存复用。
 
 ## v1 Requirements
 
-### Contract Governance
+### Theme Baseline
 
-- [x] **CONT-01**: Maintainer can define and publish a canonical support-library compile contract schema with explicit versioning rules.
-- [x] **CONT-02**: Maintainer can validate third-party library contract files before compile and receive structured errors/warnings.
-- [ ] **CONT-03**: Compiler can enforce strict contract mode for third-party libraries and block invalid contract inputs.
-- [x] **CONT-04**: Compiler can negotiate contract compatibility using explicit version fields (such as min compiler version/features) and fail fast on incompatibility.
+- [x] **THME-01**: 用户可以在内置深色与浅色主题之间切换
+- [x] **THME-02**: 主题切换后重启应用仍保持上次选中的主题
+- [ ] **THME-03**: 浅色主题在主要界面区域具备可读性（文本/背景对比可用）
 
-### Third-Party Build Workflow
+### Theme Tokens
 
-- [ ] **WFLO-01**: Third-party developer can initialize a library project scaffold that includes required contract/protocol files.
-- [ ] **WFLO-02**: Third-party developer can run one command flow to validate and package build artifacts for ycIDE consumption.
-- [ ] **WFLO-03**: Build workflow can output deterministic artifact layout compatible with `lib` / `static_lib` conventions.
-- [ ] **WFLO-04**: Build workflow can generate machine-readable reports for contract validity, architecture targets, and packaging completeness.
+- [ ] **TOKN-01**: 用户可以自定义普通文本颜色与背景颜色
+- [ ] **TOKN-02**: 用户可以自定义关键字颜色
+- [ ] **TOKN-03**: 用户可以自定义代码编辑器表格颜色与表头颜色
+- [ ] **TOKN-04**: 用户可以按主题配置流程线模式（单色或多色）
+- [ ] **TOKN-05**: 用户可以自定义流程线颜色（与流程线模式一致生效）
+- [ ] **TOKN-06**: 主题 token 对所有可见区域生效，不出现局部未跟随主题的硬编码颜色
 
-### Compatibility & Integration
+### Theme Workflow
 
-- [ ] **COMP-01**: Existing built-in and migrated libraries are evaluated under the same strict mode and return deterministic, actionable repair diagnostics (no legacy bypass).
-- [x] **COMP-02**: All loaded libraries are strict-gated by default, with no fallback pass behavior for contract/compatibility failures.
-- [ ] **COMP-03**: Support-library manager can surface contract version and contract health status per library.
-- [ ] **COMP-04**: Library load/compile diagnostics can explicitly indicate whether failures come from contract validation, compatibility mismatch, or runtime metadata issues.
+- [ ] **FLOW-01**: 用户在设置页修改颜色后可实时预览效果
+- [ ] **FLOW-02**: 用户可以撤销当前预览改动并恢复到进入设置前的主题状态
+- [ ] **FLOW-03**: 用户可以将当前配置保存为自定义主题
 
-### Ecosystem Reliability
+### Theme Management
 
-- [ ] **RELY-01**: Unsupported/placeholder command generation paths are surfaced as explicit failures in strict mode (no silent success).
-- [ ] **RELY-02**: Maintainer can run a clean-machine style verification gate for third-party artifacts before promotion.
-- [ ] **RELY-03**: Third-party onboarding docs can describe the minimum compliant contract/build/release process without requiring compiler source modifications.
+- [ ] **MGMT-01**: 用户可以在本机管理自定义主题（创建/编辑/重命名/删除）
+- [ ] **MGMT-02**: 用户可以导出自定义主题到文件
+- [ ] **MGMT-03**: 用户可以导入主题文件并应用
+- [ ] **MGMT-04**: 导入主题在字段缺失或不合法时会给出明确错误，不会静默破坏现有主题
+
+### Compatibility & Quality
+
+- [ ] **QUAL-01**: 主题切换和预览不会破坏现有编辑器与表格交互功能
+- [ ] **QUAL-02**: 关键主题路径具备自动化回归覆盖（至少覆盖浅/深、未导入失败、预览撤销、导入导出）
 
 ## Future Requirements
 
-### Developer Experience Enhancements
+### Theme Ecosystem
 
-- **DX-01**: Third-party developer can auto-generate contract scaffolds from existing FNE metadata with guided remediation suggestions.
-- **DX-02**: ycIDE can generate compatibility badges/scorecards (Contract Pass, x64 Pass, Legacy Safe) for third-party releases.
-
-### Security Hardening
-
-- **SECU-01**: ycIDE can enforce trust tiers/signature policies for third-party native support libraries.
-- **SECU-02**: ycIDE can apply stronger process isolation/sandbox strategy for untrusted third-party library metadata parsing.
+- **ECO-01**: 用户可以查看主题差异对比（当前主题 vs 草稿主题）
+- **ECO-02**: 用户可以从官方主题包一键安装主题
+- **ECO-03**: 用户可以跨设备同步主题
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Cross-platform third-party build/release (Linux/macOS) | Current milestone is Windows-focused compiler standardization and ecosystem stabilization |
-| Full rewrite of existing compiler pipeline | v1.1 aims for contract-layer standardization on top of existing architecture |
-| New IDE UI feature expansion unrelated to support-library compilation | Not aligned with this milestone’s core value |
-| Automatic patching/fixing of third-party contract errors | v1.1 prioritizes deterministic validation and clear diagnostics first |
+| 主题云市场与在线审核 | 超出 v1.2 范围，依赖账号/分发/审核体系 |
+| 允许任意 CSS/脚本注入主题 | 安全风险高，且会破坏主题可维护性 |
+| 全局 UI 架构重构（替换现有样式系统） | 目标是在现有架构增量实现主题系统 |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CONT-01 | Phase 6 | Complete |
-| CONT-02 | Phase 6 | Complete |
-| CONT-03 | Phase 7 | Pending |
-| CONT-04 | Phase 7 | Complete |
-| WFLO-01 | Phase 9 | Pending |
-| WFLO-02 | Phase 9 | Pending |
-| WFLO-03 | Phase 9 | Pending |
-| WFLO-04 | Phase 9 | Pending |
-| COMP-01 | Phase 7 | Pending |
-| COMP-02 | Phase 7 | Complete |
-| COMP-03 | Phase 8 | Pending |
-| COMP-04 | Phase 8 | Pending |
-| RELY-01 | Phase 7 | Pending |
-| RELY-02 | Phase 10 | Pending |
-| RELY-03 | Phase 10 | Pending |
+| THME-01 | Phase 13 | Complete |
+| THME-02 | Phase 13 | Complete |
+| THME-03 | Phase 13 | Pending |
+| TOKN-01 | Phase 14 | Pending |
+| TOKN-02 | Phase 14 | Pending |
+| TOKN-03 | Phase 14 | Pending |
+| TOKN-04 | Phase 14 | Pending |
+| TOKN-05 | Phase 14 | Pending |
+| TOKN-06 | Phase 14 | Pending |
+| FLOW-01 | Phase 15 | Pending |
+| FLOW-02 | Phase 15 | Pending |
+| FLOW-03 | Phase 15 | Pending |
+| MGMT-01 | Phase 16 | Pending |
+| MGMT-02 | Phase 16 | Pending |
+| MGMT-03 | Phase 16 | Pending |
+| MGMT-04 | Phase 16 | Pending |
+| QUAL-01 | Phase 17 | Pending |
+| QUAL-02 | Phase 17 | Pending |
 
 **Coverage:**
-- v1 requirements: 15 total
-- Mapped to phases: 15
-- Unmapped: 0 ✓
+- v1 requirements: 18 total
+- Mapped to phases: 18
+- Unmapped: 0 ✅
 
 ---
-*Requirements defined: 2026-03-22*  
-*Last updated: 2026-03-22 after v1.1 roadmap refresh*
+*Requirements defined: 2026-04-09*
+*Last updated: 2026-04-10 after v1.2 roadmap creation*
