@@ -4,9 +4,16 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const tokenContractPath = path.resolve(process.cwd(), 'src/shared/theme-tokens.ts')
+const themeSchemaPath = path.resolve(process.cwd(), 'src/shared/theme.ts')
+const mainThemePath = path.resolve(process.cwd(), 'src/main/index.ts')
+const preloadThemePath = path.resolve(process.cwd(), 'src/preload/index.ts')
 
 function readTokenContract() {
   return fs.readFileSync(tokenContractPath, 'utf-8')
+}
+
+function readThemeSchema() {
+  return fs.readFileSync(themeSchemaPath, 'utf-8')
 }
 
 test('token groups match business grouping and Chinese labels', () => {
@@ -44,4 +51,32 @@ test('flow-line mode contract supports single/multi and active-mode-targeted res
   assert.match(source, /mode:\s*FlowLineMode/)
   assert.match(source, /single:\s*FlowLineSingleConfig/)
   assert.match(source, /multi:\s*FlowLineMultiConfig/)
+})
+
+test('theme schema migration includes token payload defaults for legacy configs', () => {
+  const source = readThemeSchema()
+  assert.match(source, /export interface ThemeTokenPayload/)
+  assert.match(source, /flowLine:\s*FlowLineModeConfig/)
+  assert.match(source, /createDefaultThemeTokenPayload/)
+  assert.match(source, /createDefaultThemeConfig[\s\S]*themePayloads/)
+  assert.match(source, /isThemeConfigV2[\s\S]*themePayloads/)
+})
+
+test('theme IPC round-trips grouped token payload and flow-line mode data', () => {
+  const mainSource = fs.readFileSync(mainThemePath, 'utf-8')
+  const preloadSource = fs.readFileSync(preloadThemePath, 'utf-8')
+  assert.match(mainSource, /ipcMain\.handle\('theme:saveCurrent'/)
+  assert.match(mainSource, /themePayloads/)
+  assert.match(mainSource, /theme:getCurrent[\s\S]*themePayload/)
+  assert.match(preloadSource, /saveCurrent:\s*\(/)
+  assert.match(preloadSource, /ipcRenderer\.invoke\('theme:saveCurrent'/)
+})
+
+test('invalid or missing token payload safely falls back to defaults without warning regressions', () => {
+  const source = readThemeSchema()
+  const mainSource = fs.readFileSync(mainThemePath, 'utf-8')
+  assert.match(source, /resolveThemeTokenPayload/)
+  assert.match(source, /sanitizeThemeTokenValues/)
+  assert.match(mainSource, /warning:\s*createThemeWarning\('legacy_migrated'/)
+  assert.match(mainSource, /createDefaultThemeTokenPayload/)
 })
