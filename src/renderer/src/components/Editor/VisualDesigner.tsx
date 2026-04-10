@@ -685,10 +685,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           <div style={{
             ...common,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'linear-gradient(180deg, #f0f0f0 0%, #e0e0e0 100%)',
-            border: '1px solid #ababab',
+            background: 'linear-gradient(180deg, var(--button-secondary-hover) 0%, var(--button-secondary-bg) 100%)',
+            border: '1px solid var(--button-secondary-border)',
             borderRadius: 3,
-            color: '#000',
+            color: 'var(--text-primary)',
             cursor: 'default',
           }}>{ctrl.text}</div>
         )
@@ -697,10 +697,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         return (
           <div style={{
             ...common,
-            background: '#fff',
-            border: '1px solid #7a7a7a',
+            background: 'var(--bg-primary)',
+            border: '1px solid var(--border-color)',
             padding: '2px 4px',
-            color: '#000',
+            color: 'var(--text-primary)',
           }}>{ctrl.text}</div>
         )
       case '标签':
@@ -708,7 +708,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           <div style={{
             ...common,
             display: 'flex', alignItems: 'center',
-            color: '#000',
+            color: 'var(--text-primary)',
             background: 'transparent',
           }}>{ctrl.text}</div>
         )
@@ -717,10 +717,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         return (
           <div style={{
             ...common,
-            background: '#fff',
-            border: '1px solid #7a7a7a',
+            background: 'var(--bg-primary)',
+            border: '1px solid var(--border-color)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#999',
+            color: 'var(--text-disabled)',
           }}>{ctrl.type}</div>
         )
       case '列表框':
@@ -729,23 +729,23 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         return (
           <div style={{
             ...common,
-            background: '#fff',
-            border: '1px solid #7a7a7a',
-            color: '#000',
+            background: 'var(--bg-primary)',
+            border: '1px solid var(--border-color)',
+            color: 'var(--text-primary)',
           }} />
         )
       case '组合框':
         return (
           <div style={{
             ...common,
-            background: '#fff',
-            border: '1px solid #7a7a7a',
+            background: 'var(--bg-primary)',
+            border: '1px solid var(--border-color)',
             display: 'flex', alignItems: 'center',
             paddingLeft: 4,
-            color: '#000',
+            color: 'var(--text-primary)',
           }}>
             <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{ctrl.text}</span>
-            <span style={{ width: 18, textAlign: 'center', borderLeft: '1px solid #7a7a7a', color: '#333' }}>▾</span>
+            <span style={{ width: 18, textAlign: 'center', borderLeft: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>▾</span>
           </div>
         )
       case '选择框':
@@ -753,9 +753,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           <div style={{
             ...common,
             display: 'flex', alignItems: 'center', gap: 4,
-            color: '#000', background: 'transparent',
+            color: 'var(--text-primary)', background: 'transparent',
           }}>
-            <span style={{ width: 13, height: 13, border: '1px solid #7a7a7a', background: '#fff', flexShrink: 0 }} />
+            <span style={{ width: 13, height: 13, border: '1px solid var(--border-color)', background: 'var(--bg-primary)', flexShrink: 0 }} />
             {ctrl.text}
           </div>
         )
@@ -764,9 +764,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           <div style={{
             ...common,
             display: 'flex', alignItems: 'center', gap: 4,
-            color: '#000', background: 'transparent',
+            color: 'var(--text-primary)', background: 'transparent',
           }}>
-            <span style={{ width: 13, height: 13, border: '1px solid #7a7a7a', borderRadius: '50%', background: '#fff', flexShrink: 0 }} />
+            <span style={{ width: 13, height: 13, border: '1px solid var(--border-color)', borderRadius: '50%', background: 'var(--bg-primary)', flexShrink: 0 }} />
             {ctrl.text}
           </div>
         )
@@ -774,7 +774,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         return (
           <div style={{
             ...common,
-            border: '1px solid #ababab',
+            border: '1px solid var(--button-secondary-border)',
             borderRadius: 3,
             paddingTop: 14,
             position: 'relative',
@@ -782,8 +782,8 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           }}>
             <span style={{
               position: 'absolute', top: -8, left: 8,
-              background: '#f0f0f0', padding: '0 4px',
-              color: '#000', fontSize: 12,
+              background: 'var(--bg-primary)', padding: '0 4px',
+              color: 'var(--text-primary)', fontSize: 12,
             }}>{ctrl.text}</span>
           </div>
         )
@@ -792,9 +792,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const radius = typeof ctrl.properties['圆角半径'] === 'number'
           ? ctrl.properties['圆角半径']
           : 4
-        const bg = isPrimary ? '#0F6CBD' : '#F3F3F3'
-        const textColor = isPrimary ? '#fff' : '#1a1a1a'
-        const border = isPrimary ? '1px solid #0F6CBD' : '1px solid #d1d1d1'
+        const bg = isPrimary ? 'var(--accent)' : 'var(--button-secondary-bg)'
+        const textColor = isPrimary ? 'var(--statusbar-text)' : 'var(--text-primary)'
+        const border = isPrimary ? '1px solid var(--accent)' : '1px solid var(--button-secondary-border)'
         return (
           <div style={{
             ...common,
@@ -812,12 +812,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         return (
           <div style={{
             ...common,
-            background: '#e6e6e6',
-            border: '1px solid #bcbcbc',
+            background: 'var(--bg-hover)',
+            border: '1px solid var(--button-secondary-border)',
           }}>
             <div style={{
               width: '40%', height: '100%',
-              background: 'linear-gradient(180deg, #06b025 0%, #05a020 100%)',
+              background: 'linear-gradient(180deg, var(--success) 0%, color-mix(in srgb, var(--success) 85%, var(--bg-primary)) 100%)',
             }} />
           </div>
         )
@@ -826,10 +826,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         return (
           <div style={{
             ...common,
-            background: '#3c3c3c',
-            border: '1px dashed #666',
+            background: 'var(--bg-input)',
+            border: '1px dashed var(--border-color)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#aaa', fontSize: 10,
+            color: 'var(--text-disabled)', fontSize: 10,
           }}>{UNIT_ICON_MAP[ctrl.type] ? <Icon name={UNIT_ICON_MAP[ctrl.type]} size={12} /> : '?'}</div>
         )
       default:
@@ -837,10 +837,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         return (
           <div style={{
             ...common,
-            background: '#fff',
-            border: '1px solid #999',
+            background: 'var(--bg-primary)',
+            border: '1px solid var(--border-color)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#666', fontSize: 10,
+            color: 'var(--text-secondary)', fontSize: 10,
           }}>{ctrl.text || ctrl.type}</div>
         )
     }

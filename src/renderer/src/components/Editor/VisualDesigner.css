@@ -26,7 +26,7 @@
   z-index: 1000;
   border: 1px solid var(--border-color);
   border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  box-shadow: 0 4px 16px var(--menu-shadow);
   border-right: 1px solid var(--border-color);
   height: auto;
   resize: both;
@@ -201,8 +201,8 @@
   justify-content: flex-start;
   padding: 24px;
   background:
-    linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px),
-    linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px);
+    linear-gradient(90deg, color-mix(in srgb, var(--text-primary) 8%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--text-primary) 8%, transparent) 1px, transparent 1px);
   background-size: 16px 16px;
   position: relative;
   min-height: 0;
@@ -213,7 +213,7 @@
 .vd-form-wrapper {
   display: flex;
   flex-direction: column;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.22), 0 0 0 1px rgba(0,0,0,0.08);
+  box-shadow: 0 2px 12px var(--dialog-shadow), 0 0 0 1px var(--border-color);
   align-self: flex-start;
   position: relative;
   border-radius: 8px;
@@ -221,7 +221,7 @@
 }
 
 .vd-form-wrapper-selected {
-  outline: 1px dashed #0078d4;
+  outline: 1px dashed var(--accent);
   outline-offset: 1px;
 }
 
@@ -230,23 +230,23 @@
   display: flex;
   align-items: center;
   height: 32px;
-  background: #f3f3f3;
+  background: var(--bg-secondary);
   padding: 0 12px 0 12px;
   gap: 8px;
   user-select: none;
-  border-bottom: 1px solid #e5e5e5;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .vd-form-titlebar-icon {
   font-size: 14px;
-  color: #333;
+  color: var(--text-primary);
   display: flex;
   align-items: center;
 }
 
 .vd-form-titlebar-text {
   flex: 1;
-  color: #191919;
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 400;
   overflow: hidden;
@@ -267,29 +267,29 @@
   align-items: center;
   justify-content: center;
   font-size: 10px;
-  color: #191919;
+  color: var(--text-primary);
   cursor: default;
   border-radius: 0;
   transition: background 0.1s;
 }
 .vd-form-btn:hover {
-  background: rgba(0,0,0,0.06);
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 .vd-form-btn-close:hover {
-  background: #c42b1c;
-  color: #fff;
+  background: var(--danger);
+  color: var(--danger-contrast);
 }
 
 /* 窗口客户区（画布） */
 .vd-form-canvas {
   position: relative;
-  background: #f0f0f0;
+  background: var(--bg-primary);
   border: none;
   border-top: none;
   overflow: hidden;
   /* 网格点 */
   background-image:
-    radial-gradient(circle, #ccc 0.5px, transparent 0.5px);
+    radial-gradient(circle, var(--border-color) 0.5px, transparent 0.5px);
   background-size: 8px 8px;
   background-position: 4px 4px;
 }
@@ -317,14 +317,14 @@
   top: 0;
   bottom: 0;
   width: 1px;
-  background: #22a6f2;
+  background: var(--text-accent);
 }
 
 .vd-align-guide-h {
   left: 0;
   right: 0;
   height: 1px;
-  background: #22a6f2;
+  background: var(--text-accent);
 }
 
 /* 控件容器 */
@@ -334,12 +334,12 @@
 }
 
 .vd-control-selected {
-  outline: 1px dashed #0078d4;
+  outline: 1px dashed var(--accent);
   outline-offset: 1px;
 }
 
 .vd-control-multi-selected {
-  outline: 1px dashed #0078d4;
+  outline: 1px dashed var(--accent);
   outline-offset: 1px;
 }
 
@@ -365,8 +365,8 @@
   position: absolute;
   width: 6px;
   height: 6px;
-  background: #fff;
-  border: 1px solid #0078d4;
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
   z-index: 10;
 }
 
