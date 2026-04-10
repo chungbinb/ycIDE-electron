@@ -43,3 +43,14 @@ test('closing settings always resets draft session and does not recover old draf
   assert.match(dialogSource, /onMouseDown=\{onClose\}/)
 })
 
+test('App defines undo history and baseline restore handlers for draft session', () => {
+  const source = fs.readFileSync(appPath, 'utf-8')
+  assert.match(source, /const canUndoThemeDraft = \(themeDraftSession\?\.historyCursor \?\? 0\) > 0/)
+  assert.match(source, /const handleThemeDraftUndo = useCallback\(async \(\) =>/)
+  assert.match(source, /const nextCursor = themeDraftSession\.historyCursor - 1/)
+  assert.match(source, /historyCursor: nextCursor/)
+  assert.match(source, /const handleThemeDraftRestoreBaseline = useCallback\(async \(\) =>/)
+  assert.match(source, /const baselineSnapshot = themeDraftSession\.entrySnapshot/)
+  assert.match(source, /historyCursor: 0/)
+})
+
