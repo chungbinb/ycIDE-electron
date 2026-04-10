@@ -13,6 +13,8 @@ import ThemeSettingsDialog from './components/ThemeSettingsDialog/ThemeSettingsD
 import type { SelectionTarget, AlignAction, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
+import { createDefaultThemeTokenPayload, resolveThemeTokenPayload, type ThemeTokenPayload } from '../../shared/theme'
+import { THEME_TOKEN_GROUPS, type ThemeTokenGroupId } from '../../shared/theme-tokens'
 import './App.css'
 
 type ProjectSessionState = {
@@ -45,6 +47,9 @@ const REQUIRED_THEME_COLOR_KEYS = [
   '--accent',
   '--statusbar-bg',
 ]
+
+const DEFAULT_THEME_TOKEN_PAYLOAD = createDefaultThemeTokenPayload()
+const FLOW_LINE_TOKEN_KEYS = (THEME_TOKEN_GROUPS.find(group => group.id === 'flow-line')?.items || []).map(item => item.tokenKey)
 
 type TargetPlatform = 'windows' | 'macos' | 'linux'
 type TargetArch = 'x64' | 'x86' | 'arm64'
@@ -337,6 +342,8 @@ function App(): React.JSX.Element {
   const editorRef = useRef<EditorHandle>(null)
   const [themeList, setThemeList] = useState<string[]>([])
   const [currentTheme, setCurrentTheme] = useState<string>('')
+  const [themeTokenValues, setThemeTokenValues] = useState<Record<string, string>>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.tokenValues })
+  const [themeFlowLine, setThemeFlowLine] = useState<ThemeTokenPayload['flowLine']>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.flowLine })
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
   const [outputMessages, setOutputMessages] = useState<OutputMessage[]>([])
   const [debugPause, setDebugPause] = useState<DebugPauseState | null>(null)
@@ -823,13 +830,51 @@ function App(): React.JSX.Element {
     }
   }, [pushThemeNotice])
 
+  const persistCurrentThemePayload = useCallback(async (themeId: string, payload: ThemeTokenPayload) => {
+    try {
+      await window.api?.theme?.saveCurrent(themeId, payload)
+    } catch {
+      pushThemeNotice('theme-persist-failed', '[主题] 当前主题配置未能写入，建议重启应用后重试。')
+    }
+  }, [pushThemeNotice])
+
+  const getDefaultThemePayload = useCallback(async (themeId: string): Promise<ThemeTokenPayload> => {
+    const loaded = await window.api?.theme?.load(themeId)
+    return createDefaultThemeTokenPayload(loaded?.colors || themeTokenValues)
+  }, [themeTokenValues])
+
+  const applyThemeTokenValuesToRoot = useCallback((tokenValues: Record<string, string>) => {
+    const root = document.documentElement
+    for (const [key, value] of Object.entries(tokenValues)) {
+      try {
+        root.style.setProperty(key, value)
+      } catch {
+        // 保持部分应用，后续给出提示
+      }
+    }
+  }, [])
+
   // 加载主题列表和当前主题
-  const applyTheme = useCallback(async (name: string, persist = true) => {
+  const applyTheme = useCallback(async (name: string, persist = true, incomingPayload?: ThemeTokenPayload | null) => {
     const theme = await window.api?.theme?.load(name)
     if (!theme?.colors) {
       pushThemeNotice('theme-apply-load-failed', '[主题] 主题未能完整加载，当前状态可能不完整。建议重启应用后重试。')
       return
     }
+
+    let payload = resolveThemeTokenPayload(incomingPayload, theme.colors)
+    if (persist) {
+      try {
+        await window.api?.theme?.setCurrent(name)
+        const current = await window.api?.theme?.getCurrent()
+        if (current?.effectiveThemeId === name) {
+          payload = resolveThemeTokenPayload(current.themePayload, theme.colors)
+        }
+      } catch {
+        pushThemeNotice('theme-persist-failed', '[主题] 当前主题未能写入配置，建议重启应用后重试。')
+      }
+    }
+
     const root = document.documentElement
     let appliedCount = 0
     for (const [key, value] of Object.entries(theme.colors)) {
@@ -840,20 +885,87 @@ function App(): React.JSX.Element {
         // 保持部分应用，后续给出重启建议
       }
     }
+    applyThemeTokenValuesToRoot(payload.tokenValues)
+    setThemeTokenValues(payload.tokenValues)
+    setThemeFlowLine(payload.flowLine)
     setCurrentTheme(name)
+
     const missingRequired = REQUIRED_THEME_COLOR_KEYS.filter(key => !(key in theme.colors))
     if (appliedCount === 0 || missingRequired.length > 0) {
       pushThemeNotice('theme-partial-apply', `[主题] 主题“${name}”仅部分生效，建议重启应用以完成应用。${missingRequired.length > 0 ? `缺失变量：${missingRequired.join(', ')}` : ''}`)
     }
     if (persist) {
-      try {
-        await window.api?.theme?.setCurrent(name)
-      } catch {
-        pushThemeNotice('theme-persist-failed', '[主题] 当前主题未能写入配置，建议重启应用后重试。')
-      }
+      await persistCurrentThemePayload(name, payload)
     }
     if (themeRepairMessage) setThemeRepairMessage(null)
-  }, [pushThemeNotice, themeRepairMessage])
+  }, [applyThemeTokenValuesToRoot, persistCurrentThemePayload, pushThemeNotice, themeRepairMessage])
+
+  const handleThemeTokenChange = useCallback((tokenKey: string, value: string) => {
+    if (!currentTheme) return
+    const nextTokenValues = { ...themeTokenValues, [tokenKey]: value }
+    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine }, nextTokenValues)
+    applyThemeTokenValuesToRoot({ [tokenKey]: value })
+    setThemeTokenValues(payload.tokenValues)
+    setThemeFlowLine(payload.flowLine)
+    void persistCurrentThemePayload(currentTheme, payload)
+  }, [applyThemeTokenValuesToRoot, currentTheme, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+
+  const handleThemeTokenResetItem = useCallback(async (_groupId: ThemeTokenGroupId, tokenKey: string) => {
+    if (!currentTheme) return
+    const defaults = await getDefaultThemePayload(currentTheme)
+    const resetValue = defaults.tokenValues[tokenKey] || themeTokenValues[tokenKey] || '#000000'
+    const nextTokenValues = { ...themeTokenValues, [tokenKey]: resetValue }
+    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine }, nextTokenValues)
+    applyThemeTokenValuesToRoot({ [tokenKey]: resetValue })
+    setThemeTokenValues(payload.tokenValues)
+    setThemeFlowLine(payload.flowLine)
+    await persistCurrentThemePayload(currentTheme, payload)
+  }, [applyThemeTokenValuesToRoot, currentTheme, getDefaultThemePayload, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+
+  const handleThemeTokenResetGroup = useCallback(async (groupId: ThemeTokenGroupId) => {
+    if (!currentTheme) return
+    if (!window.confirm('确定重置该分组令牌吗?')) return
+
+    const defaults = await getDefaultThemePayload(currentTheme)
+    const nextTokenValues = { ...themeTokenValues }
+    let nextFlowLine = { ...themeFlowLine }
+
+    if (groupId === 'flow-line') {
+      if (themeFlowLine.mode === 'multi') {
+        nextFlowLine = { ...themeFlowLine, multi: { ...defaults.flowLine.multi } }
+      }
+      if (themeFlowLine.mode === 'single') {
+        nextFlowLine = { ...themeFlowLine, single: { ...defaults.flowLine.single } }
+      }
+      const flowLineMainColor = themeFlowLine.mode === 'multi'
+        ? nextFlowLine.multi.mainColor
+        : nextFlowLine.single.mainColor
+      for (const tokenKey of FLOW_LINE_TOKEN_KEYS) {
+        nextTokenValues[tokenKey] = flowLineMainColor
+      }
+    } else {
+      const group = THEME_TOKEN_GROUPS.find(item => item.id === groupId)
+      for (const item of group?.items || []) {
+        nextTokenValues[item.tokenKey] = defaults.tokenValues[item.tokenKey]
+      }
+    }
+
+    applyThemeTokenValuesToRoot(nextTokenValues)
+    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine }, nextTokenValues)
+    setThemeTokenValues(payload.tokenValues)
+    setThemeFlowLine(payload.flowLine)
+    await persistCurrentThemePayload(currentTheme, payload)
+  }, [applyThemeTokenValuesToRoot, currentTheme, getDefaultThemePayload, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+
+  const handleThemeTokenResetAll = useCallback(async () => {
+    if (!currentTheme) return
+    if (!window.confirm('确定恢复全部主题令牌默认值吗?')) return
+    const defaults = await getDefaultThemePayload(currentTheme)
+    applyThemeTokenValuesToRoot(defaults.tokenValues)
+    setThemeTokenValues(defaults.tokenValues)
+    setThemeFlowLine(defaults.flowLine)
+    await persistCurrentThemePayload(currentTheme, defaults)
+  }, [applyThemeTokenValuesToRoot, currentTheme, getDefaultThemePayload, persistCurrentThemePayload])
 
   useEffect(() => {
     (async () => {
@@ -861,7 +973,7 @@ function App(): React.JSX.Element {
       if (list) setThemeList(list)
       const saved = await window.api?.theme?.getCurrent()
       if (!saved?.effectiveThemeId) return
-      await applyTheme(saved.effectiveThemeId, false)
+      await applyTheme(saved.effectiveThemeId, false, saved.themePayload)
       if (saved.warning) {
         handleThemeWarning(saved.warning)
       }
@@ -2066,6 +2178,11 @@ function App(): React.JSX.Element {
         themes={themeList}
         currentTheme={currentTheme}
         onSelectTheme={(themeId) => { void applyTheme(themeId) }}
+        tokenValues={themeTokenValues}
+        onTokenChange={handleThemeTokenChange}
+        onResetToken={handleThemeTokenResetItem}
+        onResetGroup={handleThemeTokenResetGroup}
+        onResetAll={handleThemeTokenResetAll}
         repairMessage={themeRepairMessage}
       />
     </div>

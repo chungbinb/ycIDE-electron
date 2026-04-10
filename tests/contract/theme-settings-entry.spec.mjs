@@ -60,6 +60,6 @@ test('App requires confirmations for group and global resets before immediate ap
 test('flow-line group reset only resets active mode configuration', () => {
   const source = fs.readFileSync(appPath, 'utf-8')
   assert.match(source, /groupId === 'flow-line'/)
-  assert.match(source, /flowLine\.mode === 'multi'/)
-  assert.match(source, /flowLine\.mode === 'single'/)
+  assert.match(source, /themeFlowLine\.mode === 'multi'/)
+  assert.match(source, /themeFlowLine\.mode === 'single'/)
 })
