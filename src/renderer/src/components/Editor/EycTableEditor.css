@@ -10,6 +10,13 @@
   font-size: 13px;
   height: 100%;
   min-height: 0;
+  background: var(--table-bg, var(--bg-primary, #1e1e1e));
+  color: var(--table-text, var(--text-primary, #d4d4d4));
+  --flow-main-color: var(--flow-line-main, var(--syntax-keyword, #4fc1ff));
+  --flow-branch-color: var(--flow-line-branch, var(--flow-main-color));
+  --flow-loop-color: var(--flow-line-loop, var(--flow-main-color));
+  --flow-arrow-color: var(--flow-line-arrow, var(--flow-main-color));
+  --flow-inner-link-color: var(--flow-line-inner-link, var(--flow-main-color));
 }
 
 .eyc-table-wrapper {
@@ -27,13 +34,13 @@
 
 /* 行选中高亮 */
 .eyc-line-selected {
-  background-color: rgba(51, 153, 255, 0.2);
+  background-color: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
 }
 .eyc-line-selected .eyc-gutter-linenum {
-  color: #e0e0e0;
+  color: var(--table-header-text, var(--text-primary, #e0e0e0));
 }
 .eyc-gutter-cell.eyc-line-selected {
-  background-color: rgba(51, 153, 255, 0.2);
+  background-color: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
 }
 
 .eyc-line-gutter {
@@ -55,7 +62,7 @@
 .eyc-gutter-linenum {
   flex: 1;
   text-align: right;
-  color: #858585;
+  color: var(--text-secondary, #858585);
   font-family: "Consolas", "Microsoft YaHei", monospace;
   font-size: 14px;
   padding-right: 4px;
@@ -73,12 +80,12 @@
 }
 
 .eyc-breakpoint-dot.active {
-  color: #e24d4d;
+  color: var(--error, #e24d4d);
 }
 
 .eyc-debug-hoverable {
   cursor: help;
-  text-decoration: underline dotted rgba(78, 201, 176, 0.6);
+  text-decoration: underline dotted var(--flow-inner-link-color, var(--flow-line-inner-link, rgba(78, 201, 176, 0.6)));
   text-underline-offset: 2px;
 }
 
@@ -88,38 +95,38 @@
   min-width: 180px;
   max-width: 420px;
   pointer-events: none;
-  background: rgba(23, 27, 31, 0.97);
-  border: 1px solid rgba(78, 201, 176, 0.45);
+  background: color-mix(in srgb, var(--bg-secondary, #252526) 96%, transparent);
+  border: 1px solid color-mix(in srgb, var(--table-border, var(--border-color, #3c3c3c)) 70%, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)));
   border-radius: 6px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
   padding: 8px 10px;
-  color: #d6f7f1;
+  color: var(--table-text, var(--text-primary, #d6f7f1));
 }
 
 .eyc-debug-hover-name {
   font-weight: 700;
-  color: #8fe3d1;
+  color: var(--flow-inner-link-color, var(--flow-line-inner-link, #8fe3d1));
   margin-bottom: 2px;
 }
 
 .eyc-debug-hover-type {
   font-size: 12px;
-  color: #8ca8a2;
+  color: var(--text-secondary, #8ca8a2);
   margin-bottom: 6px;
 }
 
 .eyc-debug-hover-value {
   white-space: pre-wrap;
   word-break: break-word;
-  color: #f5f7f7;
+  color: var(--table-text, var(--text-primary, #f5f7f7));
 }
 
 .eyc-debug-line .eyc-code-line {
-  background-color: rgba(78, 201, 176, 0.12);
+  background-color: var(--table-row-hover-bg, var(--bg-hover, rgba(78, 201, 176, 0.12)));
 }
 
 .eyc-debug-line .eyc-gutter-linenum {
-  color: #d7fff8;
+  color: var(--table-header-text, var(--text-primary, #d7fff8));
 }
 
 .eyc-gutter-fold-area {
@@ -140,19 +147,19 @@
   justify-content: center;
   font-size: 12px;
   font-weight: bold;
-  color: #858585;
+  color: var(--text-secondary, #858585);
   cursor: pointer;
-  border: 1px solid #555;
+  border: 1px solid var(--table-border, var(--border-color, #555));
   border-radius: 2px;
-  background: #2d2d2d;
+  background: var(--table-header-bg, var(--bg-tertiary, #2d2d2d));
   line-height: 1;
   user-select: none;
   flex-shrink: 0;
 }
 .eyc-gutter-fold:hover {
-  color: #d4d4d4;
-  border-color: #888;
-  background: #3c3c3c;
+  color: var(--table-header-text, var(--table-text, #d4d4d4));
+  border-color: color-mix(in srgb, var(--table-border, var(--border-color, #888)) 75%, white);
+  background: var(--table-row-hover-bg, var(--bg-hover, #3c3c3c));
 }
 
 /* ===== 流程线 ===== */
@@ -171,7 +178,7 @@
   left: 4px;
   top: 0;
   bottom: 0;
-  border-left: 1px dashed #569cd6;
+  border-left: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
 }
 /* 起始 ┌─ */
 .eyc-flow-start::before {
@@ -180,7 +187,7 @@
   left: 4px;
   top: 50%;
   bottom: 0;
-  border-left: 1px dashed #569cd6;
+  border-left: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
 }
 .eyc-flow-start::after {
   content: '';
@@ -188,7 +195,7 @@
   left: 4px;
   right: 1ch;
   top: 50%;
-  border-top: 1px dashed #569cd6;
+  border-top: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
 }
 /* 结束 └─ */
 .eyc-flow-end::before {
@@ -197,7 +204,7 @@
   left: 4px;
   top: 0;
   height: 50%;
-  border-left: 1px dashed #569cd6;
+  border-left: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
 }
 .eyc-flow-end::after {
   content: '';
@@ -205,7 +212,7 @@
   left: 4px;
   right: 1ch;
   top: 50%;
-  border-top: 1px dashed #569cd6;
+  border-top: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
 }
 /* 如果真等无分支命令结束：竖线直通到底+向下箭头，无横线 */
 .eyc-flow-end.eyc-flow-straight-end::before {
@@ -222,7 +229,7 @@
   left: 4px;
   top: 0;
   bottom: 0;
-  border-left: 1px dashed #569cd6;
+  border-left: 1px dashed var(--flow-branch-color, var(--flow-line-branch, #4fc1ff));
 }
 .eyc-flow-branch::after {
   content: '';
@@ -230,26 +237,26 @@
   left: 4px;
   right: 1ch;
   top: 50%;
-  border-top: 1px dashed #569cd6;
+  border-top: 1px dashed var(--flow-branch-color, var(--flow-line-branch, #4fc1ff));
 }
 /* 循环命令颜色 */
 .eyc-flow-loop.eyc-flow-start::before {
-  border-left-color: #4ec9b0;
+  border-left-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
 }
 .eyc-flow-loop.eyc-flow-start::after {
-  border-top-color: #4ec9b0;
+  border-top-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
 }
 .eyc-flow-loop.eyc-flow-end::before {
-  border-left-color: #4ec9b0;
+  border-left-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
 }
 .eyc-flow-loop.eyc-flow-end::after {
-  border-top-color: #4ec9b0;
+  border-top-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
 }
 .eyc-flow-loop.eyc-flow-through::before {
-  border-left-color: #4ec9b0;
+  border-left-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
 }
 .eyc-flow-loop .eyc-flow-arrow-right {
-  border-left-color: #4ec9b0;
+  border-left-color: var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 
 /* 流程结束下箭头▼ */
@@ -261,17 +268,17 @@
   height: 0;
   border-left: 4px solid transparent;
   border-right: 4px solid transparent;
-  border-top: 5px solid #569cd6;
+  border-top: 5px solid var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 .eyc-flow-loop .eyc-flow-arrow-down {
-  border-top-color: #4ec9b0;
+  border-top-color: var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 
 /* 内部竖线（标记行用） */
 .eyc-flow-inner-vert {
   position: absolute;
   left: calc(1ch + 4px);
-  border-left: 1px dashed #569cd6;
+  border-left: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
 }
 /* 内部竖线穿过（through行，在标记分支与标记结束之间） */
 .eyc-flow-inner-through {
@@ -291,7 +298,7 @@
   left: calc(1ch + 4px - 4px);
 }
 .eyc-flow-loop .eyc-flow-inner-vert {
-  border-left-color: #4ec9b0;
+  border-left-color: var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
 }
 
 /* ===== 标记行流程线（\u200C/\u200D）===== */
@@ -303,7 +310,7 @@
   left: 4px;
   top: 0;
   bottom: 0;
-  border-left: 1px dashed #569cd6;
+  border-left: 1px dashed var(--flow-branch-color, var(--flow-line-branch, #4fc1ff));
 }
 .eyc-flow-branch.eyc-flow-marker::after {
   /* 横线从内部竖线位置向右 */
@@ -312,7 +319,7 @@
   left: calc(1ch + 4px);
   right: 1ch;
   top: 50%;
-  border-top: 1px dashed #569cd6;
+  border-top: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
 }
 .eyc-flow-branch.eyc-flow-marker .eyc-flow-inner-vert {
   top: 50%;
@@ -335,10 +342,10 @@
   left: 4px;
   top: 80%;
   bottom: 0;
-  border-left: 1px dashed #569cd6;
+  border-left: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
 }
 .eyc-flow-loop .eyc-flow-outer-resume {
-  border-left-color: #4ec9b0;
+  border-left-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
 }
 /* 上段横线：从外部竖线(left:4px)延伸到命令文本左边 */
 .eyc-flow-outer-horz {
@@ -346,10 +353,10 @@
   left: 4px;
   right: 1ch;
   top: 20%;
-  border-top: 1px dashed #569cd6;
+  border-top: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
 }
 .eyc-flow-loop .eyc-flow-outer-horz {
-  border-top-color: #4ec9b0;
+  border-top-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
 }
 /* 上段横线右箭头▶ */
 .eyc-flow-outer-arrow {
@@ -361,10 +368,10 @@
   height: 0;
   border-top: 4px solid transparent;
   border-bottom: 4px solid transparent;
-  border-left: 5px solid #569cd6;
+  border-left: 5px solid var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 .eyc-flow-loop .eyc-flow-outer-arrow {
-  border-left-color: #4ec9b0;
+  border-left-color: var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 
 /* 标记分支有外层连接：横线和内部竖线下移 */
@@ -384,7 +391,7 @@
   left: 4px;
   top: 0;
   height: 50%;
-  border-left: 1px dashed #569cd6;
+  border-left: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
 }
 .eyc-flow-end.eyc-flow-marker::after {
   /* 横线从左到右 */
@@ -393,7 +400,7 @@
   left: 4px;
   right: 1ch;
   top: 50%;
-  border-top: 1px dashed #569cd6;
+  border-top: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
 }
 
 /* 右箭头▶ */
@@ -406,10 +413,10 @@
   height: 0;
   border-top: 4px solid transparent;
   border-bottom: 4px solid transparent;
-  border-left: 5px solid #569cd6;
+  border-left: 5px solid var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 .eyc-flow-loop .eyc-flow-arrow-right {
-  border-left-color: #4ec9b0;
+  border-left-color: var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 
 .eyc-flow-end.eyc-flow-marker .eyc-flow-inner-vert {
@@ -422,13 +429,13 @@
 
 /* 标记行循环色 */
 .eyc-flow-loop.eyc-flow-branch.eyc-flow-marker::before {
-  border-left-color: #4ec9b0;
+  border-left-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
 }
 .eyc-flow-loop.eyc-flow-branch.eyc-flow-marker::after {
-  border-top-color: #4ec9b0;
+  border-top-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
 }
 .eyc-flow-loop.eyc-flow-end.eyc-flow-marker::before {
-  border-left-color: #4ec9b0;
+  border-left-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
 }
 
 /* ===== \u200D 后紧跟流程命令的连接线 ===== */
@@ -445,7 +452,7 @@
   left: calc(1ch + 4px);
   top: 0;
   height: 40%;
-  border-left: 1px dashed #569cd6;
+  border-left: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
 }
 /* 连接上方流程的横线（从内部竖线向右） */
 .eyc-flow-link-horz {
@@ -453,7 +460,7 @@
   left: calc(1ch + 4px);
   right: 1ch;
   top: 40%;
-  border-top: 1px dashed #569cd6;
+  border-top: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
 }
 /* 连接上方流程的右箭头 */
 .eyc-flow-link-arrow {
@@ -465,7 +472,7 @@
   height: 0;
   border-top: 4px solid transparent;
   border-bottom: 4px solid transparent;
-  border-left: 5px solid #569cd6;
+  border-left: 5px solid var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 
 /* ===== 嵌套流程：外层 inner vert 分支到内层命令 ===== */
@@ -475,7 +482,7 @@
   left: 0;
   right: calc(-3ch - 4px);
   top: 40%;
-  border-top: 1px dashed #569cd6;
+  border-top: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
 }
 /* 外层 through 段内部竖线分支右箭头 */
 .eyc-flow-inner-link-arrow {
@@ -487,7 +494,7 @@
   height: 0;
   border-top: 4px solid transparent;
   border-bottom: 4px solid transparent;
-  border-left: 5px solid #569cd6;
+  border-left: 5px solid var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 /* 有外层连接的内层起始行：下移腾出空间 */
 .eyc-flow-start.eyc-flow-has-outer-link::before {
@@ -590,12 +597,12 @@
   height: 0;
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
-  border-bottom: 6px solid #569cd6;
+  border-bottom: 6px solid var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
   z-index: 1;
   transform: translateX(2.5px);
 }
 .eyc-param-expand-inner {
-  background: #252526;
+  background: var(--table-header-bg, var(--bg-secondary, #252526));
   border-left: none;
   margin: 0 0 2px 0;
   padding: 2px 8px;
@@ -633,7 +640,7 @@
   left: var(--vline-offset, -8px);
   right: calc(100% + 2px);
   top: 50%;
-  border-top: 1px dashed #569cd6;
+  border-top: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
 }
 /* 每行左侧的垂直虚线段 */
 .eyc-param-expand-row::after {
@@ -642,7 +649,7 @@
   left: var(--vline-offset, -8px);
   top: 0;
   bottom: 0;
-  border-left: 1px dashed #569cd6;
+  border-left: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
 }
 /* 最后一行（或唯一一行）垂直线只到中间 */
 .eyc-param-expand-row:last-child::after {
@@ -653,20 +660,20 @@
   top: 0;
 }
 .eyc-param-expand-mark {
-  color: #e6a817;
+  color: var(--warning, #e6a817);
   flex-shrink: 0;
   margin-right: 2px;
 }
 .eyc-param-expand-name {
-  color: #9cdcfe;
+  color: var(--syntax-variable, #9cdcfe);
   flex-shrink: 0;
 }
 .eyc-param-expand-colon {
-  color: #858585;
+  color: var(--text-secondary, #858585);
   flex-shrink: 0;
 }
 .eyc-param-expand-val {
-  color: #d4d4d4;
+  color: var(--table-text, var(--syntax-operator, #d4d4d4));
   flex: 1;
   min-width: 60px;
   min-height: 20px;
@@ -681,11 +688,11 @@
   background: transparent;
   border: none;
   outline: none;
-  color: #d4d4d4;
+  color: var(--table-text, var(--syntax-operator, #d4d4d4));
   font: inherit;
   padding: 0;
   margin: 0;
-  caret-color: #d4d4d4;
+  caret-color: var(--table-text, var(--syntax-operator, #d4d4d4));
 }
 
 .eyc-block-content {
@@ -695,8 +702,8 @@
 
 /* ===== 默认配色 (ebackcolor1 暗色适配) ===== */
 .ebackcolor1 {
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: var(--table-bg, var(--bg-primary, #1e1e1e));
+  color: var(--table-text, var(--text-primary, #d4d4d4));
 }
 
 /* ===== 声明表格 ===== */
@@ -712,7 +719,9 @@
 .Rowheight {
   font-size: 12px;
   line-height: 16px;
-  border: 1px solid #555;
+  border: 1px solid var(--table-border, var(--border-color, #555));
+  color: var(--table-text, var(--text-primary, #d4d4d4));
+  background: var(--table-bg, var(--bg-primary, #1e1e1e));
   white-space: nowrap;
   padding: 4px 8px;
 }
@@ -727,13 +736,13 @@
   cursor: pointer;
 }
 .eyc-data-row:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--table-row-hover-bg, var(--bg-hover, rgba(255, 255, 255, 0.04)));
 }
 .eyc-data-row.eyc-line-selected {
-  background: rgba(51, 153, 255, 0.2);
+  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
 }
 .eyc-data-row.eyc-line-selected:hover {
-  background: rgba(51, 153, 255, 0.2);
+  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
 }
 /* 保持表格本身不拉伸，只给选中行右侧空白区域补背景 */
 .eyc-data-row.eyc-line-selected > td:last-child {
@@ -746,80 +755,80 @@
   top: -1px;
   bottom: -1px;
   width: 100vw;
-  background: rgba(51, 153, 255, 0.2);
+  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
   pointer-events: none;
 }
 
 /* ===== 表头背景色 ===== */
 /* 默认表头（子程序、常量、DLL等）— 灰绿色 */
 .eHeadercolor {
-  color: #e0e0e0;
-  background-color: #2d3a2d;
+  color: var(--table-header-text, var(--text-primary, #e0e0e0));
+  background-color: var(--table-header-bg, var(--bg-secondary, #2d3a2d));
 }
 
 /* 变量表头 — 蓝色 */
 .eVariableheadcolor {
-  color: #e0e0e0;
-  background-color: #263545;
+  color: var(--table-header-text, var(--text-primary, #e0e0e0));
+  background-color: var(--table-header-bg, var(--bg-secondary, #263545));
 }
 
 /* 程序集表头 — 深灰 */
 .eAssemblycolor {
-  color: #e0e0e0;
-  background-color: #333333;
+  color: var(--table-header-text, var(--text-primary, #e0e0e0));
+  background-color: var(--table-header-bg, var(--bg-secondary, #333333));
 }
 
 /* ===== 单元格文字颜色 ===== */
 
 /* 自定义类型/子程序名称 — 藏蓝色 */
 .eProcolor {
-  color: #569cd6;
+  color: var(--syntax-keyword, #4fc1ff);
 }
 
 /* 变量名 — 白色 */
 .Variablescolor {
-  color: #d4d4d4;
+  color: var(--table-text, var(--text-primary, #d4d4d4));
 }
 
 /* 数据类型(整数型/文本型) — 蓝色 */
 .eTypecolor {
-  color: #4fc1ff;
+  color: var(--syntax-type, #4fc1ff);
 }
 
 /* 勾选标记 — 红色加粗 */
 .eTickcolor {
-  color: #f14c4c;
+  color: var(--error, #f14c4c);
   font-weight: bold;
 }
 
 /* 备注 — 绿色 */
 .Remarkscolor {
-  color: #6a9955;
+  color: var(--syntax-comment, #6a9955);
 }
 
 /* 数组成员数 — 白色 */
 .eArraycolor {
-  color: #d4d4d4;
+  color: var(--table-text, var(--text-primary, #d4d4d4));
 }
 
 /* 常量值 — 青色 */
 .Constanttext {
-  color: #4ec9b0;
+  color: var(--syntax-type, #4fc1ff);
 }
 
 /* 错误/未填写 — 红色 */
 .Wrongcolor {
-  color: #f44747;
+  color: var(--error, #f44747);
 }
 
 /* 声音/图片/常量等名称 — 藏蓝色 */
 .eOthercolor {
-  color: #569cd6;
+  color: var(--syntax-keyword, #4fc1ff);
 }
 
 /* API颜色 — 橙红 */
 .eAPIcolor {
-  color: #ce9178;
+  color: var(--syntax-string, #ce9178);
 }
 
 /* ===== 代码行着色 ===== */
@@ -837,7 +846,7 @@
   overflow: hidden;
 }
 .eyc-code-line:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--table-row-hover-bg, var(--bg-hover, rgba(255, 255, 255, 0.04)));
 }
 
 .eyc-code-spans {
@@ -846,17 +855,17 @@
 
 /* 流程控制关键字 如果真/判断/循环 — 蓝色 */
 .comecolor {
-  color: #569cd6;
+  color: var(--syntax-keyword, #4fc1ff);
 }
 
 /* 函数名（括号前的命令名） — 暗红 */
 .funccolor {
-  color: #dcdcaa;
+  color: var(--syntax-function, #dcdcaa);
 }
 
 /* 普通代码行中的用户子程序引用 — 褐色 */
 .eyc-subrefcolor {
-  color: #a0522d;
+  color: var(--syntax-string, #a0522d);
 }
 
 /* 可点击的命令名 */
@@ -864,30 +873,30 @@
 
 /* 无效命令 — 红色波浪线 */
 .eyc-cmd-invalid {
-  text-decoration: wavy underline #f44747;
+  text-decoration: wavy underline var(--error, #f44747);
   text-decoration-skip-ink: none;
   text-underline-offset: 2px;
 }
 
 .eyc-cell-invalid {
-  text-decoration: wavy underline #f44747;
+  text-decoration: wavy underline var(--error, #f44747);
   text-decoration-skip-ink: none;
   text-underline-offset: 2px;
 }
 
 /* 对象.方法 调用 — 对象颜色 */
 .cometwolr {
-  color: #ce9178;
+  color: var(--syntax-string, #ce9178);
 }
 
 /* 引号内的文字 — 青色 */
 .eTxtcolor {
-  color: #4ec9b0;
+  color: var(--syntax-string, #4fc1ff);
 }
 
 /* 常量引用 #常量名 — 蓝色 */
 .conscolor {
-  color: #569cd6;
+  color: var(--syntax-keyword, #4fc1ff);
   font-weight: bold;
 }
 
@@ -911,12 +920,12 @@
   margin: 0;
   background: transparent;
   border: none;
-  color: #d4d4d4;
+  color: var(--table-text, var(--text-primary, #d4d4d4));
   font-family: "Consolas", "Microsoft YaHei", monospace;
   font-size: 13px;
   outline: none;
   box-sizing: border-box;
-  caret-color: #d4d4d4;
+  caret-color: var(--table-text, var(--text-primary, #d4d4d4));
   -webkit-appearance: none;
   appearance: none;
   box-shadow: none;
@@ -940,7 +949,7 @@
   padding: 0;
   margin: 0;
   box-sizing: border-box;
-  caret-color: #d4d4d4;
+  caret-color: var(--table-text, var(--text-primary, #d4d4d4));
   -webkit-appearance: none;
   appearance: none;
   box-shadow: none;
@@ -951,7 +960,7 @@
   box-shadow: none;
 }
 .eyc-cell-input.eyc-input-invalid {
-  text-decoration: wavy underline #f44747;
+  text-decoration: wavy underline var(--error, #f44747);
   text-decoration-skip-ink: none;
   text-underline-offset: 2px;
 }
@@ -1039,7 +1048,7 @@
 }
 
 .eyc-ac-return {
-  color: #4ec9b0;
+  color: var(--syntax-type, #4fc1ff);
   font-size: 11px;
   flex-shrink: 0;
 }

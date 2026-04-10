@@ -28,6 +28,12 @@ import Icon from '../Icon/Icon'
 import '../Icon/Icon.css'
 import closeIcon from '../../assets/icons/Close.svg'
 import './EycTableEditor.css'
+import { resolveFlowLineColors } from './flowLineTheme'
+import {
+  DEFAULT_FLOW_LINE_MODE_CONFIG,
+  type FlowLineMode,
+  type FlowLineModeConfig,
+} from '../../../../shared/theme-tokens'
 
 // ========== 运算符格式化 ==========
 
@@ -423,6 +429,34 @@ interface EditState {
   paramIdx?: number   // 展开参数编辑：第几个参数 (0-based)
 }
 
+const FLOW_LINE_MODE_SET = new Set<FlowLineMode>(['single', 'multi'])
+
+function parseCssNumber(rawValue: string | null | undefined, fallback: number): number {
+  const num = Number((rawValue || '').trim())
+  return Number.isFinite(num) ? num : fallback
+}
+
+function readFlowLineConfigFromCss(): FlowLineModeConfig {
+  if (typeof window === 'undefined') return { ...DEFAULT_FLOW_LINE_MODE_CONFIG }
+  const rootStyle = getComputedStyle(document.documentElement)
+  const modeCandidate = (rootStyle.getPropertyValue('--flow-line-mode') || '').trim() as FlowLineMode
+  const mode: FlowLineMode = FLOW_LINE_MODE_SET.has(modeCandidate) ? modeCandidate : DEFAULT_FLOW_LINE_MODE_CONFIG.mode
+  const singleMain = (rootStyle.getPropertyValue('--flow-line-main') || '').trim() || DEFAULT_FLOW_LINE_MODE_CONFIG.single.mainColor
+  const multiMain = (rootStyle.getPropertyValue('--flow-line-main') || '').trim() || DEFAULT_FLOW_LINE_MODE_CONFIG.multi.mainColor
+  return {
+    mode,
+    single: {
+      mainColor: singleMain,
+    },
+    multi: {
+      mainColor: multiMain,
+      depthHueStep: parseCssNumber(rootStyle.getPropertyValue('--flow-line-depth-hue-step'), DEFAULT_FLOW_LINE_MODE_CONFIG.multi.depthHueStep),
+      depthSaturationStep: parseCssNumber(rootStyle.getPropertyValue('--flow-line-depth-saturation-step'), DEFAULT_FLOW_LINE_MODE_CONFIG.multi.depthSaturationStep),
+      depthLightnessStep: parseCssNumber(rootStyle.getPropertyValue('--flow-line-depth-lightness-step'), DEFAULT_FLOW_LINE_MODE_CONFIG.multi.depthLightnessStep),
+    },
+  }
+}
+
 /** 根据命令类别返回图标字符 */
 function getCmdIconLabel(category: string): string {
   const cat = category.toLowerCase()
@@ -510,7 +544,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const [resourcePreviewMeta, setResourcePreviewMeta] = useState<{ mime: string; ext: string; filePath: string; sizeBytes: number; modifiedAtMs: number } | null>(null)
   const [resourcePreviewMediaMeta, setResourcePreviewMediaMeta] = useState<{ width?: number; height?: number; durationSec?: number }>({})
   const [debugHover, setDebugHover] = useState<{ x: number; y: number; variable: { name: string; type: string; value: string } } | null>(null)
+  const [themeRevision, setThemeRevision] = useState(0)
   const breakpointLineSet = useMemo(() => new Set(breakpointLines), [breakpointLines])
+  const flowLineModeConfig = useMemo(() => readFlowLineConfigFromCss(), [themeRevision])
   const debugVariableMap = useMemo(() => {
     const map = new Map<string, { name: string; type: string; value: string }>()
     for (const variable of debugVariables) map.set(variable.name, variable)
@@ -535,6 +571,16 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       )
     })
   }, [debugVariableMap])
+
+  useEffect(() => {
+    if (typeof MutationObserver === 'undefined') return
+    const root = document.documentElement
+    const observer = new MutationObserver(() => {
+      setThemeRevision(prev => prev + 1)
+    })
+    observer.observe(root, { attributes: true, attributeFilter: ['style'] })
+    return () => observer.disconnect()
+  }, [])
 
   const formatFileSize = useCallback((bytes: number): string => {
     if (!Number.isFinite(bytes) || bytes < 0) return '未知'
@@ -3922,7 +3968,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       node: (
         <>
           {slots.map((seg, d) => (
-            <span key={d} className={`eyc-flow-seg ${seg ? `eyc-flow-${seg.type}` : ''} ${seg?.isLoop ? 'eyc-flow-loop' : ''} ${seg?.isMarker ? 'eyc-flow-marker' : ''}${(seg?.isInnerThrough || seg?.isInnerEnd) ? ' eyc-flow-no-outer' : ''}${seg?.hasPrevFlowEnd ? ' eyc-flow-has-prev-end' : ''}${seg?.hasOuterLink ? ' eyc-flow-has-outer-link' : ''}${seg?.outerHidden ? ' eyc-flow-outer-hidden' : ''}${seg?.hasInnerLink ? ' eyc-flow-has-inner-link' : ''}${seg?.isStraightEnd ? ' eyc-flow-straight-end' : ''}`}>
+            <span
+              key={d}
+              className={`eyc-flow-seg ${seg ? `eyc-flow-${seg.type}` : ''} ${seg?.isLoop ? 'eyc-flow-loop' : ''} ${seg?.isMarker ? 'eyc-flow-marker' : ''}${(seg?.isInnerThrough || seg?.isInnerEnd) ? ' eyc-flow-no-outer' : ''}${seg?.hasPrevFlowEnd ? ' eyc-flow-has-prev-end' : ''}${seg?.hasOuterLink ? ' eyc-flow-has-outer-link' : ''}${seg?.outerHidden ? ' eyc-flow-outer-hidden' : ''}${seg?.hasInnerLink ? ' eyc-flow-has-inner-link' : ''}${seg?.isStraightEnd ? ' eyc-flow-straight-end' : ''}`}
+              style={seg ? ({
+                '--flow-main-color': resolveFlowLineColors(flowLineModeConfig, seg.depth).main,
+                '--flow-branch-color': resolveFlowLineColors(flowLineModeConfig, seg.depth).branch,
+                '--flow-loop-color': resolveFlowLineColors(flowLineModeConfig, seg.depth).loop,
+                '--flow-arrow-color': resolveFlowLineColors(flowLineModeConfig, seg.depth).arrow,
+                '--flow-inner-link-color': resolveFlowLineColors(flowLineModeConfig, seg.depth).innerLink,
+              } as React.CSSProperties) : undefined}
+            >
               {seg?.isMarker && seg.type === 'branch' && seg?.markerInnerVert && !seg?.outerHidden && <span className="eyc-flow-inner-vert" />}
               {seg?.type === 'branch' && !seg?.isMarker && seg?.hasInnerVert && <span className="eyc-flow-inner-vert eyc-flow-inner-through" />}
               {seg?.type === 'branch' && !seg?.isMarker && seg?.hasInnerLink && <span className="eyc-flow-outer-resume" />}
@@ -3979,7 +4035,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             || seg.hasInnerVert
           )
           return (
-            <span key={d} className={`eyc-flow-seg eyc-flow-cont-seg ${hasCont ? (hasInnerCont ? (isEndMarker ? '' : (needsBothLines ? 'eyc-flow-through' : 'eyc-flow-through eyc-flow-cont-inner')) : 'eyc-flow-through') : ''} ${seg?.isLoop && hasCont ? 'eyc-flow-loop' : ''}`}>
+            <span
+              key={d}
+              className={`eyc-flow-seg eyc-flow-cont-seg ${hasCont ? (hasInnerCont ? (isEndMarker ? '' : (needsBothLines ? 'eyc-flow-through' : 'eyc-flow-through eyc-flow-cont-inner')) : 'eyc-flow-through') : ''} ${seg?.isLoop && hasCont ? 'eyc-flow-loop' : ''}`}
+              style={seg ? ({
+                '--flow-main-color': resolveFlowLineColors(flowLineModeConfig, seg.depth).main,
+                '--flow-branch-color': resolveFlowLineColors(flowLineModeConfig, seg.depth).branch,
+                '--flow-loop-color': resolveFlowLineColors(flowLineModeConfig, seg.depth).loop,
+                '--flow-arrow-color': resolveFlowLineColors(flowLineModeConfig, seg.depth).arrow,
+                '--flow-inner-link-color': resolveFlowLineColors(flowLineModeConfig, seg.depth).innerLink,
+              } as React.CSSProperties) : undefined}
+            >
               {hasCont && hasInnerCont && isEndMarker && <><span className="eyc-flow-inner-vert eyc-flow-inner-end" /><span className="eyc-flow-arrow-down eyc-flow-inner-arrow-down" /></>}
               {needsBothLines && <span className="eyc-flow-inner-vert eyc-flow-inner-through" />}
             </span>
