@@ -9,6 +9,7 @@ import OutputPanel, { type OutputMessage, type CommandDetail, type FileProblem, 
 import StatusBar from './components/StatusBar/StatusBar'
 import LibraryDialog from './components/LibraryDialog/LibraryDialog'
 import NewProjectDialog from './components/NewProjectDialog/NewProjectDialog'
+import ThemeSettingsDialog from './components/ThemeSettingsDialog/ThemeSettingsDialog'
 import type { SelectionTarget, AlignAction, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
@@ -311,6 +312,7 @@ function App(): React.JSX.Element {
   const [showOutput, setShowOutput] = useState(true)
   const [showLibrary, setShowLibrary] = useState(false)
   const [showNewProject, setShowNewProject] = useState(false)
+  const [showThemeSettings, setShowThemeSettings] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [selection, setSelection] = useState<SelectionTarget>(null)
   const [sidebarTab, setSidebarTab] = useState<'project' | 'library' | 'property'>('project')
@@ -1311,6 +1313,9 @@ function App(): React.JSX.Element {
       case 'tools:library':
         setShowLibrary(true)
         break
+      case 'tools:settings':
+        setShowThemeSettings(true)
+        break
 
       // 插入菜单
       case 'insert:sub':
@@ -2008,6 +2013,13 @@ function App(): React.JSX.Element {
       />
       <LibraryDialog open={showLibrary} onClose={() => setShowLibrary(false)} />
       <NewProjectDialog open={showNewProject} onClose={() => setShowNewProject(false)} onConfirm={handleNewProjectConfirm} />
+      <ThemeSettingsDialog
+        open={showThemeSettings}
+        onClose={() => setShowThemeSettings(false)}
+        themes={themeList}
+        currentTheme={currentTheme}
+        onSelectTheme={(themeId) => { void applyTheme(themeId) }}
+      />
     </div>
   )
 }
