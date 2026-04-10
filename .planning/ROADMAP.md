@@ -10,7 +10,7 @@
 - [x] **Phase 13: Theme Baseline** - Built-in 深/浅主题可切换且可持久化，浅色具备可读性 (completed 2026-04-10)
 - [x] **Phase 14: Theme Token Coverage** - 所有可见区域接入主题 token 与流程线模式/颜色配置 (completed 2026-04-10)
 - [x] **Phase 15: Theme Editing Workflow** - 设置页支持实时预览、撤销、保存为自定义主题 (completed 2026-04-10)
-- [ ] **Phase 16: Theme Management & Portability** - 自定义主题本机管理 + 安全导入导出
+- [x] **Phase 16: Theme Management & Portability** - 自定义主题本机管理 + 安全导入导出 (completed 2026-04-10)
 - [ ] **Phase 17: Compatibility & Regression Guardrails** - 主题路径稳定性与自动化回归覆盖闭环
 
 ## Phase Details
@@ -30,7 +30,7 @@ Plans:
 - [x] 16-02-PLAN.md — Main/preload custom-theme lifecycle and export IPC
 - [x] 16-03-PLAN.md — Dedicated Theme Manager UI and CRUD/export wiring
 - [x] 16-04-PLAN.md — Import pipeline with atomic validation, conflict and switch-now flow
-- [ ] 16-05-PLAN.md — Phase 16 coverage closure and evidence artifacts
+- [x] 16-05-PLAN.md — Phase 16 coverage closure and evidence artifacts
 
 ### Phase 14: Theme Token Coverage
 **Goal**: 用户可完整配置主题 token，且所有可见区域都跟随主题生效。  
@@ -87,5 +87,5 @@ Plans:
 | 13. Theme Baseline | 4/4 | Complete    | 2026-04-10 |
 | 14. Theme Token Coverage | 6/6 | Complete    | 2026-04-10 |
 | 15. Theme Editing Workflow | 5/5 | Complete    | 2026-04-10 |
-| 16. Theme Management & Portability | 4/5 | In Progress|  |
+| 16. Theme Management & Portability | 5/5 | Complete   | 2026-04-10 |
 | 17. Compatibility & Regression Guardrails | 0/0 | Not started | - |
