@@ -1982,6 +1982,7 @@ function App(): React.JSX.Element {
                 breakpointsByFile={breakpointsByFile}
                 debugLocation={debugPause ? { file: debugPause.file, line: debugPause.line } : null}
                 debugVariables={debugPause?.variables || []}
+                currentTheme={currentTheme}
               />
             </div>
           </div>

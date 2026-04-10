@@ -14,5 +14,5 @@ test('Editor defines ycide-light Monaco palette and uses dynamic Monaco theme pr
 
 test('App passes active currentTheme into Editor for runtime Monaco switching', () => {
   const source = fs.readFileSync(appPath, 'utf-8')
-  assert.match(source, /<Editor\b(?:(?!>).)*currentTheme=\{currentTheme\}/s)
+  assert.match(source, /debugVariables=\{debugPause\?\.variables \|\| \[\]\}\s*currentTheme=\{currentTheme\}/)
 })

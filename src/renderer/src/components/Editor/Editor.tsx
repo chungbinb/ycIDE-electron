@@ -178,6 +178,70 @@ function registerEycLanguage(monaco: Monaco): void {
   })
 }
 
+function registerEditorThemes(monaco: Monaco): void {
+  monaco.editor.defineTheme('ycide-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
+      { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
+      { token: 'keyword.declaration', foreground: 'C586C0', fontStyle: 'bold' },
+      { token: 'string', foreground: 'CE9178' },
+      { token: 'number', foreground: 'B5CEA8' },
+      { token: 'number.float', foreground: 'B5CEA8' },
+      { token: 'type', foreground: '4EC9B0' },
+      { token: 'predefined', foreground: 'DCDCAA' },
+      { token: 'constant', foreground: '569CD6', fontStyle: 'bold' },
+      { token: 'identifier', foreground: '9CDCFE' },
+      { token: 'operator', foreground: 'D4D4D4' },
+      { token: 'delimiter.parenthesis', foreground: 'FFD700' },
+      { token: 'delimiter', foreground: 'D4D4D4' },
+    ],
+    colors: {
+      'editor.background': '#1e1e1e',
+      'editor.foreground': '#d4d4d4',
+      'editorLineNumber.foreground': '#858585',
+      'editorLineNumber.activeForeground': '#c6c6c6',
+      'editor.selectionBackground': '#264f78',
+      'editor.lineHighlightBackground': '#2a2d2e',
+      'editorCursor.foreground': '#aeafad',
+      'editor.findMatchBackground': '#515c6a',
+      'editor.findMatchHighlightBackground': '#ea5c0055',
+    },
+  })
+
+  monaco.editor.defineTheme('ycide-light', {
+    base: 'vs',
+    inherit: true,
+    rules: [
+      { token: 'comment', foreground: '008000', fontStyle: 'italic' },
+      { token: 'keyword', foreground: '0000FF', fontStyle: 'bold' },
+      { token: 'keyword.declaration', foreground: 'AF00DB', fontStyle: 'bold' },
+      { token: 'string', foreground: 'A31515' },
+      { token: 'number', foreground: '098658' },
+      { token: 'number.float', foreground: '098658' },
+      { token: 'type', foreground: '267F99' },
+      { token: 'predefined', foreground: '795E26' },
+      { token: 'constant', foreground: '0451A5', fontStyle: 'bold' },
+      { token: 'identifier', foreground: '001080' },
+      { token: 'operator', foreground: '333333' },
+      { token: 'delimiter.parenthesis', foreground: '6B4F00' },
+      { token: 'delimiter', foreground: '333333' },
+    ],
+    colors: {
+      'editor.background': '#ffffff',
+      'editor.foreground': '#1f1f1f',
+      'editorLineNumber.foreground': '#8a8a8a',
+      'editorLineNumber.activeForeground': '#2f2f2f',
+      'editor.selectionBackground': '#add6ff',
+      'editor.lineHighlightBackground': '#f7f7f7',
+      'editorCursor.foreground': '#000000',
+      'editor.findMatchBackground': '#f6d365',
+      'editor.findMatchHighlightBackground': '#ea5c0020',
+    },
+  })
+}
+
 // 打开的文件标签页
 export interface EditorTab {
   id: string
@@ -267,7 +331,7 @@ class EycEditorErrorBoundary extends Component<EycEditorErrorBoundaryProps, EycE
   }
 }
 
-const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }> }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [] }, ref) {
+const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }>; currentTheme?: string }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [], currentTheme = '' }, ref) {
   const [tabs, setTabs] = useState<EditorTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [tabBarPosition, setTabBarPosition] = useState<TabBarPosition>(() => {
@@ -289,6 +353,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const eycEditorRef = useRef<EycTableEditorHandle | null>(null)
   const [windowUnits, setWindowUnits] = useState<LibWindowUnit[]>([])
   const pendingNavigateRef = useRef<{ subName: string; params: Array<{ name: string; dataType: string; isByRef: boolean }> } | null>(null)
+  const monacoThemeId = currentTheme === '默认浅色' ? 'ycide-light' : 'ycide-dark'
 
   const buildEventSubName = useCallback((targetName: string, eventName: string): string => {
     const normalized = targetName.replace(/^_+/, '')
@@ -1516,41 +1581,12 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                   key={activeTab.id}
                   language="eyc"
                   value={activeTab.value}
-                  theme="ycide-dark"
+                  theme={monacoThemeId}
                   onChange={handleEditorChange}
                   onMount={handleEditorMount}
                   beforeMount={(monaco) => {
                     registerEycLanguage(monaco)
-                    monaco.editor.defineTheme('ycide-dark', {
-                      base: 'vs-dark',
-                      inherit: true,
-                      rules: [
-                        { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
-                        { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
-                        { token: 'keyword.declaration', foreground: 'C586C0', fontStyle: 'bold' },
-                        { token: 'string', foreground: 'CE9178' },
-                        { token: 'number', foreground: 'B5CEA8' },
-                        { token: 'number.float', foreground: 'B5CEA8' },
-                        { token: 'type', foreground: '4EC9B0' },
-                        { token: 'predefined', foreground: 'DCDCAA' },
-                        { token: 'constant', foreground: '569CD6', fontStyle: 'bold' },
-                        { token: 'identifier', foreground: '9CDCFE' },
-                        { token: 'operator', foreground: 'D4D4D4' },
-                        { token: 'delimiter.parenthesis', foreground: 'FFD700' },
-                        { token: 'delimiter', foreground: 'D4D4D4' },
-                      ],
-                      colors: {
-                        'editor.background': '#1e1e1e',
-                        'editor.foreground': '#d4d4d4',
-                        'editorLineNumber.foreground': '#858585',
-                        'editorLineNumber.activeForeground': '#c6c6c6',
-                        'editor.selectionBackground': '#264f78',
-                        'editor.lineHighlightBackground': '#2a2d2e',
-                        'editorCursor.foreground': '#aeafad',
-                        'editor.findMatchBackground': '#515c6a',
-                        'editor.findMatchHighlightBackground': '#ea5c0055',
-                      },
-                    })
+                    registerEditorThemes(monaco)
                   }}
                   options={{
                     fontSize: 14,
@@ -1640,44 +1676,13 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
           key={activeTab.id}
           language={activeTab.language}
           value={activeTab.value}
-          theme="ycide-dark"
+          theme={monacoThemeId}
           onChange={handleEditorChange}
           onMount={handleEditorMount}
           beforeMount={(monaco) => {
             // 注册 eyc 易语言
             registerEycLanguage(monaco)
-
-            // 注册自定义暗色主题
-            monaco.editor.defineTheme('ycide-dark', {
-              base: 'vs-dark',
-              inherit: true,
-              rules: [
-                { token: 'comment', foreground: '6A9955', fontStyle: 'italic' },
-                { token: 'keyword', foreground: '569CD6', fontStyle: 'bold' },
-                { token: 'keyword.declaration', foreground: 'C586C0', fontStyle: 'bold' },
-                { token: 'string', foreground: 'CE9178' },
-                { token: 'number', foreground: 'B5CEA8' },
-                { token: 'number.float', foreground: 'B5CEA8' },
-                { token: 'type', foreground: '4EC9B0' },
-                { token: 'predefined', foreground: 'DCDCAA' },
-                { token: 'constant', foreground: '569CD6', fontStyle: 'bold' },
-                { token: 'identifier', foreground: '9CDCFE' },
-                { token: 'operator', foreground: 'D4D4D4' },
-                { token: 'delimiter.parenthesis', foreground: 'FFD700' },
-                { token: 'delimiter', foreground: 'D4D4D4' },
-              ],
-              colors: {
-                'editor.background': '#1e1e1e',
-                'editor.foreground': '#d4d4d4',
-                'editorLineNumber.foreground': '#858585',
-                'editorLineNumber.activeForeground': '#c6c6c6',
-                'editor.selectionBackground': '#264f78',
-                'editor.lineHighlightBackground': '#2a2d2e',
-                'editorCursor.foreground': '#aeafad',
-                'editor.findMatchBackground': '#515c6a',
-                'editor.findMatchHighlightBackground': '#ea5c0055',
-              },
-            })
+            registerEditorThemes(monaco)
           }}
           options={{
             fontSize: 14,
