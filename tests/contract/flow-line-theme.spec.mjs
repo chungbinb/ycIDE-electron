@@ -7,6 +7,8 @@ import { createRequire } from 'node:module'
 import ts from 'typescript'
 
 const flowThemePath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/flowLineTheme.ts')
+const tableEditorTsxPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/EycTableEditor.tsx')
+const tableEditorCssPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/EycTableEditor.css')
 const runtimeRequire = createRequire(import.meta.url)
 
 function loadFlowLineThemeModule() {
@@ -81,4 +83,36 @@ test('depth generation is deterministic and unbounded for deep nesting', () => {
   assert.match(depth65.main, /^#[0-9a-f]{6}$/i)
   assert.notEqual(depth65.main, depth64.main)
   assert.deepEqual(depth64Again, depth64)
+})
+
+test('table and header surfaces are wired to full token set variables', () => {
+  const css = fs.readFileSync(tableEditorCssPath, 'utf-8')
+  assert.match(css, /--table-bg/)
+  assert.match(css, /--table-text/)
+  assert.match(css, /--table-border/)
+  assert.match(css, /--table-header-bg/)
+  assert.match(css, /--table-header-text/)
+  assert.match(css, /--table-row-hover-bg/)
+  assert.match(css, /--table-selection-bg/)
+  assert.match(css, /\.Rowheight[\s\S]*var\(--table-border/)
+  assert.match(css, /\.eHeadercolor[\s\S]*var\(--table-header-bg/)
+})
+
+test('table editor applies flow-line mode engine output to render styles', () => {
+  const tsx = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+  const css = fs.readFileSync(tableEditorCssPath, 'utf-8')
+  assert.match(tsx, /import\s+\{\s*resolveFlowLineColors\s*\}\s+from\s+'\.\/flowLineTheme'/)
+  assert.match(tsx, /resolveFlowLineColors\(/)
+  assert.match(tsx, /--flow-main-color/)
+  assert.match(css, /--flow-main-color/)
+  assert.doesNotMatch(css, /#569cd6|#4ec9b0/)
+})
+
+test('debug transient overlays use theme tokens instead of hardcoded literals', () => {
+  const css = fs.readFileSync(tableEditorCssPath, 'utf-8')
+  assert.match(css, /\.eyc-breakpoint-dot\.active[\s\S]*var\(--error/)
+  assert.match(css, /\.eyc-debug-hover-tooltip[\s\S]*var\(--bg-secondary/)
+  assert.match(css, /\.eyc-debug-hover-tooltip[\s\S]*var\(--table-border/)
+  assert.match(css, /\.eyc-debug-line\s+\.eyc-code-line[\s\S]*var\(--table-row-hover-bg/)
+  assert.match(css, /\.eyc-debug-line\s+\.eyc-gutter-linenum[\s\S]*var\(--table-header-text/)
 })
