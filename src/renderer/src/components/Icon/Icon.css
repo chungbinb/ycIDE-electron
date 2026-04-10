@@ -3,6 +3,7 @@
   align-items: center;
   justify-content: center;
   vertical-align: middle;
+  color: var(--icon-color, var(--text-primary));
 }
 
 .vs-icon svg {

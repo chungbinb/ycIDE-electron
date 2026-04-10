@@ -1,6 +1,6 @@
 /**
  * SVG Icon component using VS 2022 Image Library icons.
- * Adapts light-theme SVGs for dark theme by CSS filter/class overrides.
+ * Normalizes SVG colors to currentColor so icon tint follows theme tokens.
  */
 
 // Toolbar icons
@@ -169,25 +169,13 @@ export const ICON_MAP: Record<string, string> = {
   'edit': EditSvg,
 }
 
-/** Adapt light-theme SVG for dark theme  */
-function adaptForDarkTheme(raw: string): string {
+/** Normalize svg color declarations so tint follows currentColor */
+function normalizeSvgColor(raw: string): string {
   return raw
     // Remove embedded SVG title tooltip text; UI-level button title/aria-label should be authoritative.
     .replace(/<title[\s\S]*?<\/title>/gi, '')
-    // Replace light-theme default grey (#212121) with light grey
-    .replace(/fill:\s*#212121/g, 'fill: #cccccc')
-    // Replace light-theme blue (#005dba) with brighter blue
-    .replace(/fill:\s*#005dba/g, 'fill: #3794ff')
-    // Replace light-theme yellow (#996f00) with brighter yellow
-    .replace(/fill:\s*#996f00/g, 'fill: #e8ab53')
-    // Replace light-theme green (#1f801f) with brighter green
-    .replace(/fill:\s*#1f801f/g, 'fill: #89d185')
-    // Replace light-theme purple (#6936aa) with brighter purple
-    .replace(/fill:\s*#6936aa/g, 'fill: #b180d7')
-    // Replace light-theme red (#b30900) with brighter red
-    .replace(/fill:\s*#b30900/g, 'fill: #f14c4c')
-    // Replace light-theme teal (#007f7f) with brighter teal
-    .replace(/fill:\s*#007f7f/g, 'fill: #4ec9b0')
+    .replace(/\s(fill|stroke)="(?!none|currentColor)[^"]*"/gi, ' $1="currentColor"')
+    .replace(/(fill|stroke)\s*:\s*(?!none|currentColor)[^;"]+/gi, '$1: currentColor')
 }
 
 interface IconProps {
@@ -201,13 +189,14 @@ interface IconProps {
 export default function Icon({ name, size = 16, className = '', style, title }: IconProps): React.JSX.Element | null {
   const raw = ICON_MAP[name]
   if (!raw) return null
-  const adapted = adaptForDarkTheme(raw)
+  const normalizedSvg = normalizeSvgColor(raw)
   return (
     <span
       className={`vs-icon ${className}`}
-      style={{ display: 'inline-flex', width: size, height: size, ...style }}
+      style={{ width: size, height: size, ...style }}
       title={title}
-      dangerouslySetInnerHTML={{ __html: adapted }}
+      aria-label={title}
+      dangerouslySetInnerHTML={{ __html: normalizedSvg }}
     />
   )
 }
