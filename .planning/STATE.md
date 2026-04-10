@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
 status: executing
-stopped_at: Completed 15-02-PLAN.md
-last_updated: "2026-04-10T05:29:28.618Z"
+stopped_at: Completed 15-03-PLAN.md
+last_updated: "2026-04-10T05:40:13.586Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 15
-  completed_plans: 12
+  completed_plans: 13
 ---
 
 # Project State
@@ -20,12 +20,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** 用户可以在 ycIDE 中稳定使用并自定义完整主题体系，实时预览并安全保存复用。  
-**Current focus:** Phase 15 execution in progress (2/5 plans complete)
+**Current focus:** Phase 15 execution in progress (3/5 plans complete)
 
 ## Current Position
 
 Phase: 15
-Plan: 03
+Plan: 04/05
 Status: In Progress
 Last activity: 2026-04-10
 
@@ -58,6 +58,7 @@ Last activity: 2026-04-10
 | Phase 14 P06 | 3min | 2 tasks | 6 files |
 | Phase 15 P01 | 8min | 2 tasks | 3 files |
 | Phase 15-theme-editing-workflow P02 | 3min | 2 tasks | 5 files |
+| Phase 15 P03 | 6 | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -97,6 +98,8 @@ Last activity: 2026-04-10
 - [Phase 15]: When switching theme during an active draft, App discards old draft and re-baselines using selected theme payload.
 - [Phase 15-theme-editing-workflow]: Undo rollback replays snapshot through applyTheme(themeId, false, payload) to restore theme selection, token values, and flow-line together.
 - [Phase 15-theme-editing-workflow]: Theme settings undo and baseline controls are enabled only when draft historyCursor > 0 and otherwise show 无可撤销改动 hint.
+- [Phase 15]: Save-as-custom request includes sourceThemeId plus draft payload so main can materialize complete theme colors and preserve payload fidelity.
+- [Phase 15]: Renderer and main both reuse validateCustomThemeName; main remains authoritative for duplicate-name enforcement and activation.
 
 ### Pending Todos
 
@@ -112,6 +115,6 @@ Last activity: 2026-04-10
 
 ## Session Continuity
 
-Last session: 2026-04-10T05:29:28.613Z
-Stopped at: Completed 15-02-PLAN.md
+Last session: 2026-04-10T05:40:13.583Z
+Stopped at: Completed 15-03-PLAN.md
 Resume file: None

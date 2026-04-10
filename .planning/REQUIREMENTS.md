@@ -24,7 +24,7 @@
 
 - [x] **FLOW-01**: 用户在设置页修改颜色后可实时预览效果
 - [x] **FLOW-02**: 用户可以撤销当前预览改动并恢复到进入设置前的主题状态
-- [ ] **FLOW-03**: 用户可以将当前配置保存为自定义主题
+- [x] **FLOW-03**: 用户可以将当前配置保存为自定义主题
 
 ### Theme Management
 
@@ -69,7 +69,7 @@
 | TOKN-06 | Phase 14 | Complete |
 | FLOW-01 | Phase 15 | Complete |
 | FLOW-02 | Phase 15 | Complete |
-| FLOW-03 | Phase 15 | Pending |
+| FLOW-03 | Phase 15 | Complete |
 | MGMT-01 | Phase 16 | Pending |
 | MGMT-02 | Phase 16 | Pending |
 | MGMT-03 | Phase 16 | Pending |
