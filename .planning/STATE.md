@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
 status: executing
-stopped_at: Completed 17-02-PLAN.md
-last_updated: "2026-04-10T09:56:52.001Z"
+stopped_at: Completed 17-03-PLAN.md
+last_updated: "2026-04-10T10:18:00.569Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 24
-  completed_plans: 22
+  completed_plans: 23
   percent: 88
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 ## Current Position
 
 Phase: 17 of 17 (compatibility-regression-guardrails)
-Plan: 3 of 4 in current phase
+Plan: 4 of 4 in current phase
 Status: In progress
 Last activity: 2026-04-10
 
@@ -71,6 +71,7 @@ Progress: [█████████░] 88%
 | Phase 16-theme-management-portability P05 | 12min | 2 tasks | 5 files |
 | Phase 17 P01 | 13m | 2 tasks | 3 files |
 | Phase 17 P02 | 81min | 3 tasks | 3 files |
+| Phase 17 P03 | 27min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -132,6 +133,8 @@ Progress: [█████████░] 88%
 - [Phase 17]: Invalid-import gate now enforces triad atomicity snapshots (theme list/current/config) before and after import.
 - [Phase 17]: Use titlebar theme switching for QUAL-01 probes so transition checks can exercise editor/table interactions without settings-overlay blocking.
 - [Phase 17]: Jitter policy fails compatibility when sampled selector delta exceeds 0.5px and reports scenario-path diagnostics.
+- [Phase 17]: Gate command runs key contract tests first, then QUAL-02 UI gate tests.
+- [Phase 17]: Full command dynamically discovers theme contract/UI suites and preserves contract-first order.
 
 ### Pending Todos
 
@@ -147,6 +150,6 @@ Progress: [█████████░] 88%
 
 ## Session Continuity
 
-Last session: 2026-04-10T09:56:51.998Z
-Stopped at: Completed 17-02-PLAN.md
+Last session: 2026-04-10T10:18:00.565Z
+Stopped at: Completed 17-03-PLAN.md
 Resume file: None
