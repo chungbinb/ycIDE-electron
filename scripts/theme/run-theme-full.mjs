@@ -7,7 +7,7 @@ function getThemeSpecs(dirPath, ext) {
     .readdirSync(dirPath)
     .filter((name) => name.startsWith('theme-') && name.endsWith(ext))
     .sort()
-    .map((name) => path.join(dirPath, name))
+    .map((name) => path.join(dirPath, name).replace(/\\/g, '/'))
 }
 
 const contractSpecs = getThemeSpecs(path.join('tests', 'contract'), '.spec.mjs')
