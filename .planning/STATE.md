@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
 status: executing
-stopped_at: Completed 16-03-PLAN.md
-last_updated: "2026-04-10T07:52:53.818Z"
+stopped_at: Completed 16-04-PLAN.md
+last_updated: "2026-04-10T08:05:31.722Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 20
-  completed_plans: 18
+  completed_plans: 19
 ---
 
 # Project State
@@ -20,12 +20,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** 用户可以在 ycIDE 中稳定使用并自定义完整主题体系，实时预览并安全保存复用。  
-**Current focus:** Phase 16 in progress (3/5 plans completed)
+**Current focus:** Phase 16 in progress (4/5 plans completed)
 
 ## Current Position
 
 Phase: 16
-Plan: 16-04..16-05 planned
+Plan: 16-05 planned
 Status: In Progress
 Last activity: 2026-04-10
 
@@ -33,7 +33,7 @@ Last activity: 2026-04-10
 
 **Velocity:**
 
-- Total plans completed: 3
+- Total plans completed: 4
 - Average duration: 9min
 - Total execution time: 0.45 hours
 
@@ -64,6 +64,7 @@ Last activity: 2026-04-10
 | Phase 16 P01 | 2m | 2 tasks | 2 files |
 | Phase 16 P02 | 3m | 2 tasks | 3 files |
 | Phase 16-theme-management-portability P03 | 17min | 2 tasks | 6 files |
+| Phase 16 P04 | 8min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -116,6 +117,9 @@ Last activity: 2026-04-10
 - [Phase 16]: Theme manager lifecycle actions now reconcile renderer state from main lifecycle payloads.
 - [Phase 16]: Theme manager list/detail both expose unsaved draft indicators for the working theme.
 - [Phase 16]: UI export automation uses App-level test hook to avoid native dialog nondeterminism.
+- [Phase 16]: Import flow split into theme:import validate/dry-run and theme:importCommit single-write commit.
+- [Phase 16]: Overwrite import remains blocked unless overwriteConfirmed=true is provided in decision payload.
+- [Phase 16]: Post-import activation is explicit in Theme Manager via switch-now vs keep-current.
 
 ### Pending Todos
 
@@ -131,6 +135,6 @@ Last activity: 2026-04-10
 
 ## Session Continuity
 
-Last session: 2026-04-10T07:52:53.814Z
-Stopped at: Completed 16-03-PLAN.md
+Last session: 2026-04-10T08:05:31.718Z
+Stopped at: Completed 16-04-PLAN.md
 Resume file: None
