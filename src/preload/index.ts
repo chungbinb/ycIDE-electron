@@ -1,7 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { normalizeRuntimePlatform } from '../shared/platform'
+import { THEME_CONFIG_VERSION } from '../shared/theme'
+import type { ThemeConfigV2, ThemeDefinition, ThemeId, ThemeResolutionResult } from '../shared/theme'
 
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
+void THEME_CONFIG_VERSION
 type RecentOpenedItem = { type: 'project' | 'file'; path: string; label: string }
 type ThemeMenuState = { themes: string[]; currentTheme: string }
 
@@ -111,10 +114,10 @@ const api = {
   },
   // 主题管理
   theme: {
-    getList: () => ipcRenderer.invoke('theme:getList') as Promise<string[]>,
-    load: (name: string) => ipcRenderer.invoke('theme:load', name) as Promise<{ name: string; colors: Record<string, string> } | null>,
-    getCurrent: () => ipcRenderer.invoke('theme:getCurrent') as Promise<string>,
-    setCurrent: (name: string) => ipcRenderer.invoke('theme:setCurrent', name),
+    getList: () => ipcRenderer.invoke('theme:getList') as Promise<ThemeId[]>,
+    load: (name: ThemeId) => ipcRenderer.invoke('theme:load', name) as Promise<ThemeDefinition | null>,
+    getCurrent: () => ipcRenderer.invoke('theme:getCurrent') as Promise<ThemeResolutionResult>,
+    setCurrent: (name: ThemeId) => ipcRenderer.invoke('theme:setCurrent', name) as Promise<ThemeConfigV2>,
   },
   // 对话框
   dialog: {
