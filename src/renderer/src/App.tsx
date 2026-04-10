@@ -34,6 +34,17 @@ type DebugBreakAccumulator = {
 
 const RECENT_OPENED_KEY = 'ycide.recentOpened.v1'
 const MAX_RECENT_OPENED = 10
+const REQUIRED_THEME_COLOR_KEYS = [
+  '--bg-primary',
+  '--bg-secondary',
+  '--bg-tertiary',
+  '--bg-input',
+  '--border-color',
+  '--text-primary',
+  '--text-secondary',
+  '--accent',
+  '--statusbar-bg',
+]
 
 type TargetPlatform = 'windows' | 'macos' | 'linux'
 type TargetArch = 'x64' | 'x86' | 'arm64'
@@ -313,6 +324,7 @@ function App(): React.JSX.Element {
   const [showLibrary, setShowLibrary] = useState(false)
   const [showNewProject, setShowNewProject] = useState(false)
   const [showThemeSettings, setShowThemeSettings] = useState(false)
+  const [themeRepairMessage, setThemeRepairMessage] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [selection, setSelection] = useState<SelectionTarget>(null)
   const [sidebarTab, setSidebarTab] = useState<'project' | 'library' | 'property'>('project')
@@ -346,6 +358,7 @@ function App(): React.JSX.Element {
   const [breakpointsByFile, setBreakpointsByFile] = useState<Record<string, number[]>>({})
   const debugBreakAccumRef = useRef<DebugBreakAccumulator | null>(null)
   const openFileByPathRef = useRef<(filePath: string, targetLine?: number) => Promise<boolean>>(async () => false)
+  const themeNoticeKeysRef = useRef<Set<string>>(new Set())
   const [targetPlatform, setTargetPlatform] = useState<TargetPlatform>('windows')
   const [targetArch, setTargetArch] = useState<TargetArch>('x64')
   const [recentOpened, setRecentOpened] = useState<RecentOpenedItem[]>([])
@@ -795,19 +808,52 @@ function App(): React.JSX.Element {
     setCommandDetail(null)
   }, [])
 
+  const pushThemeNotice = useCallback((key: string, text: string, type: OutputMessage['type'] = 'warning', once = true) => {
+    if (once && themeNoticeKeysRef.current.has(key)) return
+    if (once) themeNoticeKeysRef.current.add(key)
+    setOutputMessages(prev => [...prev, { type, text }])
+    setShowOutput(true)
+  }, [])
+
+  const handleThemeWarning = useCallback((warning: { code: string; message: string }) => {
+    pushThemeNotice(`theme-warning:${warning.code}`, `[主题] ${warning.message}`, warning.code === 'legacy_migrated' ? 'info' : 'warning')
+    if (warning.code === 'repair_required') {
+      setThemeRepairMessage(warning.message)
+      setShowThemeSettings(true)
+    }
+  }, [pushThemeNotice])
+
   // 加载主题列表和当前主题
   const applyTheme = useCallback(async (name: string, persist = true) => {
     const theme = await window.api?.theme?.load(name)
-    if (!theme?.colors) return
+    if (!theme?.colors) {
+      pushThemeNotice('theme-apply-load-failed', '[主题] 主题未能完整加载，当前状态可能不完整。建议重启应用后重试。')
+      return
+    }
     const root = document.documentElement
+    let appliedCount = 0
     for (const [key, value] of Object.entries(theme.colors)) {
-      root.style.setProperty(key, value as string)
+      try {
+        root.style.setProperty(key, value as string)
+        appliedCount++
+      } catch {
+        // 保持部分应用，后续给出重启建议
+      }
     }
     setCurrentTheme(name)
-    if (persist) {
-      window.api?.theme?.setCurrent(name)
+    const missingRequired = REQUIRED_THEME_COLOR_KEYS.filter(key => !(key in theme.colors))
+    if (appliedCount === 0 || missingRequired.length > 0) {
+      pushThemeNotice('theme-partial-apply', `[主题] 主题“${name}”仅部分生效，建议重启应用以完成应用。${missingRequired.length > 0 ? `缺失变量：${missingRequired.join(', ')}` : ''}`)
     }
-  }, [])
+    if (persist) {
+      try {
+        await window.api?.theme?.setCurrent(name)
+      } catch {
+        pushThemeNotice('theme-persist-failed', '[主题] 当前主题未能写入配置，建议重启应用后重试。')
+      }
+    }
+    if (themeRepairMessage) setThemeRepairMessage(null)
+  }, [pushThemeNotice, themeRepairMessage])
 
   useEffect(() => {
     (async () => {
@@ -817,10 +863,10 @@ function App(): React.JSX.Element {
       if (!saved?.effectiveThemeId) return
       await applyTheme(saved.effectiveThemeId, false)
       if (saved.warning) {
-        console.warn('[theme]', saved.warning.message)
+        handleThemeWarning(saved.warning)
       }
     })()
-  }, [applyTheme])
+  }, [applyTheme, handleThemeWarning])
 
   const handleAlignDone = useCallback(() => setAlignAction(null), [])
 
@@ -2020,6 +2066,7 @@ function App(): React.JSX.Element {
         themes={themeList}
         currentTheme={currentTheme}
         onSelectTheme={(themeId) => { void applyTheme(themeId) }}
+        repairMessage={themeRepairMessage}
       />
     </div>
   )
