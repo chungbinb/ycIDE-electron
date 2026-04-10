@@ -5,6 +5,7 @@ import path from 'node:path'
 
 const themeSchemaPath = path.resolve(process.cwd(), 'src/shared/theme.ts')
 const mainPath = path.resolve(process.cwd(), 'src/main/index.ts')
+const preloadPath = path.resolve(process.cwd(), 'src/preload/index.ts')
 
 function readThemeSchema() {
   return fs.readFileSync(themeSchemaPath, 'utf-8')
@@ -12,6 +13,10 @@ function readThemeSchema() {
 
 function readMainSource() {
   return fs.readFileSync(mainPath, 'utf-8')
+}
+
+function readPreloadSource() {
+  return fs.readFileSync(preloadPath, 'utf-8')
 }
 
 test('contract dto: MGMT-02 D16-10 export dto fixed to schemaVersion + theme', () => {
@@ -89,4 +94,25 @@ test('management and export ipc: D16-07/09/10/11/12 rename conflict and single-t
   assert.match(source, /schemaVersion:\s*THEME_PORTABILITY_SCHEMA_VERSION/)
   assert.match(source, /`\$\{themeId\}\.ycide-theme\.json`/)
   assert.match(source, /built-in 主题也允许导出/)
+})
+
+test('management and export ipc bridge: preload exposes typed theme lifecycle methods', () => {
+  const source = readPreloadSource()
+  assert.match(source, /createFromCurrent:\s*\(request: \{ name: string; themePayload\?: ThemeTokenPayload \}\)/)
+  assert.match(source, /rename:\s*\(request: \{ themeId: ThemeId; newName: string \}\)/)
+  assert.match(source, /delete:\s*\(request: \{ themeId: ThemeId; confirmThemeName: string \}\)/)
+  assert.match(source, /export:\s*\(request: \{ themeId: ThemeId \}\)/)
+})
+
+test('management and export ipc bridge: preload invoke channels and argument shape align with main handlers', () => {
+  const preloadSource = readPreloadSource()
+  const mainSource = readMainSource()
+  assert.match(preloadSource, /ipcRenderer\.invoke\('theme:createFromCurrent', request\)/)
+  assert.match(preloadSource, /ipcRenderer\.invoke\('theme:rename', request\)/)
+  assert.match(preloadSource, /ipcRenderer\.invoke\('theme:delete', request\)/)
+  assert.match(preloadSource, /ipcRenderer\.invoke\('theme:export', request\)/)
+  assert.match(mainSource, /ipcMain\.handle\('theme:createFromCurrent'/)
+  assert.match(mainSource, /ipcMain\.handle\('theme:rename'/)
+  assert.match(mainSource, /ipcMain\.handle\('theme:delete'/)
+  assert.match(mainSource, /ipcMain\.handle\('theme:export'/)
 })

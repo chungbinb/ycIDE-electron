@@ -15,6 +15,12 @@ const runtimePlatform = normalizeRuntimePlatform(process.platform)
 void THEME_CONFIG_VERSION
 type RecentOpenedItem = { type: 'project' | 'file'; path: string; label: string }
 type ThemeMenuState = { themes: string[]; currentTheme: string }
+type ThemeLifecycleSyncPayload = {
+  config: ThemeConfigV2
+  themes: ThemeId[]
+  currentTheme: ThemeId
+  menuState: ThemeMenuState
+}
 
 // 向渲染进程安全暴露的 API
 const api = {
@@ -131,6 +137,26 @@ const api = {
     setCurrent: (name: ThemeId) => ipcRenderer.invoke('theme:setCurrent', name) as Promise<ThemeConfigV2>,
     saveAsCustom: (request: SaveAsCustomThemeRequest) =>
       ipcRenderer.invoke('theme:saveAsCustom', request) as Promise<SaveAsCustomThemeResult>,
+    createFromCurrent: (request: { name: string; themePayload?: ThemeTokenPayload }) =>
+      ipcRenderer.invoke('theme:createFromCurrent', request) as Promise<
+        | ({ success: true; themeId: ThemeId; sourceThemeId: ThemeId } & ThemeLifecycleSyncPayload)
+        | ({ success: false; code: 'invalid_name' | 'duplicate_name' | 'source_theme_missing' | 'save_failed'; message: string })
+      >,
+    rename: (request: { themeId: ThemeId; newName: string }) =>
+      ipcRenderer.invoke('theme:rename', request) as Promise<
+        | ({ success: true; oldThemeId: ThemeId; newThemeId: ThemeId } & ThemeLifecycleSyncPayload)
+        | ({ success: false; code: 'invalid_name' | 'builtin_readonly' | 'theme_not_found' | 'duplicate_name' | 'rename_failed'; message: string })
+      >,
+    delete: (request: { themeId: ThemeId; confirmThemeName: string }) =>
+      ipcRenderer.invoke('theme:delete', request) as Promise<
+        | ({ success: true; deletedThemeId: ThemeId; notice: string | null } & ThemeLifecycleSyncPayload)
+        | ({ success: false; code: 'builtin_readonly' | 'theme_not_found' | 'confirm_name_mismatch' | 'delete_failed'; message: string })
+      >,
+    export: (request: { themeId: ThemeId }) =>
+      ipcRenderer.invoke('theme:export', request) as Promise<
+        | { success: true; filePath: string; fileName: string; themeId: ThemeId }
+        | { success: false; canceled?: true; code?: 'theme_not_found' | 'export_failed'; message?: string }
+      >,
   },
   // 对话框
   dialog: {
