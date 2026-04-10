@@ -2141,6 +2141,7 @@ function App(): React.JSX.Element {
                 debugLocation={debugPause ? { file: debugPause.file, line: debugPause.line } : null}
                 debugVariables={debugPause?.variables || []}
                 currentTheme={currentTheme}
+                themeTokenValues={themeTokenValues}
               />
             </div>
           </div>
