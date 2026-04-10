@@ -98,7 +98,7 @@
   background: color-mix(in srgb, var(--bg-secondary, #252526) 96%, transparent);
   border: 1px solid color-mix(in srgb, var(--table-border, var(--border-color, #3c3c3c)) 70%, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)));
   border-radius: 6px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 10px 28px var(--menu-shadow, rgba(0, 0, 0, 0.35));
   padding: 8px 10px;
   color: var(--table-text, var(--text-primary, #d6f7f1));
 }
@@ -978,10 +978,10 @@
   max-width: 300px;
   max-height: 200px;
   overflow-y: auto;
-  background: #252526;
-  border: 1px solid #454545;
+  background: var(--bg-secondary, #252526);
+  border: 1px solid var(--table-border, var(--border-color, #454545));
   border-radius: 3px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 12px var(--menu-shadow, rgba(0, 0, 0, 0.5));
   font-family: Consolas, "Microsoft YaHei", monospace;
   font-size: 13px;
 }
@@ -999,16 +999,16 @@
   flex-shrink: 0;
   line-height: 1;
 }
-.eyc-ac-icon-func   { color: #8cb4ff; }
-.eyc-ac-icon-widget { color: #7dd67f; }
-.eyc-ac-icon-event  { color: #f2c14e; }
-.eyc-ac-icon-prop   { color: #b694f8; }
-.eyc-ac-icon-field  { color: #86d993; }
-.eyc-ac-icon-dll    { color: #9ec5ff; }
-.eyc-ac-icon-resource { color: #7ec8ff; }
-.eyc-ac-icon-const  { color: #6bb8ff; }
-.eyc-ac-icon-type   { color: #59c4b5; }
-.eyc-ac-icon-flow   { color: #f28b93; }
+.eyc-ac-icon-func   { color: var(--syntax-function, #8cb4ff); }
+.eyc-ac-icon-widget { color: var(--success, #7dd67f); }
+.eyc-ac-icon-event  { color: var(--warning, #f2c14e); }
+.eyc-ac-icon-prop   { color: var(--syntax-type, #b694f8); }
+.eyc-ac-icon-field  { color: var(--syntax-variable, #86d993); }
+.eyc-ac-icon-dll    { color: var(--syntax-keyword, #9ec5ff); }
+.eyc-ac-icon-resource { color: var(--info, #7ec8ff); }
+.eyc-ac-icon-const  { color: var(--syntax-number, #6bb8ff); }
+.eyc-ac-icon-type   { color: var(--syntax-type, #59c4b5); }
+.eyc-ac-icon-flow   { color: var(--error, #f28b93); }
 
 .eyc-ac-item {
   display: flex;
@@ -1021,28 +1021,28 @@
 }
 
 .eyc-ac-item-active {
-  background: #04395e;
-  color: #fff;
+  background: var(--bg-selection, #04395e);
+  color: var(--text-primary, #fff);
 }
 
 .eyc-ac-item:hover {
-  background: #2a2d2e;
+  background: var(--table-row-hover-bg, #2a2d2e);
 }
 .eyc-ac-item-active:hover {
-  background: #04395e;
+  background: var(--bg-selection, #04395e);
 }
 
 .eyc-ac-item-more {
-  border-top: 1px dashed #3c3c3c;
+  border-top: 1px dashed var(--table-border, var(--border-color, #3c3c3c));
 }
 
 .eyc-ac-item-more .eyc-ac-name {
-  color: #9cdcfe;
+  color: var(--syntax-variable, #9cdcfe);
   font-style: italic;
 }
 
 .eyc-ac-name {
-  color: #dcdcaa;
+  color: var(--syntax-function, #dcdcaa);
   font-weight: bold;
   flex-shrink: 0;
 }
@@ -1060,9 +1060,9 @@
   line-height: 16px;
   border-radius: 8px;
   font-size: 10px;
-  color: #9cdcfe;
-  background: rgba(86, 156, 214, 0.18);
-  border: 1px solid rgba(86, 156, 214, 0.35);
+  color: var(--syntax-variable, #9cdcfe);
+  background: color-mix(in srgb, var(--syntax-keyword, #569cd6) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--syntax-keyword, #569cd6) 35%, transparent);
   flex-shrink: 0;
 }
 
@@ -1073,47 +1073,47 @@
   max-height: 200px;
   overflow-y: auto;
   margin-left: 2px;
-  background: #252526;
-  border: 1px solid #454545;
+  background: var(--bg-secondary, #252526);
+  border: 1px solid var(--table-border, var(--border-color, #454545));
   border-radius: 3px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 12px var(--menu-shadow, rgba(0, 0, 0, 0.5));
   font-family: Consolas, "Microsoft YaHei", monospace;
   font-size: 12px;
   padding: 8px 10px;
-  color: #ccc;
+  color: var(--text-primary, #ccc);
   line-height: 1.7;
 }
 
 .eyc-ac-detail-call {
-  color: #dcdcaa;
+  color: var(--syntax-function, #dcdcaa);
   margin-bottom: 4px;
   white-space: pre-wrap;
   word-break: break-all;
 }
 
 .eyc-ac-detail-label {
-  color: #808080;
+  color: var(--text-secondary, #808080);
 }
 
 .eyc-ac-detail-eng {
-  color: #9cdcfe;
+  color: var(--syntax-variable, #9cdcfe);
   margin-bottom: 4px;
 }
 
 .eyc-ac-detail-desc {
-  color: #ccc;
+  color: var(--text-primary, #ccc);
   margin-bottom: 6px;
   white-space: pre-wrap;
   word-break: break-all;
 }
 
 .eyc-ac-detail-params {
-  border-top: 1px solid #3c3c3c;
+  border-top: 1px solid var(--table-border, var(--border-color, #3c3c3c));
   padding-top: 4px;
 }
 
 .eyc-ac-detail-param {
-  color: #ccc;
+  color: var(--text-primary, #ccc);
   font-size: 11px;
   padding: 2px 0;
   white-space: pre-wrap;
@@ -1121,17 +1121,17 @@
 }
 
 .eyc-ac-detail-param-head {
-  color: #9cdcfe;
+  color: var(--syntax-variable, #9cdcfe);
 }
 
 .eyc-ac-detail-param-desc {
-  color: #b0b0b0;
+  color: var(--text-secondary, #b0b0b0);
 }
 
 .eyc-resource-preview-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--dialog-shadow, rgba(0, 0, 0, 0.45));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1142,10 +1142,10 @@
 .eyc-resource-preview-modal {
   width: min(900px, 92vw);
   max-height: 86vh;
-  background: #1f2329;
-  border: 1px solid #3b4048;
+  background: var(--bg-secondary, #1f2329);
+  border: 1px solid var(--table-border, var(--border-color, #3b4048));
   border-radius: 8px;
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42);
+  box-shadow: 0 14px 36px var(--dialog-shadow, rgba(0, 0, 0, 0.42));
   display: flex;
   flex-direction: column;
   animation: eyc-resource-preview-modal-in 340ms cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -1177,13 +1177,13 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  border-bottom: 1px solid #343a42;
+  border-bottom: 1px solid var(--table-border, var(--border-color, #343a42));
 }
 
 .eyc-resource-preview-title {
   font-size: 15px;
   font-weight: 600;
-  color: #d8dde6;
+  color: var(--text-primary, #d8dde6);
 }
 
 .eyc-resource-preview-close {
@@ -1192,15 +1192,15 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #4a5160;
-  background: #2a3038;
+  border: 1px solid var(--table-border, var(--border-color, #4a5160));
+  background: var(--bg-tertiary, #2a3038);
   border-radius: 4px;
   padding: 0;
   cursor: pointer;
 }
 
 .eyc-resource-preview-close:hover {
-  background: #323a44;
+  background: var(--bg-hover, #323a44);
 }
 
 .eyc-resource-preview-close-icon {
@@ -1218,12 +1218,12 @@
 
 .eyc-resource-preview-meta {
   padding: 10px 14px;
-  color: #aeb7c6;
+  color: var(--text-secondary, #aeb7c6);
   font-size: 12px;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 6px 12px;
-  border-bottom: 1px solid #343a42;
+  border-bottom: 1px solid var(--table-border, var(--border-color, #343a42));
 }
 
 .eyc-resource-preview-path {
@@ -1246,17 +1246,17 @@
   max-width: 100%;
   max-height: 58vh;
   object-fit: contain;
-  border: 1px solid #3e4551;
+  border: 1px solid var(--table-border, var(--border-color, #3e4551));
   border-radius: 6px;
-  background: #161a20;
+  background: var(--bg-primary, #161a20);
 }
 
 .eyc-resource-preview-video {
   width: min(800px, 100%);
   max-height: 58vh;
-  border: 1px solid #3e4551;
+  border: 1px solid var(--table-border, var(--border-color, #3e4551));
   border-radius: 6px;
-  background: #101317;
+  background: var(--bg-primary, #101317);
 }
 
 .eyc-resource-preview-audio {
@@ -1264,21 +1264,21 @@
 }
 
 .eyc-resource-preview-empty {
-  color: #9ca7b8;
+  color: var(--text-secondary, #9ca7b8);
   font-size: 13px;
 }
 
 .eyc-resource-preview-footer {
-  border-top: 1px solid #343a42;
+  border-top: 1px solid var(--table-border, var(--border-color, #343a42));
   padding: 10px 14px;
   display: flex;
   justify-content: flex-end;
 }
 
 .eyc-resource-preview-replace {
-  border: 1px solid #4f5f79;
-  background: #2c3b55;
-  color: #dbe6ff;
+  border: 1px solid var(--border-focus, #4f5f79);
+  background: var(--accent, #2c3b55);
+  color: var(--menu-text-on-accent, #dbe6ff);
   border-radius: 4px;
   padding: 6px 12px;
   cursor: pointer;
@@ -1292,7 +1292,7 @@
 /* 问题定位高亮闪烁 */
 @keyframes problem-flash {
   0%, 100% { background-color: transparent; }
-  25%, 75% { background-color: rgba(255, 200, 0, 0.25); }
+  25%, 75% { background-color: color-mix(in srgb, var(--warning, #cca700) 25%, transparent); }
 }
 .highlight-flash {
   animation: problem-flash 1.5s ease;

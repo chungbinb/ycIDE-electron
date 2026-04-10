@@ -85,9 +85,12 @@ function scanFile(relativePath) {
     const found = [...line.matchAll(COLOR_LITERAL_PATTERN)]
     if (found.length === 0) continue
     for (const token of found) {
+      const literal = token[0]
+      const isVarFallback = line.includes('var(') && line.includes(literal)
       matches.push({
         line: index + 1,
-        literal: token[0],
+        literal,
+        classification: isVarFallback ? 'resolved-fallback' : 'unresolved',
         content: line.trim(),
       })
     }
@@ -103,27 +106,38 @@ function main() {
   const args = parseArgs(process.argv.slice(2))
   const files = resolveFiles(args.surface)
   const scanned = files.map(scanFile)
-  const violations = scanned.filter(item => item.hits.length > 0)
+  const unresolved = scanned.map(item => ({
+    ...item,
+    hits: item.hits.filter(hit => hit.classification === 'unresolved'),
+  })).filter(item => item.hits.length > 0)
+  const resolvedFallbacks = scanned.map(item => ({
+    ...item,
+    hits: item.hits.filter(hit => hit.classification === 'resolved-fallback'),
+  })).filter(item => item.hits.length > 0)
 
   const summary = {
     generatedAt: new Date().toISOString(),
     phase: args.phase ?? null,
     surface: args.surface ?? 'all',
-    status: args.strict && violations.length > 0 ? 'fail' : 'pass',
+    status: args.strict && unresolved.length > 0 ? 'fail' : 'pass',
     strict: args.strict,
     scannedFiles: files.length,
-    violations: violations.length,
-    totalHits: violations.reduce((sum, file) => sum + file.hits.length, 0),
+    violations: unresolved.length,
+    totalHits: unresolved.reduce((sum, file) => sum + file.hits.length, 0),
+    resolvedFallbackFiles: resolvedFallbacks.length,
+    resolvedFallbackHits: resolvedFallbacks.reduce((sum, file) => sum + file.hits.length, 0),
     summaryByFile: scanned.map(item => ({
       file: item.file,
-      hits: item.hits.length,
+      unresolvedHits: item.hits.filter(hit => hit.classification === 'unresolved').length,
+      resolvedFallbackHits: item.hits.filter(hit => hit.classification === 'resolved-fallback').length,
     })),
-    files: scanned,
+    files: unresolved,
+    resolvedFallbacks,
   }
 
   console.log(JSON.stringify(summary, null, 2))
 
-  if (args.strict && violations.length > 0) {
+  if (args.strict && unresolved.length > 0) {
     process.exitCode = 1
   }
 }
