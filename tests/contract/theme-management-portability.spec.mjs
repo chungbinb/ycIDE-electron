@@ -6,6 +6,7 @@ import path from 'node:path'
 const themeSchemaPath = path.resolve(process.cwd(), 'src/shared/theme.ts')
 const mainPath = path.resolve(process.cwd(), 'src/main/index.ts')
 const preloadPath = path.resolve(process.cwd(), 'src/preload/index.ts')
+const appPath = path.resolve(process.cwd(), 'src/renderer/src/App.tsx')
 
 function readThemeSchema() {
   return fs.readFileSync(themeSchemaPath, 'utf-8')
@@ -17,6 +18,10 @@ function readMainSource() {
 
 function readPreloadSource() {
   return fs.readFileSync(preloadPath, 'utf-8')
+}
+
+function readAppSource() {
+  return fs.readFileSync(appPath, 'utf-8')
 }
 
 test('contract dto: MGMT-02 D16-10 export dto fixed to schemaVersion + theme', () => {
@@ -96,6 +101,16 @@ test('management and export ipc: D16-07/09/10/11/12 rename conflict and single-t
   assert.match(source, /built-in 主题也允许导出/)
 })
 
+test('MGMT-01 D16-02/D16-08 lifecycle sync: manager handlers return lifecycle payload and renderer applies list/current together', () => {
+  const mainSource = readMainSource()
+  const appSource = readAppSource()
+  assert.match(mainSource, /type ThemeLifecycleState =[\s\S]*config:\s*ThemeConfigV2[\s\S]*themes:\s*ThemeId\[\][\s\S]*currentTheme:\s*ThemeId[\s\S]*menuState:\s*ThemeMenuState/)
+  assert.match(mainSource, /ipcMain\.handle\('theme:rename'[\s\S]*\.\.\.buildThemeLifecycleState\(config\)/)
+  assert.match(mainSource, /ipcMain\.handle\('theme:delete'[\s\S]*\.\.\.buildThemeLifecycleState\(config\)/)
+  assert.match(appSource, /const syncThemeLifecycleState = useCallback\([\s\S]*setThemeList\(payload\.themes \|\| \[\]\)[\s\S]*await applyTheme\(payload\.currentTheme, false, nextPayload\)/)
+  assert.match(appSource, /renameThemeInDraftSession\(result\.oldThemeId, result\.newThemeId\)/)
+})
+
 test('management and export ipc bridge: preload exposes typed theme lifecycle methods', () => {
   const source = readPreloadSource()
   assert.match(source, /createFromCurrent:\s*\(request: \{ name: string; themePayload\?: ThemeTokenPayload \}\)/)
@@ -125,6 +140,13 @@ test('import atomic and conflict: main ipc exposes validate-first prepare + atom
   assert.match(source, /validateThemeImportConflictDecision/)
   assert.match(source, /conflict_decision_required/)
   assert.match(source, /overwriteConfirmed=true/)
+})
+
+test('MGMT-04 D16-13 invalid import prepare + commit rollback preserve atomic no-write guarantee', () => {
+  const source = readMainSource()
+  assert.match(source, /ipcMain\.handle\('theme:import'[\s\S]*if \(!validation\.success\)[\s\S]*status:\s*'invalid'[\s\S]*diagnostics:\s*validation\.diagnostics/)
+  assert.match(source, /ipcMain\.handle\('theme:importCommit'[\s\S]*const rollbackTheme = loadThemeDefinition\(targetThemeId\)[\s\S]*const rollbackConfig = readThemeConfigForWrite\(\)/)
+  assert.match(source, /catch \(error\)[\s\S]*writeThemeConfig\(rollbackConfig\)/)
 })
 
 test('import atomic and conflict: preload bridge exposes import and importCommit invoke channels', () => {
