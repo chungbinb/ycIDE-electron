@@ -34,7 +34,14 @@
 2. 用户可配置编辑器表格颜色与表头颜色，且表格相关区域跟随主题更新。
 3. 用户可按主题设置流程线单色/多色模式，并按模式配置流程线颜色后正确显示。
 4. 用户在所有可见区域不再看到明显未主题化的硬编码颜色。  
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+- [x] 14-01-PLAN.md — Token contracts, schema migration, and built-in token default seeding
+- [ ] 14-02-PLAN.md — Grouped token editor UI, immediate reset UX, and Monaco fine-grained mapping
+- [ ] 14-03-PLAN.md — EycTableEditor table/header tokenization and flow-line single/multi/depth behavior
+- [ ] 14-04-PLAN.md — VisualDesigner/icon tokenization and hardcoded residue scan automation
+- [ ] 14-05-PLAN.md — Phase 14 validation suite and required evidence artifacts
 
 ### Phase 15: Theme Editing Workflow
 **Goal**: 用户在设置页可安全地试改主题并决定保留或回退。  
@@ -70,8 +77,8 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 13. Theme Baseline | 4/4 | Complete   | 2026-04-10 |
-| 14. Theme Token Coverage | 0/0 | Not started | - |
+| 13. Theme Baseline | 4/4 | Complete    | 2026-04-10 |
+| 14. Theme Token Coverage | 1/5 | In Progress|  |
 | 15. Theme Editing Workflow | 0/0 | Not started | - |
 | 16. Theme Management & Portability | 0/0 | Not started | - |
 | 17. Compatibility & Regression Guardrails | 0/0 | Not started | - |
