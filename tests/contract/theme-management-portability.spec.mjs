@@ -116,3 +116,19 @@ test('management and export ipc bridge: preload invoke channels and argument sha
   assert.match(mainSource, /ipcMain\.handle\('theme:delete'/)
   assert.match(mainSource, /ipcMain\.handle\('theme:export'/)
 })
+
+test('import atomic and conflict: main ipc exposes validate-first prepare + atomic commit handlers', () => {
+  const source = readMainSource()
+  assert.match(source, /ipcMain\.handle\('theme:import'/)
+  assert.match(source, /ipcMain\.handle\('theme:importCommit'/)
+  assert.match(source, /validateThemePortabilityImportPayload/)
+  assert.match(source, /validateThemeImportConflictDecision/)
+  assert.match(source, /conflict_decision_required/)
+  assert.match(source, /overwriteConfirmed=true/)
+})
+
+test('import atomic and conflict: preload bridge exposes import and importCommit invoke channels', () => {
+  const source = readPreloadSource()
+  assert.match(source, /ipcRenderer\.invoke\('theme:import'/)
+  assert.match(source, /ipcRenderer\.invoke\('theme:importCommit', request\)/)
+})
