@@ -79,6 +79,6 @@ Plans:
 |-------|----------------|--------|-----------|
 | 13. Theme Baseline | 4/4 | Complete    | 2026-04-10 |
 | 14. Theme Token Coverage | 6/6 | Complete    | 2026-04-10 |
-| 15. Theme Editing Workflow | 1/5 | In Progress|  |
+| 15. Theme Editing Workflow | 2/5 | In Progress|  |
 | 16. Theme Management & Portability | 0/0 | Not started | - |
 | 17. Compatibility & Regression Guardrails | 0/0 | Not started | - |

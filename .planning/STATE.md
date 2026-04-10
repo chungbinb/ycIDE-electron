@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
-status: phase_in_progress
-stopped_at: Completed 15-01-PLAN.md
-last_updated: "2026-04-10T05:23:01.653Z"
+status: executing
+stopped_at: Completed 15-02-PLAN.md
+last_updated: "2026-04-10T05:29:28.618Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 15
-  completed_plans: 11
+  completed_plans: 12
 ---
 
 # Project State
@@ -20,12 +20,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** 用户可以在 ycIDE 中稳定使用并自定义完整主题体系，实时预览并安全保存复用。  
-**Current focus:** Phase 15 execution in progress (1/5 plans complete)
+**Current focus:** Phase 15 execution in progress (2/5 plans complete)
 
 ## Current Position
 
 Phase: 15
-Plan: 02
+Plan: 03
 Status: In Progress
 Last activity: 2026-04-10
 
@@ -57,6 +57,7 @@ Last activity: 2026-04-10
 | Phase 14-theme-token-coverage P05 | 9min | 3 tasks | 10 files |
 | Phase 14 P06 | 3min | 2 tasks | 6 files |
 | Phase 15 P01 | 8min | 2 tasks | 3 files |
+| Phase 15-theme-editing-workflow P02 | 3min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,8 @@ Last activity: 2026-04-10
 - [Phase 15]: Closing with unsaved draft requires unified 3-way confirmation flow across close button, Esc, overlay, and app exit.
 - [Phase 15]: Theme edits now use preview-only applyThemeDraftChange, with saveCurrent removed from in-dialog edit handlers.
 - [Phase 15]: When switching theme during an active draft, App discards old draft and re-baselines using selected theme payload.
+- [Phase 15-theme-editing-workflow]: Undo rollback replays snapshot through applyTheme(themeId, false, payload) to restore theme selection, token values, and flow-line together.
+- [Phase 15-theme-editing-workflow]: Theme settings undo and baseline controls are enabled only when draft historyCursor > 0 and otherwise show 无可撤销改动 hint.
 
 ### Pending Todos
 
@@ -109,6 +112,6 @@ Last activity: 2026-04-10
 
 ## Session Continuity
 
-Last session: 2026-04-10T05:23:01.649Z
-Stopped at: Completed 15-01-PLAN.md
+Last session: 2026-04-10T05:29:28.613Z
+Stopped at: Completed 15-02-PLAN.md
 Resume file: None
