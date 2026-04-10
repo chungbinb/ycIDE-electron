@@ -18,6 +18,8 @@
     "test:migration:x64": "node --test tests/migration/x64-adaptation.spec.mjs",
     "test:ui": "npm run build && playwright test",
     "test:ui:smoke": "npm run build && playwright test tests/ui/electron-start.spec.js",
+    "test:theme:gate": "node scripts/theme/run-theme-gate.mjs",
+    "test:theme:full": "node scripts/theme/run-theme-full.mjs",
     "package:win": "electron-vite build && electron-builder --win",
     "package:mac": "electron-vite build && electron-builder --mac",
     "package:linux": "electron-vite build && electron-builder --linux"
