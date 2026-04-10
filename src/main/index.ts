@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell, type BrowserWindowConstructorOptions, type MenuItemConstructorOptions } from 'electron'
 import { join, dirname, basename, extname } from 'path'
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync, unlinkSync } from 'fs'
 import { libraryManager } from './libraryManager'
 import { compileProject, runExecutable, stopExecutable, isRunning, continueDebugExecutable } from './compiler'
 import { normalizeRuntimePlatform } from '../shared/platform'
@@ -9,6 +9,7 @@ import {
   BUILTIN_DARK_THEME_ID,
   validateCustomThemeName,
   THEME_CONFIG_VERSION,
+  THEME_PORTABILITY_SCHEMA_VERSION,
   createDefaultThemeTokenPayload,
   createDefaultThemeConfig,
   isThemeConfigV1,
@@ -22,7 +23,8 @@ import {
   type ThemeId,
   type ThemeTokenPayload,
   type ThemeResolutionResult,
-  type ThemeResolutionWarningCode
+  type ThemeResolutionWarningCode,
+  type ThemePortabilityExportDto
 } from '../shared/theme'
 import { THEME_TOKEN_GROUPS } from '../shared/theme-tokens'
 import { scanYcmdRegistry } from './ycmd-registry'
@@ -44,6 +46,8 @@ type ThemeMenuState = {
 
 let recentOpenedItems: RecentOpenedItem[] = []
 let themeMenuState: ThemeMenuState = { themes: [], currentTheme: '' }
+const BUILTIN_THEME_IDS: ThemeId[] = [BUILTIN_DARK_THEME_ID, '默认浅色']
+let previousBuiltInThemeId: ThemeId = BUILTIN_DARK_THEME_ID
 const closeBypassWindowIds = new Set<number>()
 
 app.setName(APP_DISPLAY_NAME)
@@ -111,6 +115,24 @@ function hasThemeIdConflict(themeId: ThemeId, existingThemeIds: ThemeId[]): bool
   return existingThemeIds.some(item => item.trim().toLowerCase() === normalized)
 }
 
+function isBuiltinThemeId(themeId: ThemeId): boolean {
+  return BUILTIN_THEME_IDS.some(item => item === themeId)
+}
+
+function resolvePreviousBuiltInThemeId(preferredThemeId?: ThemeId): ThemeId {
+  const preferred = preferredThemeId || previousBuiltInThemeId
+  if (isBuiltinThemeId(preferred) && !!loadThemeDefinition(preferred)) {
+    return preferred
+  }
+  const available = listThemeIds()
+  const fallback = BUILTIN_THEME_IDS.find(themeId => available.includes(themeId) && !!loadThemeDefinition(themeId))
+  return fallback || BUILTIN_DARK_THEME_ID
+}
+
+function rememberPreviousBuiltInTheme(themeId: ThemeId): void {
+  previousBuiltInThemeId = resolvePreviousBuiltInThemeId(themeId)
+}
+
 function getThemeTokenDefaults(themeId: ThemeId): Record<string, string> {
   const theme = loadThemeDefinition(themeId)
   const defaults: Record<string, string> = {}
@@ -156,6 +178,54 @@ function buildError(code: ThemeConfigErrorCode, message?: string) {
   return { code, message, detectedAt: new Date().toISOString() }
 }
 
+function buildThemeMenuStatePayload(currentTheme: ThemeId): ThemeMenuState {
+  return {
+    themes: listThemeIds(),
+    currentTheme,
+  }
+}
+
+function syncThemeMenuState(currentTheme: ThemeId): ThemeMenuState {
+  themeMenuState = buildThemeMenuStatePayload(currentTheme)
+  if (runtimePlatform === 'macos') {
+    setupNativeMenu()
+  }
+  return themeMenuState
+}
+
+type ThemeLifecycleState = {
+  config: ThemeConfigV2
+  themes: ThemeId[]
+  currentTheme: ThemeId
+  menuState: ThemeMenuState
+}
+
+type ThemeCreateFromCurrentResult =
+  | ({ success: true; themeId: ThemeId; sourceThemeId: ThemeId } & ThemeLifecycleState)
+  | ({ success: false; code: 'invalid_name' | 'duplicate_name' | 'source_theme_missing' | 'save_failed'; message: string })
+
+type ThemeRenameResult =
+  | ({ success: true; oldThemeId: ThemeId; newThemeId: ThemeId } & ThemeLifecycleState)
+  | ({ success: false; code: 'invalid_name' | 'builtin_readonly' | 'theme_not_found' | 'duplicate_name' | 'rename_failed'; message: string })
+
+type ThemeDeleteResult =
+  | ({ success: true; deletedThemeId: ThemeId; notice: string | null } & ThemeLifecycleState)
+  | ({ success: false; code: 'builtin_readonly' | 'theme_not_found' | 'confirm_name_mismatch' | 'delete_failed'; message: string })
+
+type ThemeExportResult =
+  | { success: true; filePath: string; fileName: string; themeId: ThemeId }
+  | { success: false; canceled?: true; code?: 'theme_not_found' | 'export_failed'; message?: string }
+
+function buildThemeLifecycleState(config: ThemeConfigV2): ThemeLifecycleState {
+  const menuState = syncThemeMenuState(config.currentThemeId)
+  return {
+    config,
+    themes: menuState.themes,
+    currentTheme: menuState.currentTheme,
+    menuState,
+  }
+}
+
 function readThemeConfigForWrite(): ThemeConfigV2 {
   const themeConfigPath = getThemeConfigPath()
   if (!existsSync(themeConfigPath)) {
@@ -199,6 +269,7 @@ function resolveThemeConfig(): ThemeResolutionResult {
     config.lastError = buildError(errorCode, errorMessage || warningMessage)
     config.retainedInvalidTheme = retainedInvalidTheme || null
     writeThemeConfig(config)
+    rememberPreviousBuiltInTheme(BUILTIN_DARK_THEME_ID)
     return {
       selectedThemeId,
       effectiveThemeId: BUILTIN_DARK_THEME_ID,
@@ -210,6 +281,7 @@ function resolveThemeConfig(): ThemeResolutionResult {
   if (!existsSync(themeConfigPath)) {
     const config = createDefaultThemeConfig(BUILTIN_DARK_THEME_ID, normalizeThemePayload(BUILTIN_DARK_THEME_ID))
     writeThemeConfig(config)
+    rememberPreviousBuiltInTheme(BUILTIN_DARK_THEME_ID)
     return {
       selectedThemeId: BUILTIN_DARK_THEME_ID,
       effectiveThemeId: BUILTIN_DARK_THEME_ID,
@@ -282,6 +354,9 @@ function resolveThemeConfig(): ThemeResolutionResult {
     config.retainedInvalidTheme = null
   }
   writeThemeConfig(config)
+  if (isBuiltinThemeId(selectedThemeId)) {
+    rememberPreviousBuiltInTheme(selectedThemeId)
+  }
 
   return {
     selectedThemeId,
@@ -1237,6 +1312,10 @@ app.whenReady().then(() => {
       }
     }
     writeThemeConfig(config)
+    if (isBuiltinThemeId(targetThemeId)) {
+      rememberPreviousBuiltInTheme(targetThemeId)
+    }
+    syncThemeMenuState(config.currentThemeId)
     return config
   })
 
@@ -1262,6 +1341,10 @@ app.whenReady().then(() => {
       }
     }
     writeThemeConfig(config)
+    if (isBuiltinThemeId(targetThemeId)) {
+      rememberPreviousBuiltInTheme(targetThemeId)
+    }
+    syncThemeMenuState(config.currentThemeId)
     return config
   })
 
@@ -1321,6 +1404,7 @@ app.whenReady().then(() => {
         config.retainedInvalidTheme = null
       }
       writeThemeConfig(config)
+      syncThemeMenuState(config.currentThemeId)
 
       return {
         success: true,
@@ -1334,6 +1418,249 @@ app.whenReady().then(() => {
         success: false,
         code: 'save_failed',
         message: `保存主题失败：${message}`,
+      }
+    }
+  })
+
+  ipcMain.handle('theme:createFromCurrent', (_event, request: { name: string; themePayload?: ThemeTokenPayload }): ThemeCreateFromCurrentResult => {
+    const validation = validateCustomThemeName(request?.name || '')
+    if (!validation.valid) {
+      return {
+        success: false,
+        code: 'invalid_name',
+        message: validation.message || '主题名称无效。',
+      }
+    }
+
+    const themeId = validation.normalizedName
+    const existingThemeIds = listThemeIds()
+    if (hasThemeIdConflict(themeId, existingThemeIds)) {
+      return {
+        success: false,
+        code: 'duplicate_name',
+        message: `主题名称“${themeId}”已存在，请更换名称。`,
+      }
+    }
+
+    const config = readThemeConfigForWrite()
+    const sourceThemeId = config.currentThemeId
+    const sourceTheme = loadThemeDefinition(sourceThemeId)
+    if (!sourceTheme?.colors) {
+      return {
+        success: false,
+        code: 'source_theme_missing',
+        message: `无法创建：基线主题“${sourceThemeId}”不存在或损坏。`,
+      }
+    }
+
+    try {
+      const sourceDefaults = { ...sourceTheme.colors, ...(request?.themePayload?.tokenValues || {}) }
+      const normalizedPayload = resolveThemeTokenPayload(request?.themePayload, sourceDefaults)
+      const activeFlowLineMain = normalizedPayload.flowLine.mode === 'multi'
+        ? normalizedPayload.flowLine.multi.mainColor
+        : normalizedPayload.flowLine.single.mainColor
+      const customTheme: ThemeDefinition = {
+        name: themeId,
+        colors: {
+          ...sourceTheme.colors,
+          ...normalizedPayload.tokenValues,
+          '--flow-line-main': activeFlowLineMain,
+        },
+      }
+      saveThemeDefinition(themeId, customTheme)
+
+      config.currentThemeId = themeId
+      config.themePayloads[themeId] = normalizeThemePayload(themeId, normalizedPayload)
+      config.lastError = null
+      if (config.retainedInvalidTheme?.themeId === themeId) {
+        config.retainedInvalidTheme = null
+      }
+      writeThemeConfig(config)
+      return {
+        success: true,
+        themeId,
+        sourceThemeId,
+        ...buildThemeLifecycleState(config),
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        success: false,
+        code: 'save_failed',
+        message: `创建主题失败：${message}`,
+      }
+    }
+  })
+
+  ipcMain.handle('theme:rename', (_event, request: { themeId: ThemeId; newName: string }): ThemeRenameResult => {
+    const themeId = request?.themeId || ''
+    if (isBuiltinThemeId(themeId)) {
+      return {
+        success: false,
+        code: 'builtin_readonly',
+        message: 'built-in 主题不可重命名。',
+      }
+    }
+    const sourceTheme = loadThemeDefinition(themeId)
+    if (!sourceTheme) {
+      return {
+        success: false,
+        code: 'theme_not_found',
+        message: `主题“${themeId}”不存在。`,
+      }
+    }
+
+    const validation = validateCustomThemeName(request?.newName || '')
+    if (!validation.valid) {
+      return {
+        success: false,
+        code: 'invalid_name',
+        message: validation.message || '主题名称无效。',
+      }
+    }
+    const targetThemeId = validation.normalizedName
+    const existingThemeIds = listThemeIds().filter(item => item !== themeId)
+    if (hasThemeIdConflict(targetThemeId, existingThemeIds)) {
+      return {
+        success: false,
+        code: 'duplicate_name',
+        message: `主题名称“${targetThemeId}”已存在，请更换名称。`,
+      }
+    }
+
+    try {
+      renameSync(join(getThemesDirPath(), `${themeId}.json`), join(getThemesDirPath(), `${targetThemeId}.json`))
+      saveThemeDefinition(targetThemeId, {
+        ...sourceTheme,
+        name: targetThemeId,
+      })
+
+      const config = readThemeConfigForWrite()
+      const sourcePayload = config.themePayloads[themeId]
+      delete config.themePayloads[themeId]
+      config.themePayloads[targetThemeId] = normalizeThemePayload(targetThemeId, sourcePayload)
+      if (config.currentThemeId === themeId) {
+        config.currentThemeId = targetThemeId
+      }
+      config.lastError = null
+      writeThemeConfig(config)
+      return {
+        success: true,
+        oldThemeId: themeId,
+        newThemeId: targetThemeId,
+        ...buildThemeLifecycleState(config),
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        success: false,
+        code: 'rename_failed',
+        message: `重命名主题失败：${message}`,
+      }
+    }
+  })
+
+  ipcMain.handle('theme:delete', (_event, request: { themeId: ThemeId; confirmThemeName: string }): ThemeDeleteResult => {
+    const themeId = request?.themeId || ''
+    if (isBuiltinThemeId(themeId)) {
+      return {
+        success: false,
+        code: 'builtin_readonly',
+        message: 'built-in 主题不可删除。',
+      }
+    }
+
+    const confirmThemeName = (request?.confirmThemeName || '').trim()
+    if (confirmThemeName !== themeId) {
+      return {
+        success: false,
+        code: 'confirm_name_mismatch',
+        message: '确认名称不匹配，删除已取消。',
+      }
+    }
+
+    if (!loadThemeDefinition(themeId)) {
+      return {
+        success: false,
+        code: 'theme_not_found',
+        message: `主题“${themeId}”不存在。`,
+      }
+    }
+
+    try {
+      unlinkSync(join(getThemesDirPath(), `${themeId}.json`))
+
+      const config = readThemeConfigForWrite()
+      delete config.themePayloads[themeId]
+
+      let notice: string | null = null
+      if (config.currentThemeId === themeId) {
+        const fallbackThemeId = resolvePreviousBuiltInThemeId(previousBuiltInThemeId)
+        config.currentThemeId = fallbackThemeId
+        config.themePayloads[fallbackThemeId] = normalizeThemePayload(fallbackThemeId, config.themePayloads[fallbackThemeId])
+        rememberPreviousBuiltInTheme(fallbackThemeId)
+        const fallbackNotice = `已删除主题“${themeId}”，并回退到删除前记录的 previous built-in 主题“${fallbackThemeId}”。`
+        notice = fallbackNotice
+      }
+
+      config.lastError = null
+      writeThemeConfig(config)
+      return {
+        success: true,
+        deletedThemeId: themeId,
+        notice,
+        ...buildThemeLifecycleState(config),
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        success: false,
+        code: 'delete_failed',
+        message: `删除主题失败：${message}`,
+      }
+    }
+  })
+
+  ipcMain.handle('theme:export', async (_event, request: { themeId: ThemeId }): Promise<ThemeExportResult> => {
+    const themeId = request?.themeId || ''
+    const theme = loadThemeDefinition(themeId)
+    if (!theme) {
+      return {
+        success: false,
+        code: 'theme_not_found',
+        message: `主题“${themeId}”不存在。`,
+      }
+    }
+    // built-in 主题也允许导出
+    const fileName = `${themeId}.ycide-theme.json`
+    const targetWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const saveResult = await dialog.showSaveDialog(targetWindow || undefined, {
+      title: '导出主题',
+      defaultPath: fileName,
+      filters: [{ name: 'ycIDE Theme', extensions: ['json'] }],
+    })
+    if (saveResult.canceled || !saveResult.filePath) {
+      return { success: false, canceled: true }
+    }
+
+    try {
+      const payload: ThemePortabilityExportDto = {
+        schemaVersion: THEME_PORTABILITY_SCHEMA_VERSION,
+        theme,
+      }
+      writeFileSync(saveResult.filePath, JSON.stringify(payload, null, 2), 'utf-8')
+      return {
+        success: true,
+        filePath: saveResult.filePath,
+        fileName,
+        themeId,
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        success: false,
+        code: 'export_failed',
+        message: `导出主题失败：${message}`,
       }
     }
   })
