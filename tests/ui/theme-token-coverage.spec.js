@@ -14,6 +14,7 @@ const {
   activateThemeFromSettings,
   readFlowConfigVars,
 } = require('./helpers/theme-token-coverage-fixtures')
+const { collectMonacoTokenColors, assertMonacoTokenColorEvidence } = require('./helpers/monaco-token-assertions')
 
 test.describe('theme token coverage', () => {
   test.describe.configure({ mode: 'serial' })
@@ -88,6 +89,30 @@ test.describe('theme token coverage', () => {
         depthHueStep: '22',
         depthSaturationStep: '-2',
         depthLightnessStep: '6',
+      })
+    } finally {
+      await closeApp(app)
+    }
+  })
+
+  test('[monaco] syntax token edits expose monaco token color evidence', async () => {
+    const app = await launchApp(getAppRoot())
+    try {
+      await openThemeSettings(app.window)
+      await setColorTokenByLabel(app.window, '语法高亮-关键字', '#ff0077')
+      await setColorTokenByLabel(app.window, '语法高亮-注释', '#00aa55')
+      await setColorTokenByLabel(app.window, '语法高亮-字符串', '#ff8800')
+      await setColorTokenByLabel(app.window, '语法高亮-类型', '#44aaff')
+      const tokenValues = await app.window.evaluate(async () => {
+        const current = await window.api.theme.getCurrent()
+        return current?.themePayload?.tokenValues || {}
+      })
+      const tokenColors = await collectMonacoTokenColors(tokenValues, 'dark')
+      assertMonacoTokenColorEvidence(tokenColors, {
+        keyword: '#ff0077',
+        comment: '#00aa55',
+        string: '#ff8800',
+        type: '#44aaff',
       })
     } finally {
       await closeApp(app)
