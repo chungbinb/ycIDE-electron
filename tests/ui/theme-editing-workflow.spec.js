@@ -69,7 +69,7 @@ test.describe('theme editing workflow', () => {
       await expect.poll(() => readRootCssVar(app.window, '--text-primary')).toBe('#123456')
 
       const customThemeName = `自动主题-${Date.now()}`
-      await nameInput.fill(customThemeName)
+      await nameInput.fill(`  ${customThemeName}  `)
       await saveButton.click()
 
       const customThemeRadio = app.window.getByRole('radio', { name: customThemeName })
