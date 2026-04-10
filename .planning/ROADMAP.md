@@ -23,14 +23,13 @@
 1. 用户可在设置中切换内置深色与浅色主题，界面即时呈现对应风格。
 2. 用户关闭并重新打开应用后，仍看到上次选中的主题。
 3. 用户在主要界面区域（文本与背景）使用浅色主题时可正常阅读与操作。  
-**Plans**: 5 plans
+**Plans**: 4 plans
 
 Plans:
-- [x] 16-01-PLAN.md — Shared import/export contracts and strict validation model
-- [x] 16-02-PLAN.md — Main/preload custom-theme lifecycle and export IPC
-- [x] 16-03-PLAN.md — Dedicated Theme Manager UI and CRUD/export wiring
-- [x] 16-04-PLAN.md — Import pipeline with atomic validation, conflict and switch-now flow
-- [x] 16-05-PLAN.md — Phase 16 coverage closure and evidence artifacts
+- [x] 13-01-PLAN.md — Theme switch/load persistence baseline and fallback config
+- [x] 13-02-PLAN.md — Full-surface light theme readability and tokenized color cleanup
+- [x] 13-03-PLAN.md — Settings + title/theme menu switch entry wiring and UX feedback
+- [x] 13-04-PLAN.md — Baseline verification suite and evidence artifacts
 
 ### Phase 14: Theme Token Coverage
 **Goal**: 用户可完整配置主题 token，且所有可见区域都跟随主题生效。  
@@ -58,7 +57,14 @@ Plans:
 1. 用户在设置页调整颜色时，界面实时预览变化且无需重启。
 2. 用户可一键撤销当前预览改动，界面恢复到进入设置前的主题状态。
 3. 用户可将当前配置保存为新的自定义主题并在主题列表中立即可用。  
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+- [x] 16-01-PLAN.md — Shared import/export contracts and strict validation model
+- [x] 16-02-PLAN.md — Main/preload custom-theme lifecycle and export IPC
+- [x] 16-03-PLAN.md — Dedicated Theme Manager UI and CRUD/export wiring
+- [x] 16-04-PLAN.md — Import pipeline with atomic validation, conflict and switch-now flow
+- [x] 16-05-PLAN.md — Phase 16 coverage closure and evidence artifacts
 
 ### Phase 16: Theme Management & Portability
 **Goal**: 用户可在本机管理自定义主题，并安全完成导入导出复用。  
@@ -69,7 +75,14 @@ Plans:
 2. 用户可将任意自定义主题导出为文件并在文件系统中获得可复用主题文件。
 3. 用户可导入有效主题文件并成功应用到当前界面。
 4. 用户导入字段缺失或非法主题文件时，会收到明确错误提示，且现有主题不被破坏。  
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+- [x] 16-01-PLAN.md — Shared import/export contracts and strict validation model
+- [x] 16-02-PLAN.md — Main/preload custom-theme lifecycle and export IPC
+- [x] 16-03-PLAN.md — Dedicated Theme Manager UI and CRUD/export wiring
+- [x] 16-04-PLAN.md — Import pipeline with atomic validation, conflict and switch-now flow
+- [x] 16-05-PLAN.md — Phase 16 coverage closure and evidence artifacts
 
 ### Phase 17: Compatibility & Regression Guardrails
 **Goal**: 主题能力上线后不破坏现有交互，并具备关键路径回归保护。  
@@ -78,7 +91,13 @@ Plans:
 **Success Criteria** (what must be TRUE):
 1. 用户在主题切换与预览过程中，编辑器与表格核心交互保持可用且行为不退化。
 2. 自动化回归可覆盖浅/深切换、预览撤销、导入失败、导入导出等关键主题路径。  
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [x] 17-01-PLAN.md — QUAL-02 minimum gate suites (UI + contract) and tag-driven selection
+- [ ] 17-02-PLAN.md — QUAL-01 compatibility suite across editor/table/transition states
+- [ ] 17-03-PLAN.md — Fast gate/full run commands and CI workflow enforcement
+- [ ] 17-04-PLAN.md — Quarantine policy automation, actionable failure output, and evidence matrix
 
 ## Progress
 
@@ -88,4 +107,4 @@ Plans:
 | 14. Theme Token Coverage | 6/6 | Complete    | 2026-04-10 |
 | 15. Theme Editing Workflow | 5/5 | Complete    | 2026-04-10 |
 | 16. Theme Management & Portability | 5/5 | Complete   | 2026-04-10 |
-| 17. Compatibility & Regression Guardrails | 0/0 | Not started | - |
+| 17. Compatibility & Regression Guardrails | 1/4 | In Progress|  |

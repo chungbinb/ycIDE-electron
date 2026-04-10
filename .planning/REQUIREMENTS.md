@@ -36,7 +36,7 @@
 ### Compatibility & Quality
 
 - [ ] **QUAL-01**: 主题切换和预览不会破坏现有编辑器与表格交互功能
-- [ ] **QUAL-02**: 关键主题路径具备自动化回归覆盖（至少覆盖浅/深、未导入失败、预览撤销、导入导出）
+- [x] **QUAL-02**: 关键主题路径具备自动化回归覆盖（至少覆盖浅/深、未导入失败、预览撤销、导入导出）
 
 ## Future Requirements
 
@@ -75,7 +75,7 @@
 | MGMT-03 | Phase 16 | Complete |
 | MGMT-04 | Phase 16 | Complete |
 | QUAL-01 | Phase 17 | Pending |
-| QUAL-02 | Phase 17 | Pending |
+| QUAL-02 | Phase 17 | Complete |
 
 **Coverage:**
 - v1 requirements: 18 total
