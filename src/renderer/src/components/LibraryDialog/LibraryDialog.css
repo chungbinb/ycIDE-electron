@@ -3,7 +3,7 @@
 .lib-dialog-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -11,14 +11,14 @@
 }
 
 .lib-dialog {
-  background: #252526;
-  border: 1px solid #454545;
+  background: var(--dialog-bg);
+  border: 1px solid var(--dialog-border);
   border-radius: 6px;
   width: 700px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 32px var(--dialog-shadow);
 }
 
 .lib-dialog-header {
@@ -26,41 +26,41 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid #3c3c3c;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .lib-dialog-title {
   font-size: 14px;
   font-weight: 600;
-  color: #cccccc;
+  color: var(--text-primary);
 }
 
 .lib-dialog-close {
   background: none;
   border: none;
-  color: #999;
+  color: var(--text-secondary);
   font-size: 18px;
   cursor: pointer;
   padding: 0 4px;
   line-height: 1;
 }
 .lib-dialog-close:hover {
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .lib-dialog-toolbar {
   display: flex;
   gap: 8px;
   padding: 10px 16px;
-  border-bottom: 1px solid #3c3c3c;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .lib-dialog-tip {
   margin: 8px 16px 0;
   padding: 8px 10px;
-  border: 1px solid #4f3d16;
-  background: #2f2513;
-  color: #d9b36c;
+  border: 1px solid var(--warning-surface-border);
+  background: var(--warning-surface-bg);
+  color: var(--warning-surface-text);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -68,27 +68,27 @@
 .lib-btn {
   padding: 4px 12px;
   font-size: 12px;
-  border: 1px solid #555;
-  background: #3c3c3c;
-  color: #ccc;
+  border: 1px solid var(--button-secondary-border);
+  background: var(--button-secondary-bg);
+  color: var(--text-primary);
   border-radius: 3px;
   cursor: pointer;
   white-space: nowrap;
 }
 .lib-btn:hover:not(:disabled) {
-  background: #4a4a4a;
+  background: var(--button-secondary-hover);
 }
 .lib-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 .lib-btn-primary {
-  background: #0e639c;
-  border-color: #1177bb;
-  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--danger-contrast);
 }
 .lib-btn-primary:hover:not(:disabled) {
-  background: #1177bb;
+  background: var(--accent-hover);
 }
 .lib-btn-sm {
   padding: 2px 8px;
@@ -124,9 +124,9 @@
 }
 
 .lib-card {
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: #1f1f20;
+  background: var(--bg-primary);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -134,7 +134,7 @@
 }
 
 .lib-card-loaded {
-  border-color: #2f7e6d;
+  border-color: var(--success);
 }
 
 .lib-card-header {
@@ -144,13 +144,13 @@
 }
 
 .lib-card-subtitle {
-  color: #9a9a9a;
+  color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.3;
 }
 
 .lib-card-version {
-  color: #c9c9c9;
+  color: var(--text-primary);
   font-size: 12px;
 }
 
@@ -161,9 +161,9 @@
 }
 
 .lib-platform-tag {
-  border: 1px solid #2a4d7d;
-  background: #1e2f48;
-  color: #9cc4ff;
+  border: 1px solid var(--accent);
+  background: var(--bg-hover);
+  color: var(--accent);
   border-radius: 999px;
   padding: 1px 8px;
   font-size: 11px;
@@ -176,43 +176,54 @@
 }
 
 .lib-state-badge {
-  border: 1px solid #555;
-  background: #303030;
-  color: #d6d6d6;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   border-radius: 999px;
   padding: 1px 8px;
   font-size: 11px;
 }
 
 .lib-state-downloaded {
-  border-color: #2f7e6d;
-  background: #123d34;
-  color: #8be0cc;
+  border-color: var(--success);
+  background: var(--bg-hover);
+  color: var(--success);
 }
 
 .lib-state-missing {
-  border-color: #7a4b3f;
-  background: #3a231e;
-  color: #ffb7a3;
+  border-color: var(--error);
+  background: var(--bg-hover);
+  color: var(--error);
 }
 
 .lib-state-loaded {
-  border-color: #357a52;
-  background: #173927;
-  color: #86d9a8;
+  border-color: var(--success);
+  background: var(--bg-hover);
+  color: var(--success);
 }
+
+.lib-state-downloaded::before,
+.lib-state-missing::before,
+.lib-state-loaded::before {
+  margin-right: 4px;
+  font-size: 10px;
+}
+
+.lib-state-downloaded::before { content: '⬇'; }
+.lib-state-missing::before { content: '⚠'; }
+.lib-state-loaded::before { content: '✓'; }
 
 .lib-empty {
   text-align: center;
-  color: #666 !important;
+  color: var(--text-disabled) !important;
   padding: 24px 8px;
 }
 
 .lib-status {
-  color: #888;
+  color: var(--text-secondary);
 }
 .lib-status-ok {
-  color: #4ec9b0;
+  color: var(--success);
 }
 
 .lib-link {
@@ -236,7 +247,7 @@
 }
 
 .lib-link-active {
-  color: #4fc1ff;
+  color: var(--accent);
 }
 
 .lib-dialog-status {
@@ -247,10 +258,17 @@
   box-sizing: border-box;
   padding: 8px 10px;
   font-size: 12px;
-  color: #ccc;
-  border-top: 1px solid #3c3c3c;
-  border: 1px solid #3c3c3c;
-  background: #1e1e1e;
+  color: var(--text-primary);
+  border-top: 1px solid var(--border-color);
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+.lib-btn:focus-visible,
+.lib-link:focus-visible,
+.lib-dialog-close:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: 1px;
 }

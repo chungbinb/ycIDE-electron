@@ -167,3 +167,10 @@
   background: var(--danger);
   color: var(--danger-contrast);
 }
+
+.titlebar-menu button:focus-visible,
+.titlebar-dropdown-item:focus-visible,
+.titlebar-btn:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: -1px;
+}

@@ -33,6 +33,10 @@ button.statusbar-item {
 button.statusbar-item:hover {
   background: var(--statusbar-item-hover);
 }
+button.statusbar-item:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: -1px;
+}
 .statusbar-error {
   color: var(--error);
 }

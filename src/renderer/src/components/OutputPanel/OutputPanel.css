@@ -50,6 +50,10 @@
 .output-tab:hover {
   color: var(--text-primary);
 }
+.output-tab:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: -1px;
+}
 
 .output-close {
   display: flex;
@@ -64,6 +68,10 @@
 .output-close:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+.output-close:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: 1px;
 }
 
 .output-content {

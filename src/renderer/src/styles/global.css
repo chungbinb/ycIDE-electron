@@ -59,6 +59,9 @@
   --scrollbar-thumb-hover: rgba(100, 100, 100, 0.7);
 
   --panel-bg: #252526;
+  --dialog-bg: #252526;
+  --dialog-border: #454545;
+  --dialog-shadow: rgba(0, 0, 0, 0.5);
   --menu-shadow: rgba(0, 0, 0, 0.4);
   --overlay-bg: rgba(0, 0, 0, 0.5);
   --danger: #e81123;
@@ -73,6 +76,12 @@
   --output-emphasis: #7cc6ff;
   --info-highlight-bg: rgba(86, 156, 214, 0.15);
   --info-highlight-border: #569cd6;
+  --button-secondary-bg: #3c3c3c;
+  --button-secondary-border: #555555;
+  --button-secondary-hover: #4c4c4c;
+  --warning-surface-bg: #2f2513;
+  --warning-surface-border: #4f3d16;
+  --warning-surface-text: #d9b36c;
 
   --tree-folder-bg: #dcb67a30;
   --tree-folder-border: #dcb67a;
