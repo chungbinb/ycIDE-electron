@@ -14,6 +14,7 @@ import type { SelectionTarget, AlignAction, DesignForm, DesignControl } from './
 import { parseLines } from './components/Editor/eycBlocks'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
 import { createDefaultThemeTokenPayload, resolveThemeTokenPayload, type ThemeTokenPayload } from '../../shared/theme'
+import { createThemeDraftSession, type ThemeDraftSession } from '../../shared/theme-draft'
 import { THEME_TOKEN_GROUPS, type FlowLineMode, type FlowLineMultiConfig, type ThemeTokenGroupId } from '../../shared/theme-tokens'
 import './App.css'
 
@@ -344,6 +345,7 @@ function App(): React.JSX.Element {
   const [currentTheme, setCurrentTheme] = useState<string>('')
   const [themeTokenValues, setThemeTokenValues] = useState<Record<string, string>>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.tokenValues })
   const [themeFlowLine, setThemeFlowLine] = useState<ThemeTokenPayload['flowLine']>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.flowLine })
+  const [themeDraftSession, setThemeDraftSession] = useState<ThemeDraftSession | null>(null)
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
   const [outputMessages, setOutputMessages] = useState<OutputMessage[]>([])
   const [debugPause, setDebugPause] = useState<DebugPauseState | null>(null)
@@ -825,6 +827,7 @@ function App(): React.JSX.Element {
   const handleThemeWarning = useCallback((warning: { code: string; message: string }) => {
     pushThemeNotice(`theme-warning:${warning.code}`, `[主题] ${warning.message}`, warning.code === 'legacy_migrated' ? 'info' : 'warning')
     if (warning.code === 'repair_required') {
+      setThemeDraftSession(null)
       setThemeRepairMessage(warning.message)
       setShowThemeSettings(true)
     }
@@ -866,11 +869,11 @@ function App(): React.JSX.Element {
   }, [])
 
   // 加载主题列表和当前主题
-  const applyTheme = useCallback(async (name: string, persist = true, incomingPayload?: ThemeTokenPayload | null) => {
+  const applyTheme = useCallback(async (name: string, persist = true, incomingPayload?: ThemeTokenPayload | null): Promise<ThemeTokenPayload | null> => {
     const theme = await window.api?.theme?.load(name)
     if (!theme?.colors) {
       pushThemeNotice('theme-apply-load-failed', '[主题] 主题未能完整加载，当前状态可能不完整。建议重启应用后重试。')
-      return
+      return null
     }
 
     let payload = resolveThemeTokenPayload(incomingPayload, theme.colors)
@@ -910,18 +913,42 @@ function App(): React.JSX.Element {
       await persistCurrentThemePayload(name, payload)
     }
     if (themeRepairMessage) setThemeRepairMessage(null)
+    return payload
   }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, persistCurrentThemePayload, pushThemeNotice, themeRepairMessage])
+
+  const applyThemeDraftChange = useCallback((nextThemePayload: ThemeTokenPayload) => {
+    if (!currentTheme) return
+    const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine }, themeTokenValues)
+    if (!themeDraftSession) {
+      setThemeDraftSession(createThemeDraftSession(currentTheme, payload))
+    }
+    const nextPayload = resolveThemeTokenPayload(nextThemePayload, nextThemePayload.tokenValues)
+    applyThemeTokenValuesToRoot(nextPayload.tokenValues)
+    applyFlowLineConfigToRoot(nextPayload.flowLine)
+    setThemeTokenValues(nextPayload.tokenValues)
+    setThemeFlowLine(nextPayload.flowLine)
+    setThemeDraftSession(prev => {
+      const baseSession = prev ?? createThemeDraftSession(currentTheme, payload)
+      const nextHistory = baseSession.history
+        .slice(0, baseSession.historyCursor + 1)
+        .concat([{ themeId: currentTheme, payload: nextPayload }])
+      return {
+        ...baseSession,
+        workingThemeId: currentTheme,
+        workingPayload: nextPayload,
+        dirty: true,
+        history: nextHistory,
+        historyCursor: nextHistory.length - 1,
+      }
+    })
+  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, themeDraftSession, themeFlowLine, themeTokenValues])
 
   const handleThemeTokenChange = useCallback((tokenKey: string, value: string) => {
     if (!currentTheme) return
     const nextTokenValues = { ...themeTokenValues, [tokenKey]: value }
     const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine }, nextTokenValues)
-    applyThemeTokenValuesToRoot({ [tokenKey]: value })
-    applyFlowLineConfigToRoot(payload.flowLine)
-    setThemeTokenValues(payload.tokenValues)
-    setThemeFlowLine(payload.flowLine)
-    void persistCurrentThemePayload(currentTheme, payload)
-  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+    applyThemeDraftChange(payload)
+  }, [applyThemeDraftChange, currentTheme, themeFlowLine, themeTokenValues])
 
   const handleThemeFlowLineModeChange = useCallback((mode: FlowLineMode) => {
     if (!currentTheme) return
@@ -935,13 +962,9 @@ function App(): React.JSX.Element {
     for (const tokenKey of FLOW_LINE_TOKEN_KEYS) {
       nextTokenValues[tokenKey] = currentMainColor
     }
-    applyThemeTokenValuesToRoot(nextTokenValues)
     const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine }, nextTokenValues)
-    applyFlowLineConfigToRoot(payload.flowLine)
-    setThemeTokenValues(payload.tokenValues)
-    setThemeFlowLine(payload.flowLine)
-    void persistCurrentThemePayload(currentTheme, payload)
-  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+    applyThemeDraftChange(payload)
+  }, [applyThemeDraftChange, currentTheme, themeFlowLine, themeTokenValues])
 
   const handleThemeFlowLineMainColorChange = useCallback((value: string) => {
     if (!currentTheme) return
@@ -952,13 +975,9 @@ function App(): React.JSX.Element {
     for (const tokenKey of FLOW_LINE_TOKEN_KEYS) {
       nextTokenValues[tokenKey] = value
     }
-    applyThemeTokenValuesToRoot(nextTokenValues)
     const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine }, nextTokenValues)
-    applyFlowLineConfigToRoot(payload.flowLine)
-    setThemeTokenValues(payload.tokenValues)
-    setThemeFlowLine(payload.flowLine)
-    void persistCurrentThemePayload(currentTheme, payload)
-  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+    applyThemeDraftChange(payload)
+  }, [applyThemeDraftChange, currentTheme, themeFlowLine, themeTokenValues])
 
   const handleThemeFlowLineDepthStepChange = useCallback((key: keyof FlowLineMultiConfig, value: number) => {
     if (!currentTheme || !Number.isFinite(value)) return
@@ -970,10 +989,8 @@ function App(): React.JSX.Element {
       },
     }
     const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: nextFlowLine }, themeTokenValues)
-    applyFlowLineConfigToRoot(payload.flowLine)
-    setThemeFlowLine(payload.flowLine)
-    void persistCurrentThemePayload(currentTheme, payload)
-  }, [applyFlowLineConfigToRoot, currentTheme, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+    applyThemeDraftChange(payload)
+  }, [applyThemeDraftChange, currentTheme, themeFlowLine, themeTokenValues])
 
   const handleThemeTokenResetItem = useCallback(async (_groupId: ThemeTokenGroupId, tokenKey: string) => {
     if (!currentTheme) return
@@ -981,12 +998,8 @@ function App(): React.JSX.Element {
     const resetValue = defaults.tokenValues[tokenKey] || themeTokenValues[tokenKey] || '#000000'
     const nextTokenValues = { ...themeTokenValues, [tokenKey]: resetValue }
     const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine }, nextTokenValues)
-    applyThemeTokenValuesToRoot({ [tokenKey]: resetValue })
-    applyFlowLineConfigToRoot(payload.flowLine)
-    setThemeTokenValues(payload.tokenValues)
-    setThemeFlowLine(payload.flowLine)
-    await persistCurrentThemePayload(currentTheme, payload)
-  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, getDefaultThemePayload, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+    applyThemeDraftChange(payload)
+  }, [applyThemeDraftChange, currentTheme, getDefaultThemePayload, themeFlowLine, themeTokenValues])
 
   const handleThemeTokenResetGroup = useCallback(async (groupId: ThemeTokenGroupId) => {
     if (!currentTheme) return
@@ -1016,24 +1029,32 @@ function App(): React.JSX.Element {
       }
     }
 
-    applyThemeTokenValuesToRoot(nextTokenValues)
     const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine }, nextTokenValues)
-    applyFlowLineConfigToRoot(payload.flowLine)
-    setThemeTokenValues(payload.tokenValues)
-    setThemeFlowLine(payload.flowLine)
-    await persistCurrentThemePayload(currentTheme, payload)
-  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, getDefaultThemePayload, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+    applyThemeDraftChange(payload)
+  }, [applyThemeDraftChange, currentTheme, getDefaultThemePayload, themeFlowLine, themeTokenValues])
 
   const handleThemeTokenResetAll = useCallback(async () => {
     if (!currentTheme) return
     if (!window.confirm('确定恢复全部主题令牌默认值吗?')) return
     const defaults = await getDefaultThemePayload(currentTheme)
-    applyThemeTokenValuesToRoot(defaults.tokenValues)
-    applyFlowLineConfigToRoot(defaults.flowLine)
-    setThemeTokenValues(defaults.tokenValues)
-    setThemeFlowLine(defaults.flowLine)
-    await persistCurrentThemePayload(currentTheme, defaults)
-  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, getDefaultThemePayload, persistCurrentThemePayload])
+    applyThemeDraftChange(defaults)
+  }, [applyThemeDraftChange, currentTheme, getDefaultThemePayload])
+
+  const handleThemeSelect = useCallback(async (themeId: string) => {
+    const hadDraft = !!themeDraftSession
+    if (hadDraft) {
+      setThemeDraftSession(null)
+    }
+    const payload = await applyTheme(themeId)
+    if (!payload || !hadDraft) return
+    const nextDraft = createThemeDraftSession(themeId, payload)
+    setThemeDraftSession(nextDraft)
+  }, [applyTheme, themeDraftSession])
+
+  const handleThemeSettingsClose = useCallback(() => {
+    setThemeDraftSession(null)
+    setShowThemeSettings(false)
+  }, [])
 
   useEffect(() => {
     (async () => {
@@ -1540,6 +1561,7 @@ function App(): React.JSX.Element {
         setShowLibrary(true)
         break
       case 'tools:settings':
+        setThemeDraftSession(null)
         setShowThemeSettings(true)
         break
 
@@ -2243,10 +2265,10 @@ function App(): React.JSX.Element {
       <NewProjectDialog open={showNewProject} onClose={() => setShowNewProject(false)} onConfirm={handleNewProjectConfirm} />
       <ThemeSettingsDialog
         open={showThemeSettings}
-        onClose={() => setShowThemeSettings(false)}
+        onClose={handleThemeSettingsClose}
         themes={themeList}
         currentTheme={currentTheme}
-        onSelectTheme={(themeId) => { void applyTheme(themeId) }}
+        onSelectTheme={(themeId) => { void handleThemeSelect(themeId) }}
         tokenValues={themeTokenValues}
         onTokenChange={handleThemeTokenChange}
         flowLineConfig={themeFlowLine}
