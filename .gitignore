@@ -13,7 +13,9 @@ playwright-report/
 test-results/
 test-fne.mjs
 支持库源码/
-.github/
+.github/*
+!.github/workflows/
+!.github/workflows/*.yml
 .planning/
 .vscode/
 resources/Visual Studio 2022 Image Library/
