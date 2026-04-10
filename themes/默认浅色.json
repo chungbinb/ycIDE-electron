@@ -78,6 +78,26 @@
     "--editor-tab-json": "#4d5f00",
     "--editor-tab-python": "#116329",
     "--scrollbar-thumb": "rgba(140, 149, 159, 0.45)",
-    "--scrollbar-thumb-hover": "rgba(99, 110, 123, 0.65)"
+    "--scrollbar-thumb-hover": "rgba(99, 110, 123, 0.65)",
+    "--syntax-keyword": "#0000ff",
+    "--syntax-string": "#a31515",
+    "--syntax-number": "#098658",
+    "--syntax-comment": "#008000",
+    "--syntax-function": "#795e26",
+    "--syntax-type": "#267f99",
+    "--syntax-variable": "#001080",
+    "--syntax-operator": "#000000",
+    "--table-bg": "#ffffff",
+    "--table-text": "#1f2328",
+    "--table-border": "#d0d7de",
+    "--table-header-bg": "#f3f4f6",
+    "--table-header-text": "#1f2328",
+    "--table-row-hover-bg": "#eef3fb",
+    "--table-selection-bg": "#cfe6ff",
+    "--flow-line-main": "#0969da",
+    "--flow-line-branch": "#0969da",
+    "--flow-line-loop": "#0969da",
+    "--flow-line-arrow": "#0969da",
+    "--flow-line-inner-link": "#0969da"
   }
 }

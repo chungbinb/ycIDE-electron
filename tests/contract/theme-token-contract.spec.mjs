@@ -7,6 +7,8 @@ const tokenContractPath = path.resolve(process.cwd(), 'src/shared/theme-tokens.t
 const themeSchemaPath = path.resolve(process.cwd(), 'src/shared/theme.ts')
 const mainThemePath = path.resolve(process.cwd(), 'src/main/index.ts')
 const preloadThemePath = path.resolve(process.cwd(), 'src/preload/index.ts')
+const darkThemePath = path.resolve(process.cwd(), 'themes/默认深色.json')
+const lightThemePath = path.resolve(process.cwd(), 'themes/默认浅色.json')
 
 function readTokenContract() {
   return fs.readFileSync(tokenContractPath, 'utf-8')
@@ -79,4 +81,37 @@ test('invalid or missing token payload safely falls back to defaults without war
   assert.match(source, /sanitizeThemeTokenValues/)
   assert.match(mainSource, /createThemeWarning\('legacy_migrated'/)
   assert.match(mainSource, /createDefaultThemeTokenPayload/)
+})
+
+test('built-in dark and light themes seed full phase-14 token defaults', () => {
+  const darkTheme = JSON.parse(fs.readFileSync(darkThemePath, 'utf-8'))
+  const lightTheme = JSON.parse(fs.readFileSync(lightThemePath, 'utf-8'))
+  const requiredKeys = [
+    '--text-primary',
+    '--bg-primary',
+    '--syntax-keyword',
+    '--syntax-string',
+    '--syntax-number',
+    '--syntax-comment',
+    '--syntax-function',
+    '--syntax-type',
+    '--syntax-variable',
+    '--syntax-operator',
+    '--table-bg',
+    '--table-text',
+    '--table-border',
+    '--table-header-bg',
+    '--table-header-text',
+    '--table-row-hover-bg',
+    '--table-selection-bg',
+    '--flow-line-main',
+    '--flow-line-branch',
+    '--flow-line-loop',
+    '--flow-line-arrow',
+    '--flow-line-inner-link',
+  ]
+  for (const key of requiredKeys) {
+    assert.equal(typeof darkTheme.colors?.[key], 'string')
+    assert.equal(typeof lightTheme.colors?.[key], 'string')
+  }
 })
