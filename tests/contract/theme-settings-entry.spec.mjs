@@ -4,15 +4,17 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const dialogPath = path.resolve(process.cwd(), 'src/renderer/src/components/ThemeSettingsDialog/ThemeSettingsDialog.tsx')
+const tokenMetaPath = path.resolve(process.cwd(), 'src/shared/theme-tokens.ts')
 
 test('theme settings renders four business groups with preview chips and keeps token keys hidden', () => {
-  const source = fs.readFileSync(dialogPath, 'utf-8')
-  assert.match(source, /基础文本\/背景/)
-  assert.match(source, /语法高亮/)
-  assert.match(source, /表格与表头/)
-  assert.match(source, /流程线/)
-  assert.match(source, /theme-settings-preview-chip/)
-  assert.doesNotMatch(source, /item\.tokenKey<\/span>/)
+  const dialogSource = fs.readFileSync(dialogPath, 'utf-8')
+  const tokenMetaSource = fs.readFileSync(tokenMetaPath, 'utf-8')
+  assert.match(tokenMetaSource, /基础文本\/背景/)
+  assert.match(tokenMetaSource, /语法高亮/)
+  assert.match(tokenMetaSource, /表格与表头/)
+  assert.match(tokenMetaSource, /流程线/)
+  assert.match(dialogSource, /theme-settings-preview-chip/)
+  assert.doesNotMatch(dialogSource, /item\.tokenKey<\/span>/)
 })
 
 test('theme settings syntax group exposes fine-grained Monaco token classes', () => {
@@ -29,7 +31,7 @@ test('theme settings syntax group exposes fine-grained Monaco token classes', ()
 })
 
 test('theme settings table/header group exposes full table token set', () => {
-  const source = fs.readFileSync(dialogPath, 'utf-8')
+  const source = fs.readFileSync(tokenMetaPath, 'utf-8')
   assert.match(source, /表格背景/)
   assert.match(source, /表格文本/)
   assert.match(source, /表格边框/)

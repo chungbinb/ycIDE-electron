@@ -9,11 +9,14 @@
 }
 
 .theme-settings-dialog {
-  width: 420px;
+  width: min(760px, 92vw);
+  max-height: 86vh;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
 }
 
 .theme-settings-header {
@@ -45,6 +48,7 @@
 
 .theme-settings-body {
   padding: 16px;
+  overflow: auto;
 }
 
 .theme-settings-section-title {
@@ -56,6 +60,7 @@
 .theme-settings-options {
   display: grid;
   gap: 8px;
+  margin-bottom: 16px;
 }
 
 .theme-settings-option {
@@ -89,10 +94,92 @@
   border-radius: 4px;
 }
 
+.theme-settings-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.theme-settings-group {
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 10px;
+  background: var(--bg-primary);
+}
+
+.theme-settings-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.theme-settings-group-title {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.theme-settings-syntax-hint {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.theme-settings-token-list {
+  display: grid;
+  gap: 6px;
+}
+
+.theme-settings-token-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme-settings-token-label {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.theme-settings-preview-chip {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+}
+
+.theme-settings-color-input {
+  width: 32px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.theme-settings-reset-btn {
+  height: 24px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 8px;
+}
+
+.theme-settings-reset-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .theme-settings-footer {
   border-top: 1px solid var(--border-color);
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   padding: 10px 16px;
 }
 
