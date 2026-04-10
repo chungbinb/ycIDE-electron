@@ -1,4 +1,5 @@
 import './ThemeSettingsDialog.css'
+import { useEffect, useState } from 'react'
 import {
   DEFAULT_FLOW_LINE_MODE_CONFIG,
   THEME_TOKEN_GROUPS,
@@ -26,6 +27,8 @@ interface ThemeSettingsDialogProps {
   onResetToken?: (groupId: ThemeTokenGroupId, tokenKey: string) => void
   onResetGroup?: (groupId: ThemeTokenGroupId) => void
   onResetAll?: () => void
+  onSaveAsCustom?: (name: string) => Promise<{ success: boolean; message?: string }>
+  saveFeedback?: string | null
   canUndo?: boolean
   onUndo?: () => void
   onRestoreBaseline?: () => void
@@ -47,14 +50,43 @@ function ThemeSettingsDialog({
   onResetToken,
   onResetGroup,
   onResetAll,
+  onSaveAsCustom,
+  saveFeedback = null,
   canUndo = false,
   onUndo,
   onRestoreBaseline,
 }: ThemeSettingsDialogProps): React.JSX.Element | null {
+  const [customThemeName, setCustomThemeName] = useState('')
+  const [savingCustomTheme, setSavingCustomTheme] = useState(false)
+  const [localSaveFeedback, setLocalSaveFeedback] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    setCustomThemeName('')
+    setSavingCustomTheme(false)
+    setLocalSaveFeedback(null)
+  }, [open])
+
+  useEffect(() => {
+    setLocalSaveFeedback(saveFeedback)
+  }, [saveFeedback])
+
   if (!open) return null
   const activeFlowLineMainColor = flowLineConfig.mode === 'multi'
     ? flowLineConfig.multi.mainColor
     : flowLineConfig.single.mainColor
+  const handleSaveAsCustom = async () => {
+    if (!onSaveAsCustom || savingCustomTheme) return
+    setSavingCustomTheme(true)
+    const result = await onSaveAsCustom(customThemeName)
+    if (result.success) {
+      setCustomThemeName('')
+      setLocalSaveFeedback(null)
+    } else if (result.message) {
+      setLocalSaveFeedback(result.message)
+    }
+    setSavingCustomTheme(false)
+  }
 
   return (
     <div className="theme-settings-overlay" onMouseDown={onClose}>
@@ -218,8 +250,32 @@ function ThemeSettingsDialog({
         </div>
         <div className="theme-settings-footer">
           <button type="button" className="theme-settings-btn" onClick={() => onResetAll?.()}>恢复全部默认</button>
+          <label className="theme-settings-save-custom">
+            <span className="theme-settings-token-label">自定义主题名称</span>
+            <input
+              type="text"
+              value={customThemeName}
+              placeholder="手动输入主题名称"
+              className="theme-settings-text-input"
+              aria-label="自定义主题名称"
+              onChange={(event) => setCustomThemeName(event.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className="theme-settings-btn theme-settings-btn-primary"
+            onClick={() => { void handleSaveAsCustom() }}
+            disabled={savingCustomTheme}
+          >
+            保存为自定义主题
+          </button>
           <button type="button" className="theme-settings-btn" onClick={onClose}>关闭</button>
         </div>
+        {localSaveFeedback && (
+          <div className="theme-settings-save-feedback" role="status">
+            {localSaveFeedback}
+          </div>
+        )}
       </div>
     </div>
   )

@@ -13,7 +13,13 @@ import ThemeSettingsDialog from './components/ThemeSettingsDialog/ThemeSettingsD
 import type { SelectionTarget, AlignAction, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
-import { createDefaultThemeTokenPayload, resolveThemeTokenPayload, type ThemeTokenPayload } from '../../shared/theme'
+import {
+  createDefaultThemeTokenPayload,
+  resolveThemeTokenPayload,
+  validateCustomThemeName,
+  type SaveAsCustomThemeResult,
+  type ThemeTokenPayload
+} from '../../shared/theme'
 import { createThemeDraftSession, type ThemeDraftSession } from '../../shared/theme-draft'
 import { THEME_TOKEN_GROUPS, type FlowLineMode, type FlowLineMultiConfig, type ThemeTokenGroupId } from '../../shared/theme-tokens'
 import './App.css'
@@ -346,6 +352,7 @@ function App(): React.JSX.Element {
   const [themeTokenValues, setThemeTokenValues] = useState<Record<string, string>>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.tokenValues })
   const [themeFlowLine, setThemeFlowLine] = useState<ThemeTokenPayload['flowLine']>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.flowLine })
   const [themeDraftSession, setThemeDraftSession] = useState<ThemeDraftSession | null>(null)
+  const [themeSaveFeedback, setThemeSaveFeedback] = useState<string | null>(null)
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
   const [outputMessages, setOutputMessages] = useState<OutputMessage[]>([])
   const [debugPause, setDebugPause] = useState<DebugPauseState | null>(null)
@@ -828,6 +835,7 @@ function App(): React.JSX.Element {
     pushThemeNotice(`theme-warning:${warning.code}`, `[主题] ${warning.message}`, warning.code === 'legacy_migrated' ? 'info' : 'warning')
     if (warning.code === 'repair_required') {
       setThemeDraftSession(null)
+      setThemeSaveFeedback(null)
       setThemeRepairMessage(warning.message)
       setShowThemeSettings(true)
     }
@@ -1090,8 +1098,49 @@ function App(): React.JSX.Element {
     setThemeDraftSession(nextDraft)
   }, [applyTheme, themeDraftSession])
 
+  const handleSaveAsCustomTheme = useCallback(async (name: string): Promise<{ success: boolean; message?: string }> => {
+    if (!currentTheme) {
+      return { success: false, message: '当前主题不可用，请重新打开设置后重试。' }
+    }
+    const validation = validateCustomThemeName(name)
+    if (!validation.valid) {
+      const message = validation.message || '主题名称无效。'
+      setThemeSaveFeedback(message)
+      return { success: false, message }
+    }
+
+    const saveResult = await window.api?.theme?.saveAsCustom({
+      name: validation.normalizedName,
+      sourceThemeId: currentTheme,
+      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine }, themeTokenValues),
+    }) as SaveAsCustomThemeResult | undefined
+    if (!saveResult) {
+      const message = '保存主题失败，请稍后重试。'
+      setThemeSaveFeedback(message)
+      return { success: false, message }
+    }
+    if (!saveResult.success) {
+      const message = saveResult.message || '保存主题失败，请更换名称后重试。'
+      setThemeSaveFeedback(message)
+      return { success: false, message }
+    }
+
+    const payload = await applyTheme(saveResult.themeId, false, saveResult.themePayload)
+    if (!payload) {
+      const message = `主题“${saveResult.themeId}”保存成功，但激活失败，请重新选择该主题。`
+      setThemeSaveFeedback(message)
+      return { success: false, message }
+    }
+
+    setThemeList(prev => prev.includes(saveResult.themeId) ? prev : [...prev, saveResult.themeId])
+    setThemeDraftSession(createThemeDraftSession(saveResult.themeId, payload))
+    setThemeSaveFeedback(null)
+    return { success: true }
+  }, [applyTheme, currentTheme, themeFlowLine, themeTokenValues])
+
   const handleThemeSettingsClose = useCallback(() => {
     setThemeDraftSession(null)
+    setThemeSaveFeedback(null)
     setShowThemeSettings(false)
   }, [])
 
@@ -1601,6 +1650,7 @@ function App(): React.JSX.Element {
         break
       case 'tools:settings':
         setThemeDraftSession(null)
+        setThemeSaveFeedback(null)
         setShowThemeSettings(true)
         break
 
@@ -2317,6 +2367,8 @@ function App(): React.JSX.Element {
         onResetToken={handleThemeTokenResetItem}
         onResetGroup={handleThemeTokenResetGroup}
         onResetAll={handleThemeTokenResetAll}
+        onSaveAsCustom={handleSaveAsCustomTheme}
+        saveFeedback={themeSaveFeedback}
         canUndo={canUndoThemeDraft}
         onUndo={() => { void handleThemeDraftUndo() }}
         onRestoreBaseline={() => { void handleThemeDraftRestoreBaseline() }}

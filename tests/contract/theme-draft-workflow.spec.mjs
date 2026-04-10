@@ -41,7 +41,7 @@ test('App discards current draft when switching base theme and rebuilds baseline
 test('closing settings always resets draft session and does not recover old draft on reopen', () => {
   const appSource = fs.readFileSync(appPath, 'utf-8')
   const dialogSource = fs.readFileSync(dialogPath, 'utf-8')
-  assert.match(appSource, /const handleThemeSettingsClose = useCallback\(\(\) => \{\s*setThemeDraftSession\(null\)\s*setShowThemeSettings\(false\)/)
+  assert.match(appSource, /const handleThemeSettingsClose = useCallback\(\(\) => \{\s*setThemeDraftSession\(null\)\s*(setThemeSaveFeedback\(null\)\s*)?setShowThemeSettings\(false\)/)
   assert.match(appSource, /onClose=\{handleThemeSettingsClose\}/)
   assert.match(dialogSource, /onMouseDown=\{onClose\}/)
 })

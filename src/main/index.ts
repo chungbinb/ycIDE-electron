@@ -7,12 +7,15 @@ import { normalizeRuntimePlatform } from '../shared/platform'
 import { getActionAccelerator } from '../shared/shortcut-config'
 import {
   BUILTIN_DARK_THEME_ID,
+  validateCustomThemeName,
   THEME_CONFIG_VERSION,
   createDefaultThemeTokenPayload,
   createDefaultThemeConfig,
   isThemeConfigV1,
   isThemeConfigV2,
   resolveThemeTokenPayload,
+  type SaveAsCustomThemeRequest,
+  type SaveAsCustomThemeResult,
   type ThemeConfigErrorCode,
   type ThemeConfigV2,
   type ThemeDefinition,
@@ -91,6 +94,20 @@ function loadThemeDefinition(themeId: ThemeId): ThemeDefinition | null {
   } catch {
     return null
   }
+}
+
+function saveThemeDefinition(themeId: ThemeId, theme: ThemeDefinition): void {
+  const themesDir = getThemesDirPath()
+  if (!existsSync(themesDir)) {
+    mkdirSync(themesDir, { recursive: true })
+  }
+  const filePath = join(themesDir, `${themeId}.json`)
+  writeFileSync(filePath, JSON.stringify(theme, null, 2), 'utf-8')
+}
+
+function hasThemeIdConflict(themeId: ThemeId, existingThemeIds: ThemeId[]): boolean {
+  const normalized = themeId.trim().toLowerCase()
+  return existingThemeIds.some(item => item.trim().toLowerCase() === normalized)
 }
 
 function getThemeTokenDefaults(themeId: ThemeId): Record<string, string> {
@@ -1208,6 +1225,79 @@ app.whenReady().then(() => {
     }
     writeThemeConfig(config)
     return config
+  })
+
+  ipcMain.handle('theme:saveAsCustom', (_event, request: SaveAsCustomThemeRequest): SaveAsCustomThemeResult => {
+    const validation = validateCustomThemeName(request?.name || '')
+    if (!validation.valid) {
+      return {
+        success: false,
+        code: 'invalid_name',
+        message: validation.message || '主题名称无效。',
+        validation,
+      }
+    }
+
+    const themeId = validation.normalizedName
+    const existingThemeIds = listThemeIds()
+    if (hasThemeIdConflict(themeId, existingThemeIds)) {
+      return {
+        success: false,
+        code: 'duplicate_name',
+        message: `主题名称“${themeId}”已存在，请更换名称。`,
+      }
+    }
+
+    const sourceThemeId = request?.sourceThemeId || readThemeConfigForWrite().currentThemeId
+    const sourceTheme = loadThemeDefinition(sourceThemeId)
+    if (!sourceTheme?.colors) {
+      return {
+        success: false,
+        code: 'source_theme_missing',
+        message: `无法保存：基线主题“${sourceThemeId}”不存在或损坏。`,
+      }
+    }
+
+    try {
+      const sourceDefaults = { ...sourceTheme.colors, ...(request?.themePayload?.tokenValues || {}) }
+      const normalizedPayload = resolveThemeTokenPayload(request?.themePayload, sourceDefaults)
+      const activeFlowLineMain = normalizedPayload.flowLine.mode === 'multi'
+        ? normalizedPayload.flowLine.multi.mainColor
+        : normalizedPayload.flowLine.single.mainColor
+      const customTheme: ThemeDefinition = {
+        name: themeId,
+        colors: {
+          ...sourceTheme.colors,
+          ...normalizedPayload.tokenValues,
+          '--flow-line-main': activeFlowLineMain,
+        },
+      }
+      saveThemeDefinition(themeId, customTheme)
+
+      const config = readThemeConfigForWrite()
+      config.currentThemeId = themeId
+      config.themePayloads[themeId] = normalizeThemePayload(themeId, normalizedPayload)
+      config.version = THEME_CONFIG_VERSION
+      config.lastError = null
+      if (config.retainedInvalidTheme?.themeId === themeId) {
+        config.retainedInvalidTheme = null
+      }
+      writeThemeConfig(config)
+
+      return {
+        success: true,
+        themeId,
+        themePayload: config.themePayloads[themeId],
+        config,
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        success: false,
+        code: 'save_failed',
+        message: `保存主题失败：${message}`,
+      }
+    }
   })
 
   // 编译器 IPC
