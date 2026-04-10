@@ -153,6 +153,17 @@ export type ThemeImportConflictDecisionValidationResult =
     diagnostics: ThemeImportValidationDiagnostic[]
   }
 
+export type ThemeImportConflictResolutionResult =
+  | {
+    status: 'conflict'
+    existingThemeId: ThemeId
+    allowedDecisions: ThemeImportConflictDecision['decision'][]
+  }
+  | {
+    status: 'ready'
+    decision: ThemeImportConflictDecision
+  }
+
 const TOKEN_KEYS = THEME_TOKEN_GROUPS.flatMap(group => group.items.map(item => item.tokenKey))
 
 const DEFAULT_THEME_TOKEN_VALUES: Record<string, string> = {
@@ -323,7 +334,7 @@ export function validateThemePortabilityImportPayload(payload: unknown): ThemeIm
     diagnostics.push({
       path: 'schemaVersion',
       code: 'unsupported_schema_version',
-      message: `仅支持 schemaVersion=${THEME_PORTABILITY_SCHEMA_VERSION}。`,
+      message: '仅支持 schemaVersion=1。',
     })
   }
 
