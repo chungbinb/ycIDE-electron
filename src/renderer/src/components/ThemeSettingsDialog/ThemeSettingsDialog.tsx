@@ -26,6 +26,9 @@ interface ThemeSettingsDialogProps {
   onResetToken?: (groupId: ThemeTokenGroupId, tokenKey: string) => void
   onResetGroup?: (groupId: ThemeTokenGroupId) => void
   onResetAll?: () => void
+  canUndo?: boolean
+  onUndo?: () => void
+  onRestoreBaseline?: () => void
 }
 
 function ThemeSettingsDialog({
@@ -44,6 +47,9 @@ function ThemeSettingsDialog({
   onResetToken,
   onResetGroup,
   onResetAll,
+  canUndo = false,
+  onUndo,
+  onRestoreBaseline,
 }: ThemeSettingsDialogProps): React.JSX.Element | null {
   if (!open) return null
   const activeFlowLineMainColor = flowLineConfig.mode === 'multi'
@@ -72,6 +78,27 @@ function ThemeSettingsDialog({
                 {themeId}
               </button>
             ))}
+          </div>
+          <div className="theme-settings-history-actions" role="group" aria-label="草稿撤销操作">
+            <button
+              type="button"
+              className="theme-settings-btn"
+              disabled={!canUndo}
+              title={canUndo ? '撤销最近一次改动' : '无可撤销改动'}
+              onClick={onUndo}
+            >
+              撤销上一步
+            </button>
+            <button
+              type="button"
+              className="theme-settings-btn"
+              disabled={!canUndo}
+              title={canUndo ? '恢复到进入设置时状态' : '无可撤销改动'}
+              onClick={onRestoreBaseline}
+            >
+              恢复会话基线
+            </button>
+            {!canUndo && <span className="theme-settings-history-hint">无可撤销改动</span>}
           </div>
           <div className="theme-settings-groups" role="region" aria-label="主题令牌分组">
             {THEME_TOKEN_GROUPS.map(group => (
