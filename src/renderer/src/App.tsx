@@ -1207,7 +1207,15 @@ function App(): React.JSX.Element {
 
   const handleThemeManagerExport = useCallback(async (themeId: string): Promise<{ success: boolean; message?: string }> => {
     if (!themeId) return { success: false, message: '请选择要导出的主题。' }
-    const result = await window.api?.theme?.export({ themeId })
+    const testExport = (window as Window & {
+      __ycideTestThemeExport?: (theme: string) => Promise<
+        | { success: true; filePath: string; fileName: string; themeId: string }
+        | { success: false; canceled?: true; code?: string; message?: string }
+      >
+    }).__ycideTestThemeExport
+    const result = testExport
+      ? await testExport(themeId)
+      : await window.api?.theme?.export({ themeId })
     if (!result) {
       return { success: false, message: '导出主题失败，请稍后重试。' }
     }
