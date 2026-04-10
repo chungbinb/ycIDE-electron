@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
-status: Planned
-stopped_at: Completed 16-02-PLAN.md
-last_updated: "2026-04-10T07:28:52.069Z"
+status: executing
+stopped_at: Completed 16-03-PLAN.md
+last_updated: "2026-04-10T07:52:53.818Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 20
-  completed_plans: 17
+  completed_plans: 18
 ---
 
 # Project State
@@ -20,12 +20,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** 用户可以在 ycIDE 中稳定使用并自定义完整主题体系，实时预览并安全保存复用。  
-**Current focus:** Phase 16 in progress (2/5 plans completed)
+**Current focus:** Phase 16 in progress (3/5 plans completed)
 
 ## Current Position
 
 Phase: 16
-Plan: 16-03..16-05 planned
+Plan: 16-04..16-05 planned
 Status: In Progress
 Last activity: 2026-04-10
 
@@ -63,6 +63,7 @@ Last activity: 2026-04-10
 | Phase 15 P05 | 7min | 2 tasks | 6 files |
 | Phase 16 P01 | 2m | 2 tasks | 2 files |
 | Phase 16 P02 | 3m | 2 tasks | 3 files |
+| Phase 16-theme-management-portability P03 | 17min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -112,6 +113,9 @@ Last activity: 2026-04-10
 - [Phase 16]: Conflict decisions are modeled as mutually exclusive rename-import/overwrite unions with overwrite confirmation hard requirement.
 - [Phase 16]: Delete active custom theme falls back to recorded previous built-in id with explicit previous built-in notice.
 - [Phase 16]: Theme lifecycle handlers return synchronized config/list/current/menu payloads from main authority.
+- [Phase 16]: Theme manager lifecycle actions now reconcile renderer state from main lifecycle payloads.
+- [Phase 16]: Theme manager list/detail both expose unsaved draft indicators for the working theme.
+- [Phase 16]: UI export automation uses App-level test hook to avoid native dialog nondeterminism.
 
 ### Pending Todos
 
@@ -127,6 +131,6 @@ Last activity: 2026-04-10
 
 ## Session Continuity
 
-Last session: 2026-04-10T07:28:52.065Z
-Stopped at: Completed 16-02-PLAN.md
+Last session: 2026-04-10T07:52:53.814Z
+Stopped at: Completed 16-03-PLAN.md
 Resume file: None
