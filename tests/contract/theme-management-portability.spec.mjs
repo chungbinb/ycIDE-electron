@@ -4,9 +4,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const themeSchemaPath = path.resolve(process.cwd(), 'src/shared/theme.ts')
+const mainPath = path.resolve(process.cwd(), 'src/main/index.ts')
 
 function readThemeSchema() {
   return fs.readFileSync(themeSchemaPath, 'utf-8')
+}
+
+function readMainSource() {
+  return fs.readFileSync(mainPath, 'utf-8')
 }
 
 test('contract dto: MGMT-02 D16-10 export dto fixed to schemaVersion + theme', () => {
@@ -51,4 +56,37 @@ test('MGMT-03 D16-14 conflict result union branches stay complete and mutually e
   assert.match(source, /status:\s*'ready'/)
   assert.match(source, /rename-import 分支不能携带 overwrite 字段/)
   assert.match(source, /overwrite 分支不能携带 newThemeName/)
+})
+
+test('management and export ipc: D16-01 built-in theme rename/delete is rejected', () => {
+  const source = readMainSource()
+  assert.match(source, /ipcMain\.handle\('theme:rename'/)
+  assert.match(source, /ipcMain\.handle\('theme:delete'/)
+  assert.match(source, /built-in 主题不可重命名/)
+  assert.match(source, /built-in 主题不可删除/)
+})
+
+test('management and export ipc: D16-03 createFromCurrent clones current active theme as baseline', () => {
+  const source = readMainSource()
+  assert.match(source, /ipcMain\.handle\('theme:createFromCurrent'/)
+  assert.match(source, /const sourceThemeId = config\.currentThemeId/)
+  assert.match(source, /const sourceTheme = loadThemeDefinition\(sourceThemeId\)/)
+  assert.match(source, /colors:\s*\{\s*\.\.\.sourceTheme\.colors/)
+})
+
+test('management and export ipc: D16-05/06/08 delete active custom requires explicit confirm and falls back to previous built-in notice', () => {
+  const source = readMainSource()
+  assert.match(source, /confirmThemeName/)
+  assert.match(source, /confirmThemeName.*!==.*themeId/)
+  assert.match(source, /previousBuiltInThemeId/)
+  assert.match(source, /fallback.*previous built-in/)
+})
+
+test('management and export ipc: D16-07/09/10/11/12 rename conflict and single-theme export contract', () => {
+  const source = readMainSource()
+  assert.match(source, /主题名称“\$\{targetThemeId\}”已存在/)
+  assert.match(source, /ipcMain\.handle\('theme:export'/)
+  assert.match(source, /schemaVersion:\s*THEME_PORTABILITY_SCHEMA_VERSION/)
+  assert.match(source, /`\$\{themeId\}\.ycide-theme\.json`/)
+  assert.match(source, /built-in 主题也允许导出/)
 })
