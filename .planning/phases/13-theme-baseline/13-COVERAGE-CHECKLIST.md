@@ -23,6 +23,7 @@ App-owned visible surfaces introduced/adjusted in Plan 13-03, audited for light-
 - **THME-01 (switch correctness):** `tests/ui/theme-baseline.spec.js` case “switches built-in themes from title bar entry point”.
 - **THME-02 (durability + fallback):** `tests/ui/theme-baseline.spec.js` cases “switches from settings entry and persists after restart” and “falls back for invalid persisted theme and shows repair prompt path”.
 - **THME-03 (readability):** matrix above + `.planning/phases/13-theme-baseline/13-CONTRAST-LOG.md`.
+- **Pass-gate status:** no deferred success criteria in Plan 13-04.
 
 ## D-08 Repair Prompt Evidence Chain
 

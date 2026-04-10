@@ -32,3 +32,4 @@
 
 - **THME-03:** Quantitative readability proof for core and interaction-state token pairs.
 - **Regression guard:** dark ratios remained above thresholds while adding light-mode coverage.
+- **Pass-gate status:** Plan 13-04 has no deferred readability criteria.

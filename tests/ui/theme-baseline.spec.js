@@ -15,6 +15,11 @@ const {
   ROOT_BG_PRIMARY,
 } = require('./helpers/theme-baseline-fixtures')
 
+// Requirement trace:
+// THME-01 -> title bar switch path
+// THME-02 -> settings persistence + invalid-config fallback/repair flow
+// THME-03 -> readable outcomes validated by 13-COVERAGE-CHECKLIST + 13-CONTRAST-LOG
+
 test.describe('theme baseline validation', () => {
   test.describe.configure({ mode: 'serial' })
 
