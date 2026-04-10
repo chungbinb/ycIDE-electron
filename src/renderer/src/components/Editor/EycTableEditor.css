@@ -1061,8 +1061,8 @@
   border-radius: 8px;
   font-size: 10px;
   color: var(--syntax-variable, #9cdcfe);
-  background: color-mix(in srgb, var(--syntax-keyword, #569cd6) 18%, transparent);
-  border: 1px solid color-mix(in srgb, var(--syntax-keyword, #569cd6) 35%, transparent);
+  background: color-mix(in srgb, var(--syntax-keyword, var(--accent, var(--flow-line-main))) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--syntax-keyword, var(--accent, var(--flow-line-main))) 35%, transparent);
   flex-shrink: 0;
 }
 
