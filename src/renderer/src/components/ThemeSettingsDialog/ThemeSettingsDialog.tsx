@@ -258,7 +258,10 @@ function ThemeSettingsDialog({
               placeholder="手动输入主题名称"
               className="theme-settings-text-input"
               aria-label="自定义主题名称"
-              onChange={(event) => setCustomThemeName(event.target.value)}
+              onChange={(event) => {
+                setCustomThemeName(event.target.value)
+                if (localSaveFeedback) setLocalSaveFeedback(null)
+              }}
             />
           </label>
           <button
