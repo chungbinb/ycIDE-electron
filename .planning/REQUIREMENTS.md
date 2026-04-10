@@ -28,7 +28,7 @@
 
 ### Theme Management
 
-- [ ] **MGMT-01**: 用户可以在本机管理自定义主题（创建/编辑/重命名/删除）
+- [x] **MGMT-01**: 用户可以在本机管理自定义主题（创建/编辑/重命名/删除）
 - [x] **MGMT-02**: 用户可以导出自定义主题到文件
 - [x] **MGMT-03**: 用户可以导入主题文件并应用
 - [x] **MGMT-04**: 导入主题在字段缺失或不合法时会给出明确错误，不会静默破坏现有主题
@@ -70,7 +70,7 @@
 | FLOW-01 | Phase 15 | Complete |
 | FLOW-02 | Phase 15 | Complete |
 | FLOW-03 | Phase 15 | Complete |
-| MGMT-01 | Phase 16 | Pending |
+| MGMT-01 | Phase 16 | Complete |
 | MGMT-02 | Phase 16 | Complete |
 | MGMT-03 | Phase 16 | Complete |
 | MGMT-04 | Phase 16 | Complete |

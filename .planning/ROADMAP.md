@@ -27,7 +27,7 @@
 
 Plans:
 - [x] 16-01-PLAN.md — Shared import/export contracts and strict validation model
-- [ ] 16-02-PLAN.md — Main/preload custom-theme lifecycle and export IPC
+- [x] 16-02-PLAN.md — Main/preload custom-theme lifecycle and export IPC
 - [ ] 16-03-PLAN.md — Dedicated Theme Manager UI and CRUD/export wiring
 - [ ] 16-04-PLAN.md — Import pipeline with atomic validation, conflict and switch-now flow
 - [ ] 16-05-PLAN.md — Phase 16 coverage closure and evidence artifacts
@@ -87,5 +87,5 @@ Plans:
 | 13. Theme Baseline | 4/4 | Complete    | 2026-04-10 |
 | 14. Theme Token Coverage | 6/6 | Complete    | 2026-04-10 |
 | 15. Theme Editing Workflow | 5/5 | Complete    | 2026-04-10 |
-| 16. Theme Management & Portability | 1/5 | In Progress|  |
+| 16. Theme Management & Portability | 2/5 | In Progress|  |
 | 17. Compatibility & Regression Guardrails | 0/0 | Not started | - |
