@@ -70,7 +70,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 13. Theme Baseline | 1/4 | In Progress|  |
+| 13. Theme Baseline | 2/4 | In Progress|  |
 | 14. Theme Token Coverage | 0/0 | Not started | - |
 | 15. Theme Editing Workflow | 0/0 | Not started | - |
 | 16. Theme Management & Portability | 0/0 | Not started | - |
