@@ -1,0 +1,208 @@
+.theme-manager-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+}
+
+.theme-manager-dialog {
+  width: min(920px, 94vw);
+  max-height: 88vh;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+}
+
+.theme-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.theme-manager-title {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.theme-manager-close {
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.theme-manager-close:hover {
+  color: var(--text-primary);
+}
+
+.theme-manager-body {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 14px;
+  padding: 14px 16px;
+  overflow: auto;
+}
+
+.theme-manager-list {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+  align-content: flex-start;
+  background: var(--bg-primary);
+}
+
+.theme-manager-list-item {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.theme-manager-list-item:hover {
+  background: var(--bg-hover);
+}
+
+.theme-manager-list-item.active {
+  border-color: var(--border-focus);
+  box-shadow: inset 0 0 0 1px var(--border-focus);
+}
+
+.theme-manager-list-name {
+  font-size: 13px;
+}
+
+.theme-manager-list-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.theme-manager-tag {
+  font-size: 11px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--text-secondary);
+}
+
+.theme-manager-tag-warning {
+  border-color: color-mix(in srgb, var(--warning) 60%, transparent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--warning) 14%, var(--bg-tertiary));
+}
+
+.theme-manager-detail {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  align-content: flex-start;
+}
+
+.theme-manager-detail-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.theme-manager-detail-label {
+  color: var(--text-secondary);
+  min-width: 60px;
+}
+
+.theme-manager-detail-draft {
+  border: 1px solid color-mix(in srgb, var(--warning) 60%, transparent);
+  background: color-mix(in srgb, var(--warning) 14%, var(--bg-tertiary));
+  color: var(--text-primary);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.theme-manager-detail-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.theme-manager-field {
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.theme-manager-input {
+  height: 28px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  padding: 0 8px;
+}
+
+.theme-manager-btn {
+  height: 28px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.theme-manager-btn:hover {
+  background: var(--bg-hover);
+}
+
+.theme-manager-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.theme-manager-btn-primary {
+  border-color: var(--border-focus);
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.theme-manager-btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.theme-manager-btn-danger {
+  border-color: color-mix(in srgb, var(--error) 50%, var(--border-color));
+}
+
+.theme-manager-feedback {
+  margin: 0 16px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 60%, transparent);
+  background: color-mix(in srgb, var(--warning) 14%, var(--bg-tertiary));
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  border-radius: 4px;
+}

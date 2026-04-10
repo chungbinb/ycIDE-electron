@@ -10,6 +10,7 @@ import StatusBar from './components/StatusBar/StatusBar'
 import LibraryDialog from './components/LibraryDialog/LibraryDialog'
 import NewProjectDialog from './components/NewProjectDialog/NewProjectDialog'
 import ThemeSettingsDialog from './components/ThemeSettingsDialog/ThemeSettingsDialog'
+import ThemeManager from './components/ThemeManager/ThemeManager'
 import type { SelectionTarget, AlignAction, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
@@ -18,6 +19,7 @@ import {
   resolveThemeTokenPayload,
   validateCustomThemeName,
   type SaveAsCustomThemeResult,
+  type ThemeConfigV2,
   type ThemeTokenPayload
 } from '../../shared/theme'
 import { createThemeDraftSession, type ThemeDraftSession } from '../../shared/theme-draft'
@@ -43,6 +45,11 @@ type DebugBreakAccumulator = {
 
 type ThemeDraftCloseIntent = 'close-button' | 'overlay' | 'escape' | 'app-exit'
 type ThemeDraftCloseDecision = 'save' | 'discard' | 'continue'
+type ThemeLifecycleSyncPayload = {
+  config: ThemeConfigV2
+  themes: string[]
+  currentTheme: string
+}
 
 const RECENT_OPENED_KEY = 'ycide.recentOpened.v1'
 const MAX_RECENT_OPENED = 10
@@ -339,6 +346,7 @@ function App(): React.JSX.Element {
   const [showLibrary, setShowLibrary] = useState(false)
   const [showNewProject, setShowNewProject] = useState(false)
   const [showThemeSettings, setShowThemeSettings] = useState(false)
+  const [showThemeManager, setShowThemeManager] = useState(false)
   const [themeRepairMessage, setThemeRepairMessage] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [selection, setSelection] = useState<SelectionTarget>(null)
@@ -844,6 +852,28 @@ function App(): React.JSX.Element {
     }
   }, [pushThemeNotice])
 
+  const renameThemeInDraftSession = useCallback((oldThemeId: string, newThemeId: string) => {
+    setThemeDraftSession(prev => {
+      if (!prev) return prev
+      const matchWorking = prev.workingThemeId === oldThemeId
+      const matchEntry = prev.entrySnapshot.themeId === oldThemeId
+      const hasHistoryMatch = prev.history.some(item => item.themeId === oldThemeId)
+      if (!matchWorking && !matchEntry && !hasHistoryMatch) return prev
+      return {
+        ...prev,
+        workingThemeId: matchWorking ? newThemeId : prev.workingThemeId,
+        entrySnapshot: matchEntry
+          ? { ...prev.entrySnapshot, themeId: newThemeId }
+          : prev.entrySnapshot,
+        history: prev.history.map(item => (
+          item.themeId === oldThemeId
+            ? { ...item, themeId: newThemeId }
+            : item
+        )),
+      }
+    })
+  }, [])
+
   const persistCurrentThemePayload = useCallback(async (themeId: string, payload: ThemeTokenPayload) => {
     try {
       await window.api?.theme?.saveCurrent(themeId, payload)
@@ -926,6 +956,19 @@ function App(): React.JSX.Element {
     if (themeRepairMessage) setThemeRepairMessage(null)
     return payload
   }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, persistCurrentThemePayload, pushThemeNotice, themeRepairMessage])
+
+  const syncThemeLifecycleState = useCallback(async (
+    payload: ThemeLifecycleSyncPayload,
+    notice?: string | null
+  ): Promise<ThemeTokenPayload | null> => {
+    setThemeList(payload.themes || [])
+    const nextPayload = payload.config?.themePayloads?.[payload.currentTheme]
+    const applied = await applyTheme(payload.currentTheme, false, nextPayload)
+    if (notice) {
+      pushThemeNotice(`theme-manager-notice:${payload.currentTheme}`, `[主题] ${notice}`, 'info', false)
+    }
+    return applied
+  }, [applyTheme, pushThemeNotice])
 
   const applyThemeDraftChange = useCallback((nextThemePayload: ThemeTokenPayload) => {
     if (!currentTheme) return
@@ -1100,6 +1143,82 @@ function App(): React.JSX.Element {
     const nextDraft = createThemeDraftSession(themeId, payload)
     setThemeDraftSession(nextDraft)
   }, [applyTheme, themeDraftSession])
+
+  const getCurrentThemePayloadForManager = useCallback(() => (
+    resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine }, themeTokenValues)
+  ), [themeFlowLine, themeTokenValues])
+
+  const handleThemeManagerCreateFromCurrent = useCallback(async (name: string): Promise<{ success: boolean; message?: string }> => {
+    const validation = validateCustomThemeName(name)
+    if (!validation.valid) {
+      return { success: false, message: validation.message || '主题名称无效。' }
+    }
+    const result = await window.api?.theme?.createFromCurrent({
+      name: validation.normalizedName,
+      themePayload: getCurrentThemePayloadForManager(),
+    })
+    if (!result) {
+      return { success: false, message: '创建主题失败，请稍后重试。' }
+    }
+    if (!result.success) {
+      return { success: false, message: result.message || '创建主题失败，请更换名称后重试。' }
+    }
+
+    const payload = await syncThemeLifecycleState(result)
+    if (payload) {
+      setThemeDraftSession(createThemeDraftSession(result.themeId, payload))
+    } else {
+      setThemeDraftSession(null)
+    }
+    return { success: true, message: `主题“${result.themeId}”已创建并激活。` }
+  }, [getCurrentThemePayloadForManager, syncThemeLifecycleState])
+
+  const handleThemeManagerRename = useCallback(async (themeId: string, newName: string): Promise<{ success: boolean; message?: string }> => {
+    if (!themeId) return { success: false, message: '请选择要重命名的主题。' }
+    const result = await window.api?.theme?.rename({ themeId, newName })
+    if (!result) {
+      return { success: false, message: '重命名主题失败，请稍后重试。' }
+    }
+    if (!result.success) {
+      return { success: false, message: result.message || '重命名失败。' }
+    }
+
+    await syncThemeLifecycleState(result)
+    renameThemeInDraftSession(result.oldThemeId, result.newThemeId)
+    return { success: true, message: `主题已重命名为“${result.newThemeId}”。` }
+  }, [renameThemeInDraftSession, syncThemeLifecycleState])
+
+  const handleThemeManagerDelete = useCallback(async (themeId: string, confirmThemeName: string): Promise<{ success: boolean; message?: string }> => {
+    if (!themeId) return { success: false, message: '请选择要删除的主题。' }
+    const result = await window.api?.theme?.delete({ themeId, confirmThemeName })
+    if (!result) {
+      return { success: false, message: '删除主题失败，请稍后重试。' }
+    }
+    if (!result.success) {
+      return { success: false, message: result.message || '删除主题失败。' }
+    }
+    await syncThemeLifecycleState(result, result.notice)
+    if (result.deletedThemeId === themeDraftSession?.workingThemeId) {
+      setThemeDraftSession(null)
+      setThemeSaveFeedback(null)
+    }
+    return { success: true, message: result.notice || `主题“${result.deletedThemeId}”已删除。` }
+  }, [syncThemeLifecycleState, themeDraftSession?.workingThemeId])
+
+  const handleThemeManagerExport = useCallback(async (themeId: string): Promise<{ success: boolean; message?: string }> => {
+    if (!themeId) return { success: false, message: '请选择要导出的主题。' }
+    const result = await window.api?.theme?.export({ themeId })
+    if (!result) {
+      return { success: false, message: '导出主题失败，请稍后重试。' }
+    }
+    if (!result.success) {
+      if (result.canceled) {
+        return { success: false, message: '已取消导出。' }
+      }
+      return { success: false, message: result.message || '导出主题失败。' }
+    }
+    return { success: true, message: `已导出：${result.fileName}` }
+  }, [])
 
   const handleSaveAsCustomTheme = useCallback(async (name: string): Promise<{ success: boolean; message?: string }> => {
     if (!currentTheme) {
@@ -1682,6 +1801,9 @@ function App(): React.JSX.Element {
         setThemeDraftSession(null)
         setThemeSaveFeedback(null)
         setShowThemeSettings(true)
+        break
+      case 'tools:themeManager':
+        setShowThemeManager(true)
         break
 
       // 插入菜单
@@ -2412,7 +2534,21 @@ function App(): React.JSX.Element {
         canUndo={canUndoThemeDraft}
         onUndo={() => { void handleThemeDraftUndo() }}
         onRestoreBaseline={() => { void handleThemeDraftRestoreBaseline() }}
+        onOpenThemeManager={() => setShowThemeManager(true)}
         repairMessage={themeRepairMessage}
+      />
+      <ThemeManager
+        open={showThemeManager}
+        themes={themeList}
+        currentTheme={currentTheme}
+        draftThemeId={themeDraftSession?.workingThemeId || null}
+        hasUnsavedDraft={!!themeDraftSession?.dirty}
+        onClose={() => setShowThemeManager(false)}
+        onSelectTheme={async (themeId) => { await handleThemeSelect(themeId) }}
+        onCreateFromCurrent={handleThemeManagerCreateFromCurrent}
+        onRenameTheme={handleThemeManagerRename}
+        onDeleteTheme={handleThemeManagerDelete}
+        onExportTheme={handleThemeManagerExport}
       />
     </div>
   )

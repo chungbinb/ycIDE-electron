@@ -32,6 +32,7 @@ interface ThemeSettingsDialogProps {
   canUndo?: boolean
   onUndo?: () => void
   onRestoreBaseline?: () => void
+  onOpenThemeManager?: () => void
 }
 
 function ThemeSettingsDialog({
@@ -55,6 +56,7 @@ function ThemeSettingsDialog({
   canUndo = false,
   onUndo,
   onRestoreBaseline,
+  onOpenThemeManager,
 }: ThemeSettingsDialogProps): React.JSX.Element | null {
   const [customThemeName, setCustomThemeName] = useState('')
   const [savingCustomTheme, setSavingCustomTheme] = useState(false)
@@ -258,6 +260,7 @@ function ThemeSettingsDialog({
           )}
         </div>
         <div className="theme-settings-footer">
+          <button type="button" className="theme-settings-btn" onClick={() => onOpenThemeManager?.()}>主题管理器</button>
           <button type="button" className="theme-settings-btn" onClick={() => onResetAll?.()}>恢复全部默认</button>
           <label className="theme-settings-save-custom">
             <span className="theme-settings-token-label">自定义主题名称</span>

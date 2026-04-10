@@ -109,6 +109,7 @@ function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasOp
     { label: '工具(T)', items: [
       { label: '支持库配置(L)', action: 'tools:library' },
       { label: '系统配置(O)', action: 'tools:settings' },
+      { label: '主题管理器(M)', action: 'tools:themeManager' },
     ]},
     { label: '帮助(H)', items: [
       { label: '帮助主题(H)', shortcut: 'F1', action: 'help:topics' },
