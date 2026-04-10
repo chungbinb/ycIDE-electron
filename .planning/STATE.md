@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
 status: executing
-stopped_at: Completed 15-04-PLAN.md
-last_updated: "2026-04-10T05:57:55.362Z"
+stopped_at: Completed 15-05-PLAN.md
+last_updated: "2026-04-10T06:05:12.345Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 15
-  completed_plans: 14
+  completed_plans: 15
 ---
 
 # Project State
@@ -20,13 +20,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** 用户可以在 ycIDE 中稳定使用并自定义完整主题体系，实时预览并安全保存复用。  
-**Current focus:** Phase 15 execution in progress (4/5 plans complete)
+**Current focus:** Phase 15 complete (5/5 plans complete)
 
 ## Current Position
 
 Phase: 15
 Plan: 05/05
-Status: In Progress
+Status: Complete
 Last activity: 2026-04-10
 
 ## Performance Metrics
@@ -60,6 +60,7 @@ Last activity: 2026-04-10
 | Phase 15-theme-editing-workflow P02 | 3min | 2 tasks | 5 files |
 | Phase 15 P03 | 6 | 3 tasks | 9 files |
 | Phase 15 P04 | 10min | 2 tasks | 6 files |
+| Phase 15 P05 | 7min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -103,6 +104,8 @@ Last activity: 2026-04-10
 - [Phase 15]: Renderer and main both reuse validateCustomThemeName; main remains authoritative for duplicate-name enforcement and activation.
 - [Phase 15]: Unsaved theme drafts now resolve through one intent-aware close handler shared by settings and app-exit.
 - [Phase 15]: Main/renderer close handshake (app:requestClose + window:forceClose) prevents app-exit bypass when draft confirmation is pending.
+- [Phase 15]: Final Phase 15 evidence uses FLOW/D15-tagged test names for 1:1 automation-to-doc mapping.
+- [Phase 15]: Undo baseline verification now uses runtime entry values to stay stable across persisted custom themes.
 
 ### Pending Todos
 
@@ -118,6 +121,6 @@ Last activity: 2026-04-10
 
 ## Session Continuity
 
-Last session: 2026-04-10T05:57:55.359Z
-Stopped at: Completed 15-04-PLAN.md
+Last session: 2026-04-10T06:05:12.340Z
+Stopped at: Completed 15-05-PLAN.md
 Resume file: None
