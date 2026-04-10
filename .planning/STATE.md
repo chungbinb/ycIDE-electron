@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
 status: completed
-stopped_at: Completed 14-03-PLAN.md
-last_updated: "2026-04-10T03:42:19.137Z"
+stopped_at: Completed 14-02-PLAN.md
+last_updated: "2026-04-10T03:48:14.862Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 9
-  completed_plans: 7
+  completed_plans: 8
 ---
 
 # Project State
@@ -53,6 +53,7 @@ Last activity: 2026-04-10
 | Phase 14 P01 | 26min | 3 tasks | 7 files |
 | Phase 14-theme-token-coverage P04 | 6min | 3 tasks | 7 files |
 | Phase 14 P03 | 5min | 2 tasks | 4 files |
+| Phase 14-theme-token-coverage P02 | 7min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,8 @@ Last activity: 2026-04-10
 - [Phase 14-theme-token-coverage]: Use strict JSON hardcoded-color scans by surface to gate TOKN-06 residue checks.
 - [Phase 14]: Flow-line mode/config is resolved from current CSS custom properties so mode switching always uses current main-color baseline.
 - [Phase 14]: Flow segment rendering writes resolved per-segment CSS vars for depth-aware deterministic colors.
+- [Phase 14-theme-token-coverage]: Kept theme token apply/persist centralized in App via theme:saveCurrent for edits and resets.
+- [Phase 14-theme-token-coverage]: Added dedicated monacoThemeTokens helper and runtime Editor theme re-registration on token payload changes.
 
 ### Pending Todos
 
@@ -93,6 +96,6 @@ Last activity: 2026-04-10
 
 ## Session Continuity
 
-Last session: 2026-04-10T03:42:19.133Z
-Stopped at: Completed 14-03-PLAN.md
+Last session: 2026-04-10T03:48:14.859Z
+Stopped at: Completed 14-02-PLAN.md
 Resume file: None
