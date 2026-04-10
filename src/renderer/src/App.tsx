@@ -943,6 +943,45 @@ function App(): React.JSX.Element {
     })
   }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, themeDraftSession, themeFlowLine, themeTokenValues])
 
+  const canUndoThemeDraft = (themeDraftSession?.historyCursor ?? 0) > 0
+
+  const handleThemeDraftUndo = useCallback(async () => {
+    if (!themeDraftSession) return
+    if (themeDraftSession.historyCursor <= 0) return
+    const nextCursor = themeDraftSession.historyCursor - 1
+    const snapshot = themeDraftSession.history[nextCursor]
+    if (!snapshot) return
+    const restoredPayload = await applyTheme(snapshot.themeId, false, snapshot.payload)
+    if (!restoredPayload) return
+    setThemeDraftSession(prev => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        workingThemeId: snapshot.themeId,
+        workingPayload: restoredPayload,
+        dirty: nextCursor > 0,
+        historyCursor: nextCursor,
+      }
+    })
+  }, [applyTheme, themeDraftSession])
+
+  const handleThemeDraftRestoreBaseline = useCallback(async () => {
+    if (!themeDraftSession) return
+    const baselineSnapshot = themeDraftSession.entrySnapshot
+    const restoredPayload = await applyTheme(baselineSnapshot.themeId, false, baselineSnapshot.payload)
+    if (!restoredPayload) return
+    setThemeDraftSession(prev => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        workingThemeId: baselineSnapshot.themeId,
+        workingPayload: restoredPayload,
+        dirty: false,
+        historyCursor: 0,
+      }
+    })
+  }, [applyTheme, themeDraftSession])
+
   const handleThemeTokenChange = useCallback((tokenKey: string, value: string) => {
     if (!currentTheme) return
     const nextTokenValues = { ...themeTokenValues, [tokenKey]: value }
@@ -2278,6 +2317,9 @@ function App(): React.JSX.Element {
         onResetToken={handleThemeTokenResetItem}
         onResetGroup={handleThemeTokenResetGroup}
         onResetAll={handleThemeTokenResetAll}
+        canUndo={canUndoThemeDraft}
+        onUndo={() => { void handleThemeDraftUndo() }}
+        onRestoreBaseline={() => { void handleThemeDraftRestoreBaseline() }}
         repairMessage={themeRepairMessage}
       />
     </div>
