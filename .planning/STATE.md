@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
-status: in_progress
-stopped_at: Completed 14-01-PLAN.md
-last_updated: "2026-04-10T03:26:24.659Z"
+status: completed
+stopped_at: Completed 14-03-PLAN.md
+last_updated: "2026-04-10T03:42:19.137Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 9
-  completed_plans: 5
+  completed_plans: 7
 ---
 
 # Project State
@@ -20,13 +20,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** 用户可以在 ycIDE 中稳定使用并自定义完整主题体系，实时预览并安全保存复用。  
-**Current focus:** Phase 14 in progress; 14-01 completed and 14-02 next
+**Current focus:** Phase 14 in progress; 14-01 and 14-04 completed, remaining plans continue in execution order.
 
 ## Current Position
 
 Phase: 14
-Plan: 02
-Status: 14-01 completed
+Plan: 04
+Status: 14-04 completed
 Last activity: 2026-04-10
 
 ## Performance Metrics
@@ -51,6 +51,8 @@ Last activity: 2026-04-10
 | Phase 13 P03 | 4min | 3 tasks | 12 files |
 | Phase 13 P04 | 3min | 3 tasks | 5 files |
 | Phase 14 P01 | 26min | 3 tasks | 7 files |
+| Phase 14-theme-token-coverage P04 | 6min | 3 tasks | 7 files |
+| Phase 14 P03 | 5min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -74,6 +76,10 @@ Last activity: 2026-04-10
 - [Phase 14]: Reset UX includes item/group/global reset with immediate apply and group/global confirmation.
 - [Phase 14]: Store token payloads per theme id in ThemeConfigV2.themePayloads for migration-safe theme switching.
 - [Phase 14]: Keep theme:setCurrent compatibility and add theme:saveCurrent for payload-aware persistence.
+- [Phase 14-theme-token-coverage]: Normalize icon SVG fill/stroke to currentColor so token vars control tinting.
+- [Phase 14-theme-token-coverage]: Use strict JSON hardcoded-color scans by surface to gate TOKN-06 residue checks.
+- [Phase 14]: Flow-line mode/config is resolved from current CSS custom properties so mode switching always uses current main-color baseline.
+- [Phase 14]: Flow segment rendering writes resolved per-segment CSS vars for depth-aware deterministic colors.
 
 ### Pending Todos
 
@@ -87,6 +93,6 @@ Last activity: 2026-04-10
 
 ## Session Continuity
 
-Last session: 2026-04-10T03:26:24.655Z
-Stopped at: Completed 14-01-PLAN.md
+Last session: 2026-04-10T03:42:19.133Z
+Stopped at: Completed 14-03-PLAN.md
 Resume file: None

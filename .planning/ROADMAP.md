@@ -39,8 +39,8 @@
 Plans:
 - [x] 14-01-PLAN.md — Token contracts, schema migration, and built-in token default seeding
 - [ ] 14-02-PLAN.md — Grouped token editor UI, immediate reset UX, and Monaco fine-grained mapping
-- [ ] 14-03-PLAN.md — EycTableEditor table/header tokenization and flow-line single/multi/depth behavior
-- [ ] 14-04-PLAN.md — VisualDesigner/icon tokenization and hardcoded residue scan automation
+- [x] 14-03-PLAN.md — EycTableEditor table/header tokenization and flow-line single/multi/depth behavior
+- [x] 14-04-PLAN.md — VisualDesigner/icon tokenization and hardcoded residue scan automation
 - [ ] 14-05-PLAN.md — Phase 14 validation suite and required evidence artifacts
 
 ### Phase 15: Theme Editing Workflow
@@ -78,7 +78,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 13. Theme Baseline | 4/4 | Complete    | 2026-04-10 |
-| 14. Theme Token Coverage | 1/5 | In Progress|  |
+| 14. Theme Token Coverage | 3/5 | In Progress|  |
 | 15. Theme Editing Workflow | 0/0 | Not started | - |
 | 16. Theme Management & Portability | 0/0 | Not started | - |
 | 17. Compatibility & Regression Guardrails | 0/0 | Not started | - |

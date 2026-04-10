@@ -18,7 +18,7 @@
 - [x] **TOKN-03**: 用户可以自定义代码编辑器表格颜色与表头颜色
 - [x] **TOKN-04**: 用户可以按主题配置流程线模式（单色或多色）
 - [x] **TOKN-05**: 用户可以自定义流程线颜色（与流程线模式一致生效）
-- [ ] **TOKN-06**: 主题 token 对所有可见区域生效，不出现局部未跟随主题的硬编码颜色
+- [x] **TOKN-06**: 主题 token 对所有可见区域生效，不出现局部未跟随主题的硬编码颜色
 
 ### Theme Workflow
 
@@ -66,7 +66,7 @@
 | TOKN-03 | Phase 14 | Complete |
 | TOKN-04 | Phase 14 | Complete |
 | TOKN-05 | Phase 14 | Complete |
-| TOKN-06 | Phase 14 | Pending |
+| TOKN-06 | Phase 14 | Complete |
 | FLOW-01 | Phase 15 | Pending |
 | FLOW-02 | Phase 15 | Pending |
 | FLOW-03 | Phase 15 | Pending |
