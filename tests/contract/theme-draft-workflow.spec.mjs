@@ -6,6 +6,9 @@ import path from 'node:path'
 const appPath = path.resolve(process.cwd(), 'src/renderer/src/App.tsx')
 const draftPath = path.resolve(process.cwd(), 'src/shared/theme-draft.ts')
 const dialogPath = path.resolve(process.cwd(), 'src/renderer/src/components/ThemeSettingsDialog/ThemeSettingsDialog.tsx')
+const themeSharedPath = path.resolve(process.cwd(), 'src/shared/theme.ts')
+const mainPath = path.resolve(process.cwd(), 'src/main/index.ts')
+const preloadPath = path.resolve(process.cwd(), 'src/preload/index.ts')
 
 test('theme draft contract defines baseline snapshot, working payload and history cursor', () => {
   const source = fs.readFileSync(draftPath, 'utf-8')
@@ -52,5 +55,23 @@ test('App defines undo history and baseline restore handlers for draft session',
   assert.match(source, /const handleThemeDraftRestoreBaseline = useCallback\(async \(\) =>/)
   assert.match(source, /const baselineSnapshot = themeDraftSession\.entrySnapshot/)
   assert.match(source, /historyCursor: 0/)
+})
+
+test('save-as-custom flow shares validation contract and wires main/preload/renderer/dialog', () => {
+  const sharedSource = fs.readFileSync(themeSharedPath, 'utf-8')
+  const mainSource = fs.readFileSync(mainPath, 'utf-8')
+  const preloadSource = fs.readFileSync(preloadPath, 'utf-8')
+  const appSource = fs.readFileSync(appPath, 'utf-8')
+  const dialogSource = fs.readFileSync(dialogPath, 'utf-8')
+
+  assert.match(sharedSource, /export interface SaveAsCustomThemeRequest/)
+  assert.match(sharedSource, /export type SaveAsCustomThemeResult/)
+  assert.match(sharedSource, /export function validateCustomThemeName\(rawName: string\)/)
+  assert.match(mainSource, /ipcMain\.handle\('theme:saveAsCustom'/)
+  assert.match(preloadSource, /saveAsCustom:\s*\(request: SaveAsCustomThemeRequest\)/)
+  assert.match(appSource, /const handleSaveAsCustomTheme = useCallback\(async \(name: string\)/)
+  assert.match(appSource, /window\.api\?\.theme\?\.saveAsCustom\(/)
+  assert.match(dialogSource, /onSaveAsCustom\?: \(name: string\) => Promise<\{ success: boolean; message\?: string \}>/)
+  assert.match(dialogSource, /保存为自定义主题/)
 })
 
