@@ -63,3 +63,27 @@ test('flow-line group reset only resets active mode configuration', () => {
   assert.match(source, /themeFlowLine\.mode === 'multi'/)
   assert.match(source, /themeFlowLine\.mode === 'single'/)
 })
+
+test('theme settings exposes flow-line mode and depth controls', () => {
+  const source = fs.readFileSync(dialogPath, 'utf-8')
+  assert.match(source, /flow-line-mode-single/)
+  assert.match(source, /flow-line-mode-multi/)
+  assert.match(source, /onFlowLineModeChange/)
+  assert.match(source, /onFlowLineMainColorChange/)
+  assert.match(source, /onFlowLineDepthStepChange/)
+  assert.match(source, /depthHueStep/)
+  assert.match(source, /depthSaturationStep/)
+  assert.match(source, /depthLightnessStep/)
+})
+
+test('App wires flow-line mode and depth controls through payload save path', () => {
+  const source = fs.readFileSync(appPath, 'utf-8')
+  assert.match(source, /const handleThemeFlowLineModeChange = useCallback\(/)
+  assert.match(source, /const handleThemeFlowLineMainColorChange = useCallback\(/)
+  assert.match(source, /const handleThemeFlowLineDepthStepChange = useCallback\(/)
+  assert.match(source, /flowLineConfig=\{themeFlowLine\}/)
+  assert.match(source, /onFlowLineModeChange=\{handleThemeFlowLineModeChange\}/)
+  assert.match(source, /onFlowLineMainColorChange=\{handleThemeFlowLineMainColorChange\}/)
+  assert.match(source, /onFlowLineDepthStepChange=\{handleThemeFlowLineDepthStepChange\}/)
+  assert.match(source, /persistCurrentThemePayload\(currentTheme, payload\)/)
+})
