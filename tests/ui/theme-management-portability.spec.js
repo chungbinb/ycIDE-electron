@@ -194,8 +194,8 @@ test.describe('theme management portability', () => {
       await app.window.getByRole('button', { name: '确认导入' }).click()
 
       await expect.poll(async () => app.window.evaluate(() => window.__importCommitCalls || [])).toHaveLength(1)
-      await expect(app.window.getByText('立即切换')).toBeVisible()
-      await expect(app.window.getByText('保持当前')).toBeVisible()
+      await expect(app.window.getByRole('button', { name: '立即切换' })).toBeVisible()
+      await expect(app.window.getByRole('button', { name: '保持当前' })).toBeVisible()
       await app.window.getByRole('button', { name: '保持当前' }).click()
       await expect(app.window.locator('.theme-manager-feedback')).toContainText('已导入')
     } finally {

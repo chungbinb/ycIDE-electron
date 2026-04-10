@@ -19,6 +19,9 @@ import {
   resolveThemeTokenPayload,
   validateCustomThemeName,
   type SaveAsCustomThemeResult,
+  type ThemeDefinition,
+  type ThemeImportConflictDecision,
+  type ThemeImportValidationDiagnostic,
   type ThemeConfigV2,
   type ThemeTokenPayload
 } from '../../shared/theme'
@@ -50,6 +53,11 @@ type ThemeLifecycleSyncPayload = {
   themes: string[]
   currentTheme: string
 }
+type ThemeManagerImportPrepareResult =
+  | { status: 'canceled' }
+  | { status: 'invalid'; diagnostics: ThemeImportValidationDiagnostic[] }
+  | { status: 'conflict'; importedTheme: ThemeDefinition; existingThemeId: string; allowedDecisions: ThemeImportConflictDecision['decision'][] }
+  | { status: 'ready'; importedTheme: ThemeDefinition; targetThemeId: string }
 
 const RECENT_OPENED_KEY = 'ycide.recentOpened.v1'
 const MAX_RECENT_OPENED = 10
@@ -1227,6 +1235,74 @@ function App(): React.JSX.Element {
     }
     return { success: true, message: `已导出：${result.fileName}` }
   }, [])
+
+  const handleThemeManagerImportPrepare = useCallback(async (): Promise<ThemeManagerImportPrepareResult> => {
+    const testImportPrepare = (window as Window & {
+      __ycideTestThemeImportPrepare?: () => Promise<ThemeManagerImportPrepareResult>
+    }).__ycideTestThemeImportPrepare
+    const result = testImportPrepare
+      ? await testImportPrepare()
+      : await window.api?.theme?.import()
+    if (!result) {
+      return {
+        status: 'invalid',
+        diagnostics: [{ path: '$', code: 'invalid_value', message: '导入失败，请稍后重试。' }],
+      }
+    }
+    if (result.status === 'invalid') {
+      return {
+        status: 'invalid',
+        diagnostics: result.diagnostics || [],
+      }
+    }
+    if (result.status === 'conflict') {
+      return {
+        status: 'conflict',
+        importedTheme: result.importedTheme,
+        existingThemeId: result.existingThemeId,
+        allowedDecisions: result.allowedDecisions,
+      }
+    }
+    if (result.status === 'ready') {
+      return {
+        status: 'ready',
+        importedTheme: result.importedTheme,
+        targetThemeId: result.targetThemeId,
+      }
+    }
+    return { status: 'canceled' }
+  }, [])
+
+  const handleThemeManagerImportCommit = useCallback(async (
+    request: { importedTheme: ThemeDefinition; decision?: ThemeImportConflictDecision }
+  ): Promise<{ success: boolean; importedThemeId?: string; message?: string }> => {
+    const testImportCommit = (window as Window & {
+      __ycideTestThemeImportCommit?: (payload: { importedTheme: ThemeDefinition; decision?: ThemeImportConflictDecision }) => Promise<{
+        success: boolean
+        importedThemeId?: string
+      } & ThemeLifecycleSyncPayload>
+    }).__ycideTestThemeImportCommit
+    const result = testImportCommit
+      ? await testImportCommit(request)
+      : await window.api?.theme?.importCommit(request)
+    if (!result) {
+      return { success: false, message: '导入提交失败，请稍后重试。' }
+    }
+    if (!result.success) {
+      if (result.code === 'conflict_decision_required') {
+        return { success: false, message: '请先选择冲突处理策略。' }
+      }
+      if (result.code === 'invalid_conflict_decision') {
+        return { success: false, message: '覆盖导入必须进行二次确认。' }
+      }
+      if (result.code === 'invalid_payload' && result.diagnostics?.length) {
+        return { success: false, message: result.diagnostics.map(item => `${item.path}: ${item.message}`).join('\n') }
+      }
+      return { success: false, message: result.message || '导入提交失败。' }
+    }
+    await syncThemeLifecycleState(result)
+    return { success: true, importedThemeId: result.importedThemeId, message: `已导入：${result.importedThemeId}` }
+  }, [syncThemeLifecycleState])
 
   const handleSaveAsCustomTheme = useCallback(async (name: string): Promise<{ success: boolean; message?: string }> => {
     if (!currentTheme) {
@@ -2557,6 +2633,8 @@ function App(): React.JSX.Element {
         onRenameTheme={handleThemeManagerRename}
         onDeleteTheme={handleThemeManagerDelete}
         onExportTheme={handleThemeManagerExport}
+        onImportThemePrepare={handleThemeManagerImportPrepare}
+        onImportThemeCommit={handleThemeManagerImportCommit}
       />
     </div>
   )
