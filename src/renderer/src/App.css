@@ -53,7 +53,7 @@
 
 .activity-button:hover {
   background: var(--bg-hover);
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: var(--border-color);
   color: var(--text-primary);
 }
 
@@ -64,7 +64,7 @@
 }
 
 .activity-button .vs-icon {
-  filter: brightness(0) invert(1);
+  filter: var(--activity-icon-filter);
   opacity: 0.9;
 }
 

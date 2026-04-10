@@ -79,7 +79,7 @@
 
 .output-content::selection,
 .output-content *::selection {
-  background: rgba(51, 153, 255, 0.35);
+  background: var(--selection-highlight);
 }
 
 .output-line {
@@ -169,8 +169,8 @@
 }
 
 .cmd-detail-param-highlight {
-  background: rgba(86, 156, 214, 0.15);
-  border-left: 2px solid #569cd6;
+  background: var(--info-highlight-bg);
+  border-left: 2px solid var(--info-highlight-border);
   padding-left: 6px;
 }
 
@@ -224,9 +224,9 @@
 }
 
 @keyframes output-problem-flash {
-  0% { background: rgba(255, 200, 0, 0); border-left-color: transparent; }
-  25%, 75% { background: rgba(255, 200, 0, 0.25); border-left-color: #ffc800; }
-  100% { background: rgba(255, 200, 0, 0); border-left-color: transparent; }
+  0% { background: transparent; border-left-color: transparent; }
+  25%, 75% { background: var(--warning-flash); border-left-color: var(--warning-border); }
+  100% { background: transparent; border-left-color: transparent; }
 }
 
 .output-problem-row.flash {
@@ -265,7 +265,7 @@
 .output-problem-file {
   color: var(--text-secondary);
   font-size: 11px;
-  background: var(--hover-bg, rgba(255,255,255,0.08));
+  background: var(--bg-hover);
   border-radius: 3px;
   padding: 0 4px;
   flex-shrink: 0;
@@ -288,7 +288,7 @@
   border: 1px solid var(--border-color);
   border-radius: 6px;
   overflow: auto;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--bg-primary);
 }
 
 .output-debug-toolbar {
@@ -298,7 +298,7 @@
   gap: 12px;
   padding: 8px;
   border-bottom: 1px solid var(--border-color);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--bg-tertiary);
 }
 
 .output-debug-filter {
@@ -307,14 +307,14 @@
   height: 28px;
   padding: 0 8px;
   color: var(--text-primary);
-  background: var(--bg-input, #3c3c3c);
+  background: var(--bg-input);
   border: 1px solid var(--border-color);
   border-radius: 4px;
   outline: none;
 }
 
 .output-debug-filter:focus {
-  border-color: var(--accent, #007acc);
+  border-color: var(--accent);
 }
 
 .output-debug-count {
@@ -354,7 +354,7 @@
 
 .output-debug-name {
   width: 26%;
-  color: #7cc6ff;
+  color: var(--output-emphasis);
   word-break: break-word;
 }
 

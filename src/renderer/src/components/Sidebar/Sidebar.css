@@ -96,13 +96,13 @@
 }
 
 /* 不同类型节点的颜色提示 */
-.tree-icon-folder { background: #dcb67a30; border: 1px solid #dcb67a; }
-.tree-icon-module { background: #4fc1ff30; border: 1px solid #4fc1ff; }
-.tree-icon-class { background: #c586c030; border: 1px solid #c586c0; }
-.tree-icon-sub { background: #dcdcaa30; border: 1px solid #dcdcaa; }
-.tree-icon-func { background: #9cdcfe30; border: 1px solid #9cdcfe; }
-.tree-icon-window { background: #4ec9b030; border: 1px solid #4ec9b0; }
-.tree-icon-resource { background: #ce914830; border: 1px solid #ce9148; }
+.tree-icon-folder { background: var(--tree-folder-bg); border: 1px solid var(--tree-folder-border); }
+.tree-icon-module { background: var(--tree-module-bg); border: 1px solid var(--tree-module-border); }
+.tree-icon-class { background: var(--tree-class-bg); border: 1px solid var(--tree-class-border); }
+.tree-icon-sub { background: var(--tree-sub-bg); border: 1px solid var(--tree-sub-border); }
+.tree-icon-func { background: var(--tree-func-bg); border: 1px solid var(--tree-func-border); }
+.tree-icon-window { background: var(--tree-window-bg); border: 1px solid var(--tree-window-border); }
+.tree-icon-resource { background: var(--tree-resource-bg); border: 1px solid var(--tree-resource-border); }
 
 .tree-label {
   overflow: hidden;
@@ -121,7 +121,7 @@
   padding: 3px 4px;
   font-size: 12px;
   color: var(--text-primary);
-  background: var(--bg-input, #3c3c3c);
+  background: var(--bg-input);
   border: 1px solid var(--border-color);
   border-radius: 2px;
   outline: none;
@@ -129,7 +129,7 @@
 }
 
 .sidebar-event-selector:focus {
-  border-color: var(--accent, #007acc);
+  border-color: var(--accent);
 }
 
 .sidebar-event-selector:disabled {
@@ -163,16 +163,16 @@
   color: var(--text-primary);
 }
 .sidebar-tab.active {
-  background: var(--bg-active, #37373d);
-  color: var(--accent, #007acc);
+  background: var(--bg-active);
+  color: var(--accent);
   font-weight: 600;
-  box-shadow: inset 0 -1px 0 var(--accent, #007acc);
+  box-shadow: inset 0 -1px 0 var(--accent);
 }
 
 /* Library icon */
 .tree-icon-lib {
-  background: #569cd630;
-  border: 1px solid #569cd6;
+  background: var(--tree-lib-bg);
+  border: 1px solid var(--tree-lib-border);
 }
 
 /* Badge */
@@ -181,7 +181,7 @@
   padding: 0 6px;
   font-size: 10px;
   color: var(--text-secondary);
-  background: rgba(255,255,255,0.06);
+  background: var(--badge-bg);
   border-radius: 8px;
 }
 
@@ -241,14 +241,14 @@
   color: var(--text-secondary);
   white-space: nowrap;
   width: 80px;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid var(--table-divider);
   border-right: 1px solid var(--border-color);
 }
 
 .prop-value {
   padding: 3px 8px;
   color: var(--text-primary);
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid var(--table-divider);
   word-break: break-all;
 }
 
@@ -272,11 +272,11 @@
   outline: none;
 }
 .prop-edit-input-error {
-  border-color: #e81123;
+  border-color: var(--error);
 }
 .prop-edit-error {
   font-size: 10px;
-  color: #e81123;
+  color: var(--error);
   margin-top: 1px;
   line-height: 1.2;
 }

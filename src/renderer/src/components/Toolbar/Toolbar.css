@@ -39,7 +39,7 @@
   color: var(--success);
 }
 .toolbar-btn-stop {
-  color: #f14c4c;
+  color: var(--error);
 }
 
 .toolbar-separator {
@@ -54,17 +54,17 @@
   padding: 0 4px;
   font-size: 12px;
   color: var(--text-primary);
-  background: var(--bg-input, #3c3c3c);
+  background: var(--bg-input);
   border: 1px solid var(--border-color);
   border-radius: 3px;
   outline: none;
   cursor: pointer;
 }
 .toolbar-select:hover {
-  border-color: var(--accent, #007acc);
+  border-color: var(--accent);
 }
 .toolbar-select:focus {
-  border-color: var(--accent, #007acc);
+  border-color: var(--accent);
 }
 
 .toolbar-spacer {

@@ -5,7 +5,7 @@
   height: var(--statusbar-height);
   padding: 0 var(--spacing-md);
   background: var(--statusbar-bg);
-  color: #fff;
+  color: var(--statusbar-text);
   font-size: var(--font-size-small);
   flex-shrink: 0;
 }
@@ -23,7 +23,7 @@
   gap: var(--spacing-sm);
   padding: 0 var(--spacing-md);
   height: 100%;
-  color: #fff;
+  color: var(--statusbar-text);
   cursor: default;
 }
 
@@ -31,8 +31,8 @@ button.statusbar-item {
   cursor: pointer;
 }
 button.statusbar-item:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--statusbar-item-hover);
 }
 .statusbar-error {
-  color: #f48771;
+  color: var(--error);
 }

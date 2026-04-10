@@ -36,6 +36,8 @@
   /* 状态栏 */
   --statusbar-height: 24px;
   --statusbar-bg: #007acc;
+  --statusbar-text: #ffffff;
+  --statusbar-item-hover: rgba(255, 255, 255, 0.12);
 
   /* 字体 */
   --font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -55,6 +57,53 @@
   --scrollbar-track: transparent;
   --scrollbar-thumb: rgba(121, 121, 121, 0.4);
   --scrollbar-thumb-hover: rgba(100, 100, 100, 0.7);
+
+  --panel-bg: #252526;
+  --menu-shadow: rgba(0, 0, 0, 0.4);
+  --overlay-bg: rgba(0, 0, 0, 0.5);
+  --danger: #e81123;
+  --danger-contrast: #ffffff;
+  --menu-text-on-accent: rgba(255, 255, 255, 0.8);
+  --activity-icon-filter: brightness(0) invert(1);
+  --badge-bg: rgba(255, 255, 255, 0.06);
+  --table-divider: rgba(255, 255, 255, 0.04);
+  --selection-highlight: rgba(51, 153, 255, 0.35);
+  --warning-flash: rgba(255, 200, 0, 0.25);
+  --warning-border: #ffc800;
+  --output-emphasis: #7cc6ff;
+  --info-highlight-bg: rgba(86, 156, 214, 0.15);
+  --info-highlight-border: #569cd6;
+
+  --tree-folder-bg: #dcb67a30;
+  --tree-folder-border: #dcb67a;
+  --tree-module-bg: #4fc1ff30;
+  --tree-module-border: #4fc1ff;
+  --tree-class-bg: #c586c030;
+  --tree-class-border: #c586c0;
+  --tree-sub-bg: #dcdcaa30;
+  --tree-sub-border: #dcdcaa;
+  --tree-func-bg: #9cdcfe30;
+  --tree-func-border: #9cdcfe;
+  --tree-window-bg: #4ec9b030;
+  --tree-window-border: #4ec9b0;
+  --tree-resource-bg: #ce914830;
+  --tree-resource-border: #ce9148;
+  --tree-lib-bg: #569cd630;
+  --tree-lib-border: #569cd6;
+
+  --editor-tab-eyc: #8fd3ff;
+  --editor-tab-egv: #79e0b6;
+  --editor-tab-ecs: #f2c86a;
+  --editor-tab-edt: #f39ac7;
+  --editor-tab-ell: #ffb07a;
+  --editor-tab-efw: #86b6ff;
+  --editor-tab-resource: #9fd2a8;
+  --editor-tab-ts: #86b6ff;
+  --editor-tab-js: #f2d16b;
+  --editor-tab-html: #ff9f74;
+  --editor-tab-css: #83c9ff;
+  --editor-tab-json: #b6d48b;
+  --editor-tab-python: #9fd487;
 }
 
 * {

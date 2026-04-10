@@ -60,10 +60,10 @@
   color: var(--text-primary);
   border-top: 1px solid var(--bg-primary);
   margin-top: -1px;
-  box-shadow: inset 0 -1px 0 var(--accent, #007acc);
+  box-shadow: inset 0 -1px 0 var(--accent);
 }
 .editor-tabs-top .editor-tab.active {
-  box-shadow: inset 0 1px 0 var(--accent, #007acc);
+  box-shadow: inset 0 1px 0 var(--accent);
 }
 .editor-tab:hover {
   color: var(--text-primary);
@@ -83,19 +83,19 @@
   text-overflow: ellipsis;
 }
 
-.editor-tab-label.tab-label-eyc { color: #8fd3ff; }
-.editor-tab-label.tab-label-egv { color: #79e0b6; }
-.editor-tab-label.tab-label-ecs { color: #f2c86a; }
-.editor-tab-label.tab-label-edt { color: #f39ac7; }
-.editor-tab-label.tab-label-ell { color: #ffb07a; }
-.editor-tab-label.tab-label-efw { color: #86b6ff; }
-.editor-tab-label.tab-label-resource { color: #9fd2a8; }
-.editor-tab-label.tab-label-ts { color: #86b6ff; }
-.editor-tab-label.tab-label-js { color: #f2d16b; }
-.editor-tab-label.tab-label-html { color: #ff9f74; }
-.editor-tab-label.tab-label-css { color: #83c9ff; }
-.editor-tab-label.tab-label-json { color: #b6d48b; }
-.editor-tab-label.tab-label-python { color: #9fd487; }
+.editor-tab-label.tab-label-eyc { color: var(--editor-tab-eyc); }
+.editor-tab-label.tab-label-egv { color: var(--editor-tab-egv); }
+.editor-tab-label.tab-label-ecs { color: var(--editor-tab-ecs); }
+.editor-tab-label.tab-label-edt { color: var(--editor-tab-edt); }
+.editor-tab-label.tab-label-ell { color: var(--editor-tab-ell); }
+.editor-tab-label.tab-label-efw { color: var(--editor-tab-efw); }
+.editor-tab-label.tab-label-resource { color: var(--editor-tab-resource); }
+.editor-tab-label.tab-label-ts { color: var(--editor-tab-ts); }
+.editor-tab-label.tab-label-js { color: var(--editor-tab-js); }
+.editor-tab-label.tab-label-html { color: var(--editor-tab-html); }
+.editor-tab-label.tab-label-css { color: var(--editor-tab-css); }
+.editor-tab-label.tab-label-json { color: var(--editor-tab-json); }
+.editor-tab-label.tab-label-python { color: var(--editor-tab-python); }
 .editor-tab-label.tab-label-default { color: var(--text-secondary); }
 
 .editor-tab.active .editor-tab-label {
@@ -135,7 +135,7 @@
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 4px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px var(--menu-shadow);
   padding: 4px;
 }
 
