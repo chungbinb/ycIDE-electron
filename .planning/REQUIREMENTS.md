@@ -9,7 +9,7 @@
 
 - [x] **THME-01**: 用户可以在内置深色与浅色主题之间切换
 - [x] **THME-02**: 主题切换后重启应用仍保持上次选中的主题
-- [ ] **THME-03**: 浅色主题在主要界面区域具备可读性（文本/背景对比可用）
+- [x] **THME-03**: 浅色主题在主要界面区域具备可读性（文本/背景对比可用）
 
 ### Theme Tokens
 
@@ -60,7 +60,7 @@
 |-------------|-------|--------|
 | THME-01 | Phase 13 | Complete |
 | THME-02 | Phase 13 | Complete |
-| THME-03 | Phase 13 | Pending |
+| THME-03 | Phase 13 | Complete |
 | TOKN-01 | Phase 14 | Pending |
 | TOKN-02 | Phase 14 | Pending |
 | TOKN-03 | Phase 14 | Pending |
