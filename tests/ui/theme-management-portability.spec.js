@@ -10,6 +10,12 @@ const {
 async function openThemeManager(window) {
   const manager = window.locator('.theme-manager-dialog')
   if (await manager.isVisible().catch(() => false)) return
+  const settingsDialog = window.locator('.theme-settings-dialog')
+  if (await settingsDialog.isVisible().catch(() => false)) {
+    await window.getByRole('button', { name: '主题管理器' }).click()
+    await expect(manager).toBeVisible()
+    return
+  }
   await window.getByRole('menuitem', { name: '工具(T)' }).click()
   await window.getByRole('menuitem', { name: '主题管理器(M)' }).click()
   await expect(manager).toBeVisible()
