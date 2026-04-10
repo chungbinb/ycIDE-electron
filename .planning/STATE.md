@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 14-06-PLAN.md
-last_updated: "2026-04-10T04:42:56.649Z"
+status: phase_in_progress
+stopped_at: Completed 15-01-PLAN.md
+last_updated: "2026-04-10T05:23:01.653Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 5
   completed_phases: 2
-  total_plans: 10
-  completed_plans: 10
+  total_plans: 15
+  completed_plans: 11
 ---
 
 # Project State
@@ -20,13 +20,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** 用户可以在 ycIDE 中稳定使用并自定义完整主题体系，实时预览并安全保存复用。  
-**Current focus:** Phase 14 complete, ready for Phase 15 planning
+**Current focus:** Phase 15 execution in progress (1/5 plans complete)
 
 ## Current Position
 
-Phase: 14
-Plan: 06 (completed)
-Status: Phase 14 gap-closure complete
+Phase: 15
+Plan: 02
+Status: In Progress
 Last activity: 2026-04-10
 
 ## Performance Metrics
@@ -56,6 +56,7 @@ Last activity: 2026-04-10
 | Phase 14-theme-token-coverage P02 | 7min | 3 tasks | 7 files |
 | Phase 14-theme-token-coverage P05 | 9min | 3 tasks | 10 files |
 | Phase 14 P06 | 3min | 2 tasks | 6 files |
+| Phase 15 P01 | 8min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -89,11 +90,17 @@ Last activity: 2026-04-10
 - [Phase 14-theme-token-coverage]: Strict hardcoded-color scan gates unresolved hits only and reports var() fallbacks as resolved evidence for TOKN-06 traceability.
 - [Phase 14]: Flow-line mode switch reuses active main color baseline and syncs flow token keys for consistent updates.
 - [Phase 14]: Autocomplete source badge fallback chain stays variable-only to satisfy hardcoded-literal contract gating.
+- [Phase 15]: Draft session starts on first edit and commits only via save-as-custom-theme.
+- [Phase 15]: Closing with unsaved draft requires unified 3-way confirmation flow across close button, Esc, overlay, and app exit.
+- [Phase 15]: Theme edits now use preview-only applyThemeDraftChange, with saveCurrent removed from in-dialog edit handlers.
+- [Phase 15]: When switching theme during an active draft, App discards old draft and re-baselines using selected theme payload.
 
 ### Pending Todos
 
 - Keep import schema validation and draft-state isolation as explicit plan must-haves.
 - Define test matrix early for QUAL-02 to avoid end-phase regression bottleneck.
+- Start planning with `/gsd-plan-phase 15`.
+- Execute phase with `/gsd-execute-phase 15`.
 
 ### Blockers/Concerns
 
@@ -102,6 +109,6 @@ Last activity: 2026-04-10
 
 ## Session Continuity
 
-Last session: 2026-04-10T04:42:56.646Z
-Stopped at: Completed 14-06-PLAN.md
+Last session: 2026-04-10T05:23:01.649Z
+Stopped at: Completed 15-01-PLAN.md
 Resume file: None
