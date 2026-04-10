@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
 status: completed
-stopped_at: Completed 14-02-PLAN.md
-last_updated: "2026-04-10T03:48:14.862Z"
+stopped_at: Completed 14-05-PLAN.md
+last_updated: "2026-04-10T03:58:56.199Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 9
-  completed_plans: 8
+  completed_plans: 9
 ---
 
 # Project State
@@ -20,13 +20,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** 用户可以在 ycIDE 中稳定使用并自定义完整主题体系，实时预览并安全保存复用。  
-**Current focus:** Phase 14 in progress; 14-01 and 14-04 completed, remaining plans continue in execution order.
+**Current focus:** Phase 14 complete; all 14-01..14-05 plans completed.
 
 ## Current Position
 
 Phase: 14
-Plan: 04
-Status: 14-04 completed
+Plan: 05
+Status: 14 complete (14-05 completed)
 Last activity: 2026-04-10
 
 ## Performance Metrics
@@ -54,6 +54,7 @@ Last activity: 2026-04-10
 | Phase 14-theme-token-coverage P04 | 6min | 3 tasks | 7 files |
 | Phase 14 P03 | 5min | 2 tasks | 4 files |
 | Phase 14-theme-token-coverage P02 | 7min | 3 tasks | 7 files |
+| Phase 14-theme-token-coverage P05 | 9min | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,8 @@ Last activity: 2026-04-10
 - [Phase 14]: Flow segment rendering writes resolved per-segment CSS vars for depth-aware deterministic colors.
 - [Phase 14-theme-token-coverage]: Kept theme token apply/persist centralized in App via theme:saveCurrent for edits and resets.
 - [Phase 14-theme-token-coverage]: Added dedicated monacoThemeTokens helper and runtime Editor theme re-registration on token payload changes.
+- [Phase 14-theme-token-coverage]: Flow-line mode/depth config is now applied to root CSS vars during theme apply/reset so EycTable resolves active mode correctly.
+- [Phase 14-theme-token-coverage]: Strict hardcoded-color scan gates unresolved hits only and reports var() fallbacks as resolved evidence for TOKN-06 traceability.
 
 ### Pending Todos
 
@@ -96,6 +99,7 @@ Last activity: 2026-04-10
 
 ## Session Continuity
 
-Last session: 2026-04-10T03:48:14.859Z
-Stopped at: Completed 14-02-PLAN.md
+Last session: 2026-04-10T03:58:56.196Z
+Stopped at: Completed 14-05-PLAN.md
 Resume file: None
+
