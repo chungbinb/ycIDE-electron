@@ -11,10 +11,12 @@ const {
 test.describe('theme editing workflow', () => {
   test.describe.configure({ mode: 'serial' })
 
-  test('undo history and baseline restore', async () => {
+  test('FLOW-02 + D15-05/D15-06/D15-07/D15-08: undo history and baseline restore', async () => {
     const app = await launchApp(getAppRoot())
     try {
       await openThemeSettings(app.window)
+      const baselineTextPrimary = await readRootCssVar(app.window, '--text-primary')
+      const baselineBgPrimary = await readRootCssVar(app.window, '--bg-primary')
 
       const undoButton = app.window.getByRole('button', { name: '撤销上一步' })
       await expect(undoButton).toBeDisabled()
@@ -27,12 +29,12 @@ test.describe('theme editing workflow', () => {
       await expect(undoButton).toBeEnabled()
 
       await undoButton.click()
-      await expect.poll(() => readRootCssVar(app.window, '--bg-primary')).toBe('#1e1e1e')
+      await expect.poll(() => readRootCssVar(app.window, '--bg-primary')).toBe(baselineBgPrimary)
       await expect.poll(() => readRootCssVar(app.window, '--text-primary')).toBe('#111111')
 
       await app.window.getByRole('button', { name: '恢复会话基线' }).click()
-      await expect.poll(() => readRootCssVar(app.window, '--text-primary')).toBe('#cccccc')
-      await expect.poll(() => readRootCssVar(app.window, '--bg-primary')).toBe('#1e1e1e')
+      await expect.poll(() => readRootCssVar(app.window, '--text-primary')).toBe(baselineTextPrimary)
+      await expect.poll(() => readRootCssVar(app.window, '--bg-primary')).toBe(baselineBgPrimary)
       await expect(app.window.locator('.theme-settings-dialog')).toBeVisible()
       await expect(undoButton).toBeDisabled()
     } finally {
@@ -40,7 +42,7 @@ test.describe('theme editing workflow', () => {
     }
   })
 
-  test('save as custom name validation and activation', async () => {
+  test('FLOW-03 + D15-09/D15-10/D15-11/D15-12: save as custom validates name and activates theme', async () => {
     const app = await launchApp(getAppRoot())
     try {
       await openThemeSettings(app.window)
@@ -82,7 +84,7 @@ test.describe('theme editing workflow', () => {
     }
   })
 
-  test('unsaved draft close parity and app exit', async () => {
+  test('FLOW-01 + D15-01..D15-04 + D15-13/D15-15/D15-16: unsaved draft close parity and app exit', async () => {
     const app = await launchApp(getAppRoot())
     try {
       await openThemeSettings(app.window)
