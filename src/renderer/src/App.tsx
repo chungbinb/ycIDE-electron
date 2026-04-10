@@ -794,7 +794,7 @@ function App(): React.JSX.Element {
   }, [])
 
   // 加载主题列表和当前主题
-  const applyTheme = useCallback(async (name: string) => {
+  const applyTheme = useCallback(async (name: string, persist = true) => {
     const theme = await window.api?.theme?.load(name)
     if (!theme?.colors) return
     const root = document.documentElement
@@ -802,7 +802,9 @@ function App(): React.JSX.Element {
       root.style.setProperty(key, value as string)
     }
     setCurrentTheme(name)
-    window.api?.theme?.setCurrent(name)
+    if (persist) {
+      window.api?.theme?.setCurrent(name)
+    }
   }, [])
 
   useEffect(() => {
@@ -810,7 +812,11 @@ function App(): React.JSX.Element {
       const list = await window.api?.theme?.getList()
       if (list) setThemeList(list)
       const saved = await window.api?.theme?.getCurrent()
-      if (saved) applyTheme(saved)
+      if (!saved?.effectiveThemeId) return
+      await applyTheme(saved.effectiveThemeId, false)
+      if (saved.warning) {
+        console.warn('[theme]', saved.warning.message)
+      }
     })()
   }, [applyTheme])
 

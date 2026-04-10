@@ -5,14 +5,24 @@ import { libraryManager } from './libraryManager'
 import { compileProject, runExecutable, stopExecutable, isRunning, continueDebugExecutable } from './compiler'
 import { normalizeRuntimePlatform } from '../shared/platform'
 import { getActionAccelerator } from '../shared/shortcut-config'
-import { BUILTIN_DARK_THEME_ID, readThemeConfigV2 } from '../shared/theme'
+import {
+  BUILTIN_DARK_THEME_ID,
+  THEME_CONFIG_VERSION,
+  createDefaultThemeConfig,
+  isThemeConfigV1,
+  isThemeConfigV2,
+  type ThemeConfigErrorCode,
+  type ThemeConfigV2,
+  type ThemeDefinition,
+  type ThemeId,
+  type ThemeResolutionResult,
+  type ThemeResolutionWarningCode
+} from '../shared/theme'
 import { scanYcmdRegistry } from './ycmd-registry'
 
 const isDev = !app.isPackaged
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
 const APP_DISPLAY_NAME = 'ycIDE'
-void BUILTIN_DARK_THEME_ID
-void readThemeConfigV2
 
 type RecentOpenedItem = {
   type: 'project' | 'file'
@@ -43,6 +53,150 @@ function appendRendererErrorLog(payload: { source?: string; message: string; sta
   const extra = payload.extra === undefined ? '' : `\nextra=${JSON.stringify(payload.extra)}`
   const line = `[${now}] [${source}] ${payload.message}${stack}${extra}\n\n`
   appendFileSync(getRendererErrorLogPath(), line, 'utf-8')
+}
+
+function getThemesDirPath(): string {
+  return isDev ? join(app.getAppPath(), 'themes') : join(dirname(process.execPath), 'themes')
+}
+
+function getThemeConfigPath(): string {
+  return join(app.getPath('userData'), 'theme-config.json')
+}
+
+function listThemeIds(): ThemeId[] {
+  const themesDir = getThemesDirPath()
+  if (!existsSync(themesDir)) return []
+  try {
+    return readdirSync(themesDir)
+      .filter(file => file.endsWith('.json'))
+      .map(file => file.replace('.json', ''))
+  } catch {
+    return []
+  }
+}
+
+function loadThemeDefinition(themeId: ThemeId): ThemeDefinition | null {
+  const filePath = join(getThemesDirPath(), `${themeId}.json`)
+  if (!existsSync(filePath)) return null
+  try {
+    const data = JSON.parse(readFileSync(filePath, 'utf-8')) as ThemeDefinition
+    if (!data || typeof data !== 'object' || typeof data.name !== 'string' || !data.colors || typeof data.colors !== 'object') {
+      return null
+    }
+    return data
+  } catch {
+    return null
+  }
+}
+
+function writeThemeConfig(config: ThemeConfigV2): void {
+  const payload: ThemeConfigV2 = {
+    version: THEME_CONFIG_VERSION,
+    currentThemeId: config.currentThemeId,
+    lastError: config.lastError,
+    retainedInvalidTheme: config.retainedInvalidTheme,
+  }
+  writeFileSync(getThemeConfigPath(), JSON.stringify(payload, null, 2), 'utf-8')
+}
+
+function createThemeWarning(code: ThemeResolutionWarningCode, message: string) {
+  return { code, message }
+}
+
+function buildError(code: ThemeConfigErrorCode, message?: string) {
+  return { code, message, detectedAt: new Date().toISOString() }
+}
+
+function resolveThemeConfig(): ThemeResolutionResult {
+  const themeConfigPath = getThemeConfigPath()
+  const availableThemeIds = listThemeIds()
+  const hasTheme = (themeId: ThemeId) => availableThemeIds.includes(themeId) && !!loadThemeDefinition(themeId)
+
+  const fallback = (warningCode: ThemeResolutionWarningCode, warningMessage: string, selectedThemeId: ThemeId, errorCode: ThemeConfigErrorCode, errorMessage?: string, retainedInvalidTheme?: ThemeConfigV2['retainedInvalidTheme']) => {
+    const config = createDefaultThemeConfig(BUILTIN_DARK_THEME_ID)
+    config.lastError = buildError(errorCode, errorMessage || warningMessage)
+    config.retainedInvalidTheme = retainedInvalidTheme || null
+    writeThemeConfig(config)
+    return {
+      selectedThemeId,
+      effectiveThemeId: BUILTIN_DARK_THEME_ID,
+      warning: createThemeWarning(warningCode, warningMessage),
+    }
+  }
+
+  if (!existsSync(themeConfigPath)) {
+    const config = createDefaultThemeConfig(BUILTIN_DARK_THEME_ID)
+    writeThemeConfig(config)
+    return {
+      selectedThemeId: BUILTIN_DARK_THEME_ID,
+      effectiveThemeId: BUILTIN_DARK_THEME_ID,
+      warning: createThemeWarning('config_missing', '主题配置不存在，已回退到默认深色主题。'),
+    }
+  }
+
+  let rawConfig: unknown
+  try {
+    rawConfig = JSON.parse(readFileSync(themeConfigPath, 'utf-8'))
+  } catch {
+    return fallback(
+      'config_parse_failed',
+      '主题配置读取失败，已回退到默认深色主题。',
+      BUILTIN_DARK_THEME_ID,
+      'config_parse_failed'
+    )
+  }
+
+  let config = createDefaultThemeConfig(BUILTIN_DARK_THEME_ID)
+  let migrated = false
+
+  if (isThemeConfigV2(rawConfig)) {
+    config = {
+      version: THEME_CONFIG_VERSION,
+      currentThemeId: rawConfig.currentThemeId,
+      lastError: rawConfig.lastError || null,
+      retainedInvalidTheme: rawConfig.retainedInvalidTheme || null,
+    }
+  } else if (isThemeConfigV1(rawConfig)) {
+    config = createDefaultThemeConfig(rawConfig.currentTheme || BUILTIN_DARK_THEME_ID)
+    migrated = true
+  } else {
+    return fallback(
+      'config_parse_failed',
+      '主题配置格式无效，已回退到默认深色主题。',
+      BUILTIN_DARK_THEME_ID,
+      'config_parse_failed'
+    )
+  }
+
+  const selectedThemeId = config.currentThemeId || BUILTIN_DARK_THEME_ID
+  if (!hasTheme(selectedThemeId)) {
+    const retainedInvalidTheme = selectedThemeId === BUILTIN_DARK_THEME_ID
+      ? null
+      : { themeId: selectedThemeId, reason: 'theme_not_found_or_invalid', detectedAt: new Date().toISOString() }
+    return fallback(
+      selectedThemeId === BUILTIN_DARK_THEME_ID ? 'persisted_theme_missing' : 'repair_required',
+      selectedThemeId === BUILTIN_DARK_THEME_ID
+        ? '默认深色主题缺失或损坏，已使用安全回退。'
+        : `主题“${selectedThemeId}”无效，已回退到默认深色主题，请修复该主题配置。`,
+      selectedThemeId,
+      selectedThemeId === BUILTIN_DARK_THEME_ID ? 'theme_load_failed' : 'repair_required',
+      undefined,
+      retainedInvalidTheme
+    )
+  }
+
+  config.currentThemeId = selectedThemeId
+  config.lastError = null
+  if (config.retainedInvalidTheme?.themeId === selectedThemeId) {
+    config.retainedInvalidTheme = null
+  }
+  writeThemeConfig(config)
+
+  return {
+    selectedThemeId,
+    effectiveThemeId: selectedThemeId,
+    warning: migrated ? createThemeWarning('legacy_migrated', '已自动迁移旧版主题配置。') : null,
+  }
 }
 
 function createWindow(): void {
@@ -922,36 +1076,31 @@ app.whenReady().then(() => {
 
   // 主题 IPC
   ipcMain.handle('theme:getList', () => {
-    const themesDir = isDev ? join(app.getAppPath(), 'themes') : join(dirname(process.execPath), 'themes')
-    if (!existsSync(themesDir)) return []
-    try {
-      return readdirSync(themesDir)
-        .filter(f => f.endsWith('.json'))
-        .map(f => f.replace('.json', ''))
-    } catch { return [] }
+    return listThemeIds()
   })
 
   ipcMain.handle('theme:load', (_event, name: string) => {
-    const themesDir = isDev ? join(app.getAppPath(), 'themes') : join(dirname(process.execPath), 'themes')
-    const filePath = join(themesDir, `${name}.json`)
-    if (!existsSync(filePath)) return null
-    try {
-      return JSON.parse(readFileSync(filePath, 'utf-8'))
-    } catch { return null }
+    return loadThemeDefinition(name)
   })
 
   ipcMain.handle('theme:getCurrent', () => {
-    const configPath = join(app.getPath('userData'), 'theme-config.json')
-    if (!existsSync(configPath)) return '默认深色'
-    try {
-      const data = JSON.parse(readFileSync(configPath, 'utf-8'))
-      return data.currentTheme || '默认深色'
-    } catch { return '默认深色' }
+    return resolveThemeConfig()
   })
 
-  ipcMain.handle('theme:setCurrent', (_event, name: string) => {
-    const configPath = join(app.getPath('userData'), 'theme-config.json')
-    writeFileSync(configPath, JSON.stringify({ currentTheme: name }), 'utf-8')
+  ipcMain.handle('theme:setCurrent', (_event, name: ThemeId) => {
+    const availableThemeIds = listThemeIds()
+    const targetThemeId = availableThemeIds.includes(name) && !!loadThemeDefinition(name) ? name : BUILTIN_DARK_THEME_ID
+    const config = createDefaultThemeConfig(targetThemeId)
+    if (targetThemeId !== name) {
+      config.lastError = buildError('repair_required', `无法应用主题“${name}”，已回退到默认深色。`)
+      config.retainedInvalidTheme = {
+        themeId: name,
+        reason: 'theme_not_found_or_invalid',
+        detectedAt: new Date().toISOString(),
+      }
+    }
+    writeThemeConfig(config)
+    return config
   })
 
   // 编译器 IPC

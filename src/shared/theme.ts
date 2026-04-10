@@ -55,3 +55,27 @@ export interface ThemeResolutionResult {
   effectiveThemeId: ThemeId
   warning: ThemeResolutionWarning | null
 }
+
+export function createDefaultThemeConfig(themeId: ThemeId = BUILTIN_DARK_THEME_ID): ThemeConfigV2 {
+  return {
+    version: THEME_CONFIG_VERSION,
+    currentThemeId: themeId,
+    lastError: null,
+    retainedInvalidTheme: null,
+  }
+}
+
+export function isThemeConfigV1(value: unknown): value is ThemeConfigV1 {
+  if (!value || typeof value !== 'object') return false
+  const data = value as ThemeConfigV1
+  return data.currentTheme === undefined || typeof data.currentTheme === 'string'
+}
+
+export function isThemeConfigV2(value: unknown): value is ThemeConfigV2 {
+  if (!value || typeof value !== 'object') return false
+  const data = value as ThemeConfigV2
+  return data.version === THEME_CONFIG_VERSION
+    && typeof data.currentThemeId === 'string'
+    && (data.lastError === null || typeof data.lastError === 'object')
+    && (data.retainedInvalidTheme === null || typeof data.retainedInvalidTheme === 'object')
+}
