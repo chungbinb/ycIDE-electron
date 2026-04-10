@@ -41,7 +41,7 @@ type DebugBreakAccumulator = {
   variables: DebugPauseState['variables']
 }
 
-type ThemeDraftCloseIntent = 'close-button' | 'overlay' | 'escape'
+type ThemeDraftCloseIntent = 'close-button' | 'overlay' | 'escape' | 'app-exit'
 type ThemeDraftCloseDecision = 'save' | 'discard' | 'continue'
 
 const RECENT_OPENED_KEY = 'ycide.recentOpened.v1'
@@ -1149,15 +1149,25 @@ function App(): React.JSX.Element {
 
   const handleThemeDraftCloseIntent = useCallback(async (intent: ThemeDraftCloseIntent): Promise<boolean> => {
     if (!themeDraftSession?.dirty) {
-      handleThemeSettingsClose()
+      if (intent !== 'app-exit') {
+        handleThemeSettingsClose()
+      }
       return true
     }
-    const action = await window.api?.dialog?.confirmUnsavedThemeDraftClose(intent) as ThemeDraftCloseDecision | undefined
+    const testCloseDecision = (window as Window & {
+      __ycideTestThemeDraftCloseDecision?: ((closeIntent: ThemeDraftCloseIntent) => ThemeDraftCloseDecision | Promise<ThemeDraftCloseDecision>)
+    }).__ycideTestThemeDraftCloseDecision
+    const action = testCloseDecision
+      ? await testCloseDecision(intent)
+      : await window.api?.dialog?.confirmUnsavedThemeDraftClose(intent) as ThemeDraftCloseDecision | undefined
     if (action === 'continue') return false
     if (action === 'discard') {
-      handleThemeSettingsClose()
+      if (intent !== 'app-exit') {
+        handleThemeSettingsClose()
+      }
       return true
     }
+    setShowThemeSettings(true)
     setThemeSaveFeedback('请先输入自定义主题名称，再点击“保存为自定义主题”。')
     return false
   }, [handleThemeSettingsClose, themeDraftSession])
@@ -1408,6 +1418,8 @@ function App(): React.JSX.Element {
   }, [activeFileId])
 
   const handleAppClose = useCallback(async () => {
+    const allowExit = await handleThemeDraftCloseIntent('app-exit')
+    if (!allowExit) return
     const hasUnsaved = editorRef.current?.hasModifiedTabs?.() ?? false
     if (hasUnsaved) {
       const action = await window.api?.dialog?.confirmSaveBeforeClose('未保存文件')
@@ -1416,8 +1428,8 @@ function App(): React.JSX.Element {
         editorRef.current?.saveAll()
       }
     }
-    window.api?.window.close()
-  }, [])
+    window.api?.window.forceClose()
+  }, [handleThemeDraftCloseIntent])
 
   const buildTabFromPath = useCallback(async (fp: string): Promise<EditorTab | null> => {
     const fileName = getBaseName(fp)
@@ -2034,6 +2046,16 @@ function App(): React.JSX.Element {
       window.api.off('menu:action')
     }
   }, [handleMenuAction])
+
+  useEffect(() => {
+    const handleWindowCloseRequest = () => {
+      void handleAppClose()
+    }
+    window.api.on('app:requestClose', handleWindowCloseRequest)
+    return () => {
+      window.api.off('app:requestClose')
+    }
+  }, [handleAppClose])
 
   // 双击资源管理器文件时打开
   const handleOpenFile = useCallback(async (fileId: string, fileName: string, targetLine?: number) => {

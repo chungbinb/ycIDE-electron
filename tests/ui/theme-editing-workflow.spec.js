@@ -81,4 +81,43 @@ test.describe('theme editing workflow', () => {
       await closeApp(app)
     }
   })
+
+  test('unsaved draft close parity and app exit', async () => {
+    const app = await launchApp(getAppRoot())
+    try {
+      await openThemeSettings(app.window)
+      await setColorTokenByLabel(app.window, '基础文本/背景-主文本', '#345678')
+      await expect.poll(() => readRootCssVar(app.window, '--text-primary')).toBe('#345678')
+      await expect(app.window.getByRole('button', { name: '撤销上一步' })).toBeEnabled()
+
+      await app.window.evaluate(() => {
+        window.__draftCloseIntents = []
+        window.__ycideTestThemeDraftCloseDecision = async (intent) => {
+          window.__draftCloseIntents.push(intent)
+          return 'continue'
+        }
+      })
+
+      await app.window.locator('.theme-settings-dialog .theme-settings-close').click()
+      await expect(app.window.locator('.theme-settings-dialog')).toBeVisible()
+
+      await app.window.keyboard.press('Escape')
+      await expect(app.window.locator('.theme-settings-dialog')).toBeVisible()
+
+      await app.window.locator('.theme-settings-overlay').click({ position: { x: 2, y: 2 } })
+      await expect(app.window.locator('.theme-settings-dialog')).toBeVisible()
+
+      await app.window.evaluate(() => window.api.window.close())
+      await expect(app.window.locator('.theme-settings-dialog')).toBeVisible()
+      await expect(app.window.locator('.titlebar')).toBeVisible()
+
+      const intents = await app.window.evaluate(() => window.__draftCloseIntents || [])
+      expect(intents).toEqual(['close-button', 'escape', 'overlay', 'app-exit'])
+    } finally {
+      await app.window.evaluate(() => {
+        window.__ycideTestThemeDraftCloseDecision = async () => 'discard'
+      }).catch(() => {})
+      await closeApp(app)
+    }
+  })
 })

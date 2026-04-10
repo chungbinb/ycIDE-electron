@@ -49,7 +49,7 @@ test('closing settings always resets draft session and does not recover old draf
 test('settings close intents share one unsaved-draft decision flow with continue-editing default', () => {
   const appSource = fs.readFileSync(appPath, 'utf-8')
   const dialogSource = fs.readFileSync(dialogPath, 'utf-8')
-  assert.match(appSource, /type ThemeDraftCloseIntent = 'close-button' \| 'overlay' \| 'escape'/)
+  assert.match(appSource, /type ThemeDraftCloseIntent = 'close-button' \| 'overlay' \| 'escape' \| 'app-exit'/)
   assert.match(appSource, /const handleThemeDraftCloseIntent = useCallback\(async \(intent: ThemeDraftCloseIntent\)/)
   assert.match(appSource, /window\.api\?\.dialog\?\.confirmUnsavedThemeDraftClose\(intent\)/)
   assert.match(appSource, /if \(action === 'continue'\) return false/)

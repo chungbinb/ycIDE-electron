@@ -44,6 +44,7 @@ type ThemeMenuState = {
 
 let recentOpenedItems: RecentOpenedItem[] = []
 let themeMenuState: ThemeMenuState = { themes: [], currentTheme: '' }
+const closeBypassWindowIds = new Set<number>()
 
 app.setName(APP_DISPLAY_NAME)
 
@@ -320,6 +321,15 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  mainWindow.on('close', (event) => {
+    if (closeBypassWindowIds.has(mainWindow.id)) {
+      closeBypassWindowIds.delete(mainWindow.id)
+      return
+    }
+    event.preventDefault()
+    mainWindow.webContents.send('app:requestClose')
+  })
+
   // 外部链接在系统浏览器打开
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
@@ -537,7 +547,14 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.on('window:close', (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.close()
+    const win = BrowserWindow.fromWebContents(event.sender)
+    win?.webContents.send('app:requestClose')
+  })
+  ipcMain.on('window:forceClose', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return
+    closeBypassWindowIds.add(win.id)
+    win.close()
   })
 
   ipcMain.handle('dialog:confirmSaveBeforeClose', async (event, fileLabel: string) => {
@@ -556,6 +573,27 @@ app.whenReady().then(() => {
     if (result.response === 0) return 'save'
     if (result.response === 1) return 'discard'
     return 'cancel'
+  })
+
+  ipcMain.handle('dialog:confirmUnsavedThemeDraftClose', async (event, intent: 'close-button' | 'overlay' | 'escape' | 'app-exit') => {
+    const win = BrowserWindow.fromWebContents(event.sender) || BrowserWindow.getFocusedWindow()
+    if (!win) return 'continue'
+    const detail = intent === 'app-exit'
+      ? '当前存在未保存的主题草稿。退出应用前请选择处理方式。'
+      : '当前存在未保存的主题草稿。关闭设置前请选择处理方式。'
+    const result = await dialog.showMessageBox(win, {
+      type: 'question',
+      title: '未保存主题草稿',
+      message: '主题改动尚未保存。',
+      detail,
+      buttons: ['保存为自定义主题', '放弃改动', '继续编辑'],
+      defaultId: 2,
+      cancelId: 2,
+      noLink: true,
+    })
+    if (result.response === 0) return 'save'
+    if (result.response === 1) return 'discard'
+    return 'continue'
   })
 
   // 项目管理 IPC

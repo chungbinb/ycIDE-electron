@@ -22,7 +22,8 @@ const api = {
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),
-    close: () => ipcRenderer.send('window:close')
+    close: () => ipcRenderer.send('window:close'),
+    forceClose: () => ipcRenderer.send('window:forceClose')
   },
   // 文件操作
   file: {
@@ -135,6 +136,8 @@ const api = {
   dialog: {
     confirmSaveBeforeClose: (fileLabel: string) =>
       ipcRenderer.invoke('dialog:confirmSaveBeforeClose', fileLabel) as Promise<'save' | 'discard' | 'cancel'>,
+    confirmUnsavedThemeDraftClose: (intent: 'close-button' | 'overlay' | 'escape' | 'app-exit') =>
+      ipcRenderer.invoke('dialog:confirmUnsavedThemeDraftClose', intent) as Promise<'save' | 'discard' | 'continue'>,
   },
   // 诊断日志
   debug: {
