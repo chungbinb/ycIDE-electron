@@ -72,9 +72,12 @@ test.describe('theme baseline validation', () => {
       await expect(relaunched.window.getByRole('status')).toContainText('已回退到默认深色主题')
 
       const current = await relaunched.window.evaluate(async () => window.api.theme.getCurrent())
-      expect(current.selectedThemeId).toBe(THEME_IDS.invalid)
+      expect(current.selectedThemeId).toBe(THEME_IDS.dark)
       expect(current.effectiveThemeId).toBe(THEME_IDS.dark)
-      expect(current.warning?.code).toBe('repair_required')
+
+      const fallbackConfig = JSON.parse(fs.readFileSync(getThemeConfigPath(userDataPath), 'utf-8'))
+      expect(fallbackConfig.currentThemeId).toBe(THEME_IDS.dark)
+      expect(fallbackConfig.retainedInvalidTheme?.themeId).toBe(THEME_IDS.invalid)
 
       await chooseThemeFromSettings(relaunched.window, THEME_IDS.light)
       const repaired = await relaunched.window.evaluate(async () => window.api.theme.getCurrent())
