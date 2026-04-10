@@ -14,7 +14,7 @@ import type { SelectionTarget, AlignAction, DesignForm, DesignControl } from './
 import { parseLines } from './components/Editor/eycBlocks'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
 import { createDefaultThemeTokenPayload, resolveThemeTokenPayload, type ThemeTokenPayload } from '../../shared/theme'
-import { THEME_TOKEN_GROUPS, type ThemeTokenGroupId } from '../../shared/theme-tokens'
+import { THEME_TOKEN_GROUPS, type FlowLineMode, type FlowLineMultiConfig, type ThemeTokenGroupId } from '../../shared/theme-tokens'
 import './App.css'
 
 type ProjectSessionState = {
@@ -922,6 +922,58 @@ function App(): React.JSX.Element {
     setThemeFlowLine(payload.flowLine)
     void persistCurrentThemePayload(currentTheme, payload)
   }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+
+  const handleThemeFlowLineModeChange = useCallback((mode: FlowLineMode) => {
+    if (!currentTheme) return
+    const currentMainColor = themeFlowLine.mode === 'multi'
+      ? themeFlowLine.multi.mainColor
+      : themeFlowLine.single.mainColor
+    const nextFlowLine = mode === 'multi'
+      ? { ...themeFlowLine, mode, multi: { ...themeFlowLine.multi, mainColor: currentMainColor } }
+      : { ...themeFlowLine, mode, single: { ...themeFlowLine.single, mainColor: currentMainColor } }
+    const nextTokenValues = { ...themeTokenValues }
+    for (const tokenKey of FLOW_LINE_TOKEN_KEYS) {
+      nextTokenValues[tokenKey] = currentMainColor
+    }
+    applyThemeTokenValuesToRoot(nextTokenValues)
+    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine }, nextTokenValues)
+    applyFlowLineConfigToRoot(payload.flowLine)
+    setThemeTokenValues(payload.tokenValues)
+    setThemeFlowLine(payload.flowLine)
+    void persistCurrentThemePayload(currentTheme, payload)
+  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+
+  const handleThemeFlowLineMainColorChange = useCallback((value: string) => {
+    if (!currentTheme) return
+    const nextFlowLine = themeFlowLine.mode === 'multi'
+      ? { ...themeFlowLine, multi: { ...themeFlowLine.multi, mainColor: value } }
+      : { ...themeFlowLine, single: { ...themeFlowLine.single, mainColor: value } }
+    const nextTokenValues = { ...themeTokenValues }
+    for (const tokenKey of FLOW_LINE_TOKEN_KEYS) {
+      nextTokenValues[tokenKey] = value
+    }
+    applyThemeTokenValuesToRoot(nextTokenValues)
+    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine }, nextTokenValues)
+    applyFlowLineConfigToRoot(payload.flowLine)
+    setThemeTokenValues(payload.tokenValues)
+    setThemeFlowLine(payload.flowLine)
+    void persistCurrentThemePayload(currentTheme, payload)
+  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+
+  const handleThemeFlowLineDepthStepChange = useCallback((key: keyof FlowLineMultiConfig, value: number) => {
+    if (!currentTheme || !Number.isFinite(value)) return
+    const nextFlowLine = {
+      ...themeFlowLine,
+      multi: {
+        ...themeFlowLine.multi,
+        [key]: value,
+      },
+    }
+    const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: nextFlowLine }, themeTokenValues)
+    applyFlowLineConfigToRoot(payload.flowLine)
+    setThemeFlowLine(payload.flowLine)
+    void persistCurrentThemePayload(currentTheme, payload)
+  }, [applyFlowLineConfigToRoot, currentTheme, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
 
   const handleThemeTokenResetItem = useCallback(async (_groupId: ThemeTokenGroupId, tokenKey: string) => {
     if (!currentTheme) return
@@ -2197,6 +2249,10 @@ function App(): React.JSX.Element {
         onSelectTheme={(themeId) => { void applyTheme(themeId) }}
         tokenValues={themeTokenValues}
         onTokenChange={handleThemeTokenChange}
+        flowLineConfig={themeFlowLine}
+        onFlowLineModeChange={handleThemeFlowLineModeChange}
+        onFlowLineMainColorChange={handleThemeFlowLineMainColorChange}
+        onFlowLineDepthStepChange={handleThemeFlowLineDepthStepChange}
         onResetToken={handleThemeTokenResetItem}
         onResetGroup={handleThemeTokenResetGroup}
         onResetAll={handleThemeTokenResetAll}

@@ -1,5 +1,12 @@
 import './ThemeSettingsDialog.css'
-import { THEME_TOKEN_GROUPS, type ThemeTokenGroupId } from '../../../../shared/theme-tokens'
+import {
+  DEFAULT_FLOW_LINE_MODE_CONFIG,
+  THEME_TOKEN_GROUPS,
+  type FlowLineMode,
+  type FlowLineModeConfig,
+  type FlowLineMultiConfig,
+  type ThemeTokenGroupId
+} from '../../../../shared/theme-tokens'
 
 const SYNTAX_EXTRA_LABELS = ['预定义', '常量', '标识符', '分隔符']
 
@@ -12,6 +19,10 @@ interface ThemeSettingsDialogProps {
   repairMessage?: string | null
   tokenValues?: Record<string, string>
   onTokenChange?: (tokenKey: string, value: string) => void
+  flowLineConfig?: FlowLineModeConfig
+  onFlowLineModeChange?: (mode: FlowLineMode) => void
+  onFlowLineMainColorChange?: (value: string) => void
+  onFlowLineDepthStepChange?: (key: keyof FlowLineMultiConfig, value: number) => void
   onResetToken?: (groupId: ThemeTokenGroupId, tokenKey: string) => void
   onResetGroup?: (groupId: ThemeTokenGroupId) => void
   onResetAll?: () => void
@@ -26,11 +37,18 @@ function ThemeSettingsDialog({
   repairMessage = null,
   tokenValues = {},
   onTokenChange,
+  flowLineConfig = DEFAULT_FLOW_LINE_MODE_CONFIG,
+  onFlowLineModeChange,
+  onFlowLineMainColorChange,
+  onFlowLineDepthStepChange,
   onResetToken,
   onResetGroup,
   onResetAll,
 }: ThemeSettingsDialogProps): React.JSX.Element | null {
   if (!open) return null
+  const activeFlowLineMainColor = flowLineConfig.mode === 'multi'
+    ? flowLineConfig.multi.mainColor
+    : flowLineConfig.single.mainColor
 
   return (
     <div className="theme-settings-overlay" onMouseDown={onClose}>
@@ -71,6 +89,69 @@ function ThemeSettingsDialog({
                 {group.id === 'syntax' && (
                   <div className="theme-settings-syntax-hint">
                     关键字 · 注释 · 字符串 · 类型 · {SYNTAX_EXTRA_LABELS.join(' · ')} · 运算符
+                  </div>
+                )}
+                {group.id === 'flow-line' && (
+                  <div className="theme-settings-flow-line-controls">
+                    <div className="theme-settings-flow-line-mode" role="radiogroup" aria-label="流程线模式">
+                      <button
+                        type="button"
+                        className={`theme-settings-flow-mode-btn flow-line-mode-single ${flowLineConfig.mode === 'single' ? 'active' : ''}`}
+                        role="radio"
+                        aria-checked={flowLineConfig.mode === 'single'}
+                        onClick={() => onFlowLineModeChange?.('single')}
+                      >
+                        单色模式
+                      </button>
+                      <button
+                        type="button"
+                        className={`theme-settings-flow-mode-btn flow-line-mode-multi ${flowLineConfig.mode === 'multi' ? 'active' : ''}`}
+                        role="radio"
+                        aria-checked={flowLineConfig.mode === 'multi'}
+                        onClick={() => onFlowLineModeChange?.('multi')}
+                      >
+                        多色模式
+                      </button>
+                    </div>
+                    <label className="theme-settings-flow-line-main">
+                      <span className="theme-settings-token-label">当前主色</span>
+                      <input
+                        type="color"
+                        className="theme-settings-color-input"
+                        value={activeFlowLineMainColor}
+                        aria-label="流程线-当前主色"
+                        onChange={(event) => onFlowLineMainColorChange?.(event.target.value)}
+                      />
+                    </label>
+                    <div className="theme-settings-flow-line-depth">
+                      <label>
+                        色相步进
+                        <input
+                          type="number"
+                          value={flowLineConfig.multi.depthHueStep}
+                          onChange={(event) => onFlowLineDepthStepChange?.('depthHueStep', Number(event.target.value))}
+                          disabled={flowLineConfig.mode !== 'multi'}
+                        />
+                      </label>
+                      <label>
+                        饱和度步进
+                        <input
+                          type="number"
+                          value={flowLineConfig.multi.depthSaturationStep}
+                          onChange={(event) => onFlowLineDepthStepChange?.('depthSaturationStep', Number(event.target.value))}
+                          disabled={flowLineConfig.mode !== 'multi'}
+                        />
+                      </label>
+                      <label>
+                        亮度步进
+                        <input
+                          type="number"
+                          value={flowLineConfig.multi.depthLightnessStep}
+                          onChange={(event) => onFlowLineDepthStepChange?.('depthLightnessStep', Number(event.target.value))}
+                          disabled={flowLineConfig.mode !== 'multi'}
+                        />
+                      </label>
+                    </div>
                   </div>
                 )}
                 <div className="theme-settings-token-list">
