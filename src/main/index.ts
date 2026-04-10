@@ -5,11 +5,14 @@ import { libraryManager } from './libraryManager'
 import { compileProject, runExecutable, stopExecutable, isRunning, continueDebugExecutable } from './compiler'
 import { normalizeRuntimePlatform } from '../shared/platform'
 import { getActionAccelerator } from '../shared/shortcut-config'
+import { BUILTIN_DARK_THEME_ID, readThemeConfigV2 } from '../shared/theme'
 import { scanYcmdRegistry } from './ycmd-registry'
 
 const isDev = !app.isPackaged
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
 const APP_DISPLAY_NAME = 'ycIDE'
+void BUILTIN_DARK_THEME_ID
+void readThemeConfigV2
 
 type RecentOpenedItem = {
   type: 'project' | 'file'
