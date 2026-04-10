@@ -854,6 +854,17 @@ function App(): React.JSX.Element {
     }
   }, [])
 
+  const applyFlowLineConfigToRoot = useCallback((flowLine: ThemeTokenPayload['flowLine']) => {
+    const root = document.documentElement
+    const mode = flowLine.mode === 'multi' ? 'multi' : 'single'
+    const activeMainColor = mode === 'multi' ? flowLine.multi.mainColor : flowLine.single.mainColor
+    root.style.setProperty('--flow-line-mode', mode)
+    root.style.setProperty('--flow-line-main', activeMainColor)
+    root.style.setProperty('--flow-line-depth-hue-step', String(flowLine.multi.depthHueStep))
+    root.style.setProperty('--flow-line-depth-saturation-step', String(flowLine.multi.depthSaturationStep))
+    root.style.setProperty('--flow-line-depth-lightness-step', String(flowLine.multi.depthLightnessStep))
+  }, [])
+
   // 加载主题列表和当前主题
   const applyTheme = useCallback(async (name: string, persist = true, incomingPayload?: ThemeTokenPayload | null) => {
     const theme = await window.api?.theme?.load(name)
@@ -886,6 +897,7 @@ function App(): React.JSX.Element {
       }
     }
     applyThemeTokenValuesToRoot(payload.tokenValues)
+    applyFlowLineConfigToRoot(payload.flowLine)
     setThemeTokenValues(payload.tokenValues)
     setThemeFlowLine(payload.flowLine)
     setCurrentTheme(name)
@@ -898,17 +910,18 @@ function App(): React.JSX.Element {
       await persistCurrentThemePayload(name, payload)
     }
     if (themeRepairMessage) setThemeRepairMessage(null)
-  }, [applyThemeTokenValuesToRoot, persistCurrentThemePayload, pushThemeNotice, themeRepairMessage])
+  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, persistCurrentThemePayload, pushThemeNotice, themeRepairMessage])
 
   const handleThemeTokenChange = useCallback((tokenKey: string, value: string) => {
     if (!currentTheme) return
     const nextTokenValues = { ...themeTokenValues, [tokenKey]: value }
     const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine }, nextTokenValues)
     applyThemeTokenValuesToRoot({ [tokenKey]: value })
+    applyFlowLineConfigToRoot(payload.flowLine)
     setThemeTokenValues(payload.tokenValues)
     setThemeFlowLine(payload.flowLine)
     void persistCurrentThemePayload(currentTheme, payload)
-  }, [applyThemeTokenValuesToRoot, currentTheme, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
 
   const handleThemeTokenResetItem = useCallback(async (_groupId: ThemeTokenGroupId, tokenKey: string) => {
     if (!currentTheme) return
@@ -917,10 +930,11 @@ function App(): React.JSX.Element {
     const nextTokenValues = { ...themeTokenValues, [tokenKey]: resetValue }
     const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine }, nextTokenValues)
     applyThemeTokenValuesToRoot({ [tokenKey]: resetValue })
+    applyFlowLineConfigToRoot(payload.flowLine)
     setThemeTokenValues(payload.tokenValues)
     setThemeFlowLine(payload.flowLine)
     await persistCurrentThemePayload(currentTheme, payload)
-  }, [applyThemeTokenValuesToRoot, currentTheme, getDefaultThemePayload, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, getDefaultThemePayload, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
 
   const handleThemeTokenResetGroup = useCallback(async (groupId: ThemeTokenGroupId) => {
     if (!currentTheme) return
@@ -952,20 +966,22 @@ function App(): React.JSX.Element {
 
     applyThemeTokenValuesToRoot(nextTokenValues)
     const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine }, nextTokenValues)
+    applyFlowLineConfigToRoot(payload.flowLine)
     setThemeTokenValues(payload.tokenValues)
     setThemeFlowLine(payload.flowLine)
     await persistCurrentThemePayload(currentTheme, payload)
-  }, [applyThemeTokenValuesToRoot, currentTheme, getDefaultThemePayload, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
+  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, getDefaultThemePayload, persistCurrentThemePayload, themeFlowLine, themeTokenValues])
 
   const handleThemeTokenResetAll = useCallback(async () => {
     if (!currentTheme) return
     if (!window.confirm('确定恢复全部主题令牌默认值吗?')) return
     const defaults = await getDefaultThemePayload(currentTheme)
     applyThemeTokenValuesToRoot(defaults.tokenValues)
+    applyFlowLineConfigToRoot(defaults.flowLine)
     setThemeTokenValues(defaults.tokenValues)
     setThemeFlowLine(defaults.flowLine)
     await persistCurrentThemePayload(currentTheme, defaults)
-  }, [applyThemeTokenValuesToRoot, currentTheme, getDefaultThemePayload, persistCurrentThemePayload])
+  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, getDefaultThemePayload, persistCurrentThemePayload])
 
   useEffect(() => {
     (async () => {
