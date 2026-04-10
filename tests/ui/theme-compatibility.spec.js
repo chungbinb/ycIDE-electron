@@ -8,6 +8,7 @@ const {
   createCustomTheme,
   ensureThemeSelected,
   runThemeTransitionScenario,
+  assertJitterFailurePolicy,
 } = require('./helpers/theme-compatibility-fixtures')
 
 const BUILTIN_DARK = '默认深色'
@@ -65,6 +66,7 @@ test.describe('theme compatibility', () => {
           markerSeed: `jitter-${scenario.source}-to-${scenario.target}`,
         })
         reports.push(report)
+        assertJitterFailurePolicy(report, 0.5)
       }
       expect(reports).toHaveLength(3)
       for (const report of reports) {

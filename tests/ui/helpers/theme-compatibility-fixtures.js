@@ -248,6 +248,29 @@ async function runThemeTransitionScenario(window, { scenarioPath, targetThemeId,
   return await stopJitterSampling(window)
 }
 
+function assertJitterFailurePolicy(report, threshold = 0.5) {
+  if (!report) {
+    throw new Error('QUAL-01 jitter failure: missing jitter sampling report')
+  }
+  const violations = []
+  for (const [selector, delta] of Object.entries(report.maxDelta || {})) {
+    for (const axis of ['x', 'y', 'width', 'height']) {
+      const value = Number(delta?.[axis] || 0)
+      if (value > threshold) {
+        violations.push({ selector, axis, value })
+      }
+    }
+  }
+  if (violations.length > 0) {
+    throw new Error(`QUAL-01 jitter failure at ${report.scenarioPath}: ${JSON.stringify({
+      threshold,
+      sampleCount: report.sampleCount,
+      violations,
+      maxDelta: report.maxDelta,
+    })}`)
+  }
+}
+
 module.exports = {
   getAppRoot,
   launchApp,
@@ -259,4 +282,5 @@ module.exports = {
   ensureThemeSelected,
   chooseThemeFromTitlebar,
   runThemeTransitionScenario,
+  assertJitterFailurePolicy,
 }
