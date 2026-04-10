@@ -103,6 +103,56 @@ export interface ThemeResolutionResult {
   warning: ThemeResolutionWarning | null
 }
 
+export const THEME_PORTABILITY_SCHEMA_VERSION = 1 as const
+
+export interface ThemePortabilityExportDto {
+  schemaVersion: typeof THEME_PORTABILITY_SCHEMA_VERSION
+  theme: ThemeDefinition
+}
+
+export type ThemeImportValidationDiagnosticCode =
+  | 'required'
+  | 'invalid_type'
+  | 'invalid_value'
+  | 'unsupported_schema_version'
+
+export interface ThemeImportValidationDiagnostic {
+  path: string
+  code: ThemeImportValidationDiagnosticCode
+  message: string
+}
+
+export type ThemeImportValidationResult =
+  | {
+    success: true
+    value: ThemePortabilityExportDto
+  }
+  | {
+    success: false
+    diagnostics: ThemeImportValidationDiagnostic[]
+  }
+
+export type ThemeImportConflictDecision =
+  | {
+    decision: 'rename-import'
+    newThemeName: ThemeId
+  }
+  | {
+    decision: 'overwrite'
+    overwriteThemeId: ThemeId
+    overwriteConfirmed: true
+  }
+
+export type ThemeImportConflictDecisionValidationResult =
+  | {
+    success: true
+    value: ThemeImportConflictDecision
+  }
+  | {
+    success: false
+    diagnostics: ThemeImportValidationDiagnostic[]
+  }
+
 const TOKEN_KEYS = THEME_TOKEN_GROUPS.flatMap(group => group.items.map(item => item.tokenKey))
 
 const DEFAULT_THEME_TOKEN_VALUES: Record<string, string> = {
@@ -245,5 +295,176 @@ export function validateCustomThemeName(rawName: string): CustomThemeNameValidat
     normalizedName,
     code: null,
     message: null,
+  }
+}
+
+export function validateThemePortabilityImportPayload(payload: unknown): ThemeImportValidationResult {
+  const diagnostics: ThemeImportValidationDiagnostic[] = []
+  const data = payload && typeof payload === 'object'
+    ? payload as Record<string, unknown>
+    : null
+
+  if (!data) {
+    diagnostics.push({
+      path: '$',
+      code: 'invalid_type',
+      message: '导入内容必须是 JSON 对象。',
+    })
+    return { success: false, diagnostics }
+  }
+
+  if (typeof data.schemaVersion !== 'number') {
+    diagnostics.push({
+      path: 'schemaVersion',
+      code: 'invalid_type',
+      message: 'schemaVersion 必须是数字。',
+    })
+  } else if (data.schemaVersion !== THEME_PORTABILITY_SCHEMA_VERSION) {
+    diagnostics.push({
+      path: 'schemaVersion',
+      code: 'unsupported_schema_version',
+      message: `仅支持 schemaVersion=${THEME_PORTABILITY_SCHEMA_VERSION}。`,
+    })
+  }
+
+  const theme = data.theme && typeof data.theme === 'object'
+    ? data.theme as Record<string, unknown>
+    : null
+  if (!theme) {
+    diagnostics.push({
+      path: 'theme',
+      code: 'required',
+      message: '缺少 theme 对象。',
+    })
+  }
+
+  const themeName = typeof theme?.name === 'string' ? theme.name.trim() : ''
+  if (!themeName) {
+    diagnostics.push({
+      path: 'theme.name',
+      code: 'required',
+      message: 'theme.name 不能为空。',
+    })
+  }
+
+  const colors = theme?.colors && typeof theme.colors === 'object'
+    ? theme.colors as Record<string, unknown>
+    : null
+  if (!colors) {
+    diagnostics.push({
+      path: 'theme.colors',
+      code: 'required',
+      message: 'theme.colors 必须是对象。',
+    })
+  } else {
+    for (const [key, value] of Object.entries(colors)) {
+      if (typeof value !== 'string') {
+        diagnostics.push({
+          path: `theme.colors.${key}`,
+          code: 'invalid_type',
+          message: '主题颜色值必须是字符串。',
+        })
+      }
+    }
+  }
+
+  if (diagnostics.length > 0) {
+    return { success: false, diagnostics }
+  }
+
+  return {
+    success: true,
+    value: {
+      schemaVersion: THEME_PORTABILITY_SCHEMA_VERSION,
+      theme: {
+        name: themeName,
+        colors: colors as Record<string, string>,
+      },
+    },
+  }
+}
+
+export function validateThemeImportConflictDecision(value: unknown): ThemeImportConflictDecisionValidationResult {
+  const diagnostics: ThemeImportValidationDiagnostic[] = []
+  const decision = value && typeof value === 'object'
+    ? value as Record<string, unknown>
+    : null
+
+  if (!decision) {
+    return {
+      success: false,
+      diagnostics: [{
+        path: 'decision',
+        code: 'required',
+        message: '必须提供冲突处理决策。',
+      }],
+    }
+  }
+
+  if (decision.decision === 'rename-import') {
+    if (typeof decision.newThemeName !== 'string' || !decision.newThemeName.trim()) {
+      diagnostics.push({
+        path: 'newThemeName',
+        code: 'required',
+        message: 'rename-import 需要提供 newThemeName。',
+      })
+    }
+    if ('overwriteThemeId' in decision || 'overwriteConfirmed' in decision) {
+      diagnostics.push({
+        path: 'decision',
+        code: 'invalid_value',
+        message: 'rename-import 分支不能携带 overwrite 字段。',
+      })
+    }
+    if (diagnostics.length > 0) return { success: false, diagnostics }
+    return {
+      success: true,
+      value: {
+        decision: 'rename-import',
+        newThemeName: decision.newThemeName.trim(),
+      },
+    }
+  }
+
+  if (decision.decision === 'overwrite') {
+    if (typeof decision.overwriteThemeId !== 'string' || !decision.overwriteThemeId.trim()) {
+      diagnostics.push({
+        path: 'overwriteThemeId',
+        code: 'required',
+        message: 'overwrite 需要提供 overwriteThemeId。',
+      })
+    }
+    if (decision.overwriteConfirmed !== true) {
+      diagnostics.push({
+        path: 'overwriteConfirmed',
+        code: 'invalid_value',
+        message: 'overwrite 需要 overwriteConfirmed=true。',
+      })
+    }
+    if ('newThemeName' in decision) {
+      diagnostics.push({
+        path: 'decision',
+        code: 'invalid_value',
+        message: 'overwrite 分支不能携带 newThemeName。',
+      })
+    }
+    if (diagnostics.length > 0) return { success: false, diagnostics }
+    return {
+      success: true,
+      value: {
+        decision: 'overwrite',
+        overwriteThemeId: decision.overwriteThemeId.trim(),
+        overwriteConfirmed: true,
+      },
+    }
+  }
+
+  return {
+    success: false,
+    diagnostics: [{
+      path: 'decision',
+      code: 'invalid_value',
+      message: '冲突决策仅支持 rename-import 或 overwrite。',
+    }],
   }
 }
