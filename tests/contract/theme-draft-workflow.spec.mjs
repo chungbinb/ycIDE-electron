@@ -42,8 +42,22 @@ test('closing settings always resets draft session and does not recover old draf
   const appSource = fs.readFileSync(appPath, 'utf-8')
   const dialogSource = fs.readFileSync(dialogPath, 'utf-8')
   assert.match(appSource, /const handleThemeSettingsClose = useCallback\(\(\) => \{\s*setThemeDraftSession\(null\)\s*(setThemeSaveFeedback\(null\)\s*)?setShowThemeSettings\(false\)/)
-  assert.match(appSource, /onClose=\{handleThemeSettingsClose\}/)
-  assert.match(dialogSource, /onMouseDown=\{onClose\}/)
+  assert.match(appSource, /onClose=\{\(intent\) => \{ void handleThemeDraftCloseIntent\(intent\) \}\}/)
+  assert.match(dialogSource, /onMouseDown=\{\(\) => onClose\('overlay'\)\}/)
+})
+
+test('settings close intents share one unsaved-draft decision flow with continue-editing default', () => {
+  const appSource = fs.readFileSync(appPath, 'utf-8')
+  const dialogSource = fs.readFileSync(dialogPath, 'utf-8')
+  assert.match(appSource, /type ThemeDraftCloseIntent = 'close-button' \| 'overlay' \| 'escape'/)
+  assert.match(appSource, /const handleThemeDraftCloseIntent = useCallback\(async \(intent: ThemeDraftCloseIntent\)/)
+  assert.match(appSource, /window\.api\?\.dialog\?\.confirmUnsavedThemeDraftClose\(intent\)/)
+  assert.match(appSource, /if \(action === 'continue'\) return false/)
+  assert.match(appSource, /if \(action === 'discard'\)/)
+  assert.match(dialogSource, /onClose:\s*\(intent: 'close-button' \| 'overlay' \| 'escape'\) => void/)
+  assert.match(dialogSource, /onMouseDown=\{\(\) => onClose\('overlay'\)\}/)
+  assert.match(dialogSource, /onClick=\{\(\) => onClose\('close-button'\)\}/)
+  assert.match(dialogSource, /if \(event\.key === 'Escape'\) onClose\('escape'\)/)
 })
 
 test('App defines undo history and baseline restore handlers for draft session', () => {

@@ -41,6 +41,9 @@ type DebugBreakAccumulator = {
   variables: DebugPauseState['variables']
 }
 
+type ThemeDraftCloseIntent = 'close-button' | 'overlay' | 'escape'
+type ThemeDraftCloseDecision = 'save' | 'discard' | 'continue'
+
 const RECENT_OPENED_KEY = 'ycide.recentOpened.v1'
 const MAX_RECENT_OPENED = 10
 const REQUIRED_THEME_COLOR_KEYS = [
@@ -1143,6 +1146,21 @@ function App(): React.JSX.Element {
     setThemeSaveFeedback(null)
     setShowThemeSettings(false)
   }, [])
+
+  const handleThemeDraftCloseIntent = useCallback(async (intent: ThemeDraftCloseIntent): Promise<boolean> => {
+    if (!themeDraftSession?.dirty) {
+      handleThemeSettingsClose()
+      return true
+    }
+    const action = await window.api?.dialog?.confirmUnsavedThemeDraftClose(intent) as ThemeDraftCloseDecision | undefined
+    if (action === 'continue') return false
+    if (action === 'discard') {
+      handleThemeSettingsClose()
+      return true
+    }
+    setThemeSaveFeedback('请先输入自定义主题名称，再点击“保存为自定义主题”。')
+    return false
+  }, [handleThemeSettingsClose, themeDraftSession])
 
   useEffect(() => {
     (async () => {
@@ -2354,7 +2372,7 @@ function App(): React.JSX.Element {
       <NewProjectDialog open={showNewProject} onClose={() => setShowNewProject(false)} onConfirm={handleNewProjectConfirm} />
       <ThemeSettingsDialog
         open={showThemeSettings}
-        onClose={handleThemeSettingsClose}
+        onClose={(intent) => { void handleThemeDraftCloseIntent(intent) }}
         themes={themeList}
         currentTheme={currentTheme}
         onSelectTheme={(themeId) => { void handleThemeSelect(themeId) }}

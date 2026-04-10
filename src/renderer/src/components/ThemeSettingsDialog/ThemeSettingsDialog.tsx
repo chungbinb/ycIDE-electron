@@ -13,7 +13,7 @@ const SYNTAX_EXTRA_LABELS = ['预定义', '常量', '标识符', '分隔符']
 
 interface ThemeSettingsDialogProps {
   open: boolean
-  onClose: () => void
+  onClose: (intent: 'close-button' | 'overlay' | 'escape') => void
   themes: string[]
   currentTheme: string
   onSelectTheme: (themeId: string) => void
@@ -71,6 +71,15 @@ function ThemeSettingsDialog({
     setLocalSaveFeedback(saveFeedback)
   }, [saveFeedback])
 
+  useEffect(() => {
+    if (!open) return
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose('escape')
+    }
+    window.addEventListener('keydown', handleKeydown)
+    return () => window.removeEventListener('keydown', handleKeydown)
+  }, [onClose, open])
+
   if (!open) return null
   const activeFlowLineMainColor = flowLineConfig.mode === 'multi'
     ? flowLineConfig.multi.mainColor
@@ -89,11 +98,11 @@ function ThemeSettingsDialog({
   }
 
   return (
-    <div className="theme-settings-overlay" onMouseDown={onClose}>
+    <div className="theme-settings-overlay" onMouseDown={() => onClose('overlay')}>
       <div className="theme-settings-dialog" onMouseDown={(e) => e.stopPropagation()}>
         <div className="theme-settings-header">
           <span className="theme-settings-title">系统配置</span>
-          <button className="theme-settings-close" onClick={onClose} aria-label="关闭">×</button>
+          <button className="theme-settings-close" onClick={() => onClose('close-button')} aria-label="关闭">×</button>
         </div>
         <div className="theme-settings-body">
           <div className="theme-settings-section-title">主题方案</div>
@@ -272,7 +281,7 @@ function ThemeSettingsDialog({
           >
             保存为自定义主题
           </button>
-          <button type="button" className="theme-settings-btn" onClick={onClose}>关闭</button>
+          <button type="button" className="theme-settings-btn" onClick={() => onClose('close-button')}>关闭</button>
         </div>
         {localSaveFeedback && (
           <div className="theme-settings-save-feedback" role="status">
