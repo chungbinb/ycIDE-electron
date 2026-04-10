@@ -9,6 +9,8 @@ import ts from 'typescript'
 const flowThemePath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/flowLineTheme.ts')
 const tableEditorTsxPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/EycTableEditor.tsx')
 const tableEditorCssPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/EycTableEditor.css')
+const themeSettingsDialogPath = path.resolve(process.cwd(), 'src/renderer/src/components/ThemeSettingsDialog/ThemeSettingsDialog.tsx')
+const appPath = path.resolve(process.cwd(), 'src/renderer/src/App.tsx')
 const runtimeRequire = createRequire(import.meta.url)
 
 function loadFlowLineThemeModule() {
@@ -115,4 +117,22 @@ test('debug transient overlays use theme tokens instead of hardcoded literals', 
   assert.match(css, /\.eyc-debug-hover-tooltip[\s\S]*var\(--table-border/)
   assert.match(css, /\.eyc-debug-line\s+\.eyc-code-line[\s\S]*var\(--table-row-hover-bg/)
   assert.match(css, /\.eyc-debug-line\s+\.eyc-gutter-linenum[\s\S]*var\(--table-header-text/)
+})
+
+test('flow-line settings controls are wired to App persistence handlers', () => {
+  const dialogSource = fs.readFileSync(themeSettingsDialogPath, 'utf-8')
+  const appSource = fs.readFileSync(appPath, 'utf-8')
+  assert.match(dialogSource, /onFlowLineModeChange/)
+  assert.match(dialogSource, /onFlowLineMainColorChange/)
+  assert.match(dialogSource, /onFlowLineDepthStepChange/)
+  assert.match(appSource, /handleThemeFlowLineModeChange/)
+  assert.match(appSource, /handleThemeFlowLineMainColorChange/)
+  assert.match(appSource, /handleThemeFlowLineDepthStepChange/)
+  assert.match(appSource, /persistCurrentThemePayload\(currentTheme, payload\)/)
+})
+
+test('autocomplete source badge avoids fixed keyword literal fallback', () => {
+  const css = fs.readFileSync(tableEditorCssPath, 'utf-8')
+  assert.match(css, /\.eyc-ac-source[\s\S]*var\(--syntax-keyword/)
+  assert.doesNotMatch(css, /\.eyc-ac-source[\s\S]*#569cd6/)
 })
