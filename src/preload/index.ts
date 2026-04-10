@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { normalizeRuntimePlatform } from '../shared/platform'
 import { THEME_CONFIG_VERSION } from '../shared/theme'
-import type { ThemeConfigV2, ThemeDefinition, ThemeId, ThemeResolutionResult } from '../shared/theme'
+import type { ThemeConfigV2, ThemeDefinition, ThemeId, ThemeResolutionResult, ThemeTokenPayload } from '../shared/theme'
 
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
 void THEME_CONFIG_VERSION
@@ -117,6 +117,8 @@ const api = {
     getList: () => ipcRenderer.invoke('theme:getList') as Promise<ThemeId[]>,
     load: (name: ThemeId) => ipcRenderer.invoke('theme:load', name) as Promise<ThemeDefinition | null>,
     getCurrent: () => ipcRenderer.invoke('theme:getCurrent') as Promise<ThemeResolutionResult>,
+    saveCurrent: (name: ThemeId, themePayload?: ThemeTokenPayload) =>
+      ipcRenderer.invoke('theme:saveCurrent', name, themePayload) as Promise<ThemeConfigV2>,
     setCurrent: (name: ThemeId) => ipcRenderer.invoke('theme:setCurrent', name) as Promise<ThemeConfigV2>,
   },
   // 对话框

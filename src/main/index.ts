@@ -8,16 +8,20 @@ import { getActionAccelerator } from '../shared/shortcut-config'
 import {
   BUILTIN_DARK_THEME_ID,
   THEME_CONFIG_VERSION,
+  createDefaultThemeTokenPayload,
   createDefaultThemeConfig,
   isThemeConfigV1,
   isThemeConfigV2,
+  resolveThemeTokenPayload,
   type ThemeConfigErrorCode,
   type ThemeConfigV2,
   type ThemeDefinition,
   type ThemeId,
+  type ThemeTokenPayload,
   type ThemeResolutionResult,
   type ThemeResolutionWarningCode
 } from '../shared/theme'
+import { THEME_TOKEN_GROUPS } from '../shared/theme-tokens'
 import { scanYcmdRegistry } from './ycmd-registry'
 
 const isDev = !app.isPackaged
@@ -89,10 +93,37 @@ function loadThemeDefinition(themeId: ThemeId): ThemeDefinition | null {
   }
 }
 
+function getThemeTokenDefaults(themeId: ThemeId): Record<string, string> {
+  const theme = loadThemeDefinition(themeId)
+  const defaults: Record<string, string> = {}
+  if (!theme) return defaults
+  for (const item of THEME_TOKEN_GROUPS.flatMap(group => group.items)) {
+    const value = theme.colors[item.tokenKey]
+    if (typeof value === 'string') {
+      defaults[item.tokenKey] = value
+    }
+  }
+  return defaults
+}
+
+function normalizeThemePayload(themeId: ThemeId, payload?: ThemeTokenPayload): ThemeTokenPayload {
+  return payload
+    ? resolveThemeTokenPayload(payload, getThemeTokenDefaults(themeId))
+    : createDefaultThemeTokenPayload(getThemeTokenDefaults(themeId))
+}
+
 function writeThemeConfig(config: ThemeConfigV2): void {
+  const normalizedPayloads: Record<ThemeId, ThemeTokenPayload> = {}
+  for (const [themeId, payload] of Object.entries(config.themePayloads || {})) {
+    normalizedPayloads[themeId] = normalizeThemePayload(themeId, payload)
+  }
+  if (!normalizedPayloads[config.currentThemeId]) {
+    normalizedPayloads[config.currentThemeId] = normalizeThemePayload(config.currentThemeId)
+  }
   const payload: ThemeConfigV2 = {
     version: THEME_CONFIG_VERSION,
     currentThemeId: config.currentThemeId,
+    themePayloads: normalizedPayloads,
     lastError: config.lastError,
     retainedInvalidTheme: config.retainedInvalidTheme,
   }
@@ -107,29 +138,64 @@ function buildError(code: ThemeConfigErrorCode, message?: string) {
   return { code, message, detectedAt: new Date().toISOString() }
 }
 
+function readThemeConfigForWrite(): ThemeConfigV2 {
+  const themeConfigPath = getThemeConfigPath()
+  if (!existsSync(themeConfigPath)) {
+    return createDefaultThemeConfig(BUILTIN_DARK_THEME_ID, normalizeThemePayload(BUILTIN_DARK_THEME_ID))
+  }
+
+  try {
+    const rawConfig = JSON.parse(readFileSync(themeConfigPath, 'utf-8'))
+    if (isThemeConfigV2(rawConfig)) {
+      const themePayloads: Record<ThemeId, ThemeTokenPayload> = {}
+      for (const [themeId, payload] of Object.entries(rawConfig.themePayloads || {})) {
+        themePayloads[themeId] = normalizeThemePayload(themeId, payload as ThemeTokenPayload)
+      }
+      return {
+        version: THEME_CONFIG_VERSION,
+        currentThemeId: rawConfig.currentThemeId,
+        themePayloads,
+        lastError: rawConfig.lastError || null,
+        retainedInvalidTheme: rawConfig.retainedInvalidTheme || null,
+      }
+    }
+
+    if (isThemeConfigV1(rawConfig)) {
+      const themeId = rawConfig.currentTheme || BUILTIN_DARK_THEME_ID
+      return createDefaultThemeConfig(themeId, normalizeThemePayload(themeId))
+    }
+  } catch {
+    // fall through to default
+  }
+
+  return createDefaultThemeConfig(BUILTIN_DARK_THEME_ID, normalizeThemePayload(BUILTIN_DARK_THEME_ID))
+}
+
 function resolveThemeConfig(): ThemeResolutionResult {
   const themeConfigPath = getThemeConfigPath()
   const availableThemeIds = listThemeIds()
   const hasTheme = (themeId: ThemeId) => availableThemeIds.includes(themeId) && !!loadThemeDefinition(themeId)
 
   const fallback = (warningCode: ThemeResolutionWarningCode, warningMessage: string, selectedThemeId: ThemeId, errorCode: ThemeConfigErrorCode, errorMessage?: string, retainedInvalidTheme?: ThemeConfigV2['retainedInvalidTheme']) => {
-    const config = createDefaultThemeConfig(BUILTIN_DARK_THEME_ID)
+    const config = createDefaultThemeConfig(BUILTIN_DARK_THEME_ID, normalizeThemePayload(BUILTIN_DARK_THEME_ID))
     config.lastError = buildError(errorCode, errorMessage || warningMessage)
     config.retainedInvalidTheme = retainedInvalidTheme || null
     writeThemeConfig(config)
     return {
       selectedThemeId,
       effectiveThemeId: BUILTIN_DARK_THEME_ID,
+      themePayload: config.themePayloads[BUILTIN_DARK_THEME_ID],
       warning: createThemeWarning(warningCode, warningMessage),
     }
   }
 
   if (!existsSync(themeConfigPath)) {
-    const config = createDefaultThemeConfig(BUILTIN_DARK_THEME_ID)
+    const config = createDefaultThemeConfig(BUILTIN_DARK_THEME_ID, normalizeThemePayload(BUILTIN_DARK_THEME_ID))
     writeThemeConfig(config)
     return {
       selectedThemeId: BUILTIN_DARK_THEME_ID,
       effectiveThemeId: BUILTIN_DARK_THEME_ID,
+      themePayload: config.themePayloads[BUILTIN_DARK_THEME_ID],
       warning: createThemeWarning('config_missing', '主题配置不存在，已回退到默认深色主题。'),
     }
   }
@@ -146,18 +212,24 @@ function resolveThemeConfig(): ThemeResolutionResult {
     )
   }
 
-  let config = createDefaultThemeConfig(BUILTIN_DARK_THEME_ID)
+  let config = createDefaultThemeConfig(BUILTIN_DARK_THEME_ID, normalizeThemePayload(BUILTIN_DARK_THEME_ID))
   let migrated = false
 
   if (isThemeConfigV2(rawConfig)) {
+    const themePayloads: Record<ThemeId, ThemeTokenPayload> = {}
+    for (const [themeId, payload] of Object.entries(rawConfig.themePayloads || {})) {
+      themePayloads[themeId] = normalizeThemePayload(themeId, payload as ThemeTokenPayload)
+    }
     config = {
       version: THEME_CONFIG_VERSION,
       currentThemeId: rawConfig.currentThemeId,
+      themePayloads,
       lastError: rawConfig.lastError || null,
       retainedInvalidTheme: rawConfig.retainedInvalidTheme || null,
     }
   } else if (isThemeConfigV1(rawConfig)) {
-    config = createDefaultThemeConfig(rawConfig.currentTheme || BUILTIN_DARK_THEME_ID)
+    const migratedThemeId = rawConfig.currentTheme || BUILTIN_DARK_THEME_ID
+    config = createDefaultThemeConfig(migratedThemeId, normalizeThemePayload(migratedThemeId))
     migrated = true
   } else {
     return fallback(
@@ -169,6 +241,7 @@ function resolveThemeConfig(): ThemeResolutionResult {
   }
 
   const selectedThemeId = config.currentThemeId || BUILTIN_DARK_THEME_ID
+  config.themePayloads[selectedThemeId] = normalizeThemePayload(selectedThemeId, config.themePayloads[selectedThemeId])
   if (!hasTheme(selectedThemeId)) {
     const retainedInvalidTheme = selectedThemeId === BUILTIN_DARK_THEME_ID
       ? null
@@ -195,6 +268,7 @@ function resolveThemeConfig(): ThemeResolutionResult {
   return {
     selectedThemeId,
     effectiveThemeId: selectedThemeId,
+    themePayload: config.themePayloads[selectedThemeId],
     warning: migrated ? createThemeWarning('legacy_migrated', '已自动迁移旧版主题配置。') : null,
   }
 }
@@ -1087,16 +1161,49 @@ app.whenReady().then(() => {
     return resolveThemeConfig()
   })
 
-  ipcMain.handle('theme:setCurrent', (_event, name: ThemeId) => {
+  ipcMain.handle('theme:saveCurrent', (_event, name: ThemeId, themePayload?: ThemeTokenPayload) => {
     const availableThemeIds = listThemeIds()
     const targetThemeId = availableThemeIds.includes(name) && !!loadThemeDefinition(name) ? name : BUILTIN_DARK_THEME_ID
-    const config = createDefaultThemeConfig(targetThemeId)
+    const config = readThemeConfigForWrite()
+    config.currentThemeId = targetThemeId
+    config.themePayloads[targetThemeId] = normalizeThemePayload(targetThemeId, themePayload || config.themePayloads[targetThemeId])
+    config.version = THEME_CONFIG_VERSION
     if (targetThemeId !== name) {
       config.lastError = buildError('repair_required', `无法应用主题“${name}”，已回退到默认深色。`)
       config.retainedInvalidTheme = {
         themeId: name,
         reason: 'theme_not_found_or_invalid',
         detectedAt: new Date().toISOString(),
+      }
+    } else {
+      config.lastError = null
+      if (config.retainedInvalidTheme?.themeId === targetThemeId) {
+        config.retainedInvalidTheme = null
+      }
+    }
+    writeThemeConfig(config)
+    return config
+  })
+
+  ipcMain.handle('theme:setCurrent', (_event, name: ThemeId) => {
+    const availableThemeIds = listThemeIds()
+    const targetThemeId = availableThemeIds.includes(name) && !!loadThemeDefinition(name) ? name : BUILTIN_DARK_THEME_ID
+    const config = readThemeConfigForWrite()
+    const existingPayload = config.themePayloads[targetThemeId]
+    config.currentThemeId = targetThemeId
+    config.themePayloads[targetThemeId] = normalizeThemePayload(targetThemeId, existingPayload)
+    config.version = THEME_CONFIG_VERSION
+    if (targetThemeId !== name) {
+      config.lastError = buildError('repair_required', `无法应用主题“${name}”，已回退到默认深色。`)
+      config.retainedInvalidTheme = {
+        themeId: name,
+        reason: 'theme_not_found_or_invalid',
+        detectedAt: new Date().toISOString(),
+      }
+    } else {
+      config.lastError = null
+      if (config.retainedInvalidTheme?.themeId === targetThemeId) {
+        config.retainedInvalidTheme = null
       }
     }
     writeThemeConfig(config)

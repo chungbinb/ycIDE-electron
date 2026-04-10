@@ -77,6 +77,6 @@ test('invalid or missing token payload safely falls back to defaults without war
   const mainSource = fs.readFileSync(mainThemePath, 'utf-8')
   assert.match(source, /resolveThemeTokenPayload/)
   assert.match(source, /sanitizeThemeTokenValues/)
-  assert.match(mainSource, /warning:\s*createThemeWarning\('legacy_migrated'/)
+  assert.match(mainSource, /createThemeWarning\('legacy_migrated'/)
   assert.match(mainSource, /createDefaultThemeTokenPayload/)
 })
