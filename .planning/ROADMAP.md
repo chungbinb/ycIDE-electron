@@ -23,7 +23,14 @@
 1. 用户可在设置中切换内置深色与浅色主题，界面即时呈现对应风格。
 2. 用户关闭并重新打开应用后，仍看到上次选中的主题。
 3. 用户在主要界面区域（文本与背景）使用浅色主题时可正常阅读与操作。  
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+- [x] 16-01-PLAN.md — Shared import/export contracts and strict validation model
+- [ ] 16-02-PLAN.md — Main/preload custom-theme lifecycle and export IPC
+- [ ] 16-03-PLAN.md — Dedicated Theme Manager UI and CRUD/export wiring
+- [ ] 16-04-PLAN.md — Import pipeline with atomic validation, conflict and switch-now flow
+- [ ] 16-05-PLAN.md — Phase 16 coverage closure and evidence artifacts
 
 ### Phase 14: Theme Token Coverage
 **Goal**: 用户可完整配置主题 token，且所有可见区域都跟随主题生效。  
@@ -79,6 +86,6 @@ Plans:
 |-------|----------------|--------|-----------|
 | 13. Theme Baseline | 4/4 | Complete    | 2026-04-10 |
 | 14. Theme Token Coverage | 6/6 | Complete    | 2026-04-10 |
-| 15. Theme Editing Workflow | 5/5 | Complete   | 2026-04-10 |
-| 16. Theme Management & Portability | 0/0 | Not started | - |
+| 15. Theme Editing Workflow | 5/5 | Complete    | 2026-04-10 |
+| 16. Theme Management & Portability | 1/5 | In Progress|  |
 | 17. Compatibility & Regression Guardrails | 0/0 | Not started | - |

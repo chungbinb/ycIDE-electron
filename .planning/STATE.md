@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
-status: executing
-stopped_at: Completed 15-05-PLAN.md
-last_updated: "2026-04-10T06:05:12.345Z"
+status: Planned
+stopped_at: Completed 16-01-PLAN.md
+last_updated: "2026-04-10T07:21:28.778Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 15
-  completed_plans: 15
+  total_plans: 20
+  completed_plans: 16
 ---
 
 # Project State
@@ -20,13 +20,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** 用户可以在 ycIDE 中稳定使用并自定义完整主题体系，实时预览并安全保存复用。  
-**Current focus:** Phase 15 complete (5/5 plans complete)
+**Current focus:** Phase 16 planned (5 plans), ready for execution
 
 ## Current Position
 
-Phase: 15
-Plan: 05/05
-Status: Complete
+Phase: 16
+Plan: 16-01..16-05 planned
+Status: Planned
 Last activity: 2026-04-10
 
 ## Performance Metrics
@@ -61,6 +61,7 @@ Last activity: 2026-04-10
 | Phase 15 P03 | 6 | 3 tasks | 9 files |
 | Phase 15 P04 | 10min | 2 tasks | 6 files |
 | Phase 15 P05 | 7min | 2 tasks | 6 files |
+| Phase 16 P01 | 2m | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -106,13 +107,15 @@ Last activity: 2026-04-10
 - [Phase 15]: Main/renderer close handshake (app:requestClose + window:forceClose) prevents app-exit bypass when draft confirmation is pending.
 - [Phase 15]: Final Phase 15 evidence uses FLOW/D15-tagged test names for 1:1 automation-to-doc mapping.
 - [Phase 15]: Undo baseline verification now uses runtime entry values to stay stable across persisted custom themes.
+- [Phase 16]: Portability import uses strict validator with explicit path-based diagnostics, separate from tolerant runtime payload resolution.
+- [Phase 16]: Conflict decisions are modeled as mutually exclusive rename-import/overwrite unions with overwrite confirmation hard requirement.
 
 ### Pending Todos
 
-- Keep import schema validation and draft-state isolation as explicit plan must-haves.
-- Define test matrix early for QUAL-02 to avoid end-phase regression bottleneck.
-- Start planning with `/gsd-plan-phase 15`.
-- Execute phase with `/gsd-execute-phase 15`.
+- Start planning with `/gsd-plan-phase 16`.
+- Keep import schema validation, atomic failure semantics, and conflict-confirm UX as explicit plan must-haves.
+- Ensure manager CRUD updates menu/title/settings theme surfaces in the same operation.
+- Define Phase 17 regression matrix scope early to avoid end-phase bottleneck.
 
 ### Blockers/Concerns
 
@@ -121,6 +124,6 @@ Last activity: 2026-04-10
 
 ## Session Continuity
 
-Last session: 2026-04-10T06:05:12.340Z
-Stopped at: Completed 15-05-PLAN.md
+Last session: 2026-04-10T07:21:28.774Z
+Stopped at: Completed 16-01-PLAN.md
 Resume file: None
