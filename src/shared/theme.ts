@@ -19,6 +19,11 @@ export interface ThemeDefinition {
 export interface ThemeTokenPayload {
   tokenValues: Record<string, string>
   flowLine: FlowLineModeConfig
+  icon: ThemeIconConfig
+}
+
+export interface ThemeIconConfig {
+  preserveToolbarIconOriginalColors: boolean
 }
 
 export interface ThemeConfigV1 {
@@ -230,6 +235,9 @@ export function createDefaultThemeTokenPayload(defaultValues?: Record<string, st
       single: { ...DEFAULT_FLOW_LINE_MODE_CONFIG.single },
       multi: { ...DEFAULT_FLOW_LINE_MODE_CONFIG.multi },
     },
+    icon: {
+      preserveToolbarIconOriginalColors: false,
+    },
   }
 }
 
@@ -245,6 +253,9 @@ export function resolveThemeTokenPayload(payload: unknown, fallbackValues?: Reco
         multi: { ...data.flowLine.multi },
       }
       : defaults.flowLine,
+    icon: {
+      preserveToolbarIconOriginalColors: !!data.icon?.preserveToolbarIconOriginalColors,
+    },
   }
 }
 

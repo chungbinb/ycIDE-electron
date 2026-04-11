@@ -202,8 +202,26 @@ function normalizeSvgColor(raw: string, scope: string): string {
   )
 }
 
+/** Default grey colors used by VS 2022 light-variant SVGs for structural elements */
+const DEFAULT_GREY_PATTERN = /#(?:212121|1e1e1e|252526|2d2d2d|1f1f1f)\b/gi
+
+/**
+ * Replace only default grey fills/strokes with currentColor, keeping accent colors intact.
+ * This lets structural parts follow theme color while colored accents (blue, yellow, red, green) remain.
+ */
+function normalizeGreyOnly(raw: string, scope: string): string {
+  return scopeSvgStyles(
+    stripSvgTitle(raw)
+      .replace(/\s(fill|stroke)="(#(?:212121|1e1e1e|252526|2d2d2d|1f1f1f))"/gi, ' $1="currentColor"')
+      .replace(/(fill|stroke)\s*:\s*(#(?:212121|1e1e1e|252526|2d2d2d|1f1f1f))\s*([;"])/gi, '$1: currentColor$3'),
+    scope
+  )
+}
+
 /** Cache processed SVG strings keyed by "name_mode" */
 const _svgCache = new Map<string, string>()
+
+export type IconColorMode = 'themed' | 'original' | 'preserve-accent'
 
 interface IconProps {
   name: string
@@ -212,17 +230,28 @@ interface IconProps {
   style?: React.CSSProperties
   title?: string
   preserveOriginalColors?: boolean
+  /** Icon color mode: 'themed' = all→currentColor, 'original' = keep all, 'preserve-accent' = grey→currentColor + keep accents */
+  colorMode?: IconColorMode
 }
 
-export default function Icon({ name, size = 16, className = '', style, title, preserveOriginalColors = false }: IconProps): React.JSX.Element | null {
+export default function Icon({ name, size = 16, className = '', style, title, preserveOriginalColors = false, colorMode }: IconProps): React.JSX.Element | null {
   const raw = ICON_MAP[name]
   if (!raw) return null
-  const cacheKey = `${name}_${preserveOriginalColors ? 'o' : 'n'}`
+  const effectiveMode: IconColorMode = colorMode ?? (preserveOriginalColors ? 'original' : 'themed')
+  const cacheKey = `${name}_${effectiveMode}`
   let processedSvg = _svgCache.get(cacheKey)
   if (!processedSvg) {
-    processedSvg = preserveOriginalColors
-      ? scopeSvgStyles(stripSvgTitle(raw), name)
-      : normalizeSvgColor(raw, name)
+    switch (effectiveMode) {
+      case 'original':
+        processedSvg = scopeSvgStyles(stripSvgTitle(raw), name)
+        break
+      case 'preserve-accent':
+        processedSvg = normalizeGreyOnly(raw, name)
+        break
+      default:
+        processedSvg = normalizeSvgColor(raw, name)
+        break
+    }
     _svgCache.set(cacheKey, processedSvg)
   }
   return (
