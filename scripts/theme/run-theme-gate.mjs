@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { formatQualFailure } from './format-qual-failure.mjs'
 const steps = [
   {
     label: 'contract gate',
@@ -19,8 +20,24 @@ const steps = [
 for (const [index, step] of steps.entries()) {
   console.log(`\n[theme-gate ${index + 1}/${steps.length}] ${step.label}`)
   console.log(`> ${step.command} ${step.args.join(' ')}`)
-  const result = spawnSync(step.command, step.args, { stdio: 'inherit' })
+  const result = spawnSync(step.command, step.args, { encoding: 'utf8' })
+  if (result.stdout) {
+    process.stdout.write(result.stdout)
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr)
+  }
   if (result.status !== 0) {
+    const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
+    console.error(
+      formatQualFailure({
+        stepLabel: step.label,
+        command: step.command,
+        args: step.args,
+        exitCode: result.status ?? 1,
+        output,
+      }),
+    )
     process.exit(result.status ?? 1)
   }
 }
