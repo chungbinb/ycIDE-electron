@@ -341,7 +341,7 @@ type ThemeImportPrepareResult =
 
 type ThemeImportCommitResult =
   | ({ success: true; importedThemeId: ThemeId; overwritten: boolean } & ThemeLifecycleState)
-  | ({ success: false; code: 'invalid_payload' | 'conflict_decision_required' | 'invalid_conflict_decision' | 'duplicate_name' | 'theme_not_found' | 'commit_failed'; message: string; diagnostics?: ThemeImportValidationDiagnostic[] })
+  | ({ success: false; code: 'builtin_readonly' | 'invalid_payload' | 'conflict_decision_required' | 'invalid_conflict_decision' | 'duplicate_name' | 'theme_not_found' | 'commit_failed'; message: string; diagnostics?: ThemeImportValidationDiagnostic[] })
 
 function buildThemeLifecycleState(config: ThemeConfigV2): ThemeLifecycleState {
   const menuState = syncThemeMenuState(config.currentThemeId)
@@ -1894,11 +1894,14 @@ app.whenReady().then(() => {
     }
     const existingThemeId = findThemeIdCaseInsensitive(importedTheme.name, listThemeIds())
     if (existingThemeId) {
+      const allowedDecisions: ('rename-import' | 'overwrite')[] = isBuiltinThemeId(existingThemeId)
+        ? ['rename-import']
+        : ['rename-import', 'overwrite']
       return {
         status: 'conflict',
         importedTheme,
         existingThemeId,
-        allowedDecisions: ['rename-import', 'overwrite'],
+        allowedDecisions,
         sourceFilePath,
       }
     }
@@ -1974,6 +1977,13 @@ app.whenReady().then(() => {
             success: false,
             code: 'theme_not_found',
             message: `覆盖目标“${decisionValidation.value.overwriteThemeId}”不存在。`,
+          }
+        }
+        if (isBuiltinThemeId(overwriteTarget)) {
+          return {
+            success: false,
+            code: 'builtin_readonly',
+            message: '内置主题不可覆盖。',
           }
         }
         targetThemeId = overwriteTarget

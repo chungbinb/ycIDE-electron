@@ -30,7 +30,7 @@ type ThemeImportPrepareResult =
   | { status: 'ready'; importedTheme: ThemeDefinition; targetThemeId: ThemeId; sourceFilePath: string | null }
 type ThemeImportCommitResult =
   | ({ success: true; importedThemeId: ThemeId; overwritten: boolean } & ThemeLifecycleSyncPayload)
-  | ({ success: false; code: 'invalid_payload' | 'conflict_decision_required' | 'invalid_conflict_decision' | 'duplicate_name' | 'theme_not_found' | 'commit_failed'; message: string; diagnostics?: ThemeImportValidationDiagnostic[] })
+  | ({ success: false; code: 'builtin_readonly' | 'invalid_payload' | 'conflict_decision_required' | 'invalid_conflict_decision' | 'duplicate_name' | 'theme_not_found' | 'commit_failed'; message: string; diagnostics?: ThemeImportValidationDiagnostic[] })
 
 // 向渲染进程安全暴露的 API
 const api = {

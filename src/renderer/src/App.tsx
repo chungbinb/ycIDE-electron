@@ -2914,6 +2914,7 @@ function App(): React.JSX.Element {
         onUndo={() => { void handleThemeDraftUndo() }}
         onRestoreBaseline={() => { void handleThemeDraftRestoreBaseline() }}
         onExportTheme={handleThemeManagerExport}
+        onDeleteTheme={handleThemeManagerDelete}
         onSaveTheme={handleThemeManagerSaveTheme}
         onSaveAsTheme={handleThemeManagerSaveAsTheme}
         onRenameTheme={handleThemeManagerRename}

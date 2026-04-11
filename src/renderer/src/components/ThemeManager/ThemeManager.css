@@ -43,6 +43,7 @@
   background: var(--titlebar-bg);
   cursor: move;
   user-select: none;
+  flex-shrink: 0;
 }
 
 .theme-manager-header {
@@ -74,11 +75,13 @@
 }
 
 .theme-manager-body {
+  flex: 1;
   display: grid;
   grid-template-columns: 320px 1fr;
   gap: 14px;
   padding: 14px 16px;
-  overflow: auto;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .theme-manager-list {
@@ -90,6 +93,8 @@
   gap: 8px;
   align-content: flex-start;
   background: var(--bg-primary);
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .theme-manager-list-item {
@@ -203,6 +208,8 @@
   display: grid;
   gap: 8px;
   align-content: flex-start;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .theme-manager-detail-row {
@@ -230,7 +237,6 @@
 .theme-manager-detail-actions {
   display: flex;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
 .theme-manager-field {

@@ -43,6 +43,7 @@ interface ThemeManagerProps {
   onResetAll?: () => void
   onUndo?: () => void
   onRestoreBaseline?: () => void
+  onDeleteTheme: (themeId: string, confirmThemeName: string) => Promise<ThemeManagerActionResult>
   onExportTheme: (themeId: string) => Promise<ThemeManagerActionResult>
   onSaveTheme: (themeId: string) => Promise<ThemeManagerActionResult>
   onSaveAsTheme: (sourceThemeId: string, name: string) => Promise<ThemeManagerActionResult>
@@ -87,6 +88,7 @@ function ThemeManager({
   onUndo,
   onRestoreBaseline,
   onExportTheme,
+  onDeleteTheme,
   onSaveTheme,
   onSaveAsTheme,
   onRenameTheme,
@@ -353,9 +355,9 @@ function ThemeManager({
     void handleAction(() => onSaveTheme(selectedThemeId))
   }
 
-  const handleThemeContextMenu = (event: React.MouseEvent<HTMLButtonElement>, themeId: string) => {
+  const handleThemeContextMenu = (event: React.MouseEvent, themeId: string) => {
     event.preventDefault()
-    setSelectedThemeId(themeId)
+    if (themeId) setSelectedThemeId(themeId)
     setThemeContextMenu({
       themeId,
       left: event.clientX,
@@ -384,6 +386,25 @@ function ThemeManager({
     const targetThemeId = themeContextMenu.themeId
     setThemeContextMenu(null)
     void handleAction(() => onExportTheme(targetThemeId))
+  }
+
+  const handleContextDeleteTheme = async () => {
+    if (!themeContextMenu?.themeId) return
+    const targetThemeId = themeContextMenu.themeId
+    setThemeContextMenu(null)
+    if (BUILTIN_THEME_IDS.includes(targetThemeId)) {
+      setFeedback('内置主题不可删除。')
+      return
+    }
+    const confirmed = window.confirm(`确定要删除主题"${targetThemeId}"吗？此操作不可撤销。`)
+    if (!confirmed) return
+    await handleAction(async () => {
+      const result = await onDeleteTheme(targetThemeId, targetThemeId)
+      if (result.success && selectedThemeId === targetThemeId) {
+        setSelectedThemeId(currentTheme)
+      }
+      return result
+    })
   }
 
   const cancelRenameEditor = () => {
@@ -451,7 +472,7 @@ function ThemeManager({
           <button type="button" className="theme-manager-close" onClick={onClose} aria-label="关闭主题管理器">×</button>
         </header>
         <div className="theme-manager-body">
-          <section className="theme-manager-list" aria-label="主题列表">
+          <section className="theme-manager-list" aria-label="主题列表" onContextMenu={(event) => { if (event.target === event.currentTarget) handleThemeContextMenu(event, '') }}>
             {orderedThemes.map((themeId, index) => {
               const isActive = themeId === currentTheme
               const isBuiltin = BUILTIN_THEME_IDS.includes(themeId)
@@ -535,7 +556,7 @@ function ThemeManager({
                   type="button"
                   className="theme-manager-context-menu-item"
                   onClick={handleContextExportTheme}
-                  disabled={submitting}
+                  disabled={!themeContextMenu.themeId || submitting}
                 >
                   导出主题
                 </button>
@@ -543,9 +564,17 @@ function ThemeManager({
                   type="button"
                   className="theme-manager-context-menu-item"
                   onClick={() => openRenameEditor(themeContextMenu.themeId)}
-                  disabled={BUILTIN_THEME_IDS.includes(themeContextMenu.themeId) || submitting}
+                  disabled={!themeContextMenu.themeId || BUILTIN_THEME_IDS.includes(themeContextMenu.themeId) || submitting}
                 >
                   重命名
+                </button>
+                <button
+                  type="button"
+                  className="theme-manager-context-menu-item"
+                  onClick={() => { void handleContextDeleteTheme() }}
+                  disabled={!themeContextMenu.themeId || BUILTIN_THEME_IDS.includes(themeContextMenu.themeId) || submitting}
+                >
+                  删除主题
                 </button>
               </div>
             )}
@@ -576,8 +605,6 @@ function ThemeManager({
               >
                 保存主题
               </button>
-            </div>
-            <div className="theme-manager-detail-actions">
               <button type="button" className="theme-manager-btn" disabled={!canUndo} onClick={onUndo}>撤销上一步</button>
               <button type="button" className="theme-manager-btn" disabled={!canUndo} onClick={onRestoreBaseline}>恢复会话基线</button>
               <button type="button" className="theme-manager-btn" onClick={onResetAll}>恢复全部默认</button>
