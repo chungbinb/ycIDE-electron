@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "policy": {
+    "description": "Temporary quarantine is only allowed with equivalent replacement coverage and same-milestone repair.",
+    "requiredFields": [
+      "testId",
+      "owner",
+      "duePlan",
+      "dueDate",
+      "replacementTestId",
+      "milestone"
+    ],
+    "overdueBehavior": "block-gate"
+  },
+  "entries": []
+}
