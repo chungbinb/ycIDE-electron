@@ -103,7 +103,7 @@ function ThemeSettingsDialog({
     <div className="theme-settings-overlay" onMouseDown={() => onClose('overlay')}>
       <div className="theme-settings-dialog" onMouseDown={(e) => e.stopPropagation()}>
         <div className="theme-settings-header">
-          <span className="theme-settings-title">系统配置</span>
+          <span className="theme-settings-title">主题配置</span>
           <button className="theme-settings-close" onClick={() => onClose('close-button')} aria-label="关闭">×</button>
         </div>
         <div className="theme-settings-body">

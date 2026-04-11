@@ -170,15 +170,32 @@
   position: relative;
   vertical-align: top;
   pointer-events: none;
+  --flow-join-gap: 1.5px;
+}
+
+/* 统一竖向虚线周期：压缩到更紧凑的 3/7 节距，减少行内过大空隙 */
+.eyc-flow-through::before,
+.eyc-flow-start::before,
+.eyc-flow-end::before,
+.eyc-flow-branch::before,
+.eyc-flow-inner-vert,
+.eyc-flow-branch.eyc-flow-marker::before,
+.eyc-flow-outer-resume,
+.eyc-flow-end.eyc-flow-marker::before,
+.eyc-flow-link-vert,
+.eyc-param-expand-row::after {
+  background-size: 1px 7px;
+  background-repeat: repeat-y;
 }
 /* 竖线穿过 │ */
 .eyc-flow-through::before {
   content: '';
   position: absolute;
   left: 4px;
-  top: 0;
-  bottom: 0;
-  border-left: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
+  top: var(--flow-join-gap);
+  bottom: var(--flow-join-gap);
+  width: 1px;
+  background-image: repeating-linear-gradient(to bottom, var(--flow-main-color, var(--flow-line-main, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 /* 起始 ┌─ */
 .eyc-flow-start::before {
@@ -186,8 +203,9 @@
   position: absolute;
   left: 4px;
   top: 50%;
-  bottom: 0;
-  border-left: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
+  bottom: var(--flow-join-gap);
+  width: 1px;
+  background-image: repeating-linear-gradient(to bottom, var(--flow-main-color, var(--flow-line-main, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 .eyc-flow-start::after {
   content: '';
@@ -195,16 +213,18 @@
   left: 4px;
   right: 1ch;
   top: 50%;
-  border-top: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
+  height: 1px;
+  background-image: repeating-linear-gradient(to right, var(--flow-main-color, var(--flow-line-main, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 /* 结束 └─ */
 .eyc-flow-end::before {
   content: '';
   position: absolute;
   left: 4px;
-  top: 0;
+  top: var(--flow-join-gap);
   height: 50%;
-  border-left: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
+  width: 1px;
+  background-image: repeating-linear-gradient(to bottom, var(--flow-main-color, var(--flow-line-main, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 .eyc-flow-end::after {
   content: '';
@@ -212,7 +232,8 @@
   left: 4px;
   right: 1ch;
   top: 50%;
-  border-top: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
+  height: 1px;
+  background-image: repeating-linear-gradient(to right, var(--flow-main-color, var(--flow-line-main, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 /* 如果真等无分支命令结束：竖线直通到底+向下箭头，无横线 */
 .eyc-flow-end.eyc-flow-straight-end::before {
@@ -227,9 +248,10 @@
   content: '';
   position: absolute;
   left: 4px;
-  top: 0;
-  bottom: 0;
-  border-left: 1px dashed var(--flow-branch-color, var(--flow-line-branch, #4fc1ff));
+  top: var(--flow-join-gap);
+  bottom: var(--flow-join-gap);
+  width: 1px;
+  background-image: repeating-linear-gradient(to bottom, var(--flow-branch-color, var(--flow-line-branch, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 .eyc-flow-branch::after {
   content: '';
@@ -237,23 +259,24 @@
   left: 4px;
   right: 1ch;
   top: 50%;
-  border-top: 1px dashed var(--flow-branch-color, var(--flow-line-branch, #4fc1ff));
+  height: 1px;
+  background-image: repeating-linear-gradient(to right, var(--flow-branch-color, var(--flow-line-branch, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 /* 循环命令颜色 */
 .eyc-flow-loop.eyc-flow-start::before {
-  border-left-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
+  background-image: repeating-linear-gradient(to bottom, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 .eyc-flow-loop.eyc-flow-start::after {
-  border-top-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
+  background-image: repeating-linear-gradient(to right, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 .eyc-flow-loop.eyc-flow-end::before {
-  border-left-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
+  background-image: repeating-linear-gradient(to bottom, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 .eyc-flow-loop.eyc-flow-end::after {
-  border-top-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
+  background-image: repeating-linear-gradient(to right, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 .eyc-flow-loop.eyc-flow-through::before {
-  border-left-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
+  background-image: repeating-linear-gradient(to bottom, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 .eyc-flow-loop .eyc-flow-arrow-right {
   border-left-color: var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
@@ -278,19 +301,20 @@
 .eyc-flow-inner-vert {
   position: absolute;
   left: calc(1ch + 4px);
-  border-left: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
+  width: 1px;
+  background-image: repeating-linear-gradient(to bottom, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 /* 内部竖线穿过（through行，在标记分支与标记结束之间） */
 .eyc-flow-inner-through {
-  top: 0;
-  bottom: 0;
+  top: var(--flow-join-gap);
+  bottom: var(--flow-join-gap);
 }
 /* 无外部流程线（额外 \u200D 行） */
 .eyc-flow-seg.eyc-flow-no-outer::before { display: none !important; }
 .eyc-flow-seg.eyc-flow-no-outer::after { display: none !important; }
 /* 内部竖线结束段 */
 .eyc-flow-inner-end {
-  top: 0;
+  top: var(--flow-join-gap);
   bottom: 5px;
 }
 /* 内部向下箭头位置 */
@@ -298,7 +322,7 @@
   left: calc(1ch + 4px - 4px);
 }
 .eyc-flow-loop .eyc-flow-inner-vert {
-  border-left-color: var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
+  background-image: repeating-linear-gradient(to bottom, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 
 /* ===== 标记行流程线（\u200C/\u200D）===== */
@@ -308,9 +332,10 @@
   content: '';
   position: absolute;
   left: 4px;
-  top: 0;
-  bottom: 0;
-  border-left: 1px dashed var(--flow-branch-color, var(--flow-line-branch, #4fc1ff));
+  top: var(--flow-join-gap);
+  bottom: var(--flow-join-gap);
+  width: 1px;
+  background-image: repeating-linear-gradient(to bottom, var(--flow-branch-color, var(--flow-line-branch, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 .eyc-flow-branch.eyc-flow-marker::after {
   /* 横线从内部竖线位置向右 */
@@ -319,11 +344,12 @@
   left: calc(1ch + 4px);
   right: 1ch;
   top: 50%;
-  border-top: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
+  height: 1px;
+  background-image: repeating-linear-gradient(to right, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 .eyc-flow-branch.eyc-flow-marker .eyc-flow-inner-vert {
   top: 50%;
-  bottom: 0;
+  bottom: var(--flow-join-gap);
 }
 
 /* 非标记分支有内部竖线穿过：外层竖线分裂为上下两段，间距=文本高度 */
@@ -341,11 +367,12 @@
   position: absolute;
   left: 4px;
   top: 80%;
-  bottom: 0;
-  border-left: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
+  bottom: var(--flow-join-gap);
+  width: 1px;
+  background-image: repeating-linear-gradient(to bottom, var(--flow-main-color, var(--flow-line-main, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 .eyc-flow-loop .eyc-flow-outer-resume {
-  border-left-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
+  background-image: repeating-linear-gradient(to bottom, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 /* 上段横线：从外部竖线(left:4px)延伸到命令文本左边 */
 .eyc-flow-outer-horz {
@@ -353,10 +380,11 @@
   left: 4px;
   right: 1ch;
   top: 20%;
-  border-top: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
+  height: 1px;
+  background-image: repeating-linear-gradient(to right, var(--flow-main-color, var(--flow-line-main, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 .eyc-flow-loop .eyc-flow-outer-horz {
-  border-top-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
+  background-image: repeating-linear-gradient(to right, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 /* 上段横线右箭头▶ */
 .eyc-flow-outer-arrow {
@@ -379,8 +407,8 @@
   top: 70%;
 }
 .eyc-flow-branch.eyc-flow-marker.eyc-flow-has-outer-link .eyc-flow-inner-vert {
-  top: 0;
-  bottom: 0;
+  top: var(--flow-join-gap);
+  bottom: var(--flow-join-gap);
 }
 
 /* 标记结束行：左侧竖线到中间结束 + 横线向右 + 右箭头 */
@@ -389,9 +417,10 @@
   content: '';
   position: absolute;
   left: 4px;
-  top: 0;
+  top: var(--flow-join-gap);
   height: 50%;
-  border-left: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
+  width: 1px;
+  background-image: repeating-linear-gradient(to bottom, var(--flow-main-color, var(--flow-line-main, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 .eyc-flow-end.eyc-flow-marker::after {
   /* 横线从左到右 */
@@ -400,7 +429,8 @@
   left: 4px;
   right: 1ch;
   top: 50%;
-  border-top: 1px dashed var(--flow-main-color, var(--flow-line-main, #4fc1ff));
+  height: 1px;
+  background-image: repeating-linear-gradient(to right, var(--flow-main-color, var(--flow-line-main, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 
 /* 右箭头▶ */
@@ -420,7 +450,7 @@
 }
 
 .eyc-flow-end.eyc-flow-marker .eyc-flow-inner-vert {
-  top: 0;
+  top: var(--flow-join-gap);
   bottom: 5px;
 }
 .eyc-flow-end.eyc-flow-marker .eyc-flow-arrow-down {
@@ -429,13 +459,13 @@
 
 /* 标记行循环色 */
 .eyc-flow-loop.eyc-flow-branch.eyc-flow-marker::before {
-  border-left-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
+  background-image: repeating-linear-gradient(to bottom, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 .eyc-flow-loop.eyc-flow-branch.eyc-flow-marker::after {
-  border-top-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
+  background-image: repeating-linear-gradient(to right, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 .eyc-flow-loop.eyc-flow-end.eyc-flow-marker::before {
-  border-left-color: var(--flow-loop-color, var(--flow-line-loop, #4fc1ff));
+  background-image: repeating-linear-gradient(to bottom, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 
 /* ===== \u200D 后紧跟流程命令的连接线 ===== */
@@ -450,9 +480,10 @@
 .eyc-flow-link-vert {
   position: absolute;
   left: calc(1ch + 4px);
-  top: 0;
+  top: var(--flow-join-gap);
   height: 40%;
-  border-left: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
+  width: 1px;
+  background-image: repeating-linear-gradient(to bottom, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 /* 连接上方流程的横线（从内部竖线向右） */
 .eyc-flow-link-horz {
@@ -460,7 +491,8 @@
   left: calc(1ch + 4px);
   right: 1ch;
   top: 40%;
-  border-top: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
+  height: 1px;
+  background-image: repeating-linear-gradient(to right, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 /* 连接上方流程的右箭头 */
 .eyc-flow-link-arrow {
@@ -482,7 +514,8 @@
   left: 0;
   right: calc(-3ch - 4px);
   top: 40%;
-  border-top: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
+  height: 1px;
+  background-image: repeating-linear-gradient(to right, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 /* 外层 through 段内部竖线分支右箭头 */
 .eyc-flow-inner-link-arrow {
@@ -640,16 +673,18 @@
   left: var(--vline-offset, -8px);
   right: calc(100% + 2px);
   top: 50%;
-  border-top: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
+  height: 1px;
+  background-image: repeating-linear-gradient(to right, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
 /* 每行左侧的垂直虚线段 */
 .eyc-param-expand-row::after {
   content: '';
   position: absolute;
   left: var(--vline-offset, -8px);
-  top: 0;
-  bottom: 0;
-  border-left: 1px dashed var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff));
+  top: 1px;
+  bottom: 1px;
+  width: 1px;
+  background-image: repeating-linear-gradient(to bottom, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 /* 最后一行（或唯一一行）垂直线只到中间 */
 .eyc-param-expand-row:last-child::after {

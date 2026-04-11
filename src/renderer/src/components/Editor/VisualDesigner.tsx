@@ -105,6 +105,68 @@ function snap(v: number): number {
 
 type AxisSnapResult = { pos: number; guide: number } | null
 
+interface FormVisualColors {
+  titleBg: string
+  titleText: string
+  canvasBg: string
+  border: string
+  grid: string
+}
+
+function colorFromNumber(value: number): string | null {
+  if (!Number.isFinite(value) || value < 0) return null
+  const n = Math.floor(value) & 0xffffff
+  const r = n & 0xff
+  const g = (n >> 8) & 0xff
+  const b = (n >> 16) & 0xff
+  return `rgb(${r}, ${g}, ${b})`
+}
+
+function normalizeColor(value: string | number | boolean | undefined): string | null {
+  if (typeof value === 'number') return colorFromNumber(value)
+  if (typeof value !== 'string') return null
+  const raw = value.trim()
+  if (!raw) return null
+  if (/^#|^rgb\(|^rgba\(|^hsl\(|^hsla\(/i.test(raw)) return raw
+  if (/^0x[0-9a-f]+$/i.test(raw)) return colorFromNumber(Number.parseInt(raw, 16))
+  if (/^\d+$/.test(raw)) return colorFromNumber(Number.parseInt(raw, 10))
+  return null
+}
+
+function readColorProperty(
+  properties: Record<string, string | number | boolean> | undefined,
+  names: string[],
+): string | null {
+  if (!properties) return null
+  for (const name of names) {
+    const normalized = normalizeColor(properties[name])
+    if (normalized) return normalized
+  }
+  return null
+}
+
+function resolveFormVisualColors(form: DesignForm): FormVisualColors {
+  const titleBg = readColorProperty(form.properties, ['标题栏背景色', '标题栏背景颜色', '标题栏颜色']) || '#e9edf2'
+  const titleText = readColorProperty(form.properties, ['标题栏文本色', '标题栏文字颜色', '前景颜色', '前景色']) || '#111827'
+  const canvasBg = readColorProperty(form.properties, ['背景颜色', '背景色', '客户区背景色']) || '#f4f6f8'
+  const border = readColorProperty(form.properties, ['边框颜色', '边框色']) || '#9ca3af'
+  const grid = readColorProperty(form.properties, ['网格颜色', '网格色']) || '#c5c9d1'
+  return { titleBg, titleText, canvasBg, border, grid }
+}
+
+interface ControlVisualColors {
+  bg: string
+  text: string
+  border: string
+}
+
+function resolveControlVisualColors(ctrl: DesignControl): ControlVisualColors {
+  const bg = readColorProperty(ctrl.properties, ['背景颜色', '背景色', '背景']) || '#f2f2f2'
+  const text = readColorProperty(ctrl.properties, ['前景颜色', '前景色', '文字颜色', '文本颜色']) || '#111827'
+  const border = readColorProperty(ctrl.properties, ['边框颜色', '边框色']) || '#b2b8c2'
+  return { bg, text, border }
+}
+
 function resolveAxisSnap(basePos: number, size: number, references: number[]): AxisSnapResult {
   const anchors = [0, size / 2, size]
   let bestDiff = Number.POSITIVE_INFINITY
@@ -179,6 +241,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const [toolboxPos, setToolboxPos] = useState({ x: 80, y: 40 })
   const [toolboxSize, setToolboxSize] = useState({ w: 160, h: 400 })
   const [alignGuides, setAlignGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] })
+  const formVisualColors = resolveFormVisualColors(form)
   const canvasRef = useRef<HTMLDivElement>(null)
   const [drawRect, setDrawRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const dragRef = useRef<{
@@ -678,6 +741,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       fontFamily: 'var(--font-family)',
       overflow: 'hidden',
     }
+    const controlColors = resolveControlVisualColors(ctrl)
 
     switch (ctrl.type) {
       case '按钮':
@@ -685,10 +749,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           <div style={{
             ...common,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'linear-gradient(180deg, var(--button-secondary-hover) 0%, var(--button-secondary-bg) 100%)',
-            border: '1px solid var(--button-secondary-border)',
+            background: controlColors.bg,
+            border: `1px solid ${controlColors.border}`,
             borderRadius: 3,
-            color: 'var(--text-primary)',
+            color: controlColors.text,
             cursor: 'default',
           }}>{ctrl.text}</div>
         )
@@ -792,9 +856,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const radius = typeof ctrl.properties['圆角半径'] === 'number'
           ? ctrl.properties['圆角半径']
           : 4
-        const bg = isPrimary ? 'var(--accent)' : 'var(--button-secondary-bg)'
-        const textColor = isPrimary ? 'var(--statusbar-text)' : 'var(--text-primary)'
-        const border = isPrimary ? '1px solid var(--accent)' : '1px solid var(--button-secondary-border)'
+        const primaryBg = readColorProperty(ctrl.properties, ['主色', '主色颜色']) || '#1677ff'
+        const bg = isPrimary ? primaryBg : controlColors.bg
+        const textColor = controlColors.text
+        const border = `1px solid ${isPrimary ? primaryBg : controlColors.border}`
         return (
           <div style={{
             ...common,
@@ -934,7 +999,16 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       <div className="vd-canvas-area">
 
         {/* 窗口外壳 */}
-        <div className={`vd-form-wrapper ${selectedId === '__form__' ? 'vd-form-wrapper-selected' : ''}`}>
+        <div
+          className={`vd-form-wrapper ${selectedId === '__form__' ? 'vd-form-wrapper-selected' : ''}`}
+          style={{
+            '--vd-form-title-bg': formVisualColors.titleBg,
+            '--vd-form-title-text': formVisualColors.titleText,
+            '--vd-form-canvas-bg': formVisualColors.canvasBg,
+            '--vd-form-border': formVisualColors.border,
+            '--vd-form-grid': formVisualColors.grid,
+          } as React.CSSProperties}
+        >
           <div className="vd-form-titlebar" onMouseDown={handleFormTitleClick} onDoubleClick={handleFormDblClick}>
             <span className="vd-form-titlebar-icon"><Icon name="windows-form" size={14} /></span>
             <span className="vd-form-titlebar-text">{form.title || form.name}</span>

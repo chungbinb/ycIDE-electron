@@ -21,9 +21,14 @@ export const THEME_TOKEN_GROUPS: ThemeTokenGroup[] = [
     items: [
       { id: 'text-primary', label: '主文本', preview: 'color-chip', tokenKey: '--text-primary' },
       { id: 'text-secondary', label: '次文本', preview: 'color-chip', tokenKey: '--text-secondary' },
-      { id: 'bg-primary', label: '主背景', preview: 'color-chip', tokenKey: '--bg-primary' },
-      { id: 'bg-secondary', label: '次背景', preview: 'color-chip', tokenKey: '--bg-secondary' },
+      { id: 'bg-secondary', label: '主背景', preview: 'color-chip', tokenKey: '--bg-secondary' },
+      { id: 'bg-primary', label: '次背景', preview: 'color-chip', tokenKey: '--bg-primary' },
       { id: 'bg-tertiary', label: '弱背景', preview: 'color-chip', tokenKey: '--bg-tertiary' },
+      { id: 'titlebar-bg', label: '标题栏背景', preview: 'color-chip', tokenKey: '--titlebar-bg' },
+      { id: 'statusbar-bg', label: '状态栏背景', preview: 'color-chip', tokenKey: '--statusbar-bg' },
+      { id: 'statusbar-text', label: '状态栏文本', preview: 'color-chip', tokenKey: '--statusbar-text' },
+      { id: 'toolbar-icon-color', label: '工具栏图标', preview: 'color-chip', tokenKey: '--toolbar-icon-color' },
+      { id: 'toolbar-icon-disabled-color', label: '工具栏禁用图标', preview: 'color-chip', tokenKey: '--toolbar-icon-disabled-color' },
     ],
   },
   {
@@ -44,8 +49,8 @@ export const THEME_TOKEN_GROUPS: ThemeTokenGroup[] = [
     id: 'table-header',
     label: '表格与表头',
     items: [
-      { id: 'table-bg', label: '表格背景', preview: 'color-chip', tokenKey: '--table-bg' },
-      { id: 'table-text', label: '表格文本', preview: 'color-chip', tokenKey: '--table-text' },
+      { id: 'table-bg', label: '编辑器背景', preview: 'color-chip', tokenKey: '--table-bg' },
+      { id: 'table-text', label: '编辑器文本', preview: 'color-chip', tokenKey: '--table-text' },
       { id: 'table-border', label: '表格边框', preview: 'color-chip', tokenKey: '--table-border' },
       { id: 'table-header-bg', label: '表头背景', preview: 'color-chip', tokenKey: '--table-header-bg' },
       { id: 'table-header-text', label: '表头文本', preview: 'color-chip', tokenKey: '--table-header-text' },

@@ -1,10 +1,18 @@
 import './ThemeManager.css'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ThemeDefinition,
   ThemeImportConflictDecision,
   ThemeImportValidationDiagnostic
 } from '../../../../shared/theme'
+import {
+  DEFAULT_FLOW_LINE_MODE_CONFIG,
+  THEME_TOKEN_GROUPS,
+  type FlowLineMode,
+  type FlowLineModeConfig,
+  type FlowLineMultiConfig,
+  type ThemeTokenGroupId,
+} from '../../../../shared/theme-tokens'
 
 interface ThemeManagerActionResult {
   success: boolean
@@ -13,16 +21,30 @@ interface ThemeManagerActionResult {
 
 interface ThemeManagerProps {
   open: boolean
+  detachedWindow?: boolean
   themes: string[]
   currentTheme: string
   draftThemeId?: string | null
   hasUnsavedDraft?: boolean
+  tokenValues?: Record<string, string>
+  flowLineConfig?: FlowLineModeConfig
+  canUndo?: boolean
   onClose: () => void
   onSelectTheme: (themeId: string) => Promise<void> | void
-  onCreateFromCurrent: (name: string) => Promise<ThemeManagerActionResult>
-  onRenameTheme: (themeId: string, newName: string) => Promise<ThemeManagerActionResult>
-  onDeleteTheme: (themeId: string, confirmThemeName: string) => Promise<ThemeManagerActionResult>
+  onApplyTheme: (themeId: string) => Promise<void> | void
+  onTokenChange?: (tokenKey: string, value: string) => void
+  onFlowLineModeChange?: (mode: FlowLineMode) => void
+  onFlowLineMainColorChange?: (value: string) => void
+  onFlowLineDepthStepChange?: (key: keyof FlowLineMultiConfig, value: number) => void
+  onResetToken?: (groupId: ThemeTokenGroupId, tokenKey: string) => void
+  onResetGroup?: (groupId: ThemeTokenGroupId) => void
+  onResetAll?: () => void
+  onUndo?: () => void
+  onRestoreBaseline?: () => void
   onExportTheme: (themeId: string) => Promise<ThemeManagerActionResult>
+  onSaveTheme: (themeId: string) => Promise<ThemeManagerActionResult>
+  onSaveAsTheme: (sourceThemeId: string, name: string) => Promise<ThemeManagerActionResult>
+  onRenameTheme: (themeId: string, newName: string) => Promise<ThemeManagerActionResult>
   onImportThemePrepare: () => Promise<
     | { status: 'canceled' }
     | { status: 'invalid'; diagnostics: ThemeImportValidationDiagnostic[] }
@@ -40,23 +62,34 @@ const BUILTIN_THEME_IDS = ['默认深色', '默认浅色']
 
 function ThemeManager({
   open,
+  detachedWindow = false,
   themes,
   currentTheme,
   draftThemeId = null,
   hasUnsavedDraft = false,
+  tokenValues = {},
+  flowLineConfig = DEFAULT_FLOW_LINE_MODE_CONFIG,
+  canUndo = false,
   onClose,
   onSelectTheme,
-  onCreateFromCurrent,
-  onRenameTheme,
-  onDeleteTheme,
+  onApplyTheme,
+  onTokenChange,
+  onFlowLineModeChange,
+  onFlowLineMainColorChange,
+  onFlowLineDepthStepChange,
+  onResetToken,
+  onResetGroup,
+  onResetAll,
+  onUndo,
+  onRestoreBaseline,
   onExportTheme,
+  onSaveTheme,
+  onSaveAsTheme,
+  onRenameTheme,
   onImportThemePrepare,
   onImportThemeCommit,
 }: ThemeManagerProps): React.JSX.Element | null {
   const [selectedThemeId, setSelectedThemeId] = useState('')
-  const [createName, setCreateName] = useState('')
-  const [renameName, setRenameName] = useState('')
-  const [deleteConfirmName, setDeleteConfirmName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [feedback, setFeedback] = useState<string | null>(null)
   const [importPreview, setImportPreview] = useState<
@@ -69,14 +102,20 @@ function ThemeManager({
   const [importRenameName, setImportRenameName] = useState('')
   const [overwriteConfirmed, setOverwriteConfirmed] = useState(false)
   const [switchNowThemeId, setSwitchNowThemeId] = useState<string | null>(null)
+  const [nameDialogMode, setNameDialogMode] = useState<'save' | null>(null)
+  const [nameDialogValue, setNameDialogValue] = useState('')
+  const [themeContextMenu, setThemeContextMenu] = useState<{ themeId: string; left: number; top: number } | null>(null)
+  const [editingThemeId, setEditingThemeId] = useState<string | null>(null)
+  const [editingThemeName, setEditingThemeName] = useState('')
+  const [dialogPosition, setDialogPosition] = useState<{ left: number; top: number } | null>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const themeContextMenuRef = useRef<HTMLDivElement>(null)
+  const dragOffsetRef = useRef<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
     if (!open) return
     const defaultTheme = themes.includes(currentTheme) ? currentTheme : (themes[0] || '')
     setSelectedThemeId(defaultTheme)
-    setRenameName(defaultTheme)
-    setDeleteConfirmName('')
-    setCreateName('')
     setFeedback(null)
     setSubmitting(false)
     setImportPreview(null)
@@ -84,22 +123,48 @@ function ThemeManager({
     setImportRenameName('')
     setOverwriteConfirmed(false)
     setSwitchNowThemeId(null)
-  }, [open])
+    setNameDialogMode(null)
+    setNameDialogValue('')
+    setThemeContextMenu(null)
+    setEditingThemeId(null)
+    setEditingThemeName('')
+    setDialogPosition(null)
+  }, [open, currentTheme, themes])
+
+  useEffect(() => {
+    if (!themeContextMenu) return
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      if (target && themeContextMenuRef.current?.contains(target)) return
+      setThemeContextMenu(null)
+    }
+    const ownerDocument = dialogRef.current?.ownerDocument || document
+    ownerDocument.addEventListener('mousedown', handlePointerDown, true)
+    return () => ownerDocument.removeEventListener('mousedown', handlePointerDown, true)
+  }, [themeContextMenu])
 
   useEffect(() => {
     if (!open) return
-    if (themes.includes(selectedThemeId)) return
+    if (selectedThemeId && themes.includes(selectedThemeId)) return
     const fallbackTheme = themes.includes(currentTheme) ? currentTheme : (themes[0] || '')
-    setSelectedThemeId(fallbackTheme)
+    if (selectedThemeId !== fallbackTheme) {
+      setSelectedThemeId(fallbackTheme)
+    }
   }, [currentTheme, open, selectedThemeId, themes])
 
-  useEffect(() => {
-    if (!selectedThemeId) return
-    setRenameName(selectedThemeId)
-    setDeleteConfirmName('')
-  }, [selectedThemeId])
-
   const isBuiltinSelected = useMemo(() => BUILTIN_THEME_IDS.includes(selectedThemeId), [selectedThemeId])
+  const builtinThemes = useMemo(
+    () => BUILTIN_THEME_IDS.filter(themeId => themes.includes(themeId)),
+    [themes]
+  )
+  const customThemes = useMemo(
+    () => themes.filter(themeId => !BUILTIN_THEME_IDS.includes(themeId)),
+    [themes]
+  )
+  const orderedThemes = useMemo(
+    () => [...builtinThemes, ...customThemes],
+    [builtinThemes, customThemes]
+  )
 
   if (!open) return null
 
@@ -174,7 +239,7 @@ function ThemeManager({
   }
 
   const handleImportCommit = async () => {
-    if (!canSubmitImport || !importPreview || importPreview.status === 'invalid' || submitting) return
+    if (!canSubmitImport || !importPreview || submitting) return
     const request: { importedTheme: ThemeDefinition; decision?: ThemeImportConflictDecision } = {
       importedTheme: importPreview.importedTheme,
     }
@@ -221,35 +286,264 @@ function ThemeManager({
     setSwitchNowThemeId(null)
   }
 
+  const handleHeaderMouseDown = (event: React.MouseEvent<HTMLElement>) => {
+    if (detachedWindow) return
+    if ((event.target as HTMLElement).closest('.theme-manager-close')) return
+    if (!dialogRef.current) return
+    const rect = dialogRef.current.getBoundingClientRect()
+    dragOffsetRef.current = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    }
+    const handleMove = (moveEvent: MouseEvent) => {
+      const offset = dragOffsetRef.current
+      if (!offset) return
+      setDialogPosition({
+        left: Math.max(12, moveEvent.clientX - offset.x),
+        top: Math.max(12, moveEvent.clientY - offset.y),
+      })
+    }
+    const handleUp = () => {
+      dragOffsetRef.current = null
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleUp)
+    }
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleUp)
+  }
+
+  const openNameDialog = (mode: 'save') => {
+    if (!selectedThemeId) {
+      setFeedback('请先选择主题。')
+      return
+    }
+    setNameDialogMode(mode)
+    setNameDialogValue(selectedThemeId)
+  }
+
+  const handleNameDialogConfirm = async () => {
+    const name = nameDialogValue.trim()
+    if (!name) {
+      setFeedback('请输入主题名称。')
+      return
+    }
+    await handleAction(
+      () => onSaveAsTheme(selectedThemeId, name),
+      () => {
+        setNameDialogMode(null)
+        setNameDialogValue('')
+      }
+    )
+  }
+
+  const handleSaveThemeClick = () => {
+    if (!selectedThemeId) {
+      setFeedback('请先选择主题。')
+      return
+    }
+    if (BUILTIN_THEME_IDS.includes(selectedThemeId)) {
+      openNameDialog('save')
+      return
+    }
+    void handleAction(() => onSaveTheme(selectedThemeId))
+  }
+
+  const handleThemeContextMenu = (event: React.MouseEvent<HTMLButtonElement>, themeId: string) => {
+    event.preventDefault()
+    setSelectedThemeId(themeId)
+    setThemeContextMenu({
+      themeId,
+      left: event.clientX,
+      top: event.clientY,
+    })
+  }
+
+  const openRenameEditor = (themeId: string) => {
+    if (BUILTIN_THEME_IDS.includes(themeId)) {
+      setFeedback('内置主题不可重命名。')
+      setThemeContextMenu(null)
+      return
+    }
+    setThemeContextMenu(null)
+    setEditingThemeId(themeId)
+    setEditingThemeName(themeId)
+  }
+
+  const handleContextImportTheme = async () => {
+    setThemeContextMenu(null)
+    await handleImportPrepare()
+  }
+
+  const handleContextExportTheme = () => {
+    if (!themeContextMenu?.themeId) return
+    const targetThemeId = themeContextMenu.themeId
+    setThemeContextMenu(null)
+    void handleAction(() => onExportTheme(targetThemeId))
+  }
+
+  const cancelRenameEditor = () => {
+    setEditingThemeId(null)
+    setEditingThemeName('')
+  }
+
+  const commitRenameEditor = async () => {
+    if (submitting) return
+    if (!editingThemeId) return
+    const sourceThemeId = editingThemeId
+    const nextThemeId = editingThemeName.trim()
+
+    if (!nextThemeId) {
+      setFeedback('主题名称不能为空。')
+      cancelRenameEditor()
+      return
+    }
+    if (BUILTIN_THEME_IDS.includes(sourceThemeId)) {
+      setFeedback('内置主题不可重命名。')
+      cancelRenameEditor()
+      return
+    }
+    if (nextThemeId === sourceThemeId) {
+      cancelRenameEditor()
+      return
+    }
+    if (themes.includes(nextThemeId)) {
+      setFeedback('主题名称不可重复。')
+      cancelRenameEditor()
+      return
+    }
+
+    setSubmitting(true)
+    const result = await onRenameTheme(sourceThemeId, nextThemeId)
+    if (!result.success) {
+      setFeedback(result.message || '重命名失败，请重试。')
+      setSubmitting(false)
+      cancelRenameEditor()
+      return
+    }
+    setFeedback(result.message || '重命名成功。')
+    setSelectedThemeId(nextThemeId)
+    setSubmitting(false)
+    cancelRenameEditor()
+  }
+
+  const activeFlowLineMainColor = flowLineConfig.mode === 'multi'
+    ? flowLineConfig.multi.mainColor
+    : flowLineConfig.single.mainColor
+
   return (
-    <div className="theme-manager-overlay" onMouseDown={onClose}>
-      <div className="theme-manager-dialog" onMouseDown={(event) => event.stopPropagation()}>
-        <header className="theme-manager-header">
+    <div
+      className={`theme-manager-overlay${detachedWindow ? ' detached' : ''}`}
+      onMouseDown={() => setThemeContextMenu(null)}
+    >
+      <div
+        ref={dialogRef}
+        className={`theme-manager-dialog${detachedWindow ? ' detached' : ''}`}
+        onMouseDown={(event) => event.stopPropagation()}
+        style={dialogPosition && !detachedWindow ? { left: `${dialogPosition.left}px`, top: `${dialogPosition.top}px`, position: 'fixed' } : undefined}
+      >
+        <header className="theme-manager-header" onMouseDown={handleHeaderMouseDown}>
           <h2 className="theme-manager-title">主题管理器</h2>
           <button type="button" className="theme-manager-close" onClick={onClose} aria-label="关闭主题管理器">×</button>
         </header>
         <div className="theme-manager-body">
           <section className="theme-manager-list" aria-label="主题列表">
-            {themes.map(themeId => {
+            {orderedThemes.map((themeId, index) => {
               const isActive = themeId === currentTheme
               const isBuiltin = BUILTIN_THEME_IDS.includes(themeId)
               const isDraft = draftVisible && themeId === draftThemeId
+              const isEditing = editingThemeId === themeId
+              const showDivider = index === builtinThemes.length && customThemes.length > 0
+              if (isEditing) {
+                return (
+                  <div key={themeId}>
+                    {showDivider && <div className="theme-manager-list-divider" aria-hidden>---------</div>}
+                    <div
+                      className={`theme-manager-list-item editing ${selectedThemeId === themeId ? 'active' : ''}`}
+                    >
+                      <input
+                        className="theme-manager-list-rename-input"
+                        value={editingThemeName}
+                        onChange={(event) => setEditingThemeName(event.target.value)}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onClick={(event) => event.stopPropagation()}
+                        onBlur={() => { void commitRenameEditor() }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            event.currentTarget.blur()
+                          }
+                          if (event.key === 'Escape') {
+                            event.preventDefault()
+                            cancelRenameEditor()
+                          }
+                        }}
+                        autoFocus
+                      />
+                      <span className="theme-manager-list-tags">
+                        {isActive && <span className="theme-manager-tag">当前</span>}
+                        <span className="theme-manager-tag">{isBuiltin ? '内置' : '自定义'}</span>
+                        {isDraft && <span className="theme-manager-tag theme-manager-tag-warning">未保存草稿</span>}
+                      </span>
+                    </div>
+                  </div>
+                )
+              }
               return (
-                <button
-                  key={themeId}
-                  type="button"
-                  className={`theme-manager-list-item ${selectedThemeId === themeId ? 'active' : ''}`}
-                  onClick={() => setSelectedThemeId(themeId)}
-                >
-                  <span className="theme-manager-list-name">{themeId}</span>
-                  <span className="theme-manager-list-tags">
-                    {isActive && <span className="theme-manager-tag">当前</span>}
-                    <span className="theme-manager-tag">{isBuiltin ? '内置' : '自定义'}</span>
-                    {isDraft && <span className="theme-manager-tag theme-manager-tag-warning">未保存草稿</span>}
-                  </span>
-                </button>
+                <div key={themeId}>
+                  {showDivider && <div className="theme-manager-list-divider" aria-hidden>---------</div>}
+                  <button
+                    type="button"
+                    className={`theme-manager-list-item ${selectedThemeId === themeId ? 'active' : ''}`}
+                    onClick={() => {
+                      setThemeContextMenu(null)
+                      setSelectedThemeId(themeId)
+                      void onSelectTheme(themeId)
+                    }}
+                    onContextMenu={(event) => handleThemeContextMenu(event, themeId)}
+                  >
+                    <span className="theme-manager-list-name">{themeId}</span>
+                    <span className="theme-manager-list-tags">
+                      {isActive && <span className="theme-manager-tag">当前</span>}
+                      <span className="theme-manager-tag">{isBuiltin ? '内置' : '自定义'}</span>
+                      {isDraft && <span className="theme-manager-tag theme-manager-tag-warning">未保存草稿</span>}
+                    </span>
+                  </button>
+                </div>
               )
             })}
+            {themeContextMenu && (
+              <div
+                ref={themeContextMenuRef}
+                className="theme-manager-context-menu"
+                style={{ left: `${themeContextMenu.left}px`, top: `${themeContextMenu.top}px` }}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className="theme-manager-context-menu-item"
+                  onClick={() => { void handleContextImportTheme() }}
+                  disabled={submitting}
+                >
+                  导入主题
+                </button>
+                <button
+                  type="button"
+                  className="theme-manager-context-menu-item"
+                  onClick={handleContextExportTheme}
+                  disabled={submitting}
+                >
+                  导出主题
+                </button>
+                <button
+                  type="button"
+                  className="theme-manager-context-menu-item"
+                  onClick={() => openRenameEditor(themeContextMenu.themeId)}
+                  disabled={BUILTIN_THEME_IDS.includes(themeContextMenu.themeId) || submitting}
+                >
+                  重命名
+                </button>
+              </div>
+            )}
           </section>
           <section className="theme-manager-detail">
             <div className="theme-manager-detail-row">
@@ -258,7 +552,7 @@ function ThemeManager({
             </div>
             <div className="theme-manager-detail-row">
               <span className="theme-manager-detail-label">主题类型</span>
-              <span>{isBuiltinSelected ? '内置主题（只读）' : '自定义主题'}</span>
+              <span>{isBuiltinSelected ? '内置主题（修改时自动复制）' : '自定义主题'}</span>
             </div>
             {draftVisible && selectedThemeId === draftThemeId && (
               <div className="theme-manager-detail-draft" role="status">
@@ -266,27 +560,22 @@ function ThemeManager({
               </div>
             )}
             <div className="theme-manager-detail-actions">
-              <button type="button" className="theme-manager-btn" onClick={() => { void onSelectTheme(selectedThemeId) }} disabled={!selectedThemeId || submitting}>
+              <button type="button" className="theme-manager-btn" onClick={() => { void onApplyTheme(selectedThemeId) }} disabled={!selectedThemeId || submitting}>
                 设为当前
               </button>
               <button
                 type="button"
                 className="theme-manager-btn"
-                onClick={() => { void handleImportPrepare() }}
-                disabled={submitting}
-              >
-                导入主题
-              </button>
-              <button
-                type="button"
-                className="theme-manager-btn"
-                onClick={() => {
-                  void handleAction(() => onExportTheme(selectedThemeId))
-                }}
+                onClick={handleSaveThemeClick}
                 disabled={!selectedThemeId || submitting}
               >
-                导出主题
+                保存主题
               </button>
+            </div>
+            <div className="theme-manager-detail-actions">
+              <button type="button" className="theme-manager-btn" disabled={!canUndo} onClick={onUndo}>撤销上一步</button>
+              <button type="button" className="theme-manager-btn" disabled={!canUndo} onClick={onRestoreBaseline}>恢复会话基线</button>
+              <button type="button" className="theme-manager-btn" onClick={onResetAll}>恢复全部默认</button>
             </div>
             {importPreview?.status === 'invalid' && (
               <div className="theme-manager-import-panel">
@@ -367,77 +656,100 @@ function ThemeManager({
                 </div>
               </div>
             )}
-            <label className="theme-manager-field">
-              <span>从当前主题创建</span>
-              <input
-                type="text"
-                value={createName}
-                onChange={(event) => setCreateName(event.target.value)}
-                className="theme-manager-input"
-                aria-label="从当前主题创建"
-                placeholder="输入新主题名称"
-              />
-            </label>
-            <button
-              type="button"
-              className="theme-manager-btn theme-manager-btn-primary"
-              onClick={() => {
-                void handleAction(
-                  () => onCreateFromCurrent(createName),
-                  () => setCreateName('')
-                )
-              }}
-              disabled={submitting}
-            >
-              从当前创建
-            </button>
-            <label className="theme-manager-field">
-              <span>重命名主题</span>
-              <input
-                type="text"
-                value={renameName}
-                onChange={(event) => setRenameName(event.target.value)}
-                className="theme-manager-input"
-                aria-label="重命名主题名称"
-                disabled={isBuiltinSelected}
-              />
-            </label>
-            <button
-              type="button"
-              className="theme-manager-btn"
-              onClick={() => {
-                void handleAction(() => onRenameTheme(selectedThemeId, renameName))
-              }}
-              disabled={!selectedThemeId || isBuiltinSelected || submitting}
-            >
-              重命名主题
-            </button>
-            <label className="theme-manager-field">
-              <span>删除确认名称</span>
-              <input
-                type="text"
-                value={deleteConfirmName}
-                onChange={(event) => setDeleteConfirmName(event.target.value)}
-                className="theme-manager-input"
-                aria-label="删除确认名称"
-                disabled={isBuiltinSelected}
-                placeholder="输入完整主题名后删除"
-              />
-            </label>
-            <button
-              type="button"
-              className="theme-manager-btn theme-manager-btn-danger"
-              onClick={() => {
-                if (!window.confirm(`确认删除主题“${selectedThemeId}”？该操作不可恢复。`)) return
-                void handleAction(
-                  () => onDeleteTheme(selectedThemeId, deleteConfirmName),
-                  () => setDeleteConfirmName('')
-                )
-              }}
-              disabled={!selectedThemeId || isBuiltinSelected || submitting}
-            >
-              删除主题
-            </button>
+            <div className="theme-manager-editor" role="region" aria-label="主题配色编辑">
+              {THEME_TOKEN_GROUPS.map(group => (
+                <section key={group.id} className="theme-manager-group">
+                  <header className="theme-manager-group-header">
+                    <h3 className="theme-manager-group-title">{group.label}</h3>
+                    <button type="button" className="theme-manager-btn" onClick={() => onResetGroup?.(group.id)}>重置本组</button>
+                  </header>
+                  {group.id === 'flow-line' && (
+                    <div className="theme-manager-flow-controls">
+                      <div className="theme-manager-detail-actions">
+                        <button
+                          type="button"
+                          className={`theme-manager-btn ${flowLineConfig.mode === 'single' ? 'theme-manager-btn-primary' : ''}`}
+                          onClick={() => onFlowLineModeChange?.('single')}
+                        >
+                          单色
+                        </button>
+                        <button
+                          type="button"
+                          className={`theme-manager-btn ${flowLineConfig.mode === 'multi' ? 'theme-manager-btn-primary' : ''}`}
+                          onClick={() => onFlowLineModeChange?.('multi')}
+                        >
+                          多色
+                        </button>
+                      </div>
+                      <div className="theme-manager-flow-row">
+                        <span>主色</span>
+                        <input type="color" value={activeFlowLineMainColor} onChange={(event) => onFlowLineMainColorChange?.(event.target.value)} />
+                        <span>色相步进</span>
+                        <input type="number" value={flowLineConfig.multi.depthHueStep} onChange={(event) => onFlowLineDepthStepChange?.('depthHueStep', Number(event.target.value))} disabled={flowLineConfig.mode !== 'multi'} />
+                        <span>饱和度步进</span>
+                        <input type="number" value={flowLineConfig.multi.depthSaturationStep} onChange={(event) => onFlowLineDepthStepChange?.('depthSaturationStep', Number(event.target.value))} disabled={flowLineConfig.mode !== 'multi'} />
+                        <span>亮度步进</span>
+                        <input type="number" value={flowLineConfig.multi.depthLightnessStep} onChange={(event) => onFlowLineDepthStepChange?.('depthLightnessStep', Number(event.target.value))} disabled={flowLineConfig.mode !== 'multi'} />
+                      </div>
+                    </div>
+                  )}
+                  {group.id !== 'flow-line' && (
+                    <div className="theme-manager-token-list">
+                      {group.items.map(item => (
+                        <div key={item.id} className="theme-manager-token-row">
+                          <span className="theme-manager-token-label">{item.label}</span>
+                          <span className="theme-manager-preview-chip" style={{ backgroundColor: tokenValues[item.tokenKey] || '#000000' }} aria-hidden />
+                          <input
+                            type="color"
+                            value={tokenValues[item.tokenKey] || '#000000'}
+                            aria-label={`${group.label}-${item.label}`}
+                            onChange={(event) => onTokenChange?.(item.tokenKey, event.target.value)}
+                          />
+                          <button type="button" className="theme-manager-btn" onClick={() => onResetToken?.(group.id, item.tokenKey)}>重置</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              ))}
+            </div>
+
+            {nameDialogMode && (
+              <div className="theme-manager-import-panel">
+                <div className="theme-manager-import-title">
+                  保存主题
+                </div>
+                <label className="theme-manager-field">
+                  <span>主题名称</span>
+                  <input
+                    type="text"
+                    value={nameDialogValue}
+                    onChange={(event) => setNameDialogValue(event.target.value)}
+                    className="theme-manager-input"
+                    placeholder="请输入主题名称"
+                    autoFocus
+                  />
+                </label>
+                <div className="theme-manager-detail-actions">
+                  <button
+                    type="button"
+                    className="theme-manager-btn theme-manager-btn-primary"
+                    onClick={() => { void handleNameDialogConfirm() }}
+                    disabled={submitting || !selectedThemeId}
+                  >
+                    确认保存
+                  </button>
+                  <button
+                    type="button"
+                    className="theme-manager-btn"
+                    onClick={() => { setNameDialogMode(null); setNameDialogValue('') }}
+                    disabled={submitting}
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
         </div>
         {feedback && (

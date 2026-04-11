@@ -16,6 +16,10 @@
   -webkit-app-region: drag;
 }
 
+.titlebar.menu-open .titlebar-drag {
+  -webkit-app-region: no-drag;
+}
+
 .titlebar-icon {
   display: flex;
   align-items: center;

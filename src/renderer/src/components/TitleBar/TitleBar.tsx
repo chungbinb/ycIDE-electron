@@ -23,6 +23,8 @@ interface RecentOpenedItem {
   label: string
 }
 
+const BUILTIN_THEME_IDS = ['默认深色', '默认浅色']
+
 function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasOpenFile: boolean, themes: string[], currentTheme: string, recentOpened: RecentOpenedItem[]): MenuDef[] {
   const np = !hasProject
   const nf = !hasOpenFile
@@ -34,6 +36,28 @@ function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasOp
       label: `${item.type === 'project' ? '项目' : '文件'}: ${item.label}`,
       action: `file:openRecent:${encodeURIComponent(JSON.stringify({ type: item.type, path: item.path }))}`,
     }))
+    : [{ label: '(空)', disabled: true }]
+  const builtinThemes = BUILTIN_THEME_IDS.filter(themeId => themes.includes(themeId))
+  const customThemes = themes.filter(themeId => !BUILTIN_THEME_IDS.includes(themeId))
+  const orderedThemes = [...builtinThemes, ...customThemes]
+  const themeSubmenu: MenuItem[] = orderedThemes.length > 0
+    ? orderedThemes.flatMap((themeName, index) => {
+      if (index === builtinThemes.length && customThemes.length > 0) {
+        return [
+          { divider: true },
+          {
+            label: themeName,
+            action: `theme:${themeName}`,
+            checked: themeName === currentTheme,
+          },
+        ]
+      }
+      return [{
+        label: themeName,
+        action: `theme:${themeName}`,
+        checked: themeName === currentTheme,
+      }]
+    })
     : [{ label: '(空)', disabled: true }]
   return [
     { label: '文件(F)', items: [
@@ -70,11 +94,7 @@ function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasOp
       { label: '', divider: true },
       { label: '项目管理器', action: 'view:project' },
       { label: '', divider: true },
-      { label: '主题', submenu: themes.map(t => ({
-        label: t,
-        action: `theme:${t}`,
-        checked: t === currentTheme,
-      })) },
+      { label: '主题', submenu: themeSubmenu },
     ]},
     { label: '插入(I)', items: [
       { label: '全局变量(G)', action: 'insert:globalVar', disabled: np },
@@ -108,7 +128,6 @@ function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasOp
     ]},
     { label: '工具(T)', items: [
       { label: '支持库配置(L)', action: 'tools:library' },
-      { label: '系统配置(O)', action: 'tools:settings' },
       { label: '主题管理器(M)', action: 'tools:themeManager' },
     ]},
     { label: '帮助(H)', items: [
@@ -157,8 +176,19 @@ function TitleBar({ onMenuAction, onWindowClose, runtimePlatform = 'windows', ha
     return () => document.removeEventListener('mousedown', handler)
   }, [openMenu, closeMenu])
 
+  const handleTitlebarMouseDownCapture = (event: React.MouseEvent<HTMLElement>) => {
+    if (openMenu === null) return
+    const target = event.target as Node
+    if (menuBarRef.current?.contains(target)) return
+    closeMenu()
+  }
+
   return (
-    <header className="titlebar" role="banner">
+    <header
+      className={`titlebar${openMenu !== null ? ' menu-open' : ''}`}
+      role="banner"
+      onMouseDownCapture={handleTitlebarMouseDownCapture}
+    >
       <div className="titlebar-drag">
         {!isMacOS && (
           <div className="titlebar-icon" aria-hidden="true">

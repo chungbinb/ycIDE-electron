@@ -38,6 +38,8 @@
   --statusbar-bg: #007acc;
   --statusbar-text: #ffffff;
   --statusbar-item-hover: rgba(255, 255, 255, 0.12);
+  --toolbar-icon-color: #e4e4e4;
+  --toolbar-icon-disabled-color: #d0d0d0;
 
   /* 字体 */
   --font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;

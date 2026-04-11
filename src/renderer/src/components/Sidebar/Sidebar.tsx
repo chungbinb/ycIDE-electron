@@ -94,7 +94,7 @@ function TreeItem({ node, depth = 0, onOpenFile, activeFileId }: { node: TreeNod
           <span className={`tree-arrow ${expanded ? 'expanded' : ''}`} aria-hidden="true">▶</span>
         )}
         {!hasChildren && <span className="tree-arrow-placeholder" aria-hidden="true" />}
-        <Icon name={(node.type === 'folder' ? (expanded ? TREE_ICON_MAP['folder-expanded'] : TREE_ICON_MAP['folder']) : TREE_ICON_MAP[node.type]) || 'custom-control'} size={16} />
+        <Icon preserveOriginalColors name={(node.type === 'folder' ? (expanded ? TREE_ICON_MAP['folder-expanded'] : TREE_ICON_MAP['folder']) : TREE_ICON_MAP[node.type]) || 'custom-control'} size={16} />
         <span className="tree-label">{node.label}</span>
       </div>
       {hasChildren && expanded && (
@@ -191,7 +191,7 @@ function LibraryPanel(): React.JSX.Element {
                   aria-hidden="true"
                   onClick={(e) => { e.stopPropagation(); toggleLib(lib.name) }}
                 >▶</span>
-                <Icon name="library" size={16} />
+                <Icon preserveOriginalColors name="library" size={16} />
                 <span className="tree-label">{lib.libName || lib.name}</span>
               </div>
               {isExpanded && detail && (
@@ -212,7 +212,7 @@ function LibraryPanel(): React.JSX.Element {
                             aria-hidden="true"
                             onClick={(e) => { e.stopPropagation(); toggleCat(dtKey) }}
                           >▶</span>
-                          <Icon name="class" size={16} />
+                          <Icon preserveOriginalColors name="class" size={16} />
                           <span className="tree-label">数据类型</span>
                           <span className="tree-badge">{detail.dataTypes.length}</span>
                         </div>
@@ -222,7 +222,7 @@ function LibraryPanel(): React.JSX.Element {
                               <li key={dt.name} role="treeitem">
                                 <div className="tree-item tree-leaf" style={{ paddingLeft: 40 }} title={dt.description}>
                                   <span className="tree-arrow-placeholder" aria-hidden="true" />
-                                  <Icon name="class" size={16} />
+                                  <Icon preserveOriginalColors name="class" size={16} />
                                   <span className="tree-label">{dt.name}</span>
                                 </div>
                               </li>
@@ -249,7 +249,7 @@ function LibraryPanel(): React.JSX.Element {
                             aria-hidden="true"
                             onClick={(e) => { e.stopPropagation(); toggleCat(catKey) }}
                           >▶</span>
-                          <Icon name="folder-closed" size={16} />
+                          <Icon preserveOriginalColors name="folder-closed" size={16} />
                           <span className="tree-label">{cat}</span>
                           <span className="tree-badge">{cmds.length}</span>
                         </div>
@@ -259,7 +259,7 @@ function LibraryPanel(): React.JSX.Element {
                               <li key={cmd.name} role="treeitem">
                                 <div className="tree-item tree-leaf" style={{ paddingLeft: 40 }} title={cmd.description}>
                                   <span className="tree-arrow-placeholder" aria-hidden="true" />
-                                  <Icon name="method" size={16} />
+                                  <Icon preserveOriginalColors name="method" size={16} />
                                   <span className="tree-label">{cmd.name}</span>
                                 </div>
                               </li>

@@ -4,6 +4,10 @@ import '../Icon/Icon.css'
 import type { AlignAction } from '../Editor/VisualDesigner'
 import { getPrimaryModifierLabel, getRedoShortcutLabel, type RuntimePlatform } from '../../utils/shortcuts'
 
+function ToolbarIcon({ name }: { name: string }): React.JSX.Element {
+  return <Icon name={name} size={16} />
+}
+
 interface ToolbarProps {
   runtimePlatform?: RuntimePlatform
   hasControlSelected?: boolean
@@ -72,13 +76,13 @@ function Toolbar({
     <div className="toolbar" role="toolbar" aria-label="工具栏">
       <div className="toolbar-group">
         <button className="toolbar-btn" aria-label="新建" title={`新建 (${mod}+Shift+N)`} onClick={onNew}>
-          <Icon name="new-document" size={16} />
+          <ToolbarIcon name="new-document" />
         </button>
         <button className="toolbar-btn" aria-label="打开" title={`打开 (${mod}+Shift+O)`} onClick={onOpen}>
-          <Icon name="open-folder" size={16} />
+          <ToolbarIcon name="open-folder" />
         </button>
         <button className="toolbar-btn" aria-label="保存" title={`保存 (${mod}+S)`} onClick={onSave}>
-          <Icon name="save" size={16} />
+          <ToolbarIcon name="save" />
         </button>
       </div>
 
@@ -86,10 +90,10 @@ function Toolbar({
 
       <div className="toolbar-group">
         <button className="toolbar-btn" aria-label="撤销" title={`撤销 (${mod}+Z)`} onClick={onUndo}>
-          <Icon name="undo" size={16} />
+          <ToolbarIcon name="undo" />
         </button>
         <button className="toolbar-btn" aria-label="重做" title={`重做 (${redoShortcut})`} onClick={onRedo}>
-          <Icon name="redo" size={16} />
+          <ToolbarIcon name="redo" />
         </button>
       </div>
 
@@ -129,7 +133,7 @@ function Toolbar({
           onClick={onCompileRun}
           disabled={!canStartOrContinue}
         >
-          <Icon name="run" size={16} />
+          <ToolbarIcon name="run" />
         </button>
         <button
           className="toolbar-btn toolbar-btn-stop"
@@ -138,7 +142,7 @@ function Toolbar({
           onClick={onStop}
           disabled={!canStop}
         >
-          <Icon name="stop" size={16} />
+          <ToolbarIcon name="stop" />
         </button>
       </div>
 
@@ -146,16 +150,16 @@ function Toolbar({
 
       <div className="toolbar-group">
         <button className="toolbar-btn" aria-label="逐过程" title="逐过程 (F10)" disabled={!canStep} onClick={onDebugStepOver}>
-          <Icon name="step-over" size={16} />
+          <ToolbarIcon name="step-over" />
         </button>
         <button className="toolbar-btn" aria-label="逐语句" title="逐语句 (F11)" disabled={!canStep} onClick={onDebugStepInto}>
-          <Icon name="step-into" size={16} />
+          <ToolbarIcon name="step-into" />
         </button>
         <button className="toolbar-btn" aria-label="跳出" title="跳出 (Shift+F11)" disabled={!canStep} onClick={onDebugStepOut}>
-          <Icon name="step-out" size={16} />
+          <ToolbarIcon name="step-out" />
         </button>
         <button className="toolbar-btn" aria-label="运行到光标处" title={`运行到光标处 (${runToCursorShortcut})`} disabled={!canRunToCursor} onClick={onDebugRunToCursor}>
-          <Icon name="run-to-cursor" size={16} />
+          <ToolbarIcon name="run-to-cursor" />
         </button>
       </div>
 
@@ -163,31 +167,31 @@ function Toolbar({
 
       <div className="toolbar-group">
         <button className="toolbar-btn" aria-label="左对齐" title="左对齐" disabled={!hasControlSelected} onClick={() => onAlign?.('align-left')}>
-          <Icon name="align-left" size={16} />
+          <ToolbarIcon name="align-left" />
         </button>
         <button className="toolbar-btn" aria-label="右对齐" title="右对齐" disabled={!hasControlSelected} onClick={() => onAlign?.('align-right')}>
-          <Icon name="align-right" size={16} />
+          <ToolbarIcon name="align-right" />
         </button>
         <button className="toolbar-btn" aria-label="顶端对齐" title="顶端对齐" disabled={!hasControlSelected} onClick={() => onAlign?.('align-top')}>
-          <Icon name="align-top" size={16} />
+          <ToolbarIcon name="align-top" />
         </button>
         <button className="toolbar-btn" aria-label="底端对齐" title="底端对齐" disabled={!hasControlSelected} onClick={() => onAlign?.('align-bottom')}>
-          <Icon name="align-bottom" size={16} />
+          <ToolbarIcon name="align-bottom" />
         </button>
         <button className="toolbar-btn" aria-label="水平居中" title="水平居中" disabled={!hasControlSelected} onClick={() => onAlign?.('center-h')}>
-          <Icon name="center-h" size={16} />
+          <ToolbarIcon name="center-h" />
         </button>
         <button className="toolbar-btn" aria-label="垂直居中" title="垂直居中" disabled={!hasControlSelected} onClick={() => onAlign?.('center-v')}>
-          <Icon name="center-v" size={16} />
+          <ToolbarIcon name="center-v" />
         </button>
         <button className="toolbar-btn" aria-label="相同宽度" title="相同宽度" disabled={!hasControlSelected} onClick={() => onAlign?.('same-width')}>
-          <Icon name="same-width" size={16} />
+          <ToolbarIcon name="same-width" />
         </button>
         <button className="toolbar-btn" aria-label="相同高度" title="相同高度" disabled={!hasControlSelected} onClick={() => onAlign?.('same-height')}>
-          <Icon name="same-height" size={16} />
+          <ToolbarIcon name="same-height" />
         </button>
         <button className="toolbar-btn" aria-label="相同大小" title="相同大小" disabled={!hasControlSelected} onClick={() => onAlign?.('same-size')}>
-          <Icon name="same-size" size={16} />
+          <ToolbarIcon name="same-size" />
         </button>
       </div>
     </div>

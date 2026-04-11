@@ -36,6 +36,7 @@ import { scanYcmdRegistry } from './ycmd-registry'
 const isDev = !app.isPackaged
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
 const APP_DISPLAY_NAME = 'ycIDE'
+const BUILTIN_LIGHT_THEME_ID: ThemeId = '默认浅色'
 
 type RecentOpenedItem = {
   type: 'project' | 'file'
@@ -50,7 +51,8 @@ type ThemeMenuState = {
 
 let recentOpenedItems: RecentOpenedItem[] = []
 let themeMenuState: ThemeMenuState = { themes: [], currentTheme: '' }
-const BUILTIN_THEME_IDS: ThemeId[] = [BUILTIN_DARK_THEME_ID, '默认浅色']
+const BUILTIN_THEME_IDS: ThemeId[] = [BUILTIN_DARK_THEME_ID, BUILTIN_LIGHT_THEME_ID]
+const BUILTIN_THEME_COMPARE_KEYS = THEME_TOKEN_GROUPS.flatMap(group => group.items.map(item => item.tokenKey))
 let previousBuiltInThemeId: ThemeId = BUILTIN_DARK_THEME_ID
 const closeBypassWindowIds = new Set<number>()
 
@@ -112,6 +114,117 @@ function saveThemeDefinition(themeId: ThemeId, theme: ThemeDefinition): void {
   }
   const filePath = join(themesDir, `${themeId}.json`)
   writeFileSync(filePath, JSON.stringify(theme, null, 2), 'utf-8')
+}
+
+function createBuiltinThemeDefinition(themeId: ThemeId): ThemeDefinition {
+  const darkDefaults = createDefaultThemeTokenPayload().tokenValues
+  if (themeId === BUILTIN_DARK_THEME_ID) {
+    return {
+      name: BUILTIN_DARK_THEME_ID,
+      colors: { ...darkDefaults },
+    }
+  }
+
+  const lightDefaults: Record<string, string> = {
+    ...darkDefaults,
+    '--bg-primary': '#f5f5f5',
+    '--bg-secondary': '#ffffff',
+    '--bg-tertiary': '#f7f7f9',
+    '--bg-hover': '#eef3fb',
+    '--bg-active': '#dde8fa',
+    '--bg-selection': '#cfe6ff',
+    '--bg-input': '#ffffff',
+    '--border-color': '#d0d7de',
+    '--border-focus': '#0969da',
+    '--text-primary': '#1f2328',
+    '--text-secondary': '#57606a',
+    '--text-disabled': '#8c959f',
+    '--text-accent': '#0969da',
+    '--text-link': '#0969da',
+    '--accent': '#0969da',
+    '--accent-hover': '#1f7ae0',
+    '--accent-active': '#0550ae',
+    '--error': '#d1242f',
+    '--warning': '#9a6700',
+    '--success': '#1a7f37',
+    '--info': '#0969da',
+    '--titlebar-bg': '#f6f8fa',
+    '--statusbar-bg': '#dbeafe',
+    '--statusbar-text': '#1f2328',
+    '--toolbar-icon-color': '#1f2328',
+    '--toolbar-icon-disabled-color': '#8c959f',
+    '--statusbar-item-hover': 'rgba(9, 105, 218, 0.14)',
+    '--panel-bg': '#ffffff',
+    '--dialog-bg': '#ffffff',
+    '--dialog-border': '#d0d7de',
+    '--dialog-shadow': 'rgba(15, 23, 42, 0.22)',
+    '--menu-shadow': 'rgba(15, 23, 42, 0.16)',
+    '--danger': '#cf222e',
+    '--menu-text-on-accent': 'rgba(255, 255, 255, 0.9)',
+    '--activity-icon-filter': 'none',
+    '--button-secondary-bg': '#f6f8fa',
+    '--button-secondary-border': '#d0d7de',
+    '--button-secondary-hover': '#eaeef2',
+    '--table-bg': '#ffffff',
+    '--table-text': '#1f2328',
+    '--table-border': '#d0d7de',
+    '--table-header-bg': '#f3f4f6',
+    '--table-header-text': '#1f2328',
+    '--table-row-hover-bg': '#eef3fb',
+    '--table-selection-bg': '#cfe6ff',
+    '--flow-line-main': '#0969da',
+    '--flow-line-branch': '#0969da',
+    '--flow-line-loop': '#0969da',
+    '--flow-line-arrow': '#0969da',
+    '--flow-line-inner-link': '#0969da',
+  }
+
+  return {
+    name: BUILTIN_LIGHT_THEME_ID,
+    colors: lightDefaults,
+  }
+}
+
+function isBuiltinThemeDefinitionValid(themeId: ThemeId, theme: ThemeDefinition | null): boolean {
+  if (!theme) return false
+  const expected = createBuiltinThemeDefinition(themeId)
+  if (theme.name !== expected.name || !theme.colors || typeof theme.colors !== 'object') return false
+  for (const tokenKey of BUILTIN_THEME_COMPARE_KEYS) {
+    if (theme.colors[tokenKey] !== expected.colors[tokenKey]) {
+      return false
+    }
+  }
+  return true
+}
+
+function backupCorruptedBuiltinThemeFile(themeId: ThemeId): void {
+  const filePath = join(getThemesDirPath(), `${themeId}.json`)
+  if (!existsSync(filePath)) return
+  try {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const backupPath = join(getThemesDirPath(), `${themeId}.corrupted.${stamp}.bak.json`)
+    copyFileSync(filePath, backupPath)
+  } catch {
+    // 备份失败不应阻塞修复流程
+  }
+}
+
+function ensureBuiltinThemeFiles(): void {
+  const themesDir = getThemesDirPath()
+  if (!existsSync(themesDir)) {
+    mkdirSync(themesDir, { recursive: true })
+  }
+
+  for (const themeId of BUILTIN_THEME_IDS) {
+    const filePath = join(themesDir, `${themeId}.json`)
+    const loaded = loadThemeDefinition(themeId)
+    if (!isBuiltinThemeDefinitionValid(themeId, loaded)) {
+      if (existsSync(filePath)) {
+        backupCorruptedBuiltinThemeFile(themeId)
+      }
+      saveThemeDefinition(themeId, createBuiltinThemeDefinition(themeId))
+    }
+  }
 }
 
 function hasThemeIdConflict(themeId: ThemeId, existingThemeIds: ThemeId[]): boolean {
@@ -427,6 +540,26 @@ function createWindow(): void {
 
   // 外部链接在系统浏览器打开
   mainWindow.webContents.setWindowOpenHandler((details) => {
+    if (details.url === 'about:blank') {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 1080,
+          height: 820,
+          minWidth: 720,
+          minHeight: 520,
+          autoHideMenuBar: true,
+          frame: false,
+          titleBarStyle: 'hidden',
+          title: '主题管理器 - ycIDE',
+          webPreferences: {
+            sandbox: false,
+            contextIsolation: true,
+            nodeIntegration: false,
+          },
+        },
+      }
+    }
     shell.openExternal(details.url)
     return { action: 'deny' }
   })
@@ -463,12 +596,23 @@ function setupNativeMenu(): void {
     : [{ label: '(空)', enabled: false }]
 
   const themeSubmenu: MenuItemConstructorOptions[] = themeMenuState.themes.length > 0
-    ? themeMenuState.themes.map(themeName => ({
-      label: themeName,
-      type: 'radio',
-      checked: themeName === themeMenuState.currentTheme,
-      click: () => emitMenuAction(`theme:${themeName}`),
-    }))
+    ? (() => {
+      const builtinThemes = BUILTIN_THEME_IDS.filter(themeId => themeMenuState.themes.includes(themeId))
+      const customThemes = themeMenuState.themes.filter(themeName => !BUILTIN_THEME_IDS.includes(themeName))
+      const orderedThemes = [...builtinThemes, ...customThemes]
+      return orderedThemes.flatMap((themeName, index) => {
+        const item: MenuItemConstructorOptions = {
+          label: themeName,
+          type: 'radio',
+          checked: themeName === themeMenuState.currentTheme,
+          click: () => emitMenuAction(`theme:${themeName}`),
+        }
+        if (index === builtinThemes.length && customThemes.length > 0) {
+          return [{ type: 'separator' } as MenuItemConstructorOptions, item]
+        }
+        return [item]
+      })
+    })()
     : [{ label: '(空)', enabled: false }]
 
   const template: MenuItemConstructorOptions[] = [
@@ -599,6 +743,7 @@ function setupNativeMenu(): void {
 }
 
 app.whenReady().then(() => {
+  ensureBuiltinThemeFiles()
   setupNativeMenu()
 
   ipcMain.on('menu:updateRecentOpened', (_event, items: unknown) => {
@@ -681,7 +826,7 @@ app.whenReady().then(() => {
       title: '未保存主题草稿',
       message: '主题改动尚未保存。',
       detail,
-      buttons: ['保存为自定义主题', '放弃改动', '继续编辑'],
+      buttons: ['保存', '放弃改动', '继续编辑'],
       defaultId: 2,
       cancelId: 2,
       noLink: true,
