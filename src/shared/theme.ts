@@ -106,6 +106,7 @@ export interface ThemeResolutionResult {
   effectiveThemeId: ThemeId
   themePayload: ThemeTokenPayload
   warning: ThemeResolutionWarning | null
+  config?: ThemeConfigV2
 }
 
 export const THEME_PORTABILITY_SCHEMA_VERSION = 1 as const

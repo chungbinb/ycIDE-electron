@@ -44,7 +44,7 @@ function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasOp
     ? orderedThemes.flatMap((themeName, index) => {
       if (index === builtinThemes.length && customThemes.length > 0) {
         return [
-          { divider: true },
+          { label: '', divider: true },
           {
             label: themeName,
             action: `theme:${themeName}`,
@@ -129,6 +129,8 @@ function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasOp
     { label: '工具(T)', items: [
       { label: '支持库配置(L)', action: 'tools:library' },
       { label: '主题管理器(M)', action: 'tools:themeManager' },
+      { label: '', divider: true },
+      { label: '系统设置(S)', action: 'tools:settings' },
     ]},
     { label: '帮助(H)', items: [
       { label: '帮助主题(H)', shortcut: 'F1', action: 'help:topics' },

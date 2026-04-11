@@ -25,7 +25,7 @@ function StatusBar({ onToggleOutput, errorCount = 0, warningCount = 0, cursorLin
           <span className="statusbar-item">行 {cursorLine}, 列 {cursorColumn}</span>
         )}
         {docType && <span className="statusbar-item">{docType}</span>}
-        <span className="statusbar-item">ycIDE v0.0.0.38</span>
+        <span className="statusbar-item">ycIDE v0.0.1.43</span>
       </div>
     </footer>
   )

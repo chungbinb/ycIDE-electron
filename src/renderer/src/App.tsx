@@ -12,6 +12,7 @@ import LibraryDialog from './components/LibraryDialog/LibraryDialog'
 import NewProjectDialog from './components/NewProjectDialog/NewProjectDialog'
 import ThemeSettingsDialog from './components/ThemeSettingsDialog/ThemeSettingsDialog'
 import ThemeManager from './components/ThemeManager/ThemeManager'
+import SettingsDialog from './components/SettingsDialog/SettingsDialog'
 import type { SelectionTarget, AlignAction, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
@@ -29,6 +30,7 @@ import {
 } from '../../shared/theme'
 import { createThemeDraftSession, type ThemeDraftSession } from '../../shared/theme-draft'
 import { THEME_TOKEN_GROUPS, type FlowLineMode, type FlowLineMultiConfig, type ThemeTokenGroupId } from '../../shared/theme-tokens'
+import { DEFAULT_IDE_SETTINGS, resolveIDESettings, type IDESettings } from '../../shared/settings'
 import './App.css'
 
 type ProjectSessionState = {
@@ -364,8 +366,13 @@ function App(): React.JSX.Element {
   const [showNewProject, setShowNewProject] = useState(false)
   const [showThemeSettings, setShowThemeSettings] = useState(false)
   const [showThemeManager, setShowThemeManager] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [ideSettings, setIdeSettings] = useState<IDESettings>(DEFAULT_IDE_SETTINGS)
   const themeManagerWindowRef = useRef<Window | null>(null)
   const [themeManagerPortalRoot, setThemeManagerPortalRoot] = useState<HTMLElement | null>(null)
+  const settingsWindowRef = useRef<Window | null>(null)
+  const [settingsPortalRoot, setSettingsPortalRoot] = useState<HTMLElement | null>(null)
+  const settingsBaselineRef = useRef<IDESettings>(DEFAULT_IDE_SETTINGS)
   const [themeRepairMessage, setThemeRepairMessage] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [selection, setSelection] = useState<SelectionTarget>(null)
@@ -446,6 +453,26 @@ function App(): React.JSX.Element {
       // 忽略无效缓存
     }
   }, [])
+
+  // 加载系统设置
+  useEffect(() => {
+    void (async () => {
+      try {
+        const saved = await window.api?.settings?.get()
+        if (saved) setIdeSettings(resolveIDESettings(saved))
+      } catch { /* ignore */ }
+    })()
+  }, [])
+
+  // 应用系统设置到 CSS 变量
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--titlebar-height', `${ideSettings.titlebarHeight}px`)
+    root.style.setProperty('--toolbar-height', `${ideSettings.toolbarHeight}px`)
+    root.style.setProperty('--toolbar-icon-size', `${ideSettings.toolbarIconSize}px`)
+    root.style.setProperty('--font-family', ideSettings.fontFamily)
+    root.style.setProperty('--font-size', `${ideSettings.fontSize}px`)
+  }, [ideSettings])
 
   useEffect(() => {
     if (runtimePlatform !== 'macos') return
@@ -950,6 +977,15 @@ function App(): React.JSX.Element {
       } catch {
         pushThemeNotice('theme-persist-failed', '[主题] 当前主题未能写入配置，建议重启应用后重试。')
       }
+    } else if (!incomingPayload) {
+      // 预览模式下也需要从已持久化的 payload 中读取 icon 等配置
+      try {
+        const current = await window.api?.theme?.getCurrent()
+        const savedPayload = current?.config?.themePayloads?.[name]
+        if (savedPayload) {
+          payload = resolveThemeTokenPayload(savedPayload, theme.colors)
+        }
+      } catch { /* ignore */ }
     }
 
     // 内置主题始终以主题文件色值为准，避免历史 payload 覆盖标题栏等关键令牌。
@@ -1321,6 +1357,16 @@ function App(): React.JSX.Element {
     return { success: true, message: result.notice || `主题“${result.deletedThemeId}”已删除。` }
   }, [syncThemeLifecycleState, themeDraftSession?.workingThemeId])
 
+  const handleSettingsSave = useCallback(async (next: IDESettings) => {
+    try {
+      const saved = await window.api?.settings?.save(next)
+      if (saved) setIdeSettings(resolveIDESettings(saved))
+      else setIdeSettings(resolveIDESettings(next))
+    } catch {
+      setIdeSettings(resolveIDESettings(next))
+    }
+  }, [])
+
   const handleThemeManagerExport = useCallback(async (themeId: string): Promise<{ success: boolean; message?: string }> => {
     if (!themeId) return { success: false, message: '请选择要导出的主题。' }
     const testExport = (window as Window & {
@@ -1647,6 +1693,88 @@ function App(): React.JSX.Element {
       themeManagerWindowRef.current.close()
     }
   }, [])
+
+  // ── 系统设置独立窗口 ──
+  useEffect(() => {
+    if (!showSettings) {
+      if (settingsWindowRef.current && !settingsWindowRef.current.closed) {
+        settingsWindowRef.current.close()
+      }
+      settingsWindowRef.current = null
+      setSettingsPortalRoot(null)
+      return
+    }
+
+    settingsBaselineRef.current = { ...ideSettings }
+
+    if (!settingsWindowRef.current || settingsWindowRef.current.closed) {
+      const popup = window.open('about:blank', 'ycIDE-settings', 'popup=yes,width=520,height=480,left=200,top=120')
+      if (!popup) {
+        setShowSettings(false)
+        return
+      }
+      popup.document.title = '系统设置 - ycIDE'
+      popup.document.body.innerHTML = ''
+      popup.document.body.style.margin = '0'
+      popup.document.body.style.overflow = 'hidden'
+
+      const root = popup.document.createElement('div')
+      root.id = 'settings-root'
+      root.style.width = '100%'
+      root.style.height = '100%'
+      popup.document.body.appendChild(root)
+
+      popup.document.head.innerHTML = ''
+      document.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+        popup.document.head.appendChild(node.cloneNode(true))
+      })
+      popup.document.documentElement.style.cssText = document.documentElement.style.cssText
+
+      const handlePopupClosed = (): void => {
+        setIdeSettings(resolveIDESettings(settingsBaselineRef.current))
+        settingsWindowRef.current = null
+        setSettingsPortalRoot(null)
+        setShowSettings(false)
+      }
+      popup.addEventListener('beforeunload', handlePopupClosed)
+
+      settingsWindowRef.current = popup
+      setSettingsPortalRoot(root)
+    } else {
+      const popup = settingsWindowRef.current
+      popup.document.documentElement.style.cssText = document.documentElement.style.cssText
+      popup.focus()
+      const root = popup.document.getElementById('settings-root') as HTMLElement | null
+      setSettingsPortalRoot(root)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSettings])
+
+  useEffect(() => {
+    const popup = settingsWindowRef.current
+    if (!popup || popup.closed) return
+    popup.document.documentElement.style.cssText = document.documentElement.style.cssText
+  }, [ideSettings])
+
+  useEffect(() => () => {
+    if (settingsWindowRef.current && !settingsWindowRef.current.closed) {
+      settingsWindowRef.current.close()
+    }
+  }, [])
+
+  const handleSettingsPreviewChange = useCallback((draft: IDESettings) => {
+    setIdeSettings(resolveIDESettings(draft))
+  }, [])
+
+  const handleSettingsCancel = useCallback(() => {
+    setIdeSettings(resolveIDESettings(settingsBaselineRef.current))
+    setShowSettings(false)
+  }, [])
+
+  const handleSettingsSaveAndClose = useCallback(async (next: IDESettings) => {
+    await handleSettingsSave(next)
+    setShowSettings(false)
+  }, [handleSettingsSave])
 
   const extractSubroutineNodes = useCallback((content: string, fileName: string): TreeNode[] => {
     const nodes: TreeNode[] = []
@@ -2140,7 +2268,7 @@ function App(): React.JSX.Element {
         setShowLibrary(true)
         break
       case 'tools:settings':
-        setShowThemeManager(true)
+        setShowSettings(true)
         break
       case 'tools:themeManager':
         setShowThemeManager(true)
@@ -2855,6 +2983,15 @@ function App(): React.JSX.Element {
       />
       <LibraryDialog open={showLibrary} onClose={() => setShowLibrary(false)} />
       <NewProjectDialog open={showNewProject} onClose={() => setShowNewProject(false)} onConfirm={handleNewProjectConfirm} />
+      {showSettings && settingsPortalRoot && createPortal(
+        <SettingsDialog
+          settings={ideSettings}
+          onClose={handleSettingsCancel}
+          onSave={(s) => { void handleSettingsSaveAndClose(s) }}
+          onChange={handleSettingsPreviewChange}
+        />,
+        settingsPortalRoot,
+      )}
       <ThemeSettingsDialog
         open={showThemeSettings}
         onClose={(intent) => { void handleThemeDraftCloseIntent(intent) }}

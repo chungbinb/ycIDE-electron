@@ -32,6 +32,7 @@ import {
 } from '../shared/theme'
 import { THEME_TOKEN_GROUPS } from '../shared/theme-tokens'
 import { scanYcmdRegistry } from './ycmd-registry'
+import { resolveIDESettings, type IDESettings } from '../shared/settings'
 
 const isDev = !app.isPackaged
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
@@ -79,6 +80,24 @@ function getThemesDirPath(): string {
 
 function getThemeConfigPath(): string {
   return join(app.getPath('userData'), 'theme-config.json')
+}
+
+function getIDESettingsPath(): string {
+  return join(app.getPath('userData'), 'ide-settings.json')
+}
+
+function readIDESettings(): IDESettings {
+  const filePath = getIDESettingsPath()
+  if (!existsSync(filePath)) return resolveIDESettings()
+  try {
+    return resolveIDESettings(JSON.parse(readFileSync(filePath, 'utf-8')))
+  } catch {
+    return resolveIDESettings()
+  }
+}
+
+function writeIDESettings(settings: IDESettings): void {
+  writeFileSync(getIDESettingsPath(), JSON.stringify(settings, null, 2), 'utf-8')
 }
 
 function listThemeIds(): ThemeId[] {
@@ -1443,6 +1462,18 @@ app.whenReady().then(() => {
     return scanYcmdRegistry(rootPath)
   })
 
+  // 系统设置 IPC
+  ipcMain.handle('settings:get', () => {
+    return readIDESettings()
+  })
+
+  ipcMain.handle('settings:save', (_event, partial: Partial<IDESettings>) => {
+    const current = readIDESettings()
+    const merged = resolveIDESettings({ ...current, ...partial })
+    writeIDESettings(merged)
+    return merged
+  })
+
   // 主题 IPC
   ipcMain.handle('theme:getList', () => {
     return listThemeIds()
@@ -1453,7 +1484,12 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('theme:getCurrent', () => {
-    return resolveThemeConfig()
+    const resolved = resolveThemeConfig()
+    const config = readThemeConfigForWrite()
+    return {
+      ...resolved,
+      config,
+    }
   })
 
   ipcMain.handle('theme:saveCurrent', (_event, name: ThemeId, themePayload?: ThemeTokenPayload) => {

@@ -7,7 +7,7 @@ import { getPrimaryModifierLabel, getRedoShortcutLabel, type RuntimePlatform } f
 import type { IconColorMode } from '../Icon/Icon'
 
 function ToolbarIcon({ name, colorMode }: { name: string; colorMode?: IconColorMode }): React.JSX.Element {
-  return <Icon name={name} size={16} colorMode={colorMode} />
+  return <Icon name={name} className="toolbar-icon-sized" colorMode={colorMode} />
 }
 
 interface ToolbarProps {
@@ -81,6 +81,8 @@ function Toolbar({
     ]
 
   const iconMode = getToolbarIconColorMode(preserveOriginalIconColors)
+  const runIconMode: IconColorMode = preserveOriginalIconColors && canStartOrContinue ? 'preserve-accent' : 'themed'
+  const stopIconMode: IconColorMode = preserveOriginalIconColors && canStop ? 'preserve-accent' : 'themed'
 
   return (
     <div className="toolbar" role="toolbar" aria-label="工具栏">
@@ -143,7 +145,7 @@ function Toolbar({
           onClick={onCompileRun}
           disabled={!canStartOrContinue}
         >
-          <ToolbarIcon name="run" colorMode={iconMode} />
+          <ToolbarIcon name="run" colorMode={runIconMode} />
         </button>
         <button
           className="toolbar-btn toolbar-btn-stop"
@@ -152,7 +154,7 @@ function Toolbar({
           onClick={onStop}
           disabled={!canStop}
         >
-          <ToolbarIcon name="stop" colorMode={iconMode} />
+          <ToolbarIcon name="stop" colorMode={stopIconMode} />
         </button>
       </div>
 

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { normalizeRuntimePlatform } from '../shared/platform'
 import { THEME_CONFIG_VERSION } from '../shared/theme'
+import type { IDESettings } from '../shared/settings'
 import type {
   SaveAsCustomThemeRequest,
   SaveAsCustomThemeResult,
@@ -136,6 +137,11 @@ const api = {
       }>
       errors: string[]
     }>,
+  },
+  // 系统设置
+  settings: {
+    get: () => ipcRenderer.invoke('settings:get') as Promise<IDESettings>,
+    save: (partial: Partial<IDESettings>) => ipcRenderer.invoke('settings:save', partial) as Promise<IDESettings>,
   },
   // 主题管理
   theme: {

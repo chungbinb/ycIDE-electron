@@ -53,12 +53,25 @@
 .toolbar-btn-stop .vs-icon {
   color: var(--error);
 }
+.toolbar-btn-run:disabled,
+.toolbar-btn-stop:disabled {
+  color: var(--toolbar-icon-disabled-color);
+}
+.toolbar-btn-run:disabled .vs-icon,
+.toolbar-btn-stop:disabled .vs-icon {
+  color: var(--toolbar-icon-disabled-color) !important;
+}
 
 .toolbar-separator {
   width: 1px;
   height: 18px;
   margin: 0 var(--spacing-sm);
   background: var(--border-color);
+}
+
+.toolbar-icon-sized {
+  width: var(--toolbar-icon-size, 16px) !important;
+  height: var(--toolbar-icon-size, 16px) !important;
 }
 
 .toolbar-select {
