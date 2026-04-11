@@ -11,7 +11,7 @@
 - [x] **Phase 14: Theme Token Coverage** - 所有可见区域接入主题 token 与流程线模式/颜色配置 (completed 2026-04-10)
 - [x] **Phase 15: Theme Editing Workflow** - 设置页支持实时预览、撤销、保存为自定义主题 (completed 2026-04-10)
 - [x] **Phase 16: Theme Management & Portability** - 自定义主题本机管理 + 安全导入导出 (completed 2026-04-10)
-- [ ] **Phase 17: Compatibility & Regression Guardrails** - 主题路径稳定性与自动化回归覆盖闭环
+- [x] **Phase 17: Compatibility & Regression Guardrails** - 主题路径稳定性与自动化回归覆盖闭环 (completed 2026-04-11)
 
 ## Phase Details
 
@@ -97,7 +97,7 @@ Plans:
 - [x] 17-01-PLAN.md — QUAL-02 minimum gate suites (UI + contract) and tag-driven selection
 - [x] 17-02-PLAN.md — QUAL-01 compatibility suite across editor/table/transition states
 - [x] 17-03-PLAN.md — Fast gate/full run commands and CI workflow enforcement
-- [ ] 17-04-PLAN.md — Quarantine policy automation, actionable failure output, and evidence matrix
+- [x] 17-04-PLAN.md — Quarantine policy automation, actionable failure output, and evidence matrix
 
 ## Progress
 
@@ -107,4 +107,4 @@ Plans:
 | 14. Theme Token Coverage | 6/6 | Complete    | 2026-04-10 |
 | 15. Theme Editing Workflow | 5/5 | Complete    | 2026-04-10 |
 | 16. Theme Management & Portability | 5/5 | Complete   | 2026-04-10 |
-| 17. Compatibility & Regression Guardrails | 3/4 | In Progress|  |
+| 17. Compatibility & Regression Guardrails | 4/4 | Complete   | 2026-04-11 |

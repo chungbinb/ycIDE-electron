@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: milestone
 status: executing
-stopped_at: Completed 17-03-PLAN.md
-last_updated: "2026-04-10T10:18:00.569Z"
-last_activity: 2026-04-10
+stopped_at: Completed 17-04-PLAN.md
+last_updated: "2026-04-11T01:00:20.591Z"
+last_activity: 2026-04-11
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 24
-  completed_plans: 23
+  completed_plans: 24
   percent: 88
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 Phase: 17 of 17 (compatibility-regression-guardrails)
 Plan: 4 of 4 in current phase
 Status: In progress
-Last activity: 2026-04-10
+Last activity: 2026-04-11
 
 Progress: [█████████░] 88%
 
@@ -72,6 +72,7 @@ Progress: [█████████░] 88%
 | Phase 17 P01 | 13m | 2 tasks | 3 files |
 | Phase 17 P02 | 81min | 3 tasks | 3 files |
 | Phase 17 P03 | 27min | 2 tasks | 6 files |
+| Phase 17-compatibility-regression-guardrails P04 | 22min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -135,6 +136,8 @@ Progress: [█████████░] 88%
 - [Phase 17]: Jitter policy fails compatibility when sampled selector delta exceeds 0.5px and reports scenario-path diagnostics.
 - [Phase 17]: Gate command runs key contract tests first, then QUAL-02 UI gate tests.
 - [Phase 17]: Full command dynamically discovers theme contract/UI suites and preserves contract-first order.
+- [Phase 17-compatibility-regression-guardrails]: Quarantine entries now require owner/due/replacement metadata and existing replacement test coverage.
+- [Phase 17-compatibility-regression-guardrails]: Theme gate failures now emit structured actionable diagnostics with path, expected/actual, and remediation.
 
 ### Pending Todos
 
@@ -150,6 +153,6 @@ Progress: [█████████░] 88%
 
 ## Session Continuity
 
-Last session: 2026-04-10T10:18:00.565Z
-Stopped at: Completed 17-03-PLAN.md
+Last session: 2026-04-11T01:00:20.587Z
+Stopped at: Completed 17-04-PLAN.md
 Resume file: None
