@@ -35,6 +35,7 @@
   align-items: center;
   height: 100%;
   -webkit-app-region: no-drag;
+  font-family: var(--titlebar-menu-font-family);
 }
 
 .titlebar-menu-item {
@@ -45,7 +46,9 @@
 .titlebar-menu button {
   height: 100%;
   padding: 0 var(--spacing-md);
-  font-size: var(--font-size);
+  font-family: inherit;
+  font-size: var(--titlebar-menu-font-size);
+  line-height: 1.35;
   color: var(--text-primary);
   border-radius: 0;
 }

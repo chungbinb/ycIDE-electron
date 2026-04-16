@@ -29,15 +29,27 @@
   /* 标题栏 */
   --titlebar-height: 32px;
   --titlebar-bg: #323233;
+  --titlebar-menu-font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --titlebar-menu-font-size: 13px;
 
   /* 工具栏 */
   --toolbar-height: 36px;
+  --toolbar-button-size: 28px;
+  --toolbar-select-height: 22px;
 
   /* 状态栏 */
   --statusbar-height: 24px;
   --statusbar-bg: #007acc;
   --statusbar-text: #ffffff;
   --statusbar-item-hover: rgba(255, 255, 255, 0.12);
+  --sidebar-header-height: 28px;
+  --tree-row-height: 24px;
+  --panel-control-height: 22px;
+  --sidebar-tab-font-size: 13px;
+  --output-header-height: 28px;
+  --output-icon-button-size: 22px;
+  --tree-indent-base: 8px;
+  --tree-indent-step: 16px;
   --toolbar-icon-color: #e4e4e4;
   --toolbar-icon-disabled-color: #d0d0d0;
 
@@ -46,6 +58,9 @@
   --font-mono: "Cascadia Code", "JetBrains Mono", "Consolas", "Courier New", monospace;
   --font-size: 13px;
   --font-size-small: 11px;
+  --editor-font-family: "Cascadia Code", "JetBrains Mono", "Consolas", "Courier New", monospace;
+  --editor-font-size: 14px;
+  --editor-line-height: 20px;
 
   /* 间距 */
   --spacing-xs: 2px;

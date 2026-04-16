@@ -6,8 +6,9 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  font-family: "Microsoft YaHei", "SimSun", sans-serif;
-  font-size: 13px;
+  font-family: var(--editor-font-family, "Microsoft YaHei", "SimSun", sans-serif);
+  font-size: var(--editor-font-size, 13px);
+  line-height: var(--editor-line-height, 20px);
   height: 100%;
   min-height: 0;
   background: var(--table-bg, var(--bg-primary, #1e1e1e));

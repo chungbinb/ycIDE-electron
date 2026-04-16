@@ -71,7 +71,7 @@ function TreeItem({ node, depth = 0, onOpenFile, activeFileId }: { node: TreeNod
     <li role="treeitem" aria-expanded={hasChildren ? expanded : undefined}>
       <div
         className={`tree-item ${hasChildren ? 'tree-branch' : 'tree-leaf'}${!hasChildren && activeFileId && activeFileId === openFileId ? ' tree-item-active' : ''}`}
-        style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        style={{ paddingLeft: `calc(${depth} * var(--tree-indent-step, 16px) + var(--tree-indent-base, 8px))` }}
         onClick={() => hasChildren && setExpanded(!expanded)}
         onDoubleClick={() => {
           if (node.type === 'module' && onOpenFile) {
@@ -183,7 +183,7 @@ function LibraryPanel(): React.JSX.Element {
             <li key={lib.name} role="treeitem" aria-expanded={isExpanded}>
               <div
                 className="tree-item tree-branch"
-                style={{ paddingLeft: 8 }}
+                style={{ paddingLeft: 'var(--tree-indent-base, 8px)' }}
                 onDoubleClick={() => toggleLib(lib.name)}
               >
                 <span
@@ -204,7 +204,7 @@ function LibraryPanel(): React.JSX.Element {
                       <li role="treeitem" aria-expanded={dtExpanded}>
                         <div
                           className="tree-item tree-branch"
-                          style={{ paddingLeft: 24 }}
+                          style={{ paddingLeft: 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px))' }}
                           onDoubleClick={() => toggleCat(dtKey)}
                         >
                           <span
@@ -220,7 +220,7 @@ function LibraryPanel(): React.JSX.Element {
                           <ul role="group">
                             {detail.dataTypes.map(dt => (
                               <li key={dt.name} role="treeitem">
-                                <div className="tree-item tree-leaf" style={{ paddingLeft: 40 }} title={dt.description}>
+                                <div className="tree-item tree-leaf" style={{ paddingLeft: 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px) * 2)' }} title={dt.description}>
                                   <span className="tree-arrow-placeholder" aria-hidden="true" />
                                   <Icon preserveOriginalColors name="class" size={16} />
                                   <span className="tree-label">{dt.name}</span>
@@ -241,7 +241,7 @@ function LibraryPanel(): React.JSX.Element {
                       <li key={cat} role="treeitem" aria-expanded={catExpanded}>
                         <div
                           className="tree-item tree-branch"
-                          style={{ paddingLeft: 24 }}
+                          style={{ paddingLeft: 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px))' }}
                           onDoubleClick={() => toggleCat(catKey)}
                         >
                           <span
@@ -257,7 +257,7 @@ function LibraryPanel(): React.JSX.Element {
                           <ul role="group">
                             {cmds.map(cmd => (
                               <li key={cmd.name} role="treeitem">
-                                <div className="tree-item tree-leaf" style={{ paddingLeft: 40 }} title={cmd.description}>
+                                <div className="tree-item tree-leaf" style={{ paddingLeft: 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px) * 2)' }} title={cmd.description}>
                                   <span className="tree-arrow-placeholder" aria-hidden="true" />
                                   <Icon preserveOriginalColors name="method" size={16} />
                                   <span className="tree-label">{cmd.name}</span>

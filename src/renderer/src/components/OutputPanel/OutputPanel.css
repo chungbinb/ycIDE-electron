@@ -25,7 +25,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 28px;
+  height: var(--output-header-height, 28px);
   padding: 0 var(--spacing-md);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
@@ -59,10 +59,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: var(--output-icon-button-size, 22px);
+  height: var(--output-icon-button-size, 22px);
   border-radius: 3px;
-  font-size: 14px;
+  font-size: calc(var(--output-icon-button-size, 22px) * 0.64);
   color: var(--text-secondary);
 }
 .output-close:hover {
@@ -122,7 +122,7 @@
 }
 
 .cmd-detail {
-  font-size: 13px;
+  font-size: var(--font-size);
   line-height: 1.8;
   color: var(--text-primary);
 }
@@ -161,7 +161,7 @@
 }
 
 .cmd-detail-param {
-  font-size: 12px;
+  font-size: var(--font-size-small);
   padding: 3px 0;
   white-space: pre-wrap;
   word-break: break-all;
@@ -183,13 +183,13 @@
 }
 
 .cmd-detail-param-detail {
-  font-size: 12px;
+  font-size: var(--font-size-small);
   line-height: 1.6;
   color: var(--info);
 }
 
 .cmd-detail-param-detail-desc {
-  font-size: 12px;
+  font-size: var(--font-size-small);
   line-height: 1.6;
   color: var(--text-secondary);
   margin-top: 4px;
@@ -217,7 +217,7 @@
   padding: 2px 4px;
   cursor: pointer;
   white-space: nowrap;
-  line-height: 20px;
+  line-height: calc(var(--font-size) + 7px);
 }
 .output-problem-row:hover {
   background: var(--bg-hover);
