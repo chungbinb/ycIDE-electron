@@ -21,8 +21,8 @@ export const THEME_TOKEN_GROUPS: ThemeTokenGroup[] = [
     items: [
       { id: 'text-primary', label: '主文本', preview: 'color-chip', tokenKey: '--text-primary' },
       { id: 'text-secondary', label: '次文本', preview: 'color-chip', tokenKey: '--text-secondary' },
-      { id: 'bg-secondary', label: '主背景', preview: 'color-chip', tokenKey: '--bg-secondary' },
-      { id: 'bg-primary', label: '次背景', preview: 'color-chip', tokenKey: '--bg-primary' },
+      { id: 'bg-primary', label: '主背景', preview: 'color-chip', tokenKey: '--bg-primary' },
+      { id: 'bg-secondary', label: '次背景', preview: 'color-chip', tokenKey: '--bg-secondary' },
       { id: 'bg-tertiary', label: '弱背景', preview: 'color-chip', tokenKey: '--bg-tertiary' },
       { id: 'titlebar-bg', label: '标题栏背景', preview: 'color-chip', tokenKey: '--titlebar-bg' },
       { id: 'statusbar-bg', label: '状态栏背景', preview: 'color-chip', tokenKey: '--statusbar-bg' },

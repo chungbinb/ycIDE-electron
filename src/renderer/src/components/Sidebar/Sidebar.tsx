@@ -36,6 +36,7 @@ const TREE_TYPE_LABEL: Record<TreeNode['type'], string> = {
 interface SidebarProps {
   width: number
   onResize: (width: number) => void
+  placement?: 'left' | 'right'
   selection?: SelectionTarget
   activeTab: SidebarTab
   onTabChange: (tab: SidebarTab) => void
@@ -1044,7 +1045,7 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
   )
 }
 
-function Sidebar({ width, onResize, selection, activeTab, onTabChange, onSelectControl, onPropertyChange, projectTree, onOpenFile, activeFileId, projectDir, onEventNavigate, onLibraryChange }: SidebarProps): React.JSX.Element {
+function Sidebar({ width, onResize, placement = 'left', selection, activeTab, onTabChange, onSelectControl, onPropertyChange, projectTree, onOpenFile, activeFileId, projectDir, onEventNavigate, onLibraryChange }: SidebarProps): React.JSX.Element {
   const SIDEBAR_MIN_WIDTH = 150
   const SIDEBAR_MAX_WIDTH = 500
   const SIDEBAR_RESIZE_STEP = 16
@@ -1095,7 +1096,9 @@ function Sidebar({ width, onResize, selection, activeTab, onTabChange, onSelectC
     const startWidth = width
 
     const handleMouseMove = (e: MouseEvent) => {
-      const newWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, startWidth + e.clientX - startX))
+      const delta = e.clientX - startX
+      const nextWidth = placement === 'right' ? startWidth - delta : startWidth + delta
+      const newWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, nextWidth))
       onResize(newWidth)
     }
 
@@ -1110,18 +1113,24 @@ function Sidebar({ width, onResize, selection, activeTab, onTabChange, onSelectC
     document.body.style.userSelect = 'none'
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-  }, [width, onResize, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH])
+  }, [width, onResize, placement, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH])
 
   const handleResizerKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'ArrowLeft') {
       event.preventDefault()
-      onResize(Math.max(SIDEBAR_MIN_WIDTH, width - SIDEBAR_RESIZE_STEP))
+      const next = placement === 'right'
+        ? Math.min(SIDEBAR_MAX_WIDTH, width + SIDEBAR_RESIZE_STEP)
+        : Math.max(SIDEBAR_MIN_WIDTH, width - SIDEBAR_RESIZE_STEP)
+      onResize(next)
       return
     }
 
     if (event.key === 'ArrowRight') {
       event.preventDefault()
-      onResize(Math.min(SIDEBAR_MAX_WIDTH, width + SIDEBAR_RESIZE_STEP))
+      const next = placement === 'right'
+        ? Math.max(SIDEBAR_MIN_WIDTH, width - SIDEBAR_RESIZE_STEP)
+        : Math.min(SIDEBAR_MAX_WIDTH, width + SIDEBAR_RESIZE_STEP)
+      onResize(next)
       return
     }
 
@@ -1135,7 +1144,7 @@ function Sidebar({ width, onResize, selection, activeTab, onTabChange, onSelectC
       event.preventDefault()
       onResize(SIDEBAR_MAX_WIDTH)
     }
-  }, [onResize, width, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_RESIZE_STEP])
+  }, [onResize, width, placement, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_RESIZE_STEP])
 
   const tabTitle = activeTab === 'project' ? '项目管理器'
     : activeTab === 'library' ? '支持库'
@@ -1280,7 +1289,7 @@ function Sidebar({ width, onResize, selection, activeTab, onTabChange, onSelectC
   }, [activeTab, projectTree])
 
   return (
-    <aside className="sidebar" style={{ width: `${width}px` }} role="complementary" aria-label="项目导航">
+    <aside className={`sidebar ${placement === 'right' ? 'sidebar-right' : ''}`} style={{ width: `${width}px` }} role="complementary" aria-label="项目导航">
       <div className="sidebar-header">
         <span>{tabTitle}</span>
       </div>

@@ -248,6 +248,13 @@ export interface EditorTab {
   formData?: DesignForm // 可视化设计器的窗口数据
 }
 
+export interface DiffLineInfo {
+  /** 1-based line numbers in the new (proposed) content that are additions */
+  addedLines: number[]
+  /** Deleted line groups: each with afterLine (1-based in new content, the line AFTER which deleted text appears) and text */
+  deletedGroups: Array<{ afterLine: number; text: string }>
+}
+
 export interface EditorHandle {
   save: () => void
   saveAll: () => void
@@ -258,6 +265,8 @@ export interface EditorHandle {
   getEditorFiles: () => Record<string, string>
   openFile: (tab: EditorTab) => void
   upsertFile: (tab: EditorTab) => void
+  applyDiffHighlight: (tabId: string, diffInfo: DiffLineInfo) => void
+  clearDiffHighlight: () => void
   insertDeclaration: () => void
   insertLocalVariable: () => void
   insertConstant: () => void
@@ -347,6 +356,9 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<Monaco | null>(null)
   const eycEditorRef = useRef<EycTableEditorHandle | null>(null)
+  const diffDecorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null)
+  const diffViewZoneIdsRef = useRef<string[]>([])
+  const [eycDiffHighlightLines, setEycDiffHighlightLines] = useState<Set<number>>(new Set())
   const [windowUnits, setWindowUnits] = useState<LibWindowUnit[]>([])
   const pendingNavigateRef = useRef<{ subName: string; params: Array<{ name: string; dataType: string; isByRef: boolean }> } | null>(null)
   const monacoThemeId = currentTheme === '默认浅色' ? 'ycide-light' : 'ycide-dark'
@@ -786,6 +798,161 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     }
   }, [tabs, activeTabId, buildEventSubName, onOpenTabsChange])
 
+  // 清除 diff 高亮装饰
+  const clearDiffDecorations = useCallback(() => {
+    if (diffDecorationsRef.current) {
+      diffDecorationsRef.current.clear()
+      diffDecorationsRef.current = null
+    }
+    const ed = editorRef.current
+    if (ed && diffViewZoneIdsRef.current.length > 0) {
+      ed.changeViewZones((accessor) => {
+        for (const id of diffViewZoneIdsRef.current) {
+          accessor.removeZone(id)
+        }
+      })
+      diffViewZoneIdsRef.current = []
+    }
+  }, [])
+
+  // 应用 diff 高亮装饰（绿色新增行 + 红色删除行 ViewZone）
+  const applyDiffDecorations = useCallback((diffInfo: DiffLineInfo) => {
+    clearDiffDecorations()
+    const ed = editorRef.current
+    const monaco = monacoRef.current
+    if (!ed || !monaco) return
+
+    // 新增行装饰（绿色背景）
+    const decorations: editor.IModelDeltaDecoration[] = diffInfo.addedLines.map((lineNum) => ({
+      range: new monaco.Range(lineNum, 1, lineNum, 1),
+      options: {
+        isWholeLine: true,
+        className: 'ai-diff-added-line',
+        glyphMarginClassName: 'ai-diff-added-glyph',
+        overviewRuler: {
+          color: 'rgba(40, 167, 69, 0.6)',
+          position: monaco.editor.OverviewRulerLane.Left,
+        },
+      },
+    }))
+
+    diffDecorationsRef.current = ed.createDecorationsCollection(decorations)
+
+    // 删除行 ViewZone（红色背景区域）
+    if (diffInfo.deletedGroups.length > 0) {
+      ed.changeViewZones((accessor) => {
+        const ids: string[] = []
+        for (const group of diffInfo.deletedGroups) {
+          const deletedLines = group.text.split('\n')
+          const domNode = document.createElement('div')
+          domNode.className = 'ai-diff-deleted-zone'
+          for (const line of deletedLines) {
+            const lineDiv = document.createElement('div')
+            lineDiv.className = 'ai-diff-deleted-line'
+            lineDiv.textContent = line || '\u00a0'
+            domNode.appendChild(lineDiv)
+          }
+          const id = accessor.addZone({
+            afterLineNumber: group.afterLine,
+            heightInLines: deletedLines.length,
+            domNode,
+          })
+          ids.push(id)
+        }
+        diffViewZoneIdsRef.current = ids
+      })
+    }
+
+    // 滚动到第一个变更位置
+    const firstChanged = diffInfo.addedLines[0] ?? diffInfo.deletedGroups[0]?.afterLine
+    if (firstChanged) {
+      ed.revealLineInCenter(firstChanged)
+    }
+  }, [clearDiffDecorations])
+
+  // 追加 diff 装饰（不清除已有的）
+  const appendDiffDecorations = useCallback((diffInfo: DiffLineInfo) => {
+    const ed = editorRef.current
+    const monaco = monacoRef.current
+    if (!ed || !monaco) return
+
+    const decorations: editor.IModelDeltaDecoration[] = diffInfo.addedLines.map((lineNum) => ({
+      range: new monaco.Range(lineNum, 1, lineNum, 1),
+      options: {
+        isWholeLine: true,
+        className: 'ai-diff-added-line',
+        glyphMarginClassName: 'ai-diff-added-glyph',
+        overviewRuler: {
+          color: 'rgba(40, 167, 69, 0.6)',
+          position: monaco.editor.OverviewRulerLane.Left,
+        },
+      },
+    }))
+
+    const newCollection = ed.createDecorationsCollection(decorations)
+    // 合并旧 collection 和新 collection：取旧的 ranges 重新创建统一 collection
+    if (diffDecorationsRef.current) {
+      const oldRanges = diffDecorationsRef.current.getRanges()
+      const oldDecorations: editor.IModelDeltaDecoration[] = oldRanges.map((r) => ({
+        range: r,
+        options: {
+          isWholeLine: true,
+          className: 'ai-diff-added-line',
+          glyphMarginClassName: 'ai-diff-added-glyph',
+          overviewRuler: {
+            color: 'rgba(40, 167, 69, 0.6)',
+            position: monaco.editor.OverviewRulerLane.Left,
+          },
+        },
+      }))
+      diffDecorationsRef.current.clear()
+      newCollection.clear()
+      diffDecorationsRef.current = ed.createDecorationsCollection([...oldDecorations, ...decorations])
+    } else {
+      diffDecorationsRef.current = newCollection
+    }
+
+    // 追加 ViewZone
+    if (diffInfo.deletedGroups.length > 0) {
+      ed.changeViewZones((accessor) => {
+        const ids: string[] = [...diffViewZoneIdsRef.current]
+        for (const group of diffInfo.deletedGroups) {
+          const deletedLines = group.text.split('\n')
+          const domNode = document.createElement('div')
+          domNode.className = 'ai-diff-deleted-zone'
+          for (const line of deletedLines) {
+            const lineDiv = document.createElement('div')
+            lineDiv.className = 'ai-diff-deleted-line'
+            lineDiv.textContent = line || '\u00a0'
+            domNode.appendChild(lineDiv)
+          }
+          const id = accessor.addZone({
+            afterLineNumber: group.afterLine,
+            heightInLines: deletedLines.length,
+            domNode,
+          })
+          ids.push(id)
+        }
+        diffViewZoneIdsRef.current = ids
+      })
+    }
+
+    const firstChanged = diffInfo.addedLines[0] ?? diffInfo.deletedGroups[0]?.afterLine
+    if (firstChanged) {
+      ed.revealLineInCenter(firstChanged)
+    }
+  }, [])
+
+  // 编辑器内容变化时自动清除 diff 高亮
+  useEffect(() => {
+    const ed = editorRef.current
+    if (!ed) return
+    const disposable = ed.onDidChangeModelContent(() => {
+      clearDiffDecorations()
+    })
+    return () => disposable.dispose()
+  }, [clearDiffDecorations, activeTabId])
+
   // 暴露给父组件的方法
   useImperativeHandle(ref, () => ({
     save: saveCurrentFile,
@@ -862,6 +1029,26 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       })
       syncSidebarByLanguage(incoming.language)
     },
+    applyDiffHighlight: (_tabId: string, diffInfo: DiffLineInfo) => {
+      const active = tabs.find(t => t.id === activeTabId)
+      const isEycLang = active && ['eyc', 'egv', 'ecs', 'edt', 'ell', 'erc'].includes(active.language)
+      if (isEycLang) {
+        // EycTableEditor: convert 1-based addedLines to 0-based lineIndex Set, merge with existing
+        const newLines = diffInfo.addedLines.map(l => l - 1)
+        setTimeout(() => setEycDiffHighlightLines(prev => {
+          const merged = new Set(prev)
+          for (const l of newLines) merged.add(l)
+          return merged
+        }), 60)
+      } else {
+        // Monaco: append decorations to existing ones
+        setTimeout(() => appendDiffDecorations(diffInfo), 60)
+      }
+    },
+    clearDiffHighlight: () => {
+      clearDiffDecorations()
+      setEycDiffHighlightLines(new Set())
+    },
     insertDeclaration: () => {
       eycEditorRef.current?.insertSubroutine()
     },
@@ -879,7 +1066,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     },
     updateFormProperty,
     navigateToEventSub,
-  }), [saveCurrentFile, saveAllFiles, closeActiveFile, clearAllTabs, tabs, activeTabId, onOpenTabsChange, syncSidebarByLanguage, updateFormProperty, navigateToEventSub])
+  }), [saveCurrentFile, saveAllFiles, closeActiveFile, clearAllTabs, tabs, activeTabId, onOpenTabsChange, syncSidebarByLanguage, updateFormProperty, navigateToEventSub, appendDiffDecorations, clearDiffDecorations, setEycDiffHighlightLines])
 
   // 接收外部打开的项目文件
   useEffect(() => {
@@ -1650,6 +1837,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                 breakpointLines={breakpointsByFile[activeTab.label] || []}
                 debugSourceLine={debugLocation?.file === activeTab.label ? debugLocation.line : undefined}
                 debugVariables={debugLocation?.file === activeTab.label ? debugVariables : []}
+                diffHighlightLines={eycDiffHighlightLines}
               />
             </EycEditorErrorBoundary>
           )

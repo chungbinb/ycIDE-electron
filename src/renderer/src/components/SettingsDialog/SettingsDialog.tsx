@@ -1,6 +1,7 @@
 import './SettingsDialog.css'
 import { useEffect, useState, useCallback } from 'react'
 import { DEFAULT_IDE_SETTINGS, type IDESettings } from '../../../../shared/settings'
+import type { AISupportedModel } from '../../../../shared/ai'
 
 interface SettingsDialogProps {
   settings: IDESettings
@@ -27,6 +28,17 @@ const UI_FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24]
 const TITLEBAR_FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24]
 const EDITOR_FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 26, 28, 30]
 const EDITOR_LINE_HEIGHT_OPTIONS = [14, 16, 18, 20, 22, 24, 26, 28, 30, 34, 38, 42, 48, 54]
+const AI_FONT_OPTIONS: Array<{ label: string; value: string }> = [
+  { label: '微软雅黑', value: '"Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif' },
+  { label: '等线', value: '"DengXian", "Microsoft YaHei UI", "Segoe UI", sans-serif' },
+  { label: 'Cascadia Code', value: '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace' },
+  { label: 'Consolas', value: 'Consolas, "Cascadia Code", "JetBrains Mono", "Courier New", monospace' },
+]
+const AI_FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24]
+const AI_MODEL_OPTIONS: Array<{ label: string; value: AISupportedModel }> = [
+  { label: 'DeepSeek', value: 'deepseek' },
+  { label: 'GLM', value: 'glm' },
+]
 
 function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogProps): React.JSX.Element {
   const [draft, setDraft] = useState<IDESettings>({ ...settings })
@@ -186,6 +198,71 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
               ))}
             </select>
             <span className="settings-unit">px</span>
+          </div>
+        </div>
+        <div className="settings-group">
+          <h4 className="settings-group-title">AI 助手</h4>
+          <div className="settings-row">
+            <span className="settings-label">AI 助手字体</span>
+            <select
+              className="settings-input"
+              value={draft.aiFontFamily}
+              onChange={(e) => updateDraft('aiFontFamily', e.target.value)}
+            >
+              {AI_FONT_OPTIONS.map((item) => (
+                <option key={item.label} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">AI 助手字号</span>
+            <select
+              className="settings-input settings-input-number"
+              value={draft.aiFontSize}
+              onChange={(e) => handleNumberChange('aiFontSize', e.target.value)}
+            >
+              {AI_FONT_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+            <span className="settings-unit">px</span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">默认模型</span>
+            <select
+              className="settings-input"
+              value={draft.aiModel}
+              onChange={(e) => updateDraft('aiModel', e.target.value as IDESettings['aiModel'])}
+            >
+              {AI_MODEL_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+            <span className="settings-unit" />
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">DeepSeek API Key</span>
+            <input
+              type="password"
+              className="settings-input"
+              value={draft.aiDeepseekApiKey}
+              onChange={(e) => updateDraft('aiDeepseekApiKey', e.target.value)}
+              placeholder="sk-..."
+              autoComplete="off"
+            />
+            <span className="settings-unit" />
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">GLM API Key</span>
+            <input
+              type="password"
+              className="settings-input"
+              value={draft.aiGlmApiKey}
+              onChange={(e) => updateDraft('aiGlmApiKey', e.target.value)}
+              placeholder="glm-..."
+              autoComplete="off"
+            />
+            <span className="settings-unit" />
           </div>
         </div>
       </div>

@@ -6,6 +6,36 @@
   background: var(--bg-primary);
 }
 
+/* AI Diff 高亮装饰 */
+.ai-diff-added-line {
+  background: rgba(40, 167, 69, 0.18) !important;
+  border-left: 3px solid rgba(40, 167, 69, 0.7);
+}
+
+.ai-diff-added-glyph {
+  background: rgba(40, 167, 69, 0.55);
+  margin-left: 3px;
+  width: 4px !important;
+}
+
+.ai-diff-deleted-zone {
+  background: rgba(220, 53, 69, 0.13);
+  border-left: 3px solid rgba(220, 53, 69, 0.6);
+  padding: 0 0 0 60px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.ai-diff-deleted-line {
+  font-family: var(--editor-font-family, "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace);
+  font-size: var(--editor-font-size, 14px);
+  line-height: var(--editor-line-height, 20px);
+  color: var(--text-secondary, #888);
+  text-decoration: line-through;
+  white-space: pre;
+  opacity: 0.7;
+}
+
 /* 标签页 */
 .editor-tabs {
   display: flex;
