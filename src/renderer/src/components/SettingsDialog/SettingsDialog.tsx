@@ -9,6 +9,25 @@ interface SettingsDialogProps {
   onChange: (settings: IDESettings) => void
 }
 
+const UI_FONT_OPTIONS: Array<{ label: string; value: string }> = [
+  { label: '微软雅黑', value: '"Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif' },
+  { label: '等线', value: '"DengXian", "Microsoft YaHei UI", "Segoe UI", sans-serif' },
+  { label: '宋体', value: '"SimSun", "Microsoft YaHei UI", sans-serif' },
+  { label: 'Segoe UI', value: '"Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif' },
+]
+
+const EDITOR_FONT_OPTIONS: Array<{ label: string; value: string }> = [
+  { label: 'Cascadia Code', value: '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace' },
+  { label: 'JetBrains Mono', value: '"JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace' },
+  { label: 'Consolas', value: 'Consolas, "Cascadia Code", "JetBrains Mono", "Courier New", monospace' },
+  { label: 'Fira Code', value: '"Fira Code", "Cascadia Code", Consolas, "Courier New", monospace' },
+]
+
+const UI_FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24]
+const TITLEBAR_FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24]
+const EDITOR_FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 26, 28, 30]
+const EDITOR_LINE_HEIGHT_OPTIONS = [14, 16, 18, 20, 22, 24, 26, 28, 30, 34, 38, 42, 48, 54]
+
 function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogProps): React.JSX.Element {
   const [draft, setDraft] = useState<IDESettings>({ ...settings })
   const [baseline] = useState<IDESettings>({ ...settings })
@@ -63,31 +82,32 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
         <div className="settings-group">
           <h4 className="settings-group-title">布局</h4>
           <div className="settings-row">
-            <span className="settings-label">标题栏高度</span>
-            <input
-              type="number"
+            <span className="settings-label">标题栏菜单字体</span>
+            <select
+              className="settings-input"
+              value={draft.titlebarMenuFontFamily}
+              onChange={(e) => updateDraft('titlebarMenuFontFamily', e.target.value)}
+            >
+              {UI_FONT_OPTIONS.map((item) => (
+                <option key={item.label} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">标题栏菜单字号</span>
+            <select
               className="settings-input settings-input-number"
-              min={24}
-              max={60}
-              value={draft.titlebarHeight}
-              onChange={(e) => handleNumberChange('titlebarHeight', e.target.value)}
-            />
+              value={draft.titlebarMenuFontSize}
+              onChange={(e) => handleNumberChange('titlebarMenuFontSize', e.target.value)}
+            >
+              {TITLEBAR_FONT_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
             <span className="settings-unit">px</span>
           </div>
           <div className="settings-row">
-            <span className="settings-label">工具栏高度</span>
-            <input
-              type="number"
-              className="settings-input settings-input-number"
-              min={24}
-              max={60}
-              value={draft.toolbarHeight}
-              onChange={(e) => handleNumberChange('toolbarHeight', e.target.value)}
-            />
-            <span className="settings-unit">px</span>
-          </div>
-          <div className="settings-row">
-            <span className="settings-label">工具栏图标大小</span>
+            <span className="settings-label">工具栏图标大小（高度自动适配）</span>
             <input
               type="number"
               className="settings-input settings-input-number"
@@ -103,23 +123,68 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
           <h4 className="settings-group-title">字体</h4>
           <div className="settings-row">
             <span className="settings-label">界面字体</span>
-            <input
-              type="text"
+            <select
               className="settings-input"
               value={draft.fontFamily}
               onChange={(e) => updateDraft('fontFamily', e.target.value)}
-            />
+            >
+              {UI_FONT_OPTIONS.map((item) => (
+                <option key={item.label} value={item.value}>{item.label}</option>
+              ))}
+            </select>
           </div>
           <div className="settings-row">
             <span className="settings-label">界面字号</span>
-            <input
-              type="number"
+            <select
               className="settings-input settings-input-number"
-              min={10}
-              max={24}
               value={draft.fontSize}
               onChange={(e) => handleNumberChange('fontSize', e.target.value)}
-            />
+            >
+              {UI_FONT_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+            <span className="settings-unit">px</span>
+          </div>
+        </div>
+        <div className="settings-group">
+          <h4 className="settings-group-title">编辑器</h4>
+          <div className="settings-row">
+            <span className="settings-label">编辑器字体</span>
+            <select
+              className="settings-input"
+              value={draft.editorFontFamily}
+              onChange={(e) => updateDraft('editorFontFamily', e.target.value)}
+            >
+              {EDITOR_FONT_OPTIONS.map((item) => (
+                <option key={item.label} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">编辑器字号</span>
+            <select
+              className="settings-input settings-input-number"
+              value={draft.editorFontSize}
+              onChange={(e) => handleNumberChange('editorFontSize', e.target.value)}
+            >
+              {EDITOR_FONT_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+            <span className="settings-unit">px</span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">编辑器行高</span>
+            <select
+              className="settings-input settings-input-number"
+              value={draft.editorLineHeight}
+              onChange={(e) => handleNumberChange('editorLineHeight', e.target.value)}
+            >
+              {EDITOR_LINE_HEIGHT_OPTIONS.map((height) => (
+                <option key={height} value={height}>{height}</option>
+              ))}
+            </select>
             <span className="settings-unit">px</span>
           </div>
         </div>

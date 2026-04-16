@@ -26,7 +26,7 @@
 }
 
 .activity-bar {
-  width: 44px;
+  width: var(--activity-bar-width, 44px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -38,8 +38,8 @@
 }
 
 .activity-button {
-  width: 34px;
-  height: 34px;
+  width: var(--activity-button-size, 34px);
+  height: var(--activity-button-size, 34px);
   display: inline-flex;
   align-items: center;
   justify-content: center;

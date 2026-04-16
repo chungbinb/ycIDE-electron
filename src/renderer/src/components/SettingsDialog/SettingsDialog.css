@@ -75,7 +75,7 @@
 
 .settings-row {
   display: grid;
-  grid-template-columns: 120px 1fr auto;
+  grid-template-columns: 180px 1fr auto;
   align-items: center;
   gap: 8px;
 }

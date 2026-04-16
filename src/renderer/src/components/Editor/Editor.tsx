@@ -197,6 +197,46 @@ function registerEditorThemes(monaco: Monaco, themeTokenValues: Record<string, s
   })
 }
 
+function createMonacoEditorOptions(
+  editorFontFamily: string,
+  editorFontSize: number,
+  editorLineHeight: number,
+): editor.IStandaloneEditorConstructionOptions {
+  return {
+    fontSize: editorFontSize,
+    fontFamily: editorFontFamily,
+    lineHeight: editorLineHeight,
+    fontLigatures: true,
+    minimap: { enabled: true, scale: 1 },
+    scrollBeyondLastLine: false,
+    smoothScrolling: true,
+    cursorBlinking: 'smooth',
+    cursorSmoothCaretAnimation: 'on',
+    renderLineHighlight: 'all',
+    renderWhitespace: 'selection',
+    bracketPairColorization: { enabled: true },
+    autoIndent: 'full',
+    formatOnPaste: true,
+    wordWrap: 'off',
+    lineNumbers: 'on',
+    glyphMargin: true,
+    folding: true,
+    foldingStrategy: 'indentation',
+    links: true,
+    contextmenu: true,
+    mouseWheelZoom: true,
+    padding: { top: 8, bottom: 8 },
+    suggest: {
+      showKeywords: true,
+      showSnippets: true,
+      preview: true,
+    },
+    tabSize: 4,
+    insertSpaces: true,
+    automaticLayout: true,
+  }
+}
+
 // 打开的文件标签页
 export interface EditorTab {
   id: string
@@ -286,7 +326,7 @@ class EycEditorErrorBoundary extends Component<EycEditorErrorBoundaryProps, EycE
   }
 }
 
-const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }>; currentTheme?: string; themeTokenValues?: Record<string, string> }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [], currentTheme = '', themeTokenValues = {} }, ref) {
+const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }>; currentTheme?: string; themeTokenValues?: Record<string, string>; editorFontFamily?: string; editorFontSize?: number; editorLineHeight?: number }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [], currentTheme = '', themeTokenValues = {}, editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20 }, ref) {
   const [tabs, setTabs] = useState<EditorTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [tabBarPosition, setTabBarPosition] = useState<TabBarPosition>(() => {
@@ -310,6 +350,14 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const [windowUnits, setWindowUnits] = useState<LibWindowUnit[]>([])
   const pendingNavigateRef = useRef<{ subName: string; params: Array<{ name: string; dataType: string; isByRef: boolean }> } | null>(null)
   const monacoThemeId = currentTheme === '默认浅色' ? 'ycide-light' : 'ycide-dark'
+  const monacoEditorOptions = useMemo(
+    () => createMonacoEditorOptions(editorFontFamily, editorFontSize, editorLineHeight),
+    [editorFontFamily, editorFontSize, editorLineHeight],
+  )
+
+  useEffect(() => {
+    editorRef.current?.updateOptions(monacoEditorOptions)
+  }, [monacoEditorOptions])
 
   const buildEventSubName = useCallback((targetName: string, eventName: string): string => {
     const normalized = targetName.replace(/^_+/, '')
@@ -1550,38 +1598,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                     registerEycLanguage(monaco)
                     registerEditorThemes(monaco, themeTokenValues)
                   }}
-                  options={{
-                    fontSize: 14,
-                    fontFamily: '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace',
-                    fontLigatures: true,
-                    minimap: { enabled: true, scale: 1 },
-                    scrollBeyondLastLine: false,
-                    smoothScrolling: true,
-                    cursorBlinking: 'smooth',
-                    cursorSmoothCaretAnimation: 'on',
-                    renderLineHighlight: 'all',
-                    renderWhitespace: 'selection',
-                    bracketPairColorization: { enabled: true },
-                    autoIndent: 'full',
-                    formatOnPaste: true,
-                    wordWrap: 'off',
-                    lineNumbers: 'on',
-                    glyphMargin: true,
-                    folding: true,
-                    foldingStrategy: 'indentation',
-                    links: true,
-                    contextmenu: true,
-                    mouseWheelZoom: true,
-                    padding: { top: 8, bottom: 8 },
-                    suggest: {
-                      showKeywords: true,
-                      showSnippets: true,
-                      preview: true,
-                    },
-                    tabSize: 4,
-                    insertSpaces: true,
-                    automaticLayout: true,
-                  }}
+                  options={monacoEditorOptions}
                   loading={
                     <div className="editor-loading">
                       <span>编辑器加载中...</span>
@@ -1611,6 +1628,9 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                 ref={eycEditorRef}
                 value={activeTab.value}
                 docLanguage={activeTab.language}
+                editorFontFamily={editorFontFamily}
+                editorFontSize={editorFontSize}
+                editorLineHeight={editorLineHeight}
                 projectDir={projectDir}
                 isClassModule={activeTab.label.toLowerCase().endsWith('.ecc')}
                 projectGlobalVars={projectGlobalVars}
@@ -1646,38 +1666,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             registerEycLanguage(monaco)
             registerEditorThemes(monaco, themeTokenValues)
           }}
-          options={{
-            fontSize: 14,
-            fontFamily: '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace',
-            fontLigatures: true,
-            minimap: { enabled: true, scale: 1 },
-            scrollBeyondLastLine: false,
-            smoothScrolling: true,
-            cursorBlinking: 'smooth',
-            cursorSmoothCaretAnimation: 'on',
-            renderLineHighlight: 'all',
-            renderWhitespace: 'selection',
-            bracketPairColorization: { enabled: true },
-            autoIndent: 'full',
-            formatOnPaste: true,
-            wordWrap: 'off',
-            lineNumbers: 'on',
-            glyphMargin: true,
-            folding: true,
-            foldingStrategy: 'indentation',
-            links: true,
-            contextmenu: true,
-            mouseWheelZoom: true,
-            padding: { top: 8, bottom: 8 },
-            suggest: {
-              showKeywords: true,
-              showSnippets: true,
-              preview: true,
-            },
-            tabSize: 4,
-            insertSpaces: true,
-            automaticLayout: true,
-          }}
+          options={monacoEditorOptions}
           loading={
             <div className="editor-loading">
               <span>编辑器加载中...</span>
