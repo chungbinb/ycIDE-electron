@@ -1,11 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import TitleBar from './components/TitleBar/TitleBar'
 import Toolbar from './components/Toolbar/Toolbar'
 import Sidebar from './components/Sidebar/Sidebar'
 import type { TreeNode } from './components/Sidebar/Sidebar'
 import Icon from './components/Icon/Icon'
-import Editor, { type EditorTab, type EditorHandle } from './components/Editor/Editor'
+import Editor, { type EditorTab, type EditorHandle, type DiffLineInfo } from './components/Editor/Editor'
 import OutputPanel, { type OutputMessage, type CommandDetail, type FileProblem, type DebugPauseState } from './components/OutputPanel/OutputPanel'
 import StatusBar from './components/StatusBar/StatusBar'
 import LibraryDialog from './components/LibraryDialog/LibraryDialog'
@@ -13,6 +13,7 @@ import NewProjectDialog from './components/NewProjectDialog/NewProjectDialog'
 import ThemeSettingsDialog from './components/ThemeSettingsDialog/ThemeSettingsDialog'
 import ThemeManager from './components/ThemeManager/ThemeManager'
 import SettingsDialog from './components/SettingsDialog/SettingsDialog'
+import AIAssistantPanel from './components/AIAssistantPanel/AIAssistantPanel'
 import type { SelectionTarget, AlignAction, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
@@ -31,6 +32,7 @@ import {
 import { createThemeDraftSession, type ThemeDraftSession } from '../../shared/theme-draft'
 import { THEME_TOKEN_GROUPS, type FlowLineMode, type FlowLineMultiConfig, type ThemeTokenGroupId } from '../../shared/theme-tokens'
 import { DEFAULT_IDE_SETTINGS, resolveIDESettings, type IDESettings } from '../../shared/settings'
+import type { AIChatMessage, AIEditResult, AISupportedModel } from '../../shared/ai'
 import './App.css'
 
 type ProjectSessionState = {
@@ -64,6 +66,9 @@ type ThemeManagerImportPrepareResult =
   | { status: 'ready'; importedTheme: ThemeDefinition; targetThemeId: string }
 
 const RECENT_OPENED_KEY = 'ycide.recentOpened.v1'
+const ACTIVITY_BAR_SIDE_KEY = 'ycide.activityBar.side.v1'
+const AI_PANEL_OPEN_KEY = 'ycide.aiPanel.open.v1'
+const LAST_PROJECT_EPP_KEY = 'ycide.lastProject.epp.v1'
 const MAX_RECENT_OPENED = 10
 const REQUIRED_THEME_COLOR_KEYS = [
   '--bg-primary',
@@ -89,6 +94,7 @@ const FLOW_LINE_TOKEN_KEYS = (THEME_TOKEN_GROUPS.find(group => group.id === 'flo
 
 type TargetPlatform = 'windows' | 'macos' | 'linux'
 type TargetArch = 'x64' | 'x86' | 'arm64'
+type ActivityBarSide = 'left' | 'right'
 
 function normalizeTargetPlatform(value?: string | null): TargetPlatform {
   const normalized = (value || '').trim().toLowerCase()
@@ -113,6 +119,123 @@ function coerceArchByPlatform(platform: TargetPlatform, arch: TargetArch): Targe
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
+}
+
+function inferAIEditableLanguage(filePath: string): EditorTab['language'] | null {
+  const ext = (filePath.split('.').pop() || '').toLowerCase()
+  if (ext === 'ecc') return 'eyc'
+  if (ext === 'eyc' || ext === 'egv' || ext === 'ecs' || ext === 'edt' || ext === 'ell' || ext === 'erc') return ext
+  return null
+}
+
+function isAIEditableFile(filePath: string): boolean {
+  return inferAIEditableLanguage(filePath) !== null
+}
+
+/** 计算两文本之间的 diff 行信息，用于编辑器高亮 */
+function computeDiffLineInfo(original: string, proposed: string): DiffLineInfo {
+  const oldLines = original.replace(/\r\n/g, '\n').split('\n')
+  const newLines = proposed.replace(/\r\n/g, '\n').split('\n')
+
+  // 简单的 LCS (最长公共子序列) Myers diff
+  const n = oldLines.length
+  const m = newLines.length
+  const max = n + m
+  const v = new Int32Array(2 * max + 1)
+  const trace: Int32Array[] = []
+
+  // Forward pass
+  outer:
+  for (let d = 0; d <= max; d++) {
+    trace.push(v.slice())
+    for (let k = -d; k <= d; k += 2) {
+      let x: number
+      if (k === -d || (k !== d && v[k - 1 + max] < v[k + 1 + max])) {
+        x = v[k + 1 + max]
+      } else {
+        x = v[k - 1 + max] + 1
+      }
+      let y = x - k
+      while (x < n && y < m && oldLines[x] === newLines[y]) {
+        x++
+        y++
+      }
+      v[k + max] = x
+      if (x >= n && y >= m) break outer
+    }
+  }
+
+  // Backtrack to get edit script
+  type Edit = { type: 'keep' | 'delete' | 'insert'; oldIdx?: number; newIdx?: number }
+  const edits: Edit[] = []
+  let cx = n
+  let cy = m
+  for (let d = trace.length - 1; d >= 0; d--) {
+    const vp = trace[d]
+    const k = cx - cy
+    let prevK: number
+    if (k === -d || (k !== d && vp[k - 1 + max] < vp[k + 1 + max])) {
+      prevK = k + 1
+    } else {
+      prevK = k - 1
+    }
+    const prevX = vp[prevK + max]
+    const prevY = prevX - prevK
+
+    // diagonal (equal lines)
+    while (cx > prevX && cy > prevY) {
+      cx--
+      cy--
+      edits.push({ type: 'keep', oldIdx: cx, newIdx: cy })
+    }
+    if (d > 0) {
+      if (cx === prevX) {
+        // insert
+        cy--
+        edits.push({ type: 'insert', newIdx: cy })
+      } else {
+        // delete
+        cx--
+        edits.push({ type: 'delete', oldIdx: cx })
+      }
+    }
+  }
+
+  edits.reverse()
+
+  const addedLines: number[] = []
+  const deletedGroups: Array<{ afterLine: number; text: string }> = []
+
+  let newLineCounter = 0
+  let pendingDeleted: string[] = []
+  let lastNewLine = 0
+
+  for (const edit of edits) {
+    if (edit.type === 'keep') {
+      if (pendingDeleted.length > 0) {
+        deletedGroups.push({ afterLine: lastNewLine, text: pendingDeleted.join('\n') })
+        pendingDeleted = []
+      }
+      newLineCounter++
+      lastNewLine = newLineCounter
+    } else if (edit.type === 'insert') {
+      if (pendingDeleted.length > 0) {
+        deletedGroups.push({ afterLine: lastNewLine, text: pendingDeleted.join('\n') })
+        pendingDeleted = []
+      }
+      newLineCounter++
+      lastNewLine = newLineCounter
+      addedLines.push(newLineCounter)
+    } else if (edit.type === 'delete') {
+      pendingDeleted.push(oldLines[edit.oldIdx!])
+    }
+  }
+
+  if (pendingDeleted.length > 0) {
+    deletedGroups.push({ afterLine: lastNewLine, text: pendingDeleted.join('\n') })
+  }
+
+  return { addedLines, deletedGroups }
 }
 
 function computeTitlebarHeight(menuFontSize: number): number {
@@ -380,6 +503,9 @@ function App(): React.JSX.Element {
   const [showThemeSettings, setShowThemeSettings] = useState(false)
   const [showThemeManager, setShowThemeManager] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showAIPanel, setShowAIPanel] = useState(() => {
+    try { return localStorage.getItem(AI_PANEL_OPEN_KEY) === 'true' } catch { return false }
+  })
   const [ideSettings, setIdeSettings] = useState<IDESettings>(DEFAULT_IDE_SETTINGS)
   const themeManagerWindowRef = useRef<Window | null>(null)
   const [themeManagerPortalRoot, setThemeManagerPortalRoot] = useState<HTMLElement | null>(null)
@@ -430,6 +556,15 @@ function App(): React.JSX.Element {
   const [targetPlatform, setTargetPlatform] = useState<TargetPlatform>('windows')
   const [targetArch, setTargetArch] = useState<TargetArch>('x64')
   const [recentOpened, setRecentOpened] = useState<RecentOpenedItem[]>([])
+  const [activityBarSide, setActivityBarSide] = useState<ActivityBarSide>(() => {
+    try {
+      const raw = localStorage.getItem(ACTIVITY_BAR_SIDE_KEY)
+      return raw === 'right' ? 'right' : 'left'
+    } catch {
+      return 'left'
+    }
+  })
+  const [activityBarContextMenu, setActivityBarContextMenu] = useState<{ x: number; y: number } | null>(null)
   const isWorkspaceEmpty = !currentProjectDir && (openProjectFiles?.length ?? 0) === 0
 
   const pushRecentOpened = useCallback((item: RecentOpenedItem) => {
@@ -466,6 +601,30 @@ function App(): React.JSX.Element {
       // 忽略无效缓存
     }
   }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVITY_BAR_SIDE_KEY, activityBarSide)
+    } catch {
+      // 忽略持久化异常
+    }
+  }, [activityBarSide])
+
+  useEffect(() => {
+    if (!activityBarContextMenu) return
+    const close = (): void => setActivityBarContextMenu(null)
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('contextmenu', close)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('contextmenu', close)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [activityBarContextMenu])
 
   // 加载系统设置
   useEffect(() => {
@@ -2163,8 +2322,22 @@ function App(): React.JSX.Element {
       path: eppPath,
       label: eppInfo.projectName || (getBaseName(eppPath) || eppPath),
     })
+    try { localStorage.setItem(LAST_PROJECT_EPP_KEY, eppPath) } catch {}
     return true
   }, [buildProjectTreeFromEpp, buildTabFromPath, getBaseName, getDirName, joinPath, pushRecentOpened])
+
+  // 启动时自动恢复上次打开的项目
+  const startupRestoredRef = useRef(false)
+  useEffect(() => {
+    if (startupRestoredRef.current) return
+    startupRestoredRef.current = true
+    try {
+      const lastEpp = localStorage.getItem(LAST_PROJECT_EPP_KEY)
+      if (lastEpp) {
+        void openProjectByEppPath(lastEpp)
+      }
+    } catch {}
+  }, [openProjectByEppPath])
 
   const openFileByPath = useCallback(async (filePath: string, targetLine?: number) => {
     const ext = filePath.split('.').pop()?.toLowerCase()
@@ -2243,6 +2416,7 @@ function App(): React.JSX.Element {
         setCurrentProjectDir('')
         setSelection(null)
         setSidebarTab('project')
+        try { localStorage.removeItem(LAST_PROJECT_EPP_KEY) } catch {}
         break
       case 'file:exit':
         await handleAppClose()
@@ -2326,6 +2500,9 @@ function App(): React.JSX.Element {
         break
 
       // 查看/工具菜单
+      case 'view:output':
+        setShowOutput(prev => !prev)
+        break
       case 'view:library':
       case 'tools:library':
         setShowLibrary(true)
@@ -2883,14 +3060,385 @@ function App(): React.JSX.Element {
     setOutputMessages(prev => [...prev, { type: 'info', text: '搜索功能正在开发中。' }])
   }, [])
 
+  const openAIPanel = useCallback(() => {
+    setShowAIPanel(prev => {
+      const next = !prev
+      try { localStorage.setItem(AI_PANEL_OPEN_KEY, String(next)) } catch {}
+      return next
+    })
+  }, [])
+
   const openUserPanel = useCallback(() => {
     setShowOutput(true)
     setOutputMessages(prev => [...prev, { type: 'info', text: '用户功能正在开发中。' }])
   }, [])
 
+  const getActiveEditorTab = useCallback((): EditorTab | null => {
+    const activeId = activeFileIdRef.current
+    if (!activeId) return null
+    return openTabsRef.current.find(item => item.id === activeId) || null
+  }, [])
+
+  const getActiveTextTab = useCallback((): EditorTab | null => {
+    const activeTab = getActiveEditorTab()
+    if (!activeTab) return null
+    if (activeTab.language === 'efw') return null
+    return activeTab
+  }, [getActiveEditorTab])
+
+  const getTextTabByPath = useCallback((targetPath: string): EditorTab | null => {
+    if (!targetPath) return null
+    const normalized = targetPath.toLowerCase()
+    const tab = openTabsRef.current.find(item => {
+      if (item.language === 'efw') return false
+      const itemPath = (item.filePath || item.label).toLowerCase()
+      return itemPath === normalized
+    })
+    return tab || null
+  }, [])
+
+  const activeAIFilePath = (() => {
+    const activeTab = openTabsRef.current.find(item => item.id === activeFileId) || null
+    if (!activeTab) return null
+    const candidatePath = activeTab.filePath || activeTab.label
+    if (!candidatePath || !isAIEditableFile(candidatePath)) return null
+    return candidatePath
+  })()
+
+  const activeAIFileLabel = (() => {
+    const activeTab = openTabsRef.current.find(item => item.id === activeFileId) || null
+    if (!activeTab) return null
+    return activeTab.filePath || activeTab.label
+  })()
+
+  const aiIdeContext = useMemo(() => {
+    const lines: string[] = [
+      `IDE: ycIDE v0.0.2.45（易承语言集成开发环境）`,
+      `运行平台: ${runtimePlatform}`,
+      `编译目标: ${targetPlatform} / ${targetArch}`,
+    ]
+    if (currentProjectDir) {
+      const projectName = currentProjectDir.replace(/^.*[\\/]/, '')
+      lines.push(`当前项目: ${projectName}`)
+      lines.push(`项目路径: ${currentProjectDir}`)
+    }
+    const tabs = openTabsRef.current
+    if (tabs.length > 0) {
+      lines.push(`已打开的文件: ${tabs.map(t => t.filePath?.replace(/^.*[\\/]/, '') || t.label).join(', ')}`)
+    }
+    if (activeAIFileLabel) {
+      lines.push(`当前编辑文件: ${activeAIFileLabel}`)
+    }
+    const allProblems = [...fileProblems, ...designProblems]
+    const errorCount = allProblems.filter(p => p.severity === 'error').length
+    const warningCount = allProblems.filter(p => p.severity === 'warning').length
+    if (errorCount > 0 || warningCount > 0) {
+      lines.push(`问题面板: ${errorCount} 个错误, ${warningCount} 个警告`)
+    }
+    return lines.join('\n')
+  }, [runtimePlatform, targetPlatform, targetArch, currentProjectDir, activeAIFileLabel, fileProblems, designProblems])
+
+  const handleAIModelChange = useCallback(async (model: AISupportedModel, persist = true) => {
+    const next = resolveIDESettings({ ...ideSettings, aiModel: model })
+    setIdeSettings(next)
+    if (!persist) return
+    try {
+      const saved = await window.api?.settings?.save({ aiModel: model })
+      if (saved) setIdeSettings(resolveIDESettings(saved))
+    } catch {
+      // 保持本地变更
+    }
+  }, [ideSettings])
+
+  const handleAIChat = useCallback(async (messages: AIChatMessage[]) => {
+    const result = await window.api?.ai?.chat({ model: ideSettings.aiModel, messages })
+    if (!result) {
+      return { ok: false, message: '', error: 'AI 服务暂不可用。' }
+    }
+    return result
+  }, [ideSettings.aiModel])
+
+  const handleAIChatStream = useCallback(async (
+    messages: AIChatMessage[],
+    onDelta: (delta: string) => void,
+  ) => {
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const channel = 'ai:chatStream:chunk'
+
+    const handleChunk = (payload: unknown): void => {
+      if (!payload || typeof payload !== 'object') return
+      const data = payload as { requestId?: string; delta?: string; done?: boolean }
+      if (data.requestId !== requestId) return
+      if (typeof data.delta === 'string' && data.delta) {
+        onDelta(data.delta)
+      }
+    }
+
+    window.api.on(channel, handleChunk)
+    try {
+      const result = await window.api?.ai?.chatStream({ model: ideSettings.aiModel, messages }, requestId)
+      if (!result) {
+        return { ok: false, message: '', error: 'AI 服务暂不可用。' }
+      }
+      return result
+    } finally {
+      window.api.off(channel)
+    }
+  }, [ideSettings.aiModel])
+
+  const handleAIRequestEdit = useCallback(async (instruction: string, targetFilePath: string): Promise<AIEditResult> => {
+    const tab = getTextTabByPath(targetFilePath)
+    const language = inferAIEditableLanguage(targetFilePath)
+    if (!language) {
+      return {
+        ok: false,
+        filePath: targetFilePath,
+        summary: '',
+        diff: '',
+        originalContent: '',
+        proposedContent: '',
+        error: '请选择一个可编辑的源码文件。',
+      }
+    }
+
+    let currentContent = ''
+    if (tab) {
+      const fileKey = tab.filePath?.replace(/^.*[\\/]/, '') || tab.label
+      const editorFiles = editorRef.current?.getEditorFiles() || {}
+      currentContent = editorFiles[fileKey] ?? tab.value
+    } else {
+      const fromDisk = await window.api?.project?.readFile(targetFilePath)
+      if (typeof fromDisk !== 'string') {
+        return {
+          ok: false,
+          filePath: targetFilePath,
+          summary: '',
+          diff: '',
+          originalContent: '',
+          proposedContent: '',
+          error: '无法读取目标文件，请确认文件存在且可访问。',
+        }
+      }
+      currentContent = fromDisk
+    }
+
+    const filePath = targetFilePath
+    const result = await window.api?.ai?.proposeEdit({
+      model: ideSettings.aiModel,
+      instruction,
+      filePath,
+      fileContent: currentContent,
+      problems: [...fileProblems, ...designProblems].map(p => ({
+        line: p.line,
+        column: p.column,
+        message: p.message,
+        severity: p.severity,
+        file: p.file,
+      })),
+      ideContext: aiIdeContext,
+    })
+
+    if (!result) {
+      return {
+        ok: false,
+        filePath,
+        summary: '',
+        diff: '',
+        originalContent: currentContent,
+        proposedContent: '',
+        error: 'AI 编辑服务暂不可用。',
+      }
+    }
+
+    return result
+  }, [getTextTabByPath, ideSettings.aiModel, fileProblems, designProblems, aiIdeContext])
+
+  const handleAIRequestEditStream = useCallback(async (
+    instruction: string,
+    targetFilePath: string,
+    onDelta: (delta: string) => void,
+    onReasoning?: (delta: string) => void,
+  ): Promise<AIEditResult> => {
+    const tab = getTextTabByPath(targetFilePath)
+    const language = inferAIEditableLanguage(targetFilePath)
+    if (!language) {
+      return {
+        ok: false,
+        filePath: targetFilePath,
+        summary: '',
+        diff: '',
+        originalContent: '',
+        proposedContent: '',
+        error: '请选择一个可编辑的源码文件。',
+      }
+    }
+
+    let currentContent = ''
+    if (tab) {
+      const fileKey = tab.filePath?.replace(/^.*[\\/]/, '') || tab.label
+      const editorFiles = editorRef.current?.getEditorFiles() || {}
+      currentContent = editorFiles[fileKey] ?? tab.value
+    } else {
+      const fromDisk = await window.api?.project?.readFile(targetFilePath)
+      if (typeof fromDisk !== 'string') {
+        return {
+          ok: false,
+          filePath: targetFilePath,
+          summary: '',
+          diff: '',
+          originalContent: '',
+          proposedContent: '',
+          error: '无法读取目标文件，请确认文件存在且可访问。',
+        }
+      }
+      currentContent = fromDisk
+    }
+
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const channel = 'ai:proposeEditStream:chunk'
+    const handleChunk = (payload: unknown): void => {
+      if (!payload || typeof payload !== 'object') return
+      const data = payload as { requestId?: string; delta?: string; type?: string }
+      if (data.requestId !== requestId) return
+      if (typeof data.delta === 'string' && data.delta) {
+        if (data.type === 'reasoning' && onReasoning) {
+          onReasoning(data.delta)
+        } else {
+          onDelta(data.delta)
+        }
+      }
+    }
+
+    window.api.on(channel, handleChunk)
+    try {
+      const result = await window.api?.ai?.proposeEditStream({
+        model: ideSettings.aiModel,
+        instruction,
+        filePath: targetFilePath,
+        fileContent: currentContent,
+        problems: [...fileProblems, ...designProblems].map(p => ({
+          line: p.line,
+          column: p.column,
+          message: p.message,
+          severity: p.severity,
+          file: p.file,
+        })),
+        ideContext: aiIdeContext,
+      }, requestId)
+
+      if (!result) {
+        return {
+          ok: false,
+          filePath: targetFilePath,
+          summary: '',
+          diff: '',
+          originalContent: currentContent,
+          proposedContent: '',
+          error: 'AI 编辑服务暂不可用。',
+        }
+      }
+      return result
+    } finally {
+      window.api.off(channel)
+    }
+  }, [getTextTabByPath, ideSettings.aiModel, fileProblems, designProblems, aiIdeContext])
+
+  const handleAIApplyEdit = useCallback(async (result: AIEditResult, overrideContent?: string): Promise<boolean> => {
+    const nextContent = typeof overrideContent === 'string' ? overrideContent : result.proposedContent
+    if (!result.ok || !nextContent) return false
+    const language = inferAIEditableLanguage(result.filePath)
+    if (!language) return false
+
+    const originalContent = result.originalContent || ''
+
+    const tab = getTextTabByPath(result.filePath)
+    if (tab) {
+      editorRef.current?.upsertFile({
+        ...tab,
+        value: nextContent,
+        savedValue: tab.savedValue,
+      })
+    } else {
+      const diskContent = await window.api?.project?.readFile(result.filePath)
+      if (typeof diskContent !== 'string') return false
+      const label = getBaseName(result.filePath)
+      editorRef.current?.upsertFile({
+        id: result.filePath,
+        label,
+        language,
+        value: nextContent,
+        savedValue: diskContent,
+        filePath: result.filePath,
+      })
+    }
+
+    // 计算 diff 行信息并高亮
+    const diffInfo = computeDiffLineInfo(originalContent, nextContent)
+    if (diffInfo.addedLines.length > 0 || diffInfo.deletedGroups.length > 0) {
+      editorRef.current?.applyDiffHighlight(result.filePath, diffInfo)
+    }
+
+    setShowOutput(true)
+    setOutputMessages(prev => [...prev, { type: 'info', text: `已应用 AI 编辑建议到 ${result.filePath}` }])
+    return true
+  }, [getTextTabByPath, getBaseName])
+
+  const handleAIUndoEdit = useCallback(async (result: AIEditResult): Promise<boolean> => {
+    if (!result.ok || !result.originalContent) return false
+    const language = inferAIEditableLanguage(result.filePath)
+    if (!language) return false
+
+    editorRef.current?.clearDiffHighlight()
+
+    const tab = getTextTabByPath(result.filePath)
+    if (tab) {
+      editorRef.current?.upsertFile({
+        ...tab,
+        value: result.originalContent,
+        savedValue: tab.savedValue,
+      })
+    } else {
+      const diskContent = await window.api?.project?.readFile(result.filePath)
+      if (typeof diskContent !== 'string') return false
+      const label = getBaseName(result.filePath)
+      editorRef.current?.upsertFile({
+        id: result.filePath,
+        label,
+        language,
+        value: result.originalContent,
+        savedValue: diskContent,
+        filePath: result.filePath,
+      })
+    }
+
+    setOutputMessages(prev => [...prev, { type: 'info', text: `已撤销 AI 编辑：${result.filePath}` }])
+    return true
+  }, [getTextTabByPath, getBaseName])
+
+  const handleAIKeepEdit = useCallback(() => {
+    editorRef.current?.clearDiffHighlight()
+  }, [])
+
   const toggleSidebarCollapse = useCallback(() => {
     setSidebarCollapsed(prev => !prev)
   }, [])
+
+  const handleActivityBarContextMenu = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const menuWidth = 200
+    const menuX = Math.min(e.clientX, window.innerWidth - menuWidth - 8)
+    setActivityBarContextMenu({ x: Math.max(0, menuX), y: e.clientY })
+  }, [])
+
+  const toggleActivityBarSide = useCallback(() => {
+    setActivityBarSide((prev) => (prev === 'left' ? 'right' : 'left'))
+  }, [])
+
+  const toggleActivityBarSideFromMenu = useCallback(() => {
+    toggleActivityBarSide()
+    setActivityBarContextMenu(null)
+  }, [toggleActivityBarSide])
 
   return (
     <div className={`app${isWorkspaceEmpty ? ' app-empty-workspace' : ''}`}>
@@ -2929,8 +3477,8 @@ function App(): React.JSX.Element {
         onUndo={() => handleMenuAction('edit:undo')}
         onRedo={() => handleMenuAction('edit:redo')}
       />
-      <div className={`app-body${isWorkspaceEmpty ? ' app-body-empty-workspace' : ''}`}>
-        <aside className="activity-bar" role="navigation" aria-label="主活动栏">
+      <div className={`app-body${isWorkspaceEmpty ? ' app-body-empty-workspace' : ''}${activityBarSide === 'right' ? ' app-body-right' : ''}`}>
+        <aside className={`activity-bar${activityBarSide === 'right' ? ' activity-bar-right' : ''}`} role="navigation" aria-label="主活动栏" onContextMenu={handleActivityBarContextMenu}>
           <button
             type="button"
             className="activity-button"
@@ -2978,6 +3526,15 @@ function App(): React.JSX.Element {
           </button>
           <button
             type="button"
+            className={`activity-button ${showAIPanel ? 'active' : ''}`}
+            title="AI 助手"
+            aria-label="AI 助手"
+            onClick={openAIPanel}
+          >
+            <Icon preserveOriginalColors className="activity-icon-original" name="spy" size={ideSettings.toolbarIconSize} />
+          </button>
+          <button
+            type="button"
             className="activity-button activity-button-bottom"
             title="用户"
             aria-label="用户"
@@ -2986,39 +3543,58 @@ function App(): React.JSX.Element {
             <Icon preserveOriginalColors className="activity-icon-original" name="account" size={ideSettings.toolbarIconSize} />
           </button>
         </aside>
+        {activityBarContextMenu && (
+          <div
+            className="activity-context-menu"
+            style={{ left: activityBarContextMenu.x, top: activityBarContextMenu.y }}
+            role="menu"
+            onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <button
+              type="button"
+              className="activity-context-menu-item"
+              onClick={toggleActivityBarSideFromMenu}
+            >
+              {activityBarSide === 'right' ? '将主活动栏切换到左侧' : '将主活动栏切换到右侧'}
+            </button>
+          </div>
+        )}
         <div className="app-content">
-          <div className="app-side">
-            {!sidebarCollapsed && (
-              <Sidebar width={sidebarWidth} onResize={setSidebarWidth} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onLibraryChange={handleLibraryChange} />
-            )}
-            <div className="app-main">
-              <Editor
-                ref={editorRef}
-                onSelectControl={setSelection}
-                onSidebarTab={setSidebarTab}
-                selection={selection}
-                alignAction={alignAction}
-                onAlignDone={handleAlignDone}
-                onMultiSelectChange={setMultiSelectCount}
-                openProjectFiles={openProjectFiles}
-                onOpenTabsChange={handleOpenTabsChange}
-                onActiveTabChange={setActiveFileId}
-                onCommandClick={handleCommandClick}
-                onCommandClear={handleCommandClear}
-                onProblemsChange={setFileProblems}
-                onCursorChange={(line, col, sourceLine) => { setCursorLine(line); setCursorColumn(col); setCursorSourceLine(sourceLine) }}
-                onDocTypeChange={setDocType}
-                projectDir={currentProjectDir}
-                onProjectTreeRefresh={refreshProjectTree}
-                breakpointsByFile={breakpointsByFile}
-                debugLocation={debugPause ? { file: debugPause.file, line: debugPause.line } : null}
-                debugVariables={debugPause?.variables || []}
-                currentTheme={currentTheme}
-                themeTokenValues={themeTokenValues}
-                editorFontFamily={ideSettings.editorFontFamily}
-                editorFontSize={ideSettings.editorFontSize}
-                editorLineHeight={ideSettings.editorLineHeight}
-              />
+          <div className="app-workspace">
+            <div className={`app-side${activityBarSide === 'right' ? ' app-side-right' : ''}`}>
+              {!sidebarCollapsed && (
+                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onLibraryChange={handleLibraryChange} />
+              )}
+              <div className="app-main">
+                <Editor
+                  ref={editorRef}
+                  onSelectControl={setSelection}
+                  onSidebarTab={setSidebarTab}
+                  selection={selection}
+                  alignAction={alignAction}
+                  onAlignDone={handleAlignDone}
+                  onMultiSelectChange={setMultiSelectCount}
+                  openProjectFiles={openProjectFiles}
+                  onOpenTabsChange={handleOpenTabsChange}
+                  onActiveTabChange={setActiveFileId}
+                  onCommandClick={handleCommandClick}
+                  onCommandClear={handleCommandClear}
+                  onProblemsChange={setFileProblems}
+                  onCursorChange={(line, col, sourceLine) => { setCursorLine(line); setCursorColumn(col); setCursorSourceLine(sourceLine) }}
+                  onDocTypeChange={setDocType}
+                  projectDir={currentProjectDir}
+                  onProjectTreeRefresh={refreshProjectTree}
+                  breakpointsByFile={breakpointsByFile}
+                  debugLocation={debugPause ? { file: debugPause.file, line: debugPause.line } : null}
+                  debugVariables={debugPause?.variables || []}
+                  currentTheme={currentTheme}
+                  themeTokenValues={themeTokenValues}
+                  editorFontFamily={ideSettings.editorFontFamily}
+                  editorFontSize={ideSettings.editorFontSize}
+                  editorLineHeight={ideSettings.editorLineHeight}
+                />
+              </div>
             </div>
           </div>
           {showOutput && (
@@ -3038,6 +3614,27 @@ function App(): React.JSX.Element {
             />
           )}
         </div>
+        {showAIPanel && (
+          <AIAssistantPanel
+            model={ideSettings.aiModel}
+            customModels={ideSettings.aiCustomModels}
+            activeFilePath={activeAIFilePath}
+            activeFileLabel={activeAIFileLabel}
+            problems={[...fileProblems, ...designProblems]}
+            placement={activityBarSide === 'right' ? 'left' : 'right'}
+            ideContext={aiIdeContext}
+            aiFontFamily={ideSettings.aiFontFamily}
+            aiFontSize={ideSettings.aiFontSize}
+            onModelChange={(model, persist) => { void handleAIModelChange(model, persist) }}
+            onChat={handleAIChat}
+            onChatStream={handleAIChatStream}
+            onRequestEdit={handleAIRequestEdit}
+            onRequestEditStream={handleAIRequestEditStream}
+            onApplyEdit={handleAIApplyEdit}
+            onUndoEdit={handleAIUndoEdit}
+            onKeepEdit={handleAIKeepEdit}
+          />
+        )}
       </div>
       <StatusBar
         onToggleOutput={() => setShowOutput(!showOutput)}

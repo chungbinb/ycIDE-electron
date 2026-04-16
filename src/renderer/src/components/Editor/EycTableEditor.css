@@ -130,6 +130,20 @@
   color: var(--table-header-text, var(--text-primary, #d7fff8));
 }
 
+/* AI diff 高亮 — 新增/修改行绿色背景 */
+.eyc-diff-highlight {
+  background-color: rgba(40, 167, 69, 0.18) !important;
+}
+.eyc-diff-highlight .eyc-code-line {
+  background-color: rgba(40, 167, 69, 0.18) !important;
+}
+.eyc-diff-highlight .eyc-line-gutter {
+  border-left: 3px solid rgba(40, 167, 69, 0.7);
+}
+tr.eyc-diff-highlight > td {
+  background-color: rgba(40, 167, 69, 0.18) !important;
+}
+
 .eyc-gutter-fold-area {
   width: 20px;
   flex-shrink: 0;
@@ -1325,11 +1339,15 @@
   cursor: not-allowed;
 }
 
-/* 问题定位高亮闪烁 */
+/* 问题定位高亮闪烁 — 用 box-shadow 实现，不受 diff 背景 !important 影响 */
 @keyframes problem-flash {
-  0%, 100% { background-color: transparent; }
-  25%, 75% { background-color: color-mix(in srgb, var(--warning, #cca700) 25%, transparent); }
+  0%, 100% { box-shadow: inset 0 0 0 0 transparent; }
+  50% { box-shadow: inset 0 0 0 2000px color-mix(in srgb, var(--warning, #cca700) 30%, transparent); }
 }
 .highlight-flash {
-  animation: problem-flash 1.5s ease;
+  animation: problem-flash 0.5s ease 3 !important;
+}
+.highlight-flash .eyc-code-line,
+.highlight-flash > td {
+  animation: problem-flash 0.5s ease 3 !important;
 }

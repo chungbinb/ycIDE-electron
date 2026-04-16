@@ -418,6 +418,7 @@ interface EycTableEditorProps {
   breakpointLines?: number[]
   debugSourceLine?: number
   debugVariables?: Array<{ name: string; type: string; value: string }>
+  diffHighlightLines?: Set<number>
 }
 
 export interface FileProblem {
@@ -519,7 +520,7 @@ function getOuterParenRange(text: string): { start: number; end: number } | null
   return null
 }
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, projectDir, isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, breakpointLines = [], debugSourceLine, debugVariables = [] }, ref) {
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, projectDir, isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines }, ref) {
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
@@ -4216,7 +4217,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                       {blk.rows.map((row, ri) => (
                         <tr
                           key={ri}
-                          className={row.isHeader ? 'eyc-hdr-row' : `eyc-data-row${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}`}
+                          className={row.isHeader ? 'eyc-hdr-row' : `eyc-data-row${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${diffHighlightLines && diffHighlightLines.has(row.lineIndex) ? ' eyc-diff-highlight' : ''}`}
                           {...(!row.isHeader ? { 'data-line-index': row.lineIndex } : {})}
                           onMouseDown={row.isHeader ? undefined : (e) => {
                             e.stopPropagation()
@@ -4315,7 +4316,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           return (
             <div
               key={bi}
-              className={`eyc-block-row eyc-block-row-wrap${isAutoFlowLine ? ' eyc-flow-auto-line' : ''}${isLineSelected ? ' eyc-line-selected' : ''}${isDebugLine ? ' eyc-debug-line' : ''}`}
+              className={`eyc-block-row eyc-block-row-wrap${isAutoFlowLine ? ' eyc-flow-auto-line' : ''}${isLineSelected ? ' eyc-line-selected' : ''}${isDebugLine ? ' eyc-debug-line' : ''}${diffHighlightLines && diffHighlightLines.has(blk.lineIndex) ? ' eyc-diff-highlight' : ''}`}
               data-line-index={blk.lineIndex}
               onMouseDown={(e) => handleLineMouseDown(e, blk.lineIndex)}
             >

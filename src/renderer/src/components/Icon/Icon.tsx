@@ -21,6 +21,7 @@ import UserSvg from '../../assets/icons/User.svg?raw'
 import FieldSvg from '../../assets/icons/Field.svg?raw'
 import MeasureTreeSvg from '../../assets/icons/MeasureTree.svg?raw'
 import ConePreviewSvg from '../../assets/icons/ConePreview.svg?raw'
+import SpySvg from '../../assets/icons/Spy.svg?raw'
 
 // Debug icons
 import StopSvg from '../../assets/icons/Stop.svg?raw'
@@ -29,6 +30,7 @@ import StepIntoSvg from '../../assets/icons/StepInto.svg?raw'
 import StepOverSvg from '../../assets/icons/StepOver.svg?raw'
 import StepOutSvg from '../../assets/icons/StepOut.svg?raw'
 import GoToCurrentLineSvg from '../../assets/icons/GoToCurrentLine.svg?raw'
+import GoToPreviousSvg from '../../assets/icons/GoToPrevious.svg?raw'
 
 // Alignment icons
 import AlignLeftSvg from '../../assets/icons/AlignLeft.svg?raw'
@@ -40,6 +42,7 @@ import CenterVerticallySvg from '../../assets/icons/CenterVertically.svg?raw'
 import AlignHorizontalStretchSvg from '../../assets/icons/AlignHorizontalStretch.svg?raw'
 import AlignVerticalStretchSvg from '../../assets/icons/AlignVerticalStretch.svg?raw'
 import MakeSameHeightSvg from '../../assets/icons/MakeSameHeight.svg?raw'
+import MoveUpSvg from '../../assets/icons/MoveUp.svg?raw'
 
 // Tree / sidebar icons
 import FolderClosedSvg from '../../assets/icons/FolderClosed.svg?raw'
@@ -100,6 +103,7 @@ export const ICON_MAP: Record<string, string> = {
   'step-over': StepOverSvg,
   'step-out': StepOutSvg,
   'run-to-cursor': GoToCurrentLineSvg,
+  'go-to-previous': GoToPreviousSvg,
   'library': LibrarySvg,
   'toolbox': ToolboxSvg,
   'collapse-left': CollapseLeftSvg,
@@ -109,6 +113,7 @@ export const ICON_MAP: Record<string, string> = {
   'extension': ExtensionApplicationSvg,
   'account': UserSvg,
   'dll-command': MeasureTreeSvg,
+  'spy': SpySvg,
 
   // Alignment
   'align-left': AlignLeftSvg,
@@ -120,6 +125,7 @@ export const ICON_MAP: Record<string, string> = {
   'same-width': AlignHorizontalStretchSvg,
   'same-height': AlignVerticalStretchSvg,
   'same-size': MakeSameHeightSvg,
+  'move-up': MoveUpSvg,
 
   // Tree
   'folder-closed': FolderClosedSvg,

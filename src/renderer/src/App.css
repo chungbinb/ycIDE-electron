@@ -11,6 +11,10 @@
   overflow: hidden;
 }
 
+.app-body-right {
+  flex-direction: row-reverse;
+}
+
 .app-content {
   display: flex;
   flex-direction: column;
@@ -19,10 +23,22 @@
   overflow: hidden;
 }
 
+.app-workspace {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 .app-side {
   display: flex;
   flex: 1;
   min-height: 0;
+  min-width: 0;
+}
+
+.app-side-right {
+  flex-direction: row-reverse;
 }
 
 .activity-bar {
@@ -35,6 +51,11 @@
   background: var(--bg-tertiary);
   border-right: 1px solid var(--border-color);
   flex-shrink: 0;
+}
+
+.activity-bar-right {
+  border-right: none;
+  border-left: 1px solid var(--border-color);
 }
 
 .activity-button {
@@ -83,4 +104,31 @@
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+}
+
+.activity-context-menu {
+  position: fixed;
+  z-index: 2100;
+  min-width: 190px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px var(--menu-shadow);
+  padding: 4px;
+}
+
+.activity-context-menu-item {
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.activity-context-menu-item:hover {
+  background: var(--bg-hover);
 }

@@ -1,0 +1,562 @@
+.ai-panel {
+  position: relative;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ai-panel-resizer {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.ai-panel-resizer:hover,
+.ai-panel-resizer:active {
+  background: var(--focus-border, #007fd4);
+  opacity: 0.5;
+}
+
+.ai-panel-left {
+  border-left: none;
+  border-right: 1px solid var(--border-color);
+}
+
+.ai-panel-resizer-right {
+  left: auto;
+  right: -3px;
+}
+
+.ai-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ai-panel-title {
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+
+.ai-model-select {
+  height: 28px;
+  min-width: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  padding: 0 8px;
+}
+
+.ai-file-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.ai-mode-select {
+  width: 52px;
+  min-width: 52px;
+}
+
+.ai-model-inline-select {
+  width: 100%;
+  min-width: 98px;
+}
+
+.ai-inline-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  border: 1px solid transparent;
+  background-color: transparent;
+  color: var(--text-primary);
+  padding: 0 14px 0 8px;
+}
+
+.ai-inline-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ai-inline-select-wrap-fill {
+  width: auto;
+  justify-self: start;
+}
+
+.ai-inline-select-wrap::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translateY(-50%);
+  pointer-events: none;
+  background-color: var(--text-secondary);
+  -webkit-mask-image: url('../../assets/icons/ExpandDown.svg');
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: 10px 10px;
+  mask-image: url('../../assets/icons/ExpandDown.svg');
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: 10px 10px;
+}
+
+.ai-inline-select:hover {
+  background-color: var(--bg-hover);
+}
+
+.ai-inline-select:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.ai-inline-select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.ai-inline-select option:checked {
+  background: color-mix(in srgb, var(--accent) 75%, var(--bg-secondary));
+  color: var(--text-primary);
+}
+
+.ai-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ai-mode-tabs-inline {
+  padding: 0;
+  border-bottom: none;
+  width: 168px;
+}
+
+.ai-mode-tab {
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  height: 30px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ai-mode-tab.active {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-input));
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-color));
+}
+
+.ai-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  min-height: 0;
+  flex: 1;
+}
+
+.ai-composer {
+  margin: 10px 12px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  background: var(--bg-secondary);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.ai-composer:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border-focus) 45%, transparent);
+}
+
+.ai-chat-log {
+  flex: 1;
+  min-height: 140px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--bg-primary) 92%, var(--bg-tertiary));
+}
+
+.ai-chat-item {
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--bg-input);
+  max-width: 92%;
+  align-self: flex-start;
+}
+
+.ai-chat-assistant {
+  border-left: 3px solid var(--accent);
+}
+
+.ai-chat-user {
+  border-left: 0;
+  border-right: 3px solid var(--info);
+  align-self: flex-end;
+}
+
+.ai-chat-role {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.ai-chat-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.ai-textarea {
+  width: 100%;
+  min-height: 86px;
+  max-height: 180px;
+  resize: vertical;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  padding: 8px;
+  font-size: inherit;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.ai-textarea-composer {
+  min-height: unset;
+  max-height: 220px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  resize: none;
+  overflow-y: auto;
+}
+
+.ai-textarea-composer:focus {
+  outline: none;
+}
+
+.ai-composer-target-row {
+  display: block;
+  padding: 0;
+  background: transparent;
+}
+
+.ai-composer-target-name {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-composer-footer {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-btn {
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.ai-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.ai-btn-icon {
+  width: 34px;
+  min-width: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ai-send-btn {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+.ai-send-btn:hover:not(:disabled),
+.ai-send-btn:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  border-color: color-mix(in srgb, var(--text-primary) 16%, transparent);
+}
+
+.ai-edit-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.ai-edit-summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ai-hunk-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ai-hunk-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.ai-hunk-list {
+  display: grid;
+  gap: 6px;
+  max-height: 120px;
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--bg-primary) 92%, var(--bg-tertiary));
+}
+
+.ai-hunk-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+@media (max-width: 1180px) {
+  .ai-composer-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-mode-tabs-inline {
+    width: 100%;
+  }
+}
+
+.ai-diff-preview {
+  flex: 1;
+  min-height: 160px;
+  margin: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-primary) 88%, var(--bg-tertiary));
+  color: var(--text-primary);
+  padding: 8px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ai-file-hint {
+  font-size: inherit;
+  color: var(--text-secondary);
+}
+
+.ai-empty {
+  color: var(--text-secondary);
+  font-size: inherit;
+}
+
+.ai-status {
+  border-top: 1px solid var(--border-color);
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* 编辑模式中 "正在编辑文件中..." 动态省略号 */
+.ai-dots-anim::after {
+  content: '';
+  animation: ai-dots 1.4s steps(4, end) infinite;
+}
+
+@keyframes ai-dots {
+  0%   { content: ''; }
+  25%  { content: '.'; }
+  50%  { content: '..'; }
+  75%  { content: '...'; }
+  100% { content: ''; }
+}
+
+/* 文件变更栏（类 VS Code 风格） */
+.ai-change-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-secondary) 90%, var(--bg-tertiary));
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.ai-change-bar-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ai-change-bar-name {
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.ai-change-bar-added {
+  color: #28a745;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ai-change-bar-deleted {
+  color: #dc3545;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ai-change-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.ai-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 20;
+}
+
+.ai-modal {
+  width: min(420px, 100%);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.24);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.ai-modal-title {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.ai-modal-row {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-modal-custom-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-custom-model-list {
+  display: grid;
+  gap: 8px;
+  max-height: 240px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.ai-custom-model-item {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--bg-primary) 92%, var(--bg-tertiary));
+}
+
+.ai-modal-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ai-modal-input {
+  min-height: 30px;
+  max-height: 30px;
+  resize: none;
+}
+
+.ai-modal-status {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ai-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

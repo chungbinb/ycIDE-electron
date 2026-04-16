@@ -33,6 +33,8 @@ import {
 import { THEME_TOKEN_GROUPS } from '../shared/theme-tokens'
 import { scanYcmdRegistry } from './ycmd-registry'
 import { resolveIDESettings, type IDESettings } from '../shared/settings'
+import type { AIChatRequest, AIEditRequest } from '../shared/ai'
+import { runAIChat, runAIChatStream, runAIEdit, runAIEditStream } from './ai-assistant'
 
 const isDev = !app.isPackaged
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
@@ -1472,6 +1474,77 @@ app.whenReady().then(() => {
     const merged = resolveIDESettings({ ...current, ...partial })
     writeIDESettings(merged)
     return merged
+  })
+
+  ipcMain.handle('ai:chat', (_event, request: AIChatRequest) => {
+    const settings = readIDESettings()
+    const custom = settings.aiCustomModels.find(item => item.id === request.model)
+    const apiKey = request.model === 'glm'
+      ? settings.aiGlmApiKey
+      : request.model === 'deepseek'
+        ? settings.aiDeepseekApiKey
+        : (custom?.apiKey || '')
+    return runAIChat(request, apiKey, settings.aiCustomModels)
+  })
+
+  ipcMain.handle('ai:chatStream', (event, request: AIChatRequest, requestId: string) => {
+    const settings = readIDESettings()
+    const custom = settings.aiCustomModels.find(item => item.id === request.model)
+    const apiKey = request.model === 'glm'
+      ? settings.aiGlmApiKey
+      : request.model === 'deepseek'
+        ? settings.aiDeepseekApiKey
+        : (custom?.apiKey || '')
+
+    const sender = event.sender
+    return runAIChatStream(
+      request,
+      (delta) => {
+        sender.send('ai:chatStream:chunk', { requestId, delta, done: false })
+      },
+      apiKey,
+      settings.aiCustomModels,
+    ).then((result) => {
+      sender.send('ai:chatStream:chunk', { requestId, delta: '', done: true, error: result.ok ? '' : (result.error || '') })
+      return result
+    })
+  })
+
+  ipcMain.handle('ai:proposeEdit', (_event, request: AIEditRequest) => {
+    const settings = readIDESettings()
+    const custom = settings.aiCustomModels.find(item => item.id === request.model)
+    const apiKey = request.model === 'glm'
+      ? settings.aiGlmApiKey
+      : request.model === 'deepseek'
+        ? settings.aiDeepseekApiKey
+        : (custom?.apiKey || '')
+    return runAIEdit(request, apiKey, settings.aiCustomModels)
+  })
+
+  ipcMain.handle('ai:proposeEditStream', (event, request: AIEditRequest, requestId: string) => {
+    const settings = readIDESettings()
+    const custom = settings.aiCustomModels.find(item => item.id === request.model)
+    const apiKey = request.model === 'glm'
+      ? settings.aiGlmApiKey
+      : request.model === 'deepseek'
+        ? settings.aiDeepseekApiKey
+        : (custom?.apiKey || '')
+
+    const sender = event.sender
+    return runAIEditStream(
+      request,
+      (delta) => {
+        sender.send('ai:proposeEditStream:chunk', { requestId, delta, type: 'content', done: false })
+      },
+      apiKey,
+      settings.aiCustomModels,
+      (delta) => {
+        sender.send('ai:proposeEditStream:chunk', { requestId, delta, type: 'reasoning', done: false })
+      },
+    ).then((result) => {
+      sender.send('ai:proposeEditStream:chunk', { requestId, delta: '', type: 'content', done: true, error: result.ok ? '' : (result.error || '') })
+      return result
+    })
   })
 
   // 主题 IPC

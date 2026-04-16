@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { normalizeRuntimePlatform } from '../shared/platform'
 import { THEME_CONFIG_VERSION } from '../shared/theme'
 import type { IDESettings } from '../shared/settings'
+import type { AIChatRequest, AIChatResult, AIEditRequest, AIEditResult } from '../shared/ai'
 import type {
   SaveAsCustomThemeRequest,
   SaveAsCustomThemeResult,
@@ -142,6 +143,12 @@ const api = {
   settings: {
     get: () => ipcRenderer.invoke('settings:get') as Promise<IDESettings>,
     save: (partial: Partial<IDESettings>) => ipcRenderer.invoke('settings:save', partial) as Promise<IDESettings>,
+  },
+  ai: {
+    chat: (request: AIChatRequest) => ipcRenderer.invoke('ai:chat', request) as Promise<AIChatResult>,
+    chatStream: (request: AIChatRequest, requestId: string) => ipcRenderer.invoke('ai:chatStream', request, requestId) as Promise<AIChatResult>,
+    proposeEdit: (request: AIEditRequest) => ipcRenderer.invoke('ai:proposeEdit', request) as Promise<AIEditResult>,
+    proposeEditStream: (request: AIEditRequest, requestId: string) => ipcRenderer.invoke('ai:proposeEditStream', request, requestId) as Promise<AIEditResult>,
   },
   // 主题管理
   theme: {

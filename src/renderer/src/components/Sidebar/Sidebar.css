@@ -7,6 +7,11 @@
   flex-shrink: 0;
 }
 
+.sidebar-right {
+  border-right: none;
+  border-left: 1px solid var(--border-color);
+}
+
 .sidebar-header {
   display: flex;
   align-items: center;
@@ -34,6 +39,11 @@
   height: 100%;
   cursor: col-resize;
   z-index: 10;
+}
+
+.sidebar-right .sidebar-resizer {
+  right: auto;
+  left: -2px;
 }
 .sidebar-resizer:hover {
   background: var(--accent);
