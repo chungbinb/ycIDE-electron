@@ -111,6 +111,19 @@ function coerceArchByPlatform(platform: TargetPlatform, arch: TargetArch): Targe
   return arch
 }
 
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function computeTitlebarHeight(menuFontSize: number): number {
+  const lineHeight = Math.ceil(menuFontSize * 1.35)
+  return Math.round(clampNumber(lineHeight + 14, 30, 64))
+}
+
+function computeToolbarHeight(iconSize: number): number {
+  return Math.round(clampNumber(iconSize * 1.5 + 12, 30, 68))
+}
+
 function normalizeResourceTableContent(raw: string): string {
   const nonEmptyLines = raw
     .replace(/\r\n/g, '\n')
@@ -467,11 +480,61 @@ function App(): React.JSX.Element {
   // 应用系统设置到 CSS 变量
   useEffect(() => {
     const root = document.documentElement
-    root.style.setProperty('--titlebar-height', `${ideSettings.titlebarHeight}px`)
-    root.style.setProperty('--toolbar-height', `${ideSettings.toolbarHeight}px`)
+    const uiScale = clampNumber(ideSettings.fontSize / 13, 0.75, 2)
+    const fontSizeSmall = Math.round(clampNumber(ideSettings.fontSize * 0.88, 10, 22))
+    const spacingXs = Math.max(1, Math.round(2 * uiScale))
+    const spacingSm = Math.max(2, Math.round(4 * uiScale))
+    const spacingMd = Math.max(4, Math.round(8 * uiScale))
+    const spacingLg = Math.max(6, Math.round(12 * uiScale))
+    const spacingXl = Math.max(8, Math.round(16 * uiScale))
+    const statusbarHeight = Math.round(clampNumber(fontSizeSmall + 12, 22, 40))
+    const sidebarHeaderHeight = Math.round(clampNumber(fontSizeSmall + 16, 26, 44))
+    const treeRowHeight = Math.round(clampNumber(ideSettings.fontSize + 10, 22, 42))
+    const panelControlHeight = Math.round(clampNumber(ideSettings.fontSize + 10, 22, 40))
+    const outputHeaderHeight = Math.round(clampNumber(fontSizeSmall + 16, 26, 42))
+    const outputIconButtonSize = Math.round(clampNumber(fontSizeSmall + 10, 20, 36))
+    const treeIndentBase = spacingMd
+    const treeIndentStep = Math.round(clampNumber(16 * uiScale, 12, 28))
+    const activityIconSize = ideSettings.toolbarIconSize
+    const activityButtonSize = Math.round(clampNumber(activityIconSize + 14, 28, 54))
+    const activityBarWidth = Math.round(activityButtonSize + 10)
+
+    const titlebarHeight = computeTitlebarHeight(ideSettings.titlebarMenuFontSize)
+    const toolbarHeight = computeToolbarHeight(ideSettings.toolbarIconSize)
+    const toolbarButtonSize = Math.round(Math.max(24, toolbarHeight - 8))
+    const toolbarSelectHeight = Math.round(Math.max(22, toolbarHeight - 14))
+    const editorLineHeight = Math.max(ideSettings.editorLineHeight, ideSettings.editorFontSize + 2)
+
+    root.style.setProperty('--titlebar-height', `${titlebarHeight}px`)
+    root.style.setProperty('--toolbar-height', `${toolbarHeight}px`)
+    root.style.setProperty('--toolbar-button-size', `${toolbarButtonSize}px`)
+    root.style.setProperty('--toolbar-select-height', `${toolbarSelectHeight}px`)
     root.style.setProperty('--toolbar-icon-size', `${ideSettings.toolbarIconSize}px`)
+    root.style.setProperty('--titlebar-menu-font-family', ideSettings.titlebarMenuFontFamily)
+    root.style.setProperty('--titlebar-menu-font-size', `${ideSettings.titlebarMenuFontSize}px`)
     root.style.setProperty('--font-family', ideSettings.fontFamily)
     root.style.setProperty('--font-size', `${ideSettings.fontSize}px`)
+    root.style.setProperty('--font-size-small', `${fontSizeSmall}px`)
+    root.style.setProperty('--spacing-xs', `${spacingXs}px`)
+    root.style.setProperty('--spacing-sm', `${spacingSm}px`)
+    root.style.setProperty('--spacing-md', `${spacingMd}px`)
+    root.style.setProperty('--spacing-lg', `${spacingLg}px`)
+    root.style.setProperty('--spacing-xl', `${spacingXl}px`)
+    root.style.setProperty('--statusbar-height', `${statusbarHeight}px`)
+    root.style.setProperty('--sidebar-header-height', `${sidebarHeaderHeight}px`)
+    root.style.setProperty('--tree-row-height', `${treeRowHeight}px`)
+    root.style.setProperty('--panel-control-height', `${panelControlHeight}px`)
+    root.style.setProperty('--sidebar-tab-font-size', `${ideSettings.fontSize}px`)
+    root.style.setProperty('--output-header-height', `${outputHeaderHeight}px`)
+    root.style.setProperty('--output-icon-button-size', `${outputIconButtonSize}px`)
+    root.style.setProperty('--tree-indent-base', `${treeIndentBase}px`)
+    root.style.setProperty('--tree-indent-step', `${treeIndentStep}px`)
+    root.style.setProperty('--activity-icon-size', `${activityIconSize}px`)
+    root.style.setProperty('--activity-button-size', `${activityButtonSize}px`)
+    root.style.setProperty('--activity-bar-width', `${activityBarWidth}px`)
+    root.style.setProperty('--editor-font-family', ideSettings.editorFontFamily)
+    root.style.setProperty('--editor-font-size', `${ideSettings.editorFontSize}px`)
+    root.style.setProperty('--editor-line-height', `${editorLineHeight}px`)
   }, [ideSettings])
 
   useEffect(() => {
@@ -1708,7 +1771,7 @@ function App(): React.JSX.Element {
     settingsBaselineRef.current = { ...ideSettings }
 
     if (!settingsWindowRef.current || settingsWindowRef.current.closed) {
-      const popup = window.open('about:blank', 'ycIDE-settings', 'popup=yes,width=520,height=480,left=200,top=120')
+      const popup = window.open('about:blank', 'ycIDE-settings', 'popup=yes,width=520,height=620,left=200,top=120')
       if (!popup) {
         setShowSettings(false)
         return
@@ -2875,7 +2938,7 @@ function App(): React.JSX.Element {
             aria-label={sidebarCollapsed ? '展开侧边栏' : '收缩侧边栏'}
             onClick={toggleSidebarCollapse}
           >
-            <Icon preserveOriginalColors className="activity-icon-original" name={sidebarCollapsed ? 'expand-right' : 'collapse-left'} size={20} />
+            <Icon preserveOriginalColors className="activity-icon-original" name={sidebarCollapsed ? 'expand-right' : 'collapse-left'} size={ideSettings.toolbarIconSize} />
           </button>
           <button
             type="button"
@@ -2884,7 +2947,7 @@ function App(): React.JSX.Element {
             aria-label="资源管理器"
             onClick={openProjectExplorer}
           >
-            <Icon preserveOriginalColors className="activity-icon-original" name="resource-view" size={20} />
+            <Icon preserveOriginalColors className="activity-icon-original" name="resource-view" size={ideSettings.toolbarIconSize} />
           </button>
           <button
             type="button"
@@ -2893,7 +2956,7 @@ function App(): React.JSX.Element {
             aria-label="搜索"
             onClick={openSearchPanel}
           >
-            <Icon preserveOriginalColors className="activity-icon-original" name="search" size={20} />
+            <Icon preserveOriginalColors className="activity-icon-original" name="search" size={ideSettings.toolbarIconSize} />
           </button>
           <button
             type="button"
@@ -2902,7 +2965,7 @@ function App(): React.JSX.Element {
             aria-label="源代码管理"
             onClick={openScmPanel}
           >
-            <Icon preserveOriginalColors className="activity-icon-original" name="source-control" size={20} />
+            <Icon preserveOriginalColors className="activity-icon-original" name="source-control" size={ideSettings.toolbarIconSize} />
           </button>
           <button
             type="button"
@@ -2911,7 +2974,7 @@ function App(): React.JSX.Element {
             aria-label="插件"
             onClick={openLibraryPanel}
           >
-            <Icon preserveOriginalColors className="activity-icon-original" name="extension" size={20} />
+            <Icon preserveOriginalColors className="activity-icon-original" name="extension" size={ideSettings.toolbarIconSize} />
           </button>
           <button
             type="button"
@@ -2920,7 +2983,7 @@ function App(): React.JSX.Element {
             aria-label="用户"
             onClick={openUserPanel}
           >
-            <Icon preserveOriginalColors className="activity-icon-original" name="account" size={20} />
+            <Icon preserveOriginalColors className="activity-icon-original" name="account" size={ideSettings.toolbarIconSize} />
           </button>
         </aside>
         <div className="app-content">
@@ -2952,6 +3015,9 @@ function App(): React.JSX.Element {
                 debugVariables={debugPause?.variables || []}
                 currentTheme={currentTheme}
                 themeTokenValues={themeTokenValues}
+                editorFontFamily={ideSettings.editorFontFamily}
+                editorFontSize={ideSettings.editorFontSize}
+                editorLineHeight={ideSettings.editorLineHeight}
               />
             </div>
           </div>

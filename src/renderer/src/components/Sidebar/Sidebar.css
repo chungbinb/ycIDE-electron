@@ -10,7 +10,7 @@
 .sidebar-header {
   display: flex;
   align-items: center;
-  height: 28px;
+  height: var(--sidebar-header-height, 28px);
   padding: 0 var(--spacing-lg);
   font-size: var(--font-size-small);
   text-transform: uppercase;
@@ -50,7 +50,7 @@
 .tree-item {
   display: flex;
   align-items: center;
-  height: 24px;
+  min-height: var(--tree-row-height, 24px);
   padding-right: var(--spacing-md);
   cursor: pointer;
   white-space: nowrap;
@@ -70,9 +70,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  font-size: 8px;
+  width: var(--panel-control-height, 22px);
+  height: var(--panel-control-height, 22px);
+  font-size: var(--font-size-small);
   color: var(--text-secondary);
   transition: transform 0.12s ease;
   flex-shrink: 0;
@@ -83,14 +83,14 @@
 
 .tree-arrow-placeholder {
   display: inline-block;
-  width: 16px;
+  width: var(--panel-control-height, 22px);
   flex-shrink: 0;
 }
 
 .tree-icon {
   display: inline-block;
-  width: 16px;
-  height: 16px;
+  width: calc(var(--panel-control-height, 22px) - 6px);
+  height: calc(var(--panel-control-height, 22px) - 6px);
   flex-shrink: 0;
   border-radius: 2px;
 }
@@ -118,8 +118,9 @@
 
 .sidebar-event-selector {
   width: 100%;
-  padding: 3px 4px;
-  font-size: 12px;
+  height: var(--panel-control-height, 22px);
+  padding: 0 var(--spacing-sm);
+  font-size: var(--font-size);
   color: var(--text-primary);
   background: var(--bg-input);
   border: 1px solid var(--border-color);
@@ -146,8 +147,8 @@
 
 .sidebar-tab {
   flex: 1;
-  padding: 6px 0;
-  font-size: 12px;
+  padding: var(--spacing-sm) 0;
+  font-size: var(--sidebar-tab-font-size, var(--font-size));
   color: var(--text-secondary);
   background: var(--bg-secondary);
   border: none;
@@ -179,7 +180,7 @@
 .tree-badge {
   margin-left: auto;
   padding: 0 6px;
-  font-size: 10px;
+  font-size: var(--font-size-small);
   color: var(--text-secondary);
   background: var(--badge-bg);
   border-radius: 8px;
@@ -196,7 +197,7 @@
   padding: 16px;
   text-align: center;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size);
 }
 
 /* Property panel */
@@ -208,8 +209,9 @@
 
 .prop-selector {
   width: 100%;
-  padding: 3px 4px;
-  font-size: 12px;
+  height: var(--panel-control-height, 22px);
+  padding: 0 var(--spacing-sm);
+  font-size: var(--font-size);
   font-family: inherit;
   color: var(--text-primary);
   background: var(--bg-primary);
@@ -229,7 +231,7 @@
 .prop-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--font-size);
 }
 
 .prop-row:hover {
@@ -263,7 +265,7 @@
   width: 100%;
   box-sizing: border-box;
   padding: 1px 4px;
-  font-size: 12px;
+  font-size: var(--font-size);
   font-family: inherit;
   color: var(--text-primary);
   background: var(--bg-primary);
@@ -275,7 +277,7 @@
   border-color: var(--error);
 }
 .prop-edit-error {
-  font-size: 10px;
+  font-size: var(--font-size-small);
   color: var(--error);
   margin-top: 1px;
   line-height: 1.2;
@@ -285,7 +287,7 @@
   width: 100%;
   box-sizing: border-box;
   padding: 1px 2px;
-  font-size: 12px;
+  font-size: var(--font-size);
   font-family: inherit;
   color: var(--text-primary);
   background: var(--bg-primary);

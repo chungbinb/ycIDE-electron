@@ -68,6 +68,10 @@ interface Span { text: string; cls: string }
 interface CompletionParam { name: string; type: string; description: string; optional: boolean; isVariable: boolean; isArray: boolean }
 interface CompletionItem { name: string; englishName: string; description: string; returnType: string; category: string; libraryName: string; isMember: boolean; ownerTypeName: string; params: CompletionParam[] }
 
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
 const MEMBER_DELIMITER_REGEX = /[。．]/g
 const MEMBER_DELIMITERS = new Set(['.', '。', '．'])
 
@@ -392,6 +396,9 @@ export interface EycTableEditorHandle {
 interface EycTableEditorProps {
   value: string
   docLanguage?: string
+  editorFontFamily?: string
+  editorFontSize?: number
+  editorLineHeight?: number
   projectDir?: string
   isClassModule?: boolean
   projectGlobalVars?: Array<{ name: string; type: string }>
@@ -512,7 +519,8 @@ function getOuterParenRange(text: string): { start: number; end: number } | null
   return null
 }
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', projectDir, isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, breakpointLines = [], debugSourceLine, debugVariables = [] }, ref) {
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, projectDir, isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, breakpointLines = [], debugSourceLine, debugVariables = [] }, ref) {
+  const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -4091,7 +4099,16 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   }, [lines.length, startEditLine])
 
   return (
-    <div className="eyc-table-editor ebackcolor1" onClick={() => onCommandClear?.()}>
+    <div
+      className="eyc-table-editor ebackcolor1"
+      style={{
+        '--editor-font-family': editorFontFamily,
+        '--editor-font-size': `${editorFontSize}px`,
+        '--editor-line-height': `${editorLineHeight}px`,
+        zoom: eycScale,
+      } as React.CSSProperties}
+      onClick={() => onCommandClear?.()}
+    >
       <div
         className="eyc-table-wrapper"
         ref={wrapperRef}

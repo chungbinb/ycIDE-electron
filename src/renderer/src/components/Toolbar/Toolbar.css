@@ -19,8 +19,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--toolbar-button-size, 28px);
+  height: var(--toolbar-button-size, 28px);
   border-radius: 4px;
   color: var(--text-primary);
 }
@@ -64,7 +64,7 @@
 
 .toolbar-separator {
   width: 1px;
-  height: 18px;
+  height: max(18px, calc(var(--toolbar-button-size, 28px) - 10px));
   margin: 0 var(--spacing-sm);
   background: var(--border-color);
 }
@@ -75,7 +75,7 @@
 }
 
 .toolbar-select {
-  height: 22px;
+  height: var(--toolbar-select-height, 22px);
   padding: 0 4px;
   font-size: 12px;
   color: var(--text-primary);
