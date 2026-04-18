@@ -33,6 +33,12 @@
   align-items: stretch;
 }
 
+/* 非包裹行（普通代码行/表格行）按内容自然宽度撑开，
+   让 .eyc-table-wrapper 在内容超宽时出现横向滚动条 */
+.eyc-block-row {
+  min-width: max-content;
+}
+
 /* 行选中高亮 */
 .eyc-line-selected {
   background-color: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
@@ -43,6 +49,17 @@
 .eyc-gutter-cell.eyc-line-selected {
   background-color: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
 }
+/* 选中行时覆盖 gutter 的不透明背景，保持选中色可见 */
+.eyc-block-row.eyc-line-selected > .eyc-line-gutter {
+  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+}
+/* 调试/diff 高亮行的 gutter 保持对应背景 */
+.eyc-debug-line > .eyc-line-gutter {
+  background: var(--table-row-hover-bg, var(--bg-hover, rgba(78, 201, 176, 0.12)));
+}
+.eyc-diff-highlight > .eyc-line-gutter {
+  background-color: rgba(40, 167, 69, 0.18);
+}
 
 .eyc-line-gutter {
   width: 80px;
@@ -50,6 +67,11 @@
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  /* 水平滚动时行号固定在左侧不跟随横向滚动 */
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--table-bg, var(--bg-primary, #1e1e1e));
 }
 
 .eyc-gutter-cell {
@@ -660,7 +682,7 @@ tr.eyc-diff-highlight > td {
 }
 .eyc-param-expand-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0;
   padding: 1px 0;
   line-height: 20px;
@@ -726,15 +748,21 @@ tr.eyc-diff-highlight > td {
   color: var(--table-text, var(--syntax-operator, #d4d4d4));
   flex: 1;
   min-width: 60px;
-  min-height: 20px;
+  height: 20px;
+  line-height: 20px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: text;
+  box-sizing: border-box;
 }
 
 .eyc-param-val-input {
   width: 100%;
+  flex: 1;
+  min-width: 60px;
+  height: 20px;
+  line-height: 20px;
   background: transparent;
   border: none;
   outline: none;
@@ -742,6 +770,8 @@ tr.eyc-diff-highlight > td {
   font: inherit;
   padding: 0;
   margin: 0;
+  box-sizing: border-box;
+  vertical-align: baseline;
   caret-color: var(--table-text, var(--syntax-operator, #d4d4d4));
 }
 
@@ -886,6 +916,7 @@ tr.eyc-diff-highlight > td {
 /* 代码行容器 */
 .eyc-code-line {
   flex: 1;
+  min-width: max-content;
   min-height: 22px;
   line-height: 22px;
   padding: 0 8px 0 0;
@@ -894,7 +925,6 @@ tr.eyc-diff-highlight > td {
   font-size: 13px;
   font-synthesis: none;
   white-space: pre;
-  overflow: hidden;
 }
 .eyc-code-line:hover {
   background: var(--table-row-hover-bg, var(--bg-hover, rgba(255, 255, 255, 0.04)));
@@ -964,6 +994,13 @@ tr.eyc-diff-highlight > td {
   font-weight: bold;
 }
 
+/* 标点符号（括号/运算符/逗号）— 与 conscolor 同色但不加粗，
+   保持与编辑态 input 中的括号/运算符粗细一致，避免进入/离开编辑态时抖动变粗变细 */
+.eyc-punct {
+  color: var(--syntax-keyword, #4fc1ff);
+  font-weight: normal;
+}
+
 /* 树形线条 */
 .eTreeLine {
   color: transparent;
@@ -973,6 +1010,7 @@ tr.eyc-diff-highlight > td {
 /* ===== 行内编辑输入框 ===== */
 .eyc-code-line.eyc-code-line-editing {
   display: flex;
+  min-width: max-content;
   /* 用 flex-start 让流程线段与输入框上边缘对齐，避免基线对齐导致进入编辑态时文字整体下移 */
   align-items: flex-start;
   /* 规避 Chromium 在合成层内偶发 caret 不刷新的问题 */
@@ -980,8 +1018,8 @@ tr.eyc-diff-highlight > td {
 }
 
 .eyc-inline-input {
-  flex: 1;
-  min-width: 0;
+  flex: 0 0 auto;
+  min-width: 1ch;
   height: 22px;
   line-height: 22px;
   padding: 0;

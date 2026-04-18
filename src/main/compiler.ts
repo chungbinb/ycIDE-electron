@@ -4413,7 +4413,10 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     // 查找编译器
     const zigPath = findZigCompiler()
     if (!zigPath) {
-      sendMessage({ type: 'error', text: '错误: 找不到 Zig 编译器\n请确保 compiler/zig 目录下有 zig（Windows 可为 zig.exe）' })
+      const zigHint = hostPlatform === 'windows'
+        ? '请确保 compiler/zig/zig.exe存在'
+        : '请确保 compiler/zig/zig存在'
+      sendMessage({ type: 'error', text: `错误: 找不到 Zig 编译器\n${zigHint}` })
       result.errorCount++
       return result
     }

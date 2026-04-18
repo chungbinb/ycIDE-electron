@@ -181,17 +181,10 @@ function convertYiFlowToInternal(src: string): string {
         }
         stack.pop()
       }
+      // 内层结束行只承载内层结束标记，不与外层分支标记合并
+      // 外层标记由后续 body 行通过 mapLine 自然带出
       if (frame) {
-        const { marker } = mapLine(indent)
-        if (marker) {
-          let branchBase = 0
-          for (let i = stack.length - 1; i >= 0; i--) {
-            if (stack[i].kind === 'branch') { branchBase = stack[i].baseIndent; break }
-          }
-          result.push(' '.repeat(branchBase) + marker + FLOW_ELSE_MARK)
-        } else {
-          result.push(' '.repeat(frame.baseIndent) + FLOW_ELSE_MARK)
-        }
+        result.push(' '.repeat(frame.baseIndent) + FLOW_ELSE_MARK)
       } else {
         result.push(' '.repeat(indent) + FLOW_ELSE_MARK)
       }
@@ -210,16 +203,7 @@ function convertYiFlowToInternal(src: string): string {
         stack.pop()
       }
       if (frame) {
-        const { marker } = mapLine(indent)
-        if (marker) {
-          let branchBase = 0
-          for (let i = stack.length - 1; i >= 0; i--) {
-            if (stack[i].kind === 'branch') { branchBase = stack[i].baseIndent; break }
-          }
-          result.push(' '.repeat(branchBase) + marker + FLOW_ELSE_MARK)
-        } else {
-          result.push(' '.repeat(frame.baseIndent) + FLOW_ELSE_MARK)
-        }
+        result.push(' '.repeat(frame.baseIndent) + FLOW_ELSE_MARK)
       } else {
         result.push(' '.repeat(indent) + FLOW_ELSE_MARK)
       }
@@ -238,16 +222,7 @@ function convertYiFlowToInternal(src: string): string {
         stack.pop()
       }
       if (frame) {
-        const { marker } = mapLine(indent)
-        if (marker) {
-          let branchBase = 0
-          for (let i = stack.length - 1; i >= 0; i--) {
-            if (stack[i].kind === 'branch') { branchBase = stack[i].baseIndent; break }
-          }
-          result.push(' '.repeat(branchBase) + marker + FLOW_JUDGE_END_MARK)
-        } else {
-          result.push(' '.repeat(frame.baseIndent) + FLOW_JUDGE_END_MARK)
-        }
+        result.push(' '.repeat(frame.baseIndent) + FLOW_JUDGE_END_MARK)
       } else {
         result.push(' '.repeat(indent) + FLOW_JUDGE_END_MARK)
       }
