@@ -91,6 +91,7 @@ export function parseFlowMarkerTargetLine(targetLine: string): {
 }
 
 export function removeDuplicateFlowAutoEndings(extraLines: string[], remainingLines: string[]): string[] {
+  // 仅提取自动展开生成的关键流程行，和后续现有代码做结构比对。
   const kwLines = extraLines.filter(el => {
     const t = el.trim()
     return el.includes(FLOW_AUTO_TAG) || t === FLOW_TRUE_MARK || t === FLOW_ELSE_MARK || t === FLOW_JUDGE_END_MARK
@@ -113,5 +114,6 @@ export function removeDuplicateFlowAutoEndings(extraLines: string[], remainingLi
     return remainingLines.some(rl => extractFlowKw(rl) === kw)
   })
 
+  // 若后续作用域里已完整存在同构结束链，则丢弃自动补出的重复尾部。
   return hasAllEndings ? [] : extraLines
 }

@@ -71,7 +71,7 @@ export function renderFlowSegsLine(params: RenderFlowSegsParams): { node: ReactN
             {seg?.type === 'start' && seg?.isLoop && <span className="eyc-flow-arrow-right" />}
             {seg?.type === 'end' && !seg?.isMarker && !seg?.isStraightEnd && !seg?.isLoop && <span className="eyc-flow-arrow-down" />}
             {seg?.isStraightEnd && <span className="eyc-flow-arrow-down" />}
-            {seg?.hasInnerVert && !seg?.hasInnerLink && <span className="eyc-flow-inner-vert eyc-flow-inner-through" />}
+            {seg?.hasInnerVert && seg?.type !== 'branch' && <span className="eyc-flow-inner-vert eyc-flow-inner-through" />}
             {seg?.hasInnerLink && seg?.type !== 'branch' && <><span className="eyc-flow-inner-link-horz" /><span className="eyc-flow-inner-link-arrow" /></>}
             {seg?.isInnerThrough && <span className="eyc-flow-inner-vert eyc-flow-inner-through" />}
             {seg?.isInnerEnd && <><span className="eyc-flow-inner-vert eyc-flow-inner-end" /><span className="eyc-flow-arrow-down eyc-flow-inner-arrow-down" /></>}

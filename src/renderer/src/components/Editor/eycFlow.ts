@@ -387,7 +387,6 @@ export function computeFlowLines(blocks: RenderBlock[]): { map: Map<number, Flow
       const seg = throughSegs.find(s => s.type === 'through' && s.depth === fb.depth && s.hasInnerVert)
       if (seg) {
         seg.hasInnerLink = true
-        seg.hasInnerVert = undefined
       }
     }
     const startSegs = map.get(nextLine)
@@ -401,7 +400,6 @@ export function computeFlowLines(blocks: RenderBlock[]): { map: Map<number, Flow
       const seg = lineSegs.find(s => s.depth === fb.depth)
       if (seg) {
         seg.outerHidden = true
-        seg.hasInnerVert = undefined
       }
     }
     if (fb.extraEndLines) {
@@ -411,7 +409,6 @@ export function computeFlowLines(blocks: RenderBlock[]): { map: Map<number, Flow
         const seg = lineSegs.find(s => s.depth === fb.depth)
         if (seg) {
           seg.outerHidden = true
-          seg.hasInnerVert = undefined
         }
       }
     }

@@ -527,7 +527,7 @@ tr.eyc-diff-highlight > td {
   position: absolute;
   left: calc(1ch + 4px);
   right: 1ch;
-  top: 40%;
+  top: 9px;
   height: 1px;
   background-image: repeating-linear-gradient(to right, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
@@ -535,7 +535,7 @@ tr.eyc-diff-highlight > td {
 .eyc-flow-link-arrow {
   position: absolute;
   right: 1ch;
-  top: 40%;
+  top: 9px;
   transform: translateY(-50%);
   width: 0;
   height: 0;
@@ -544,13 +544,26 @@ tr.eyc-diff-highlight > td {
   border-left: 5px solid var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 
+/* 横向线在非整数 zoom 下容易被抗锯齿成 2px，做纵向反缩放保持视觉 1px */
+.eyc-flow-start::after,
+.eyc-flow-end::after,
+.eyc-flow-branch::after,
+.eyc-flow-branch.eyc-flow-marker::after,
+.eyc-flow-end.eyc-flow-marker::after,
+.eyc-flow-outer-horz,
+.eyc-flow-link-horz,
+.eyc-flow-inner-link-horz {
+  transform: scaleY(calc(1 / var(--eyc-scale, 1)));
+  transform-origin: center;
+}
+
 /* ===== 嵌套流程：外层 inner vert 分支到内层命令 ===== */
 /* 外层 through 段内部竖线分支横线（从左侧延伸到内层命令横线起始处） */
 .eyc-flow-inner-link-horz {
   position: absolute;
-  left: 0;
+  left: 4px;
   right: calc(-3ch - 4px);
-  top: 40%;
+  top: 9px;
   height: 1px;
   background-image: repeating-linear-gradient(to right, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
@@ -558,7 +571,7 @@ tr.eyc-diff-highlight > td {
 .eyc-flow-inner-link-arrow {
   position: absolute;
   right: calc(-3ch - 4px - 3px);
-  top: 40%;
+  top: 9px;
   transform: translateY(-50%);
   width: 0;
   height: 0;

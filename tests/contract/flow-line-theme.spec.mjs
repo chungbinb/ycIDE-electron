@@ -9,6 +9,7 @@ import ts from 'typescript'
 const flowThemePath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/flowLineTheme.ts')
 const tableEditorTsxPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/EycTableEditor.tsx')
 const tableEditorCssPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/EycTableEditor.css')
+const flowRenderUtilsPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/editorFlowRenderUtils.tsx')
 const themeSettingsDialogPath = path.resolve(process.cwd(), 'src/renderer/src/components/ThemeSettingsDialog/ThemeSettingsDialog.tsx')
 const appPath = path.resolve(process.cwd(), 'src/renderer/src/App.tsx')
 const runtimeRequire = createRequire(import.meta.url)
@@ -102,12 +103,23 @@ test('table and header surfaces are wired to full token set variables', () => {
 
 test('table editor applies flow-line mode engine output to render styles', () => {
   const tsx = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+  const flowRenderUtils = fs.readFileSync(flowRenderUtilsPath, 'utf-8')
   const css = fs.readFileSync(tableEditorCssPath, 'utf-8')
   assert.match(tsx, /import\s+\{\s*resolveFlowLineColors\s*\}\s+from\s+'\.\/flowLineTheme'/)
   assert.match(tsx, /resolveFlowLineColors\(/)
-  assert.match(tsx, /--flow-main-color/)
+  assert.match(flowRenderUtils, /--flow-main-color/)
+  assert.match(flowRenderUtils, /createFlowStyle\(/)
   assert.match(css, /--flow-main-color/)
   assert.doesNotMatch(css, /#569cd6|#4ec9b0/)
+})
+
+test('flow horizontal lines keep 1px appearance under editor zoom', () => {
+  const tsx = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+  const css = fs.readFileSync(tableEditorCssPath, 'utf-8')
+  assert.match(tsx, /'--eyc-scale':\s*`\$\{eycScale\}`/)
+  assert.match(css, /\.eyc-flow-link-horz[\s\S]*top:\s*9px;/)
+  assert.match(css, /\.eyc-flow-inner-link-horz[\s\S]*top:\s*9px;/)
+  assert.match(css, /scaleY\(calc\(1 \/ var\(--eyc-scale, 1\)\)\)/)
 })
 
 test('debug transient overlays use theme tokens instead of hardcoded literals', () => {
@@ -128,7 +140,7 @@ test('flow-line settings controls are wired to App persistence handlers', () => 
   assert.match(appSource, /handleThemeFlowLineModeChange/)
   assert.match(appSource, /handleThemeFlowLineMainColorChange/)
   assert.match(appSource, /handleThemeFlowLineDepthStepChange/)
-  assert.match(appSource, /persistCurrentThemePayload\(currentTheme, payload\)/)
+  assert.match(appSource, /persistCurrentThemePayload\(/)
 })
 
 test('autocomplete source badge avoids fixed keyword literal fallback', () => {

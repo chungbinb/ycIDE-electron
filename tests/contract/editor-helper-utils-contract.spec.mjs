@@ -44,6 +44,7 @@ function loadTsModule(tsPath, mockRequire = {}) {
 
 const tableUtilsPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/editorTableRowUtils.ts')
 const flowUtilsPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/editorFlowAutoExpandUtils.ts')
+const flowPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/eycFlow.ts')
 
 test('table utils: template lookup returns expected insert line', () => {
   const { getTableRowInsertTemplate } = loadTsModule(tableUtilsPath)
@@ -153,4 +154,66 @@ test('flow auto-expand utils: duplicate endings are removed only when scope alre
 
   assert.deepEqual(toPlain(trimTrailingEmptyFormattedLine(['A', ''])), ['A'])
   assert.deepEqual(toPlain(trimTrailingEmptyFormattedLine(['A', 'B'])), ['A', 'B'])
+})
+
+test('flow lines: keep inner vertical line when else marker is followed by nested flow', () => {
+  const { computeFlowLines } = loadTsModule(flowPath)
+  const FLOW_TRUE_MARK = '\u200C'
+  const FLOW_ELSE_MARK = '\u200D'
+  const lines = [
+    '.子程序 A, , , ',
+    '    .如果 (x)',
+    `    ${FLOW_TRUE_MARK}`,
+    '        .如果 (y)',
+    '            执行()',
+    `        ${FLOW_ELSE_MARK}`,
+    `    ${FLOW_ELSE_MARK}`,
+    '',
+  ]
+  const blocks = lines.map((codeLine, lineIndex) => ({ kind: 'codeline', lineIndex, codeLine, rows: [] }))
+
+  const result = computeFlowLines(blocks)
+  const linkLineSegs = result.map.get(3) || []
+  const outerThroughOnLinkLine = linkLineSegs.find(seg => seg.depth === 0 && seg.type === 'through')
+  const segs = result.map.get(4) || []
+  const outerThroughSeg = segs.find(seg => seg.depth === 0 && seg.type === 'through')
+
+  assert.ok(outerThroughOnLinkLine)
+  assert.equal(outerThroughOnLinkLine.hasInnerLink, true)
+  assert.equal(outerThroughOnLinkLine.hasInnerVert, true)
+  assert.ok(outerThroughSeg)
+  assert.equal(outerThroughSeg.outerHidden, true)
+  assert.equal(outerThroughSeg.hasInnerVert, true)
+})
+
+test('flow lines: preserve inner vertical continuity across multi-line nested branch under 200D', () => {
+  const { computeFlowLines } = loadTsModule(flowPath)
+  const FLOW_TRUE_MARK = '\u200C'
+  const FLOW_ELSE_MARK = '\u200D'
+  const lines = [
+    '.子程序 A, , , ',
+    '    .如果 (A)',
+    `        ${FLOW_TRUE_MARK}`,
+    '        .如果 (B)',
+    '            .如果 (C)',
+    '                执行1()',
+    '                执行2()',
+    `            ${FLOW_ELSE_MARK}`,
+    `        ${FLOW_ELSE_MARK}`,
+    `    ${FLOW_ELSE_MARK}`,
+  ]
+  const blocks = lines.map((codeLine, lineIndex) => ({ kind: 'codeline', lineIndex, codeLine, rows: [] }))
+
+  const result = computeFlowLines(blocks)
+  const line6Segs = result.map.get(5) || []
+  const line7Segs = result.map.get(6) || []
+  const outerThroughAt6 = line6Segs.find(seg => seg.depth === 0 && seg.type === 'through')
+  const outerThroughAt7 = line7Segs.find(seg => seg.depth === 0 && seg.type === 'through')
+
+  assert.ok(outerThroughAt6)
+  assert.equal(outerThroughAt6.outerHidden, true)
+  assert.equal(outerThroughAt6.hasInnerVert, true)
+  assert.ok(outerThroughAt7)
+  assert.equal(outerThroughAt7.outerHidden, true)
+  assert.equal(outerThroughAt7.hasInnerVert, true)
 })
