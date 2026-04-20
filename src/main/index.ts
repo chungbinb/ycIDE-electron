@@ -62,9 +62,17 @@ const closeBypassWindowIds = new Set<number>()
 app.setName(APP_DISPLAY_NAME)
 
 function getRendererErrorLogPath(): string {
-  const logDir = join(app.getPath('userData'), 'logs')
+  const baseDir = isDev ? process.cwd() : dirname(process.execPath)
+  const logDir = join(baseDir, 'debug_logs')
   if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true })
   return join(logDir, 'renderer-errors.log')
+}
+
+function getRendererDebugLogPath(): string {
+  const baseDir = isDev ? process.cwd() : dirname(process.execPath)
+  const logDir = join(baseDir, 'debug_logs')
+  if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true })
+  return join(logDir, 'renderer-debug.log')
 }
 
 function appendRendererErrorLog(payload: { source?: string; message: string; stack?: string; extra?: unknown }): void {
@@ -74,6 +82,14 @@ function appendRendererErrorLog(payload: { source?: string; message: string; sta
   const extra = payload.extra === undefined ? '' : `\nextra=${JSON.stringify(payload.extra)}`
   const line = `[${now}] [${source}] ${payload.message}${stack}${extra}\n\n`
   appendFileSync(getRendererErrorLogPath(), line, 'utf-8')
+}
+
+function appendRendererDebugLog(payload: { source?: string; message: string; extra?: unknown }): void {
+  const now = new Date().toISOString()
+  const source = payload.source || 'renderer'
+  const extra = payload.extra === undefined ? '' : `\nextra=${JSON.stringify(payload.extra)}`
+  const line = `[${now}] [${source}] ${payload.message}${extra}\n\n`
+  appendFileSync(getRendererDebugLogPath(), line, 'utf-8')
 }
 
 function getThemesDirPath(): string {
@@ -764,6 +780,20 @@ function setupNativeMenu(): void {
 }
 
 app.whenReady().then(() => {
+  try {
+    appendRendererDebugLog({
+      source: 'main',
+      message: 'debug-log-ready',
+      extra: {
+        isDev,
+        runtimePlatform,
+        pid: process.pid,
+      },
+    })
+  } catch (error) {
+    console.error('[renderer-debug] failed to write startup heartbeat', error)
+  }
+
   ensureBuiltinThemeFiles()
   setupNativeMenu()
 
@@ -2187,6 +2217,20 @@ app.whenReady().then(() => {
 
   ipcMain.handle('debug:getRendererErrorLogPath', () => {
     return getRendererErrorLogPath()
+  })
+
+  ipcMain.handle('debug:logRendererEvent', (_event, payload: { source?: string; message: string; extra?: unknown }) => {
+    try {
+      appendRendererDebugLog(payload)
+      return { success: true }
+    } catch (error) {
+      console.error('[renderer-debug] failed to persist log', error)
+      return { success: false }
+    }
+  })
+
+  ipcMain.handle('debug:getRendererDebugLogPath', () => {
+    return getRendererDebugLogPath()
   })
 
   ipcMain.handle('debug:continue', () => {

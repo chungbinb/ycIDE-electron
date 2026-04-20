@@ -38,6 +38,35 @@ function createFlowStyle(seg: FlowSegment, resolveColors: (depth: number) => Flo
   } as CSSProperties
 }
 
+function getSegPriority(seg: FlowSegment): number {
+  if (seg.type === 'branch' && seg.isMarker) return 400
+  if (seg.type === 'branch') return 300
+  if (seg.type === 'start') return 200
+  if (seg.type === 'end') return 150
+  return 100
+}
+
+function mergeSameDepthSeg(base: FlowSegment, incoming: FlowSegment): FlowSegment {
+  const dominant = getSegPriority(incoming) >= getSegPriority(base) ? incoming : base
+  const secondary = dominant === incoming ? base : incoming
+  return {
+    ...dominant,
+    isLoop: dominant.isLoop || secondary.isLoop,
+    isMarker: dominant.isMarker || secondary.isMarker || undefined,
+    markerInnerVert: dominant.markerInnerVert || secondary.markerInnerVert || undefined,
+    hasInnerVert: dominant.hasInnerVert || secondary.hasInnerVert || undefined,
+    hasExtraEnds: dominant.hasExtraEnds || secondary.hasExtraEnds || undefined,
+    isInnerThrough: dominant.isInnerThrough || secondary.isInnerThrough || undefined,
+    isInnerEnd: dominant.isInnerEnd || secondary.isInnerEnd || undefined,
+    hasNextFlow: dominant.hasNextFlow || secondary.hasNextFlow || undefined,
+    hasPrevFlowEnd: dominant.hasPrevFlowEnd || secondary.hasPrevFlowEnd || undefined,
+    hasInnerLink: dominant.hasInnerLink || secondary.hasInnerLink || undefined,
+    hasOuterLink: dominant.hasOuterLink || secondary.hasOuterLink || undefined,
+    outerHidden: dominant.outerHidden || secondary.outerHidden || undefined,
+    isStraightEnd: dominant.isStraightEnd || secondary.isStraightEnd || undefined,
+  }
+}
+
 export function renderFlowSegsLine(params: RenderFlowSegsParams): { node: ReactNode; skipTreeLines: number } {
   const { flowLines, lineIndex, isExpanded, resolveColors } = params
   if (flowLines.maxDepth === 0) return { node: null, skipTreeLines: 0 }
@@ -47,7 +76,10 @@ export function renderFlowSegsLine(params: RenderFlowSegsParams): { node: ReactN
 
   const lineMaxDepth = Math.max(...segs.map(s => s.depth)) + 1
   const slots: Array<FlowSegment | null> = Array(lineMaxDepth).fill(null)
-  for (const s of segs) slots[s.depth] = s
+  for (const s of segs) {
+    const cur = slots[s.depth]
+    slots[s.depth] = cur ? mergeSameDepthSeg(cur, s) : s
+  }
 
   return {
     node: (
@@ -92,7 +124,10 @@ export function renderFlowContinuationLine(params: RenderFlowContinuationParams)
 
   const lineMaxDepth = Math.max(...segs.map(s => s.depth)) + 1
   const slots: Array<FlowSegment | null> = Array(lineMaxDepth).fill(null)
-  for (const s of segs) slots[s.depth] = s
+  for (const s of segs) {
+    const cur = slots[s.depth]
+    slots[s.depth] = cur ? mergeSameDepthSeg(cur, s) : s
+  }
 
   const hasAny = slots.some(seg => seg && (seg.type === 'start' || seg.type === 'through' || seg.type === 'branch' || (seg.type === 'end' && (seg.hasExtraEnds || seg.isMarker))))
   if (!hasAny) return null

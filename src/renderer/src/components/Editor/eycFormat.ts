@@ -13,6 +13,83 @@ const FLOW_TRUE_MARK = '\u200C'
 const FLOW_ELSE_MARK = '\u200D'
 const FLOW_JUDGE_END_MARK = '\u2060'
 
+function isFlowPasteDebugEnabled(): boolean {
+  if (import.meta.env.DEV) return true
+  const g = globalThis as {
+    __EYC_FLOW_PASTE_DEBUG__?: boolean
+    localStorage?: { getItem: (key: string) => string | null }
+  }
+  if (g.__EYC_FLOW_PASTE_DEBUG__ === true) return true
+  try {
+    return g.localStorage?.getItem('__EYC_FLOW_PASTE_DEBUG__') === '1'
+  } catch {
+    return false
+  }
+}
+
+function debugFlowPaste(stage: string, payload: Record<string, unknown>): void {
+  if (!isFlowPasteDebugEnabled()) return
+  console.debug('[EYC_FLOW_DEBUG]', stage, payload)
+  const g = globalThis as {
+    api?: {
+      debug?: {
+        logRendererEvent?: (payload: { source?: string; message: string; extra?: unknown }) => Promise<{ success: boolean }>
+        logRendererError?: (payload: { source?: string; message: string; extra?: unknown }) => Promise<{ success: boolean }>
+      }
+    }
+  }
+  const evt = g.api?.debug?.logRendererEvent
+  if (evt) {
+    void evt({ source: 'flow-paste', message: stage, extra: payload }).catch(() => {
+      const err = g.api?.debug?.logRendererError
+      if (err) {
+        void err({ source: 'flow-paste-fallback', message: stage, extra: payload })
+      }
+    })
+    return
+  }
+  const err = g.api?.debug?.logRendererError
+  if (err) {
+    void err({ source: 'flow-paste-fallback', message: stage, extra: payload })
+  }
+}
+
+function countFlowMarkers(text: string): { mark200c: number; mark200d: number; mark2060: number } {
+  let mark200c = 0
+  let mark200d = 0
+  let mark2060 = 0
+  for (const ch of text) {
+    if (ch === FLOW_TRUE_MARK) mark200c++
+    else if (ch === FLOW_ELSE_MARK) mark200d++
+    else if (ch === FLOW_JUDGE_END_MARK) mark2060++
+  }
+  return { mark200c, mark200d, mark2060 }
+}
+
+function isLikelyInternalFlowText(text: string): boolean {
+  const lines = normalizeEycText(text).split('\n')
+  const internalFlowCmds = new Set([
+    '如果', '如果真', '判断',
+    '如果结束', '如果真结束', '判断结束',
+    '否则', '默认',
+    '判断循环首', '判断循环尾', '循环判断首', '循环判断尾',
+    '计次循环首', '计次循环尾', '变量循环首', '变量循环尾',
+  ])
+
+  for (const raw of lines) {
+    const trimmed = raw.trimStart()
+    if (!trimmed) continue
+    if (trimmed.startsWith(FLOW_TRUE_MARK) || trimmed.startsWith(FLOW_ELSE_MARK) || trimmed.startsWith(FLOW_JUDGE_END_MARK)) {
+      return true
+    }
+    if (trimmed.startsWith('.')) continue
+    const kw = trimmed.split(/[\s(（]/)[0]
+    if (internalFlowCmds.has(kw)) return true
+  }
+
+  return false
+}
+
 function convertYiFlowToInternal(src: string): string {
   const flowDotKeywords = new Set([
     '如果', '如果真', '否则', '如果结束', '如果真结束',
@@ -346,13 +423,33 @@ function eycToInternalFormat(text: string): string {
 }
 
 function sanitizePastedTextForCurrent(text: string, currentSource: string): string {
-  const normalized = eycToInternalFormat(text)
-  if (!hasAssemblyDeclaration(currentSource)) return normalized
+  const internalLike = isLikelyInternalFlowText(text)
+  debugFlowPaste('sanitize:input', {
+    internalLike,
+    hasAssembly: hasAssemblyDeclaration(currentSource),
+    inputPreview: normalizeEycText(text).split('\n').slice(0, 8),
+    inputMarkerCount: countFlowMarkers(text),
+  })
+  const normalized = internalLike
+    ? normalizeEycText(text)
+    : eycToInternalFormat(text)
+  if (!hasAssemblyDeclaration(currentSource)) {
+    debugFlowPaste('sanitize:output-no-assembly-filter', {
+      outputPreview: normalized.split('\n').slice(0, 8),
+      outputMarkerCount: countFlowMarkers(normalized),
+    })
+    return normalized
+  }
 
-  return normalizeEycText(normalized)
+  const filtered = normalizeEycText(normalized)
     .split('\n')
     .filter(line => !line.trimStart().startsWith('.程序集 '))
     .join('\n')
+  debugFlowPaste('sanitize:output-filtered', {
+    outputPreview: filtered.split('\n').slice(0, 8),
+    outputMarkerCount: countFlowMarkers(filtered),
+  })
+  return filtered
 }
 
 export {

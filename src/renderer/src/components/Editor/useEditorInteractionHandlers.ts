@@ -105,6 +105,47 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     openResourcePreview,
   } = params
 
+  const isFlowPasteDebugEnabled = (): boolean => {
+    if (import.meta.env.DEV) return true
+    const g = globalThis as {
+      __EYC_FLOW_PASTE_DEBUG__?: boolean
+      localStorage?: { getItem: (key: string) => string | null }
+    }
+    if (g.__EYC_FLOW_PASTE_DEBUG__ === true) return true
+    try {
+      return g.localStorage?.getItem('__EYC_FLOW_PASTE_DEBUG__') === '1'
+    } catch {
+      return false
+    }
+  }
+
+  const debugFlowPaste = (stage: string, payload: Record<string, unknown>): void => {
+    if (!isFlowPasteDebugEnabled()) return
+    console.debug('[EYC_FLOW_DEBUG]', stage, payload)
+    const g = globalThis as {
+      api?: {
+        debug?: {
+          logRendererEvent?: (payload: { source?: string; message: string; extra?: unknown }) => Promise<{ success: boolean }>
+          logRendererError?: (payload: { source?: string; message: string; extra?: unknown }) => Promise<{ success: boolean }>
+        }
+      }
+    }
+    const evt = g.api?.debug?.logRendererEvent
+    if (evt) {
+      void evt({ source: 'flow-paste', message: stage, extra: payload }).catch(() => {
+        const err = g.api?.debug?.logRendererError
+        if (err) {
+          void err({ source: 'flow-paste-fallback', message: stage, extra: payload })
+        }
+      })
+      return
+    }
+    const err = g.api?.debug?.logRendererError
+    if (err) {
+      void err({ source: 'flow-paste-fallback', message: stage, extra: payload })
+    }
+  }
+
   const isWrapperScrollbarHit = useCallback((e: React.MouseEvent): boolean => {
     const wrapper = wrapperRef.current
     if (!wrapper) return false
@@ -192,6 +233,11 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     }
     e.preventDefault()
     const cursorLine = editCellRef.current?.lineIndex ?? lastFocusedLineRef.current
+    debugFlowPaste('paste-wrapper:input', {
+      cursorLine,
+      clipPreview: String(clipText || '').replace(/\r\n?/g, '\n').split('\n').slice(0, 8),
+      clipLength: (clipText || '').length,
+    })
     const pasteResult = buildMultiLinePasteResult({
       currentText,
       clipText,
@@ -199,6 +245,11 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
       sanitizePastedText: sanitizePastedTextForCurrent,
     })
     if (!pasteResult) return
+    debugFlowPaste('paste-wrapper:result', {
+      insertAt: pasteResult.insertAt,
+      pastedLineCount: pasteResult.pastedLineCount,
+      resultPreview: pasteResult.nextText.split('\n').slice(Math.max(0, pasteResult.insertAt - 2), pasteResult.insertAt + pasteResult.pastedLineCount + 3),
+    })
     pushUndo(currentText)
     applyTextChange(pasteResult.nextText)
     const newSel = new Set<number>()

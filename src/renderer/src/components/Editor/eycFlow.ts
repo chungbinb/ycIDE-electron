@@ -201,16 +201,21 @@ export function computeFlowLines(blocks: RenderBlock[]): { map: Map<number, Flow
     } else if (FLOW_BRANCH_KW.has(kw)) {
       if (stack.length > 0) {
         const branchIndent = blk.codeLine!.length - blk.codeLine!.replace(/^ +/, '').length
-        let targetIdx = stack.length - 1
+        let targetIdx = -1
         for (let si = stack.length - 1; si >= 0; si--) {
           const entry = stack[si]
           const entryBlk = codeBlocks.find(cb => cb.lineIndex === entry.lineIndex)
           const entryIndent = entryBlk ? entryBlk.codeLine!.length - entryBlk.codeLine!.replace(/^ +/, '').length : -1
+          if (kw === FLOW_TRUE_MARK && (entry.keyword === '如果' || entry.keyword === '如果真' || entry.keyword === '判断')) {
+            const indentFits = branchIndent === entryIndent || branchIndent === entryIndent + 4
+            if (indentFits) { targetIdx = si; break }
+            continue
+          }
           if (entryIndent !== branchIndent) continue
-          if (kw === FLOW_TRUE_MARK && (entry.keyword === '如果' || entry.keyword === '如果真' || entry.keyword === '判断')) { targetIdx = si; break }
           if (kw === '否则' && entry.keyword === '如果') { targetIdx = si; break }
           if (kw === '默认' && entry.keyword === '判断') { targetIdx = si; break }
         }
+        if (targetIdx < 0) continue
         if (kw === FLOW_TRUE_MARK) {
           const extraLines: number[] = []
           let lastBranchCi = ci
@@ -220,7 +225,7 @@ export function computeFlowLines(blocks: RenderBlock[]): { map: Map<number, Flow
             const nextIndent = codeBlocks[j].codeLine!.length - codeBlocks[j].codeLine!.replace(/^ +/, '').length
             if (nextIndent !== branchIndent) break
             markerLines.add(codeBlocks[j].lineIndex)
-            extraLines.push(blk.lineIndex)
+            extraLines.push(codeBlocks[j].lineIndex)
             lastBranchCi = j
             skipIndices.add(j)
           }

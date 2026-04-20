@@ -198,6 +198,10 @@ const api = {
       ipcRenderer.invoke('debug:logRendererError', payload) as Promise<{ success: boolean }>,
     getRendererErrorLogPath: () =>
       ipcRenderer.invoke('debug:getRendererErrorLogPath') as Promise<string>,
+    logRendererEvent: (payload: { source?: string; message: string; extra?: unknown }) =>
+      ipcRenderer.invoke('debug:logRendererEvent', payload) as Promise<{ success: boolean }>,
+    getRendererDebugLogPath: () =>
+      ipcRenderer.invoke('debug:getRendererDebugLogPath') as Promise<string>,
     continue: () =>
       ipcRenderer.invoke('debug:continue') as Promise<boolean>,
   },

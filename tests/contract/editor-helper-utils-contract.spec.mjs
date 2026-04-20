@@ -45,6 +45,8 @@ function loadTsModule(tsPath, mockRequire = {}) {
 const tableUtilsPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/editorTableRowUtils.ts')
 const flowUtilsPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/editorFlowAutoExpandUtils.ts')
 const flowPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/eycFlow.ts')
+const coreUtilsPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/editorCoreUtils.ts')
+const formatPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/eycFormat.ts')
 
 test('table utils: template lookup returns expected insert line', () => {
   const { getTableRowInsertTemplate } = loadTsModule(tableUtilsPath)
@@ -216,4 +218,79 @@ test('flow lines: preserve inner vertical continuity across multi-line nested br
   assert.ok(outerThroughAt7)
   assert.equal(outerThroughAt7.outerHidden, true)
   assert.equal(outerThroughAt7.hasInnerVert, true)
+})
+
+test('flow lines: ignore unmatched 200C marker indentation instead of binding to top stack flow', () => {
+  const { computeFlowLines } = loadTsModule(flowPath)
+  const FLOW_TRUE_MARK = '\u200C'
+  const FLOW_ELSE_MARK = '\u200D'
+  const lines = [
+    '.子程序 A, , , ',
+    '    .如果 (A)',
+    `    ${FLOW_TRUE_MARK}`,
+    '        .如果 (B)',
+    '            执行()',
+    `                ${FLOW_TRUE_MARK}`,
+    `        ${FLOW_ELSE_MARK}`,
+    `    ${FLOW_ELSE_MARK}`,
+  ]
+  const blocks = lines.map((codeLine, lineIndex) => ({ kind: 'codeline', lineIndex, codeLine, rows: [] }))
+
+  const result = computeFlowLines(blocks)
+  const unmatchedSegs = result.map.get(5) || []
+  const innerBranchOnUnmatchedLine = unmatchedSegs.find(seg => seg.depth === 1 && seg.type === 'branch')
+
+  assert.equal(innerBranchOnUnmatchedLine, undefined)
+})
+
+test('colorize: parentheses and operators use eyc-punct (non-bold) class', () => {
+  const { colorize } = loadTsModule(coreUtilsPath, {
+    './eycBlocks': {
+      splitCSV: (text) => String(text || '').split(','),
+    },
+    './eycFlow': {
+      FLOW_KW: new Set(),
+    },
+  })
+  const spans = colorize('    求和(1, 2)')
+  const punctTexts = spans.filter(s => s.cls === 'eyc-punct').map(s => s.text)
+
+  assert.equal(punctTexts.includes('('), true)
+  assert.equal(punctTexts.includes(','), true)
+  assert.equal(punctTexts.includes(')'), true)
+})
+
+test('paste sanitize: internal flow text stays idempotent and does not drift into judge marker', () => {
+  const { sanitizePastedTextForCurrent, normalizeEycText } = loadTsModule(formatPath)
+  const C = '\u200C'
+  const D = '\u200D'
+  const internal = [
+    '.子程序 A, , , ',
+    '    如果（）',
+    `    ${C}`,
+    '        如果（）',
+    `        ${C}333`,
+    `        ${D}`,
+    `    ${D}`,
+  ].join('\n')
+
+  const out = sanitizePastedTextForCurrent(internal, '.程序集 Demo')
+  assert.equal(out, normalizeEycText(internal))
+  assert.equal(out.includes('\u2060'), false)
+})
+
+test('paste sanitize: Yi flow source still converts into internal markers', () => {
+  const { sanitizePastedTextForCurrent } = loadTsModule(formatPath)
+  const yi = [
+    '.子程序 A, , , ',
+    '    .如果 (a)',
+    '        333',
+    '    .否则',
+    '        444',
+    '    .如果结束',
+  ].join('\n')
+
+  const out = sanitizePastedTextForCurrent(yi, '.程序集 Demo')
+  assert.equal(out.includes('\u200C'), true)
+  assert.equal(out.includes('\u200D'), true)
 })

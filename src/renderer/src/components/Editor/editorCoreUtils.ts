@@ -221,7 +221,7 @@ function colorExpr(expr: string): Span[] {
 
     const op = r.match(/^(<>|!=|<=|>=|=|＝|<|>|\+|-|\*|\/|,|，)/)
     if (op) {
-      out.push({ text: op[0], cls: 'conscolor' })
+      out.push({ text: op[0], cls: 'eyc-punct' })
       r = r.slice(op[0].length)
       continue
     }
@@ -256,7 +256,7 @@ function colorExpr(expr: string): Span[] {
     }
 
     if ('()（）{}[]'.includes(r[0])) {
-      out.push({ text: r[0], cls: 'conscolor' })
+      out.push({ text: r[0], cls: 'eyc-punct' })
       r = r.slice(1)
       continue
     }
@@ -272,7 +272,7 @@ function colorExpr(expr: string): Span[] {
       continue
     }
 
-    const pm = r.match(/^[^""\u201c#(（），=＝<>+\-*\/]+/)
+    const pm = r.match(/^[^""\u201c#()（）,，=＝<>+\-*\/\[\]{}]+/)
     if (pm) {
       out.push({ text: pm[0], cls: '' })
       r = r.slice(pm[0].length)

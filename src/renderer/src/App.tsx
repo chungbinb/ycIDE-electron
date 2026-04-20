@@ -17,6 +17,7 @@ import AIAssistantPanel from './components/AIAssistantPanel/AIAssistantPanel'
 import type { SelectionTarget, AlignAction, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
+import { mountIdeActionLogger } from './utils/ideActionLogger'
 import {
   BUILTIN_DARK_THEME_ID,
   createDefaultThemeTokenPayload,
@@ -518,6 +519,7 @@ function App(): React.JSX.Element {
   const [sidebarTab, setSidebarTab] = useState<'project' | 'library' | 'property'>('project')
   const [alignAction, setAlignAction] = useState<AlignAction>(null)
   const [multiSelectCount, setMultiSelectCount] = useState(0)
+
   const [openProjectFiles, setOpenProjectFiles] = useState<EditorTab[]>()
   const [projectTree, setProjectTree] = useState<TreeNode[]>([])
   const [currentProjectDir, setCurrentProjectDir] = useState<string>('')
@@ -566,6 +568,13 @@ function App(): React.JSX.Element {
   })
   const [activityBarContextMenu, setActivityBarContextMenu] = useState<{ x: number; y: number } | null>(null)
   const isWorkspaceEmpty = !currentProjectDir && (openProjectFiles?.length ?? 0) === 0
+
+  useEffect(() => {
+    const unmount = mountIdeActionLogger()
+    return () => {
+      unmount()
+    }
+  }, [])
 
   const pushRecentOpened = useCallback((item: RecentOpenedItem) => {
     setRecentOpened(prev => {
@@ -3113,7 +3122,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.2.48（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.2.49（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
