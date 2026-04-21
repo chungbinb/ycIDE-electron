@@ -14,13 +14,15 @@ function toPlain(value) {
 
 function loadTsModule(tsPath, mockRequire = {}) {
   const source = fs.readFileSync(tsPath, 'utf-8')
-  const compiled = ts.transpileModule(source, {
+  const compiledRaw = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2020,
     },
     fileName: tsPath,
   }).outputText
+  // vm + CommonJS 测试桩不支持 import.meta，统一降级为非 DEV 分支。
+  const compiled = compiledRaw.replace(/import\.meta\.env\.DEV/g, 'false')
 
   const module = { exports: {} }
   const localRequire = (request) => {
@@ -279,6 +281,146 @@ test('paste sanitize: internal flow text stays idempotent and does not drift int
   assert.equal(out.includes('\u2060'), false)
 })
 
+test('format save: keep .否则 when previous 200D belongs to nested inner branch', () => {
+  const { eycToYiFormat } = loadTsModule(formatPath)
+  const C = '\u200C'
+  const D = '\u200D'
+  const internal = [
+    '.子程序 A, , , ',
+    '    如果 (A)',
+    `    ${C}`,
+    '        如果 (X)',
+    `        ${C}111`,
+    `        ${D}`,
+    `    ${D}如果 (B)`,
+    `    ${D}222`,
+    `    ${D}`,
+  ].join('\n')
+
+  const out = eycToYiFormat(internal)
+  assert.equal(out.includes('    .否则'), true)
+})
+
+test('format save: still emits .否则 when previous same-indent 200D is an empty end marker', () => {
+  const { eycToYiFormat } = loadTsModule(formatPath)
+  const C = '\u200C'
+  const D = '\u200D'
+  const internal = [
+    '.子程序 A, , , ',
+    '    如果 (A)',
+    `    ${C}111`,
+    `    ${D}222`,
+    `    ${D}`,
+  ].join('\n')
+
+  const out = eycToYiFormat(internal)
+  assert.equal(out.includes('    .否则'), true)
+})
+
+test('format save: never generate .否则 for 如果真 branch', () => {
+  const { eycToYiFormat } = loadTsModule(formatPath)
+  const D = '\u200D'
+  const internal = [
+    '.子程序 A, , , ',
+    '    如果真 ()',
+    `    ${D}22222`,
+    `    ${D}`,
+  ].join('\n')
+
+  const out = eycToYiFormat(internal)
+  assert.equal(out.includes('.否则'), false)
+  assert.equal(out.includes('.如果真结束'), true)
+  assert.equal(out.includes('22222'), true)
+})
+
+test('roundtrip: complex yi flow keeps else branches and if-true has no else', () => {
+  const { eycToInternalFormat, eycToYiFormat } = loadTsModule(formatPath)
+  const yi = [
+    '.版本 2',
+    '',
+    '.如果 ()',
+    '    .如果 ()',
+    '        .如果真 ()',
+    '            .如果 ()',
+    '                22222',
+    '            .否则',
+    '',
+    '            .如果结束',
+    '',
+    '        .如果真结束',
+    '',
+    '    .否则',
+    '        .如果 ()',
+    '',
+    '        .否则',
+    '            .如果 ()',
+    '',
+    '            .否则',
+    '                .如果 ()',
+    '',
+    '                .否则',
+    '',
+    '                .如果结束',
+    '',
+    '            .如果结束',
+    '',
+    '        .如果结束',
+    '',
+    '    .如果结束',
+    '',
+    '.否则',
+    '',
+    '.如果结束',
+    '',
+    '.如果 ()',
+    '',
+    '.否则',
+    '    .如果 ()',
+    '',
+    '    .否则',
+    '',
+    '    .如果结束',
+    '',
+    '.如果结束',
+    '',
+    '.如果真 ()',
+    '',
+    '.如果真结束',
+  ].join('\n')
+
+  const roundtrip = eycToYiFormat(eycToInternalFormat(yi))
+  assert.equal(roundtrip.includes('.否则'), true)
+  assert.equal(roundtrip.includes('.如果真 ()\n.否则'), false)
+})
+
+test('roundtrip: if inside else branch stays inside else branch', () => {
+  const { eycToInternalFormat, eycToYiFormat } = loadTsModule(formatPath)
+  const yi = [
+    '.版本 2',
+    '',
+    '.如果 ()',
+    '',
+    '.否则',
+    '    .如果 ()',
+    '',
+    '    .否则',
+    '',
+    '    .如果结束',
+    '',
+    '.如果结束',
+  ].join('\n')
+
+  const roundtrip = eycToYiFormat(eycToInternalFormat(yi))
+  // 显式 else-open 标记保证内层 .如果 恢复时位于 .否则 之后。
+  assert.equal(roundtrip.includes('.如果 ()'), true)
+  assert.equal(roundtrip.includes('.如果结束'), true)
+  const idxOuterElse = roundtrip.indexOf('\n.否则')
+  const idxInnerIf = roundtrip.indexOf('\n    .如果 ()')
+  assert.ok(idxOuterElse >= 0, 'outer .否则 should be emitted')
+  assert.ok(idxInnerIf >= 0, 'inner .如果 should be emitted with indent')
+  assert.ok(idxOuterElse < idxInnerIf, 'inner .如果 should appear inside outer .否则 branch')
+})
+
 test('paste sanitize: Yi flow source still converts into internal markers', () => {
   const { sanitizePastedTextForCurrent } = loadTsModule(formatPath)
   const yi = [
@@ -366,7 +508,12 @@ test('paste sanitize: inserts minimal true-marker when true branch only contains
   ].join('\n')
 
   const out = sanitizePastedTextForCurrent(yi, '.程序集 Demo')
-  const hasStandaloneTrueMarker = out.split('\n').some(line => line.trimStart() === C)
-  assert.equal(hasStandaloneTrueMarker, true)
+  // 真分支的 [C] 标记既可独立成行（原行为），也可与 [D] 合并为 `[C][D]` 占同一行
+  // （新行为，减少表格模式空行）。两种形式都保留了 [C] 的渲染语义。
+  const hasTrueMarker = out.split('\n').some(line => {
+    const t = line.trimStart()
+    return t === C || t.startsWith(C)
+  })
+  assert.equal(hasTrueMarker, true)
   assert.equal(out.includes('\u200D'), true)
 })

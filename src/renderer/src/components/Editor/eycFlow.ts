@@ -253,6 +253,33 @@ export function computeFlowLines(blocks: RenderBlock[]): { map: Map<number, Flow
         if (kw === FLOW_ELSE_MARK && (entry.keyword === '如果' || entry.keyword === '如果真')) { matchIdx = si; break }
         if (kw === FLOW_JUDGE_END_MARK && entry.keyword === '判断') { matchIdx = si; break }
       }
+      // 当 200D / 2060 位于分支帧的顶端缩进，但同缩进范围内后续还存在同种标记时，
+      // 说明当前行是 `.否则` / `.默认` 的进入标记，而非结构关闭。此时应作为分支分界点，
+      // 追加到 branches 里并保留栈帧，直到遇到同缩进范围内的最后一条同种标记才真正关闭。
+      if (matchIdx >= 0 && (kw === FLOW_ELSE_MARK || kw === FLOW_JUDGE_END_MARK)) {
+        const entry = stack[matchIdx]
+        const isBranchFrame = entry.keyword === '如果' || entry.keyword === '如果真' || entry.keyword === '判断'
+        if (isBranchFrame && matchIdx === stack.length - 1) {
+          let hasLaterSameMarker = false
+          for (let j = ci + 1; j < codeBlocks.length; j++) {
+            const nextKw = extractFlowKw(codeBlocks[j].codeLine!)
+            const nextIndent = codeBlocks[j].codeLine!.length - codeBlocks[j].codeLine!.replace(/^ +/, '').length
+            if (nextIndent < endIndent) break
+            if (nextIndent === endIndent) {
+              if (nextKw === kw) { hasLaterSameMarker = true; break }
+              // 同缩进的非同种标记 / 非标记行 → 当前帧作用域已结束
+              if (!nextKw || (nextKw !== FLOW_TRUE_MARK && nextKw !== FLOW_ELSE_MARK && nextKw !== FLOW_JUDGE_END_MARK)) break
+              // 同缩进的其它流程标记（如孤立的 200C）继续扫描，不视为作用域结束
+            }
+            // 更深缩进的行属于嵌套内容，继续向前扫描
+          }
+          if (hasLaterSameMarker) {
+            markerLines.add(blk.lineIndex)
+            entry.branches.push(blk.lineIndex)
+            continue
+          }
+        }
+      }
       if (matchIdx >= 0) {
         while (stack.length > matchIdx + 1) stack.pop()
         const extraEndLines: number[] = []

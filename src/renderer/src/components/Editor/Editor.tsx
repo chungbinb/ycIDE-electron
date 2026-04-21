@@ -300,7 +300,17 @@ interface ProjectDllCommand {
 }
 
 type TabBarPosition = 'top' | 'bottom'
+type EycEditorMode = 'table' | 'text'
 const EDITOR_TAB_BAR_POS_KEY = 'ycide.editor.tabbar.position'
+
+function isEycSourceLanguage(language?: string): boolean {
+  return language === 'eyc'
+    || language === 'egv'
+    || language === 'ecs'
+    || language === 'edt'
+    || language === 'ell'
+    || language === 'erc'
+}
 
 interface EycEditorErrorBoundaryProps {
   tabId: string
@@ -346,8 +356,9 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       return 'bottom'
     }
   })
-  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tabId: string | null } | null>(null)
   const [eycFallbackTabs, setEycFallbackTabs] = useState<Record<string, true>>({})
+  const [eycEditorModeTabs, setEycEditorModeTabs] = useState<Record<string, EycEditorMode>>({})
   const [projectGlobalVars, setProjectGlobalVars] = useState<Array<{ name: string; type: string }>>([])
   const [projectConstants, setProjectConstants] = useState<Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>>([])
   const [projectDllCommands, setProjectDllCommands] = useState<ProjectDllCommand[]>([])
@@ -396,7 +407,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   }, [onSidebarTab])
 
   const normalizeIncomingTab = (tab: EditorTab): EditorTab => {
-    if (tab.language !== 'eyc' && tab.language !== 'egv' && tab.language !== 'ecs' && tab.language !== 'edt' && tab.language !== 'ell' && tab.language !== 'erc') return tab
+    if (!isEycSourceLanguage(tab.language)) return tab
     return {
       ...tab,
       value: eycToInternalFormat(tab.value),
@@ -469,6 +480,12 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         delete next[tabId]
         return next
       })
+      setEycEditorModeTabs(prevModes => {
+        if (!prevModes[tabId]) return prevModes
+        const next = { ...prevModes }
+        delete next[tabId]
+        return next
+      })
       return newTabs
     })
   }, [tabs, activeTabId, onOpenTabsChange])
@@ -483,6 +500,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const clearAllTabs = useCallback(() => {
     setTabs([])
     setActiveTabId(null)
+    setEycFallbackTabs({})
+    setEycEditorModeTabs({})
     onOpenTabsChange?.([])
   }, [onOpenTabsChange])
 
@@ -1579,9 +1598,16 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   }, [activeTabId, tabs, syncProjectTreeAfterEventSubChange])
 
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0] || null
+  const activeTabEycMode: EycEditorMode = activeTab ? (eycEditorModeTabs[activeTab.id] || 'table') : 'table'
+  const activeTabFallbackTextMode = !!(activeTab && eycFallbackTabs[activeTab.id])
+  const activeTabUseTextMode = activeTabEycMode === 'text' || activeTabFallbackTextMode
+  const activeTabTextModeValue = useMemo(() => {
+    if (!activeTab || !isEycSourceLanguage(activeTab.language)) return ''
+    return eycToYiFormat(activeTab.value)
+  }, [activeTab])
   const activeWindowControls = useMemo(() => {
     if (!activeTab) return [] as Array<{ name: string; type: string }>
-    const isSourceTab = activeTab.language === 'eyc' || activeTab.language === 'egv' || activeTab.language === 'ecs' || activeTab.language === 'edt' || activeTab.language === 'ell' || activeTab.language === 'erc'
+    const isSourceTab = isEycSourceLanguage(activeTab.language)
     if (!isSourceTab) return [] as Array<{ name: string; type: string }>
 
     const sourceFileName = (activeTab.filePath?.split(/[\\/]/).pop() || activeTab.label).toLowerCase()
@@ -1651,6 +1677,16 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     )
   }, [activeTabId])
 
+  const handleEycTextEditorChange: OnChange = useCallback((value) => {
+    if (value === undefined) return
+    const internal = eycToInternalFormat(value)
+    setTabs(prev =>
+      prev.map(t =>
+        t.id === activeTabId ? { ...t, value: internal } : t
+      )
+    )
+  }, [activeTabId])
+
   // 直接接收 string 的 onChange（给 EycTableEditor 用）
   const handleEycChange = useCallback((value: string) => {
     setTabs(prev =>
@@ -1713,16 +1749,56 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     }
   }, [tabContextMenu])
 
-  const handleTabContextMenu = useCallback((e: React.MouseEvent) => {
+  const handleTabContextMenu = useCallback((e: React.MouseEvent, tabId: string | null = null) => {
     e.preventDefault()
     e.stopPropagation()
-    setTabContextMenu({ x: e.clientX, y: e.clientY })
+    setTabContextMenu({ x: e.clientX, y: e.clientY, tabId })
   }, [])
 
   const toggleTabBarPosition = useCallback(() => {
     setTabBarPosition(prev => prev === 'bottom' ? 'top' : 'bottom')
     setTabContextMenu(null)
   }, [])
+
+  const contextMenuTab = tabContextMenu
+    ? tabs.find(t => t.id === (tabContextMenu.tabId ?? activeTabId)) || null
+    : null
+  const contextMenuTabIsEyc = isEycSourceLanguage(contextMenuTab?.language)
+  const contextMenuTabMode: EycEditorMode = contextMenuTab ? (eycEditorModeTabs[contextMenuTab.id] || 'table') : 'table'
+  const contextMenuTabFallbackTextMode = !!(contextMenuTab && eycFallbackTabs[contextMenuTab.id])
+  const contextMenuTabUseTextMode = contextMenuTabMode === 'text' || contextMenuTabFallbackTextMode
+
+  const toggleContextMenuTabEditorMode = useCallback(() => {
+    const targetTabId = tabContextMenu?.tabId ?? activeTabId
+    if (!targetTabId) {
+      setTabContextMenu(null)
+      return
+    }
+    const targetTab = tabs.find(t => t.id === targetTabId)
+    if (!targetTab || !isEycSourceLanguage(targetTab.language)) {
+      setTabContextMenu(null)
+      return
+    }
+    const mode = eycEditorModeTabs[targetTabId] || 'table'
+    const fallbackTextMode = !!eycFallbackTabs[targetTabId]
+    const useTextMode = mode === 'text' || fallbackTextMode
+    const nextMode: EycEditorMode = useTextMode ? 'table' : 'text'
+    setEycEditorModeTabs(prev => {
+      const next = { ...prev }
+      if (nextMode === 'table') delete next[targetTabId]
+      else next[targetTabId] = 'text'
+      return next
+    })
+    if (nextMode === 'table') {
+      setEycFallbackTabs(prev => {
+        if (!prev[targetTabId]) return prev
+        const next = { ...prev }
+        delete next[targetTabId]
+        return next
+      })
+    }
+    setTabContextMenu(null)
+  }, [tabContextMenu, activeTabId, tabs, eycEditorModeTabs, eycFallbackTabs])
 
   return (
     <div className={`editor ${tabBarPosition === 'top' ? 'editor-tabs-top' : 'editor-tabs-bottom'}`} role="main" aria-label="代码编辑器">
@@ -1746,40 +1822,42 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             onControlDoubleClick={handleControlDblClick}
             onFormDoubleClick={handleFormDblClick}
           />
-        ) : (activeTab.language === 'eyc' || activeTab.language === 'egv' || activeTab.language === 'ecs' || activeTab.language === 'edt' || activeTab.language === 'ell' || activeTab.language === 'erc') ? (
-          eycFallbackTabs[activeTab.id] ? (
+        ) : isEycSourceLanguage(activeTab.language) ? (
+          activeTabUseTextMode ? (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#2d2d2d', borderBottom: '1px solid #3a3a3a' }}>
-                <span style={{ color: '#f2c97d', fontSize: 12 }}>表格模式异常，已临时切换到文本模式</span>
-                <button
-                  type="button"
-                  style={{
-                    padding: '2px 10px',
-                    borderRadius: 4,
-                    border: '1px solid #5a5a5a',
-                    background: '#3a3a3a',
-                    color: '#d4d4d4',
-                    cursor: 'pointer',
-                    fontSize: 12,
-                  }}
-                  onClick={() => {
-                    setEycFallbackTabs(prev => {
-                      const next = { ...prev }
-                      delete next[activeTab.id]
-                      return next
-                    })
-                  }}
-                >
-                  重试表格模式
-                </button>
-              </div>
+              {activeTabFallbackTextMode && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#2d2d2d', borderBottom: '1px solid #3a3a3a' }}>
+                  <span style={{ color: '#f2c97d', fontSize: 12 }}>表格模式异常，已临时切换到文本模式</span>
+                  <button
+                    type="button"
+                    style={{
+                      padding: '2px 10px',
+                      borderRadius: 4,
+                      border: '1px solid #5a5a5a',
+                      background: '#3a3a3a',
+                      color: '#d4d4d4',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                    }}
+                    onClick={() => {
+                      setEycFallbackTabs(prev => {
+                        const next = { ...prev }
+                        delete next[activeTab.id]
+                        return next
+                      })
+                    }}
+                  >
+                    重试表格模式
+                  </button>
+                </div>
+              )}
               <div style={{ flex: 1 }}>
                 <MonacoEditor
                   key={activeTab.id}
                   language="eyc"
-                  value={activeTab.value}
+                  value={activeTabTextModeValue}
                   theme={monacoThemeId}
-                  onChange={handleEditorChange}
+                  onChange={handleEycTextEditorChange}
                   onMount={handleEditorMount}
                   beforeMount={(monaco) => {
                     registerEycLanguage(monaco)
@@ -1869,7 +1947,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         className="editor-tabs"
         role="tablist"
         aria-label="打开的文件"
-        onContextMenu={handleTabContextMenu}
+        onContextMenu={(e) => handleTabContextMenu(e, activeTabId)}
       >
         {tabs.map((tab) => (
           <button
@@ -1878,7 +1956,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             role="tab"
             aria-selected={tab.id === activeTabId}
             onClick={() => switchTab(tab.id)}
-            onContextMenu={handleTabContextMenu}
+            onContextMenu={(e) => handleTabContextMenu(e, tab.id)}
             title={tab.filePath || tab.label}
           >
             <span className="editor-tab-icon">
@@ -1911,6 +1989,15 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
           >
             {tabBarPosition === 'bottom' ? '将文件标签移到编辑器上边' : '将文件标签移到编辑器下边'}
           </button>
+          {contextMenuTabIsEyc && (
+            <button
+              type="button"
+              className="editor-tab-context-item"
+              onClick={toggleContextMenuTabEditorMode}
+            >
+              {contextMenuTabUseTextMode ? '切换为表格模式' : '切换为文本模式'}
+            </button>
+          )}
         </div>
       )}
     </div>

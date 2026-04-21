@@ -236,9 +236,21 @@ function convertYiFlowToInternal(src: string): string {
       while (stack.length > 0) {
         const top = stack[stack.length - 1]
         if (top.kind === 'branch' && top.type === '如果') {
+          // 真分支空时 ensureTrueMarker 会新推一行 `[C]`，
+          // 此时直接将 else-open 标记追加到同一行上构成 `[C][D]`，
+          // 避免在表格模式则多出一行空行。
+          const beforeLen = result.length
           ensureTrueMarker(top)
+          if (result.length > beforeLen) {
+            const idx = result.length - 1
+            result[idx] = result[idx] + FLOW_ELSE_MARK
+          } else {
+            // 真分支已有直接内容时，回退到单独新行的 `[D]` 标记。后续回写侧通过
+            // “同缩进后续还有 [D] ”的前向扫描区分 else-open 和 close。
+            result.push(' '.repeat(top.baseIndent) + FLOW_ELSE_MARK)
+          }
           top.marker = FLOW_ELSE_MARK
-          top.trueMarkerEmitted = false
+          top.trueMarkerEmitted = true
           top.srcBodyIndent = indent + 4
           break
         }
@@ -252,9 +264,16 @@ function convertYiFlowToInternal(src: string): string {
       while (stack.length > 0) {
         const top = stack[stack.length - 1]
         if (top.kind === 'branch' && top.type === '判断') {
+          const beforeLen = result.length
           ensureTrueMarker(top)
+          if (result.length > beforeLen) {
+            const idx = result.length - 1
+            result[idx] = result[idx] + FLOW_JUDGE_END_MARK
+          } else {
+            result.push(' '.repeat(top.baseIndent) + FLOW_JUDGE_END_MARK)
+          }
           top.marker = FLOW_JUDGE_END_MARK
-          top.trueMarkerEmitted = false
+          top.trueMarkerEmitted = true
           top.srcBodyIndent = indent + 4
           break
         }
@@ -369,12 +388,81 @@ function eycToYiFormat(text: string): string {
   ])
 
   const srcLines = normalizeEycText(text).split('\n')
+  const cleanedLines = srcLines.map(raw => raw.replace(new RegExp(FLOW_AUTO_TAG, 'g'), ''))
   const out: string[] = []
-  const branchStack: Array<'如果' | '如果真' | '判断'> = []
+  // 针对 `.否则/.默认` 的 else-open 与 `.如果结束/.判断结束` 的 close 都会以同样的
+  // 空 200D/2060 行形式出现在内部文本。依靠前向扫描在遇到第一条空标记行时判断：
+  // 同缩进范围内后续是否还存在另一条同种空标记行。存在 → 当前是 else-open；
+  // 不存在 → 当前就是 close。这样就不用引入额外零宽字符来污染流程渲染。
+  interface Frame {
+    type: '如果' | '如果真' | '判断'
+    elseEntered: boolean
+  }
+  const branchStack: Frame[] = []
+
+  const startsWithMarkerAtIndent = (line: string, indent: string, marker: string): boolean => {
+    return line.startsWith(indent + marker)
+  }
+
+  const updateBranchStackByKw = (kw: string): void => {
+    if (kw === '如果' || kw === '如果真' || kw === '判断') {
+      branchStack.push({ type: kw, elseEntered: false })
+      return
+    }
+    if (kw === '如果结束' || kw === '如果真结束') {
+      const top = branchStack[branchStack.length - 1]
+      if (top && (top.type === '如果' || top.type === '如果真')) branchStack.pop()
+      return
+    }
+    if (kw === '判断结束') {
+      const top = branchStack[branchStack.length - 1]
+      if (top && top.type === '判断') branchStack.pop()
+    }
+  }
+
+  const noAutoCloseStartKeywords = new Set([
+    '如果', '如果真', '判断',
+    '判断循环首', '循环判断首', '计次循环首', '变量循环首',
+  ])
+  const branchStartKeywords = new Set(['如果', '如果真', '判断'])
+
+  const emitMarkerRestLine = (rest: string, lineIndent: string, bodyIndent: string): string => {
+    const normalizedRest = rest.trimStart()
+    const kw = normalizedRest.split(/[\s(（]/)[0]
+    const needsDot = flowKeywords.has(kw) && !normalizedRest.startsWith('.')
+    const outRest = needsDot ? ('.' + normalizedRest) : normalizedRest
+    const contentIndent = branchStartKeywords.has(kw) ? lineIndent : bodyIndent
+    out.push(contentIndent + outRest)
+    updateBranchStackByKw(kw)
+    return kw
+  }
+
+  // 向前扫描：当前行是 baseIndent 缩进的空 marker 行；判断该 baseIndent 作用域内后续
+  // 是否还有同种空 marker 行。存在则当前行为 else-open/default-open；否则为 close。
+  const hasLaterEmptyMarkerAtIndent = (fromIdx: number, indentLen: number, marker: string): boolean => {
+    for (let j = fromIdx + 1; j < cleanedLines.length; j++) {
+      const ln = cleanedLines[j]
+      const trimmedLn = ln.trimStart()
+      if (!trimmedLn) continue
+      const lnIndentLen = ln.length - trimmedLn.length
+      if (lnIndentLen < indentLen) return false
+      if (lnIndentLen === indentLen) {
+        // 同缩进的空 marker 行
+        if (trimmedLn === marker) return true
+        // 同缩进、非标记起始的行：新的兄弟结构开始 → 本块已结束
+        if (!trimmedLn.startsWith(FLOW_TRUE_MARK)
+          && !trimmedLn.startsWith(FLOW_ELSE_MARK)
+          && !trimmedLn.startsWith(FLOW_JUDGE_END_MARK)) {
+          return false
+        }
+      }
+      // 更深缩进的行（嵌套结构）继续扫描
+    }
+    return false
+  }
 
   for (let i = 0; i < srcLines.length; i++) {
-    const raw = srcLines[i]
-    const line = raw.replace(new RegExp(FLOW_AUTO_TAG, 'g'), '')
+    const line = cleanedLines[i]
     const trimmed = line.trimStart()
     const indent = line.slice(0, line.length - trimmed.length)
     if (!trimmed) {
@@ -382,54 +470,111 @@ function eycToYiFormat(text: string): string {
       continue
     }
 
-    const nextTrimmed = i + 1 < srcLines.length
-      ? srcLines[i + 1].replace(new RegExp(FLOW_AUTO_TAG, 'g'), '').trimStart()
-      : ''
-    const prevTrimmed = i > 0
-      ? srcLines[i - 1].replace(new RegExp(FLOW_AUTO_TAG, 'g'), '').trimStart()
-      : ''
+    const nextLine = i + 1 < cleanedLines.length ? cleanedLines[i + 1] : ''
 
     // 分支体在易语言格式中需要比关键字多缩进一级（4 个空格）
     const bodyIndent = indent + '    '
     if (trimmed.startsWith(FLOW_TRUE_MARK)) {
       const rest = trimmed.slice(1)
-      out.push(rest.trim() ? bodyIndent + rest : '')
+      // 合并形式：`[C][D]` 表示“真分支为空且进入 else 分支”。同理 `[C][E]` 对应判断→默认。
+      // 这样可以避免表格模式多出一行占位的 `[C]` 或 `[D]`。
+      if (rest.startsWith(FLOW_ELSE_MARK) && !rest.slice(1).trim()) {
+        const top = branchStack[branchStack.length - 1]
+        if (top && top.type === '如果' && !top.elseEntered) {
+          out.push(indent + '.否则')
+          top.elseEntered = true
+        } else {
+          // 非预期情形（如 `如果真` 或已进入 else），按普通空 [D] 处理
+          out.push(indent + (top && top.type === '如果真' ? '.如果真结束' : '.如果结束'))
+          if (top && (top.type === '如果' || top.type === '如果真')) branchStack.pop()
+        }
+        continue
+      }
+      if (rest.startsWith(FLOW_JUDGE_END_MARK) && !rest.slice(1).trim()) {
+        const top = branchStack[branchStack.length - 1]
+        if (top && top.type === '判断' && !top.elseEntered) {
+          out.push(indent + '.默认')
+          top.elseEntered = true
+        } else {
+          out.push(indent + '.判断结束')
+          if (top && top.type === '判断') branchStack.pop()
+        }
+        continue
+      }
+      if (rest.trim()) void emitMarkerRestLine(rest, indent, bodyIndent)
+      else out.push('')
       continue
     }
     if (trimmed.startsWith(FLOW_ELSE_MARK)) {
       const rest = trimmed.slice(1)
       if (rest.trim()) {
-        if (!prevTrimmed.startsWith(FLOW_ELSE_MARK)) out.push(indent + '.否则')
-        out.push(bodyIndent + rest)
-        if (!nextTrimmed.startsWith(FLOW_ELSE_MARK)) out.push(indent + '.如果结束')
+        const normalizedRest = rest.trimStart()
+        const restKw = normalizedRest.split(/[\s(（]/)[0]
+        const branchIndent = branchStartKeywords.has(restKw)
+          ? (indent.length >= 4 ? indent.slice(0, indent.length - 4) : '')
+          : indent
+        const top = branchStack[branchStack.length - 1]
+        // 如果真分支没有“否则”语义，遇到 200D+内容时仅还原为正文。
+        if (top && top.type === '如果真') {
+          void emitMarkerRestLine(rest, indent, bodyIndent)
+          continue
+        }
+        // 200D + 内容表示 else 分支内的正文。若该帧尚未进入 else，则先补 `.否则`。
+        if (top && top.type === '如果' && !top.elseEntered) {
+          out.push(branchIndent + '.否则')
+          top.elseEntered = true
+        }
+        emitMarkerRestLine(rest, indent, bodyIndent)
+        if (!noAutoCloseStartKeywords.has(restKw) && !startsWithMarkerAtIndent(nextLine, indent, FLOW_ELSE_MARK)) {
+          out.push(branchIndent + '.如果结束')
+        }
       } else {
-        const currentBranch = branchStack[branchStack.length - 1]
-        out.push(indent + (currentBranch === '如果真' ? '.如果真结束' : '.如果结束'))
-        if (currentBranch === '如果' || currentBranch === '如果真') branchStack.pop()
+        // 空 200D：在 `如果` 帧中表示 `.否则`（首次）或 `.如果结束`；在 `如果真` 帧中仅表示 `.如果真结束`。
+        const top = branchStack[branchStack.length - 1]
+        if (top && top.type === '如果' && !top.elseEntered
+          && hasLaterEmptyMarkerAtIndent(i, indent.length, FLOW_ELSE_MARK)) {
+          out.push(indent + '.否则')
+          top.elseEntered = true
+        } else {
+          out.push(indent + (top && top.type === '如果真' ? '.如果真结束' : '.如果结束'))
+          if (top && (top.type === '如果' || top.type === '如果真')) branchStack.pop()
+        }
       }
       continue
     }
     if (trimmed.startsWith(FLOW_JUDGE_END_MARK)) {
       const rest = trimmed.slice(1)
       if (rest.trim()) {
-        if (!prevTrimmed.startsWith(FLOW_JUDGE_END_MARK)) out.push(indent + '.默认')
-        out.push(bodyIndent + rest)
-        if (!nextTrimmed.startsWith(FLOW_JUDGE_END_MARK)) out.push(indent + '.判断结束')
+        const normalizedRest = rest.trimStart()
+        const restKw = normalizedRest.split(/[\s(（]/)[0]
+        const branchIndent = branchStartKeywords.has(restKw)
+          ? (indent.length >= 4 ? indent.slice(0, indent.length - 4) : '')
+          : indent
+        const top = branchStack[branchStack.length - 1]
+        if (top && top.type === '判断' && !top.elseEntered) {
+          out.push(branchIndent + '.默认')
+          top.elseEntered = true
+        }
+        emitMarkerRestLine(rest, indent, bodyIndent)
+        if (!noAutoCloseStartKeywords.has(restKw) && !startsWithMarkerAtIndent(nextLine, indent, FLOW_JUDGE_END_MARK)) {
+          out.push(branchIndent + '.判断结束')
+        }
       } else {
-        out.push(indent + '.判断结束')
-        if (branchStack[branchStack.length - 1] === '判断') branchStack.pop()
+        const top = branchStack[branchStack.length - 1]
+        if (top && top.type === '判断' && !top.elseEntered
+          && hasLaterEmptyMarkerAtIndent(i, indent.length, FLOW_JUDGE_END_MARK)) {
+          out.push(indent + '.默认')
+          top.elseEntered = true
+        } else {
+          out.push(indent + '.判断结束')
+          if (top && top.type === '判断') branchStack.pop()
+        }
       }
       continue
     }
 
     const kw = trimmed.split(/[\s(（]/)[0]
-    if (kw === '如果' || kw === '如果真' || kw === '判断') {
-      branchStack.push(kw)
-    } else if (kw === '如果结束' || kw === '如果真结束') {
-      if (branchStack[branchStack.length - 1] === '如果' || branchStack[branchStack.length - 1] === '如果真') branchStack.pop()
-    } else if (kw === '判断结束') {
-      if (branchStack[branchStack.length - 1] === '判断') branchStack.pop()
-    }
+    updateBranchStackByKw(kw)
     if (flowKeywords.has(kw) && !trimmed.startsWith('.')) {
       out.push(indent + '.' + trimmed)
       continue
