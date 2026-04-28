@@ -199,6 +199,32 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             </select>
             <span className="settings-unit">px</span>
           </div>
+          <div className="settings-row">
+            <span className="settings-label">子程序表头冻结（实验功能）</span>
+            <label className="settings-switch" aria-label="子程序表头冻结">
+              <input
+                type="checkbox"
+                className="settings-switch-input"
+                checked={draft.editorFreezeSubTableHeader}
+                onChange={(e) => updateDraft('editorFreezeSubTableHeader', e.target.checked)}
+              />
+              <span className="settings-switch-track" aria-hidden="true" />
+            </label>
+            <span className="settings-unit" />
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">代码预览区（缩略图）</span>
+            <label className="settings-switch" aria-label="代码预览区">
+              <input
+                type="checkbox"
+                className="settings-switch-input"
+                checked={draft.editorShowMinimapPreview}
+                onChange={(e) => updateDraft('editorShowMinimapPreview', e.target.checked)}
+              />
+              <span className="settings-switch-track" aria-hidden="true" />
+            </label>
+            <span className="settings-unit" />
+          </div>
         </div>
         <div className="settings-group">
           <h4 className="settings-group-title">AI 助手</h4>

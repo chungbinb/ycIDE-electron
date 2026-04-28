@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { normalizeRuntimePlatform } from '../shared/platform'
 import { THEME_CONFIG_VERSION } from '../shared/theme'
 import type { IDESettings } from '../shared/settings'
-import type { AIChatRequest, AIChatResult, AIEditRequest, AIEditResult } from '../shared/ai'
+import type { AIChatRequest, AIChatResult, AIChatWithToolsRequest, AIChatWithToolsResult, AIEditRequest, AIEditResult } from '../shared/ai'
 import type {
   SaveAsCustomThemeRequest,
   SaveAsCustomThemeResult,
@@ -108,6 +108,13 @@ const api = {
     stop: () => ipcRenderer.invoke('compiler:stop'),
     isRunning: () => ipcRenderer.invoke('compiler:isRunning') as Promise<boolean>,
   },
+  terminal: {
+    start: () => ipcRenderer.invoke('terminal:start') as Promise<{ running: boolean; output: string[]; commands: string[]; lastCommand: string }>,
+    send: (command: string) => ipcRenderer.invoke('terminal:send', command) as Promise<{ ok: boolean; error?: string }>,
+    interrupt: () => ipcRenderer.invoke('terminal:interrupt') as Promise<{ ok: boolean; error?: string }>,
+    getSnapshot: () => ipcRenderer.invoke('terminal:getSnapshot') as Promise<{ running: boolean; output: string[]; commands: string[]; lastCommand: string }>,
+    getLastCommand: () => ipcRenderer.invoke('terminal:getLastCommand') as Promise<string>,
+  },
   // 支持库管理
   library: {
     scan: (folder?: string) => ipcRenderer.invoke('library:scan', folder),
@@ -146,6 +153,7 @@ const api = {
   },
   ai: {
     chat: (request: AIChatRequest) => ipcRenderer.invoke('ai:chat', request) as Promise<AIChatResult>,
+    chatWithTools: (request: AIChatWithToolsRequest) => ipcRenderer.invoke('ai:chatWithTools', request) as Promise<AIChatWithToolsResult>,
     chatStream: (request: AIChatRequest, requestId: string) => ipcRenderer.invoke('ai:chatStream', request, requestId) as Promise<AIChatResult>,
     proposeEdit: (request: AIEditRequest) => ipcRenderer.invoke('ai:proposeEdit', request) as Promise<AIEditResult>,
     proposeEditStream: (request: AIEditRequest, requestId: string) => ipcRenderer.invoke('ai:proposeEditStream', request, requestId) as Promise<AIEditResult>,

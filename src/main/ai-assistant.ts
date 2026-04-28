@@ -1,5 +1,16 @@
 import { createPatch } from 'diff'
-import type { AIChatRequest, AIChatResult, AIEditRequest, AIEditResult, AICustomModelConfig, AISupportedModel } from '../shared/ai'
+import type {
+  AIChatRequest,
+  AIChatResult,
+  AIChatTool,
+  AIChatToolCall,
+  AIChatWithToolsRequest,
+  AIChatWithToolsResult,
+  AIEditRequest,
+  AIEditResult,
+  AICustomModelConfig,
+  AISupportedModel,
+} from '../shared/ai'
 
 type ProviderConfig = {
   endpoint: string
@@ -8,19 +19,32 @@ type ProviderConfig = {
 }
 
 type OpenAIMessage = {
-  role: 'system' | 'user' | 'assistant'
+  role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  name?: string
+  tool_call_id?: string
+  tool_calls?: AIChatToolCall[]
 }
 
 type OpenAIResponse = {
   choices?: Array<{
     message?: {
       content?: string | Array<{ type?: string; text?: string }>
+      tool_calls?: AIChatToolCall[]
     }
   }>
   error?: {
     message?: string
   }
+}
+
+type CompletionResult = {
+  ok: true
+  content: string
+  toolCalls: AIChatToolCall[]
+} | {
+  ok: false
+  error: string
 }
 
 type OpenAIStreamChunk = {
@@ -48,7 +72,23 @@ function resolveProvider(model: AISupportedModel, customModels: AICustomModelCon
   if (model === 'deepseek') {
     return {
       endpoint: 'https://api.deepseek.com/chat/completions',
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-pro',
+      envKey: 'DEEPSEEK_API_KEY',
+    }
+  }
+
+  if (model === 'deepseek-v4-flash') {
+    return {
+      endpoint: 'https://api.deepseek.com/chat/completions',
+      model: 'deepseek-v4-flash',
+      envKey: 'DEEPSEEK_API_KEY',
+    }
+  }
+
+  if (model === 'deepseek-v3.2') {
+    return {
+      endpoint: 'https://api.deepseek.com/chat/completions',
+      model: 'deepseek-v3.2',
       envKey: 'DEEPSEEK_API_KEY',
     }
   }
@@ -96,7 +136,14 @@ function tryParseJsonBlock(text: string): unknown {
   }
 }
 
-async function requestCompletion(model: AISupportedModel, messages: OpenAIMessage[], apiKeyOverride?: string, customModels: AICustomModelConfig[] = []): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
+async function requestCompletion(
+  model: AISupportedModel,
+  messages: OpenAIMessage[],
+  apiKeyOverride?: string,
+  customModels: AICustomModelConfig[] = [],
+  tools?: AIChatTool[],
+  toolChoice?: 'auto' | 'none',
+): Promise<CompletionResult> {
   const provider = resolveProvider(model, customModels)
   if (!provider) {
     return {
@@ -135,11 +182,14 @@ async function requestCompletion(model: AISupportedModel, messages: OpenAIMessag
         model: provider.model,
         messages,
         temperature: 0.2,
+        ...(Array.isArray(tools) && tools.length > 0 ? { tools, tool_choice: toolChoice || 'auto' } : {}),
       }),
     })
 
     const payload = await response.json()
-    const messageContent = readTextContent(payload.choices?.[0]?.message?.content)
+    const message = payload.choices?.[0]?.message
+    const messageContent = readTextContent(message?.content)
+    const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : []
 
     if (!response.ok) {
       return {
@@ -148,14 +198,14 @@ async function requestCompletion(model: AISupportedModel, messages: OpenAIMessag
       }
     }
 
-    if (!messageContent) {
+    if (!messageContent && toolCalls.length === 0) {
       return {
         ok: false,
         error: 'AI 返回为空，请重试。',
       }
     }
 
-    return { ok: true, content: messageContent }
+    return { ok: true, content: messageContent, toolCalls }
   } catch (error) {
     return {
       ok: false,
@@ -307,8 +357,14 @@ async function requestCompletionStream(
 
 export async function runAIChat(request: AIChatRequest, apiKeyOverride?: string, customModels: AICustomModelConfig[] = []): Promise<AIChatResult> {
   const messages = request.messages
-    .map(item => ({ role: item.role, content: (item.content || '').trim() }))
-    .filter(item => item.content.length > 0)
+    .map(item => ({
+      role: item.role,
+      content: typeof item.content === 'string' ? item.content : '',
+      name: item.name,
+      tool_call_id: item.tool_call_id,
+      tool_calls: item.tool_calls,
+    }))
+    .filter(item => item.role === 'assistant' || item.role === 'tool' || item.content.trim().length > 0)
 
   if (messages.length === 0) {
     return {
@@ -330,6 +386,52 @@ export async function runAIChat(request: AIChatRequest, apiKeyOverride?: string,
   return {
     ok: true,
     message: result.content,
+  }
+}
+
+export async function runAIChatWithTools(
+  request: AIChatWithToolsRequest,
+  apiKeyOverride?: string,
+  customModels: AICustomModelConfig[] = [],
+): Promise<AIChatWithToolsResult> {
+  const messages = request.messages
+    .map(item => ({
+      role: item.role,
+      content: typeof item.content === 'string' ? item.content : '',
+      name: item.name,
+      tool_call_id: item.tool_call_id,
+      tool_calls: item.tool_calls,
+    }))
+    .filter(item => item.role === 'assistant' || item.role === 'tool' || item.content.trim().length > 0)
+
+  if (messages.length === 0) {
+    return {
+      ok: false,
+      message: '',
+      error: '请输入聊天内容。',
+    }
+  }
+
+  const result = await requestCompletion(
+    request.model,
+    messages,
+    apiKeyOverride,
+    customModels,
+    request.tools,
+    request.tool_choice,
+  )
+  if (!result.ok) {
+    return {
+      ok: false,
+      message: '',
+      error: result.error,
+    }
+  }
+
+  return {
+    ok: true,
+    message: result.content,
+    toolCalls: result.toolCalls,
   }
 }
 

@@ -23,6 +23,10 @@ export interface IDESettings {
   editorFontSize: number
   /** 编辑器行高 (px) */
   editorLineHeight: number
+  /** 子程序表头冻结 */
+  editorFreezeSubTableHeader: boolean
+  /** 代码预览区（缩略图） */
+  editorShowMinimapPreview: boolean
   /** AI 助手字体 */
   aiFontFamily: string
   /** AI 助手字号 (px) */
@@ -48,6 +52,8 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   editorFontFamily: '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace',
   editorFontSize: 14,
   editorLineHeight: 20,
+  editorFreezeSubTableHeader: false,
+  editorShowMinimapPreview: true,
   aiFontFamily: '"Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif',
   aiFontSize: 13,
   aiModel: 'deepseek',
@@ -78,6 +84,12 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
       : d.editorFontFamily,
     editorFontSize: clampInt(raw.editorFontSize, 10, 30, d.editorFontSize),
     editorLineHeight: clampInt(raw.editorLineHeight, 14, 54, d.editorLineHeight),
+    editorFreezeSubTableHeader: typeof raw.editorFreezeSubTableHeader === 'boolean'
+      ? raw.editorFreezeSubTableHeader
+      : d.editorFreezeSubTableHeader,
+    editorShowMinimapPreview: typeof raw.editorShowMinimapPreview === 'boolean'
+      ? raw.editorShowMinimapPreview
+      : d.editorShowMinimapPreview,
     aiFontFamily: typeof raw.aiFontFamily === 'string' && raw.aiFontFamily.trim()
       ? raw.aiFontFamily.trim()
       : d.aiFontFamily,

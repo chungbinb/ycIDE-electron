@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react'
-import { eycToYiFormat, sanitizePastedTextForCurrent } from './eycFormat'
+import { Fragment, useState, useCallback, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react'
+import { eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
 import {
   buildBlocks,
   inferResourceTypeByFileName,
@@ -121,6 +121,8 @@ interface EycTableEditorProps {
   editorFontFamily?: string
   editorFontSize?: number
   editorLineHeight?: number
+  freezeSubTableHeader?: boolean
+  showMinimapPreview?: boolean
   projectDir?: string
   isClassModule?: boolean
   projectGlobalVars?: Array<{ name: string; type: string }>
@@ -137,10 +139,14 @@ interface EycTableEditorProps {
   onCommandClear?: () => void
   onProblemsChange?: (problems: FileProblem[]) => void
   onCursorChange?: (line: number, column: number, sourceLine?: number) => void
+  onRouteDeclarationPaste?: (routes: Array<{ language: 'ell' | 'egv' | 'ecs' | 'edt'; lines: string[] }>) => void
   breakpointLines?: number[]
   debugSourceLine?: number
   debugVariables?: Array<{ name: string; type: string; value: string }>
   diffHighlightLines?: Set<number>
+  diffAddedLines?: Set<number>
+  diffEditedLines?: Set<number>
+  diffDeletedAfterLines?: Set<number>
 }
 
 export interface FileProblem {
@@ -159,7 +165,7 @@ interface EditState {
   paramIdx?: number   // 展开参数编辑：第几个参数 (0-based)
 }
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, projectDir, isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines }, ref) {
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>() }, ref) {
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
@@ -180,9 +186,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const preserveEditOnScrollbarRef = useRef(false) // 拖动滚动条时保留编辑态，避免 blur 提交
   const editCellOrigValRef = useRef<string>('') // 表格单元格编辑前的原始值（liveUpdate 会实时更新 lines，需保存原始值用于重命名比较）
   const codeLineEditOrigValRef = useRef<string>('') // 代码行编辑初始值，用于无改动时跳过重排
+  const liveUpdateTimerRef = useRef<number | null>(null)
+  const pendingLiveUpdateValRef = useRef<string | null>(null)
   const [expandedLines, setExpandedLines] = useState<Set<number>>(new Set())
   const [expandedAssignRhsParamLines, setExpandedAssignRhsParamLines] = useState<Set<number>>(new Set())
   const isResourceTableDoc = docLanguage === 'erc'
+  const shouldFreezeTableHeader = freezeSubTableHeader && docLanguage === 'eyc' && !isClassModule
   const [resourcePreview, setResourcePreview] = useState<{
     visible: boolean
     lineIndex: number
@@ -198,6 +207,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const [resourcePreviewMediaMeta, setResourcePreviewMediaMeta] = useState<{ width?: number; height?: number; durationSec?: number }>({})
   const [debugHover, setDebugHover] = useState<{ x: number; y: number; variable: { name: string; type: string; value: string } } | null>(null)
   const [themeRevision, setThemeRevision] = useState(0)
+  const [diagnosticsText, setDiagnosticsText] = useState(value)
   const breakpointLineSet = useMemo(() => new Set(breakpointLines), [breakpointLines])
   const flowLineModeConfig = useMemo(() => readFlowLineConfigFromCss(), [themeRevision])
   const debugVariableMap = useMemo(() => {
@@ -234,6 +244,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     observer.observe(root, { attributes: true, attributeFilter: ['style'] })
     return () => observer.disconnect()
   }, [])
+
+  useEffect(() => {
+    if (!editCell) {
+      setDiagnosticsText(currentText)
+      return
+    }
+    const timer = window.setTimeout(() => {
+      setDiagnosticsText(currentText)
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [currentText, editCell])
 
   // ===== 行选择状态 =====
   const [selectedLines, setSelectedLines] = useState<Set<number>>(new Set())
@@ -304,6 +325,231 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   // ===== 行选择：拖选逻辑 =====
   // 从行号到实际元素的映射（用于鼠标位置判定）
   const wrapperRef = useRef<HTMLDivElement>(null)
+  const tableShellRef = useRef<HTMLDivElement>(null)
+  const minimapTrackRef = useRef<HTMLDivElement>(null)
+  const minimapContentRef = useRef<HTMLDivElement>(null)
+  const minimapViewportRef = useRef<HTMLDivElement>(null)
+  const minimapViewportRafRef = useRef<number | null>(null)
+  const stickyScopeRafRef = useRef<number | null>(null)
+  const stickyScopeRowRef = useRef<HTMLDivElement>(null)
+  const stickyStartTopByLineRef = useRef<Map<number, number>>(new Map())
+  const blocksRef = useRef<RenderBlock[]>([])
+  const subTableMetaRef = useRef<Array<{
+    startLine: number
+    nextStartLine: number | null
+    colCount: number
+    rows: Array<{
+      lineIndex: number
+      isHeader: boolean
+      cells: Array<{ text: string; cls: string; colSpan?: number; align?: string; fieldIdx?: number; sliceField?: boolean }>
+    }>
+  }>>([])
+  const [stickySubTable, setStickySubTable] = useState<{
+    lineIndex: number
+    nextStartLine: number | null
+    colCount: number
+    rows: Array<{
+      lineIndex: number
+      isHeader: boolean
+      cells: Array<{ text: string; cls: string; colSpan?: number; align?: string; fieldIdx?: number; sliceField?: boolean }>
+    }>
+  } | null>(null)
+  const [stickyPushOffsetPx, setStickyPushOffsetPx] = useState(0)
+  const [scrollbarLaneHeightPx, setScrollbarLaneHeightPx] = useState(0)
+  const minimapMetricsRef = useRef({
+    topRatio: -1,
+    heightRatio: -1,
+    scrollbarWidth: -1,
+    scrollbarHeight: -1,
+    laneHeight: -1,
+    contentOffsetPx: -1,
+  })
+  const minimapWidthPx = useMemo(() => {
+    const base = (editorFontSize / 14) * 75
+    return Math.max(52, Math.round(base))
+  }, [editorFontSize])
+
+  const scrollToLineIndex = useCallback((lineIndex: number, behavior: ScrollBehavior = 'smooth') => {
+    if (!Number.isFinite(lineIndex) || lineIndex < 0) return
+    const el = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${lineIndex}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior, block: 'center' })
+      return
+    }
+    const wrapper = wrapperRef.current
+    if (!wrapper) return
+    const maxLineIndex = Math.max(currentText.split('\n').length - 1, 0)
+    const targetRatio = maxLineIndex > 0 ? Math.min(Math.max(lineIndex / maxLineIndex, 0), 1) : 0
+    const targetTop = targetRatio * Math.max(wrapper.scrollHeight - wrapper.clientHeight, 0)
+    wrapper.scrollTo({ top: targetTop, behavior })
+  }, [currentText])
+
+  const updateMinimapViewport = useCallback(() => {
+    const wrapper = wrapperRef.current
+    if (!wrapper) return
+    const minimapScale = 0.24
+    const scrollHeight = Math.max(wrapper.scrollHeight, 1)
+    const clientHeight = Math.max(wrapper.clientHeight, 1)
+    const topRatio = Math.min(Math.max(wrapper.scrollTop / scrollHeight, 0), 1)
+    const heightRatio = Math.min(Math.max(clientHeight / scrollHeight, 0.08), 1)
+
+    const viewportEl = minimapViewportRef.current
+    if (viewportEl) {
+      const { topRatio: prevTop, heightRatio: prevHeight } = minimapMetricsRef.current
+      if (Math.abs(prevTop - topRatio) > 0.0005) {
+        viewportEl.style.top = `${topRatio * 100}%`
+      }
+      if (Math.abs(prevHeight - heightRatio) > 0.0005) {
+        viewportEl.style.height = `${heightRatio * 100}%`
+      }
+    }
+
+    const scrollbarWidth = Math.max(wrapper.offsetWidth - wrapper.clientWidth, 0)
+    const scrollbarHeight = Math.max(wrapper.offsetHeight - wrapper.clientHeight, 0)
+    const laneHeight = Math.max(wrapper.clientHeight, 1)
+    let contentOffsetPx = minimapMetricsRef.current.contentOffsetPx
+
+    const shellEl = tableShellRef.current
+    if (shellEl) {
+      const { scrollbarWidth: prevWidth, scrollbarHeight: prevHeight } = minimapMetricsRef.current
+      if (prevWidth !== scrollbarWidth) {
+        shellEl.style.setProperty('--eyc-scrollbar-width', `${scrollbarWidth}px`)
+      }
+      if (prevHeight !== scrollbarHeight) {
+        shellEl.style.setProperty('--eyc-scrollbar-height', `${scrollbarHeight}px`)
+      }
+    }
+
+    if (Math.abs(minimapMetricsRef.current.laneHeight - laneHeight) > 0.5) {
+      setScrollbarLaneHeightPx(laneHeight)
+    }
+
+    const contentEl = minimapContentRef.current
+    if (contentEl) {
+      const maxScrollTop = Math.max(scrollHeight - clientHeight, 0)
+      const scrollRatio = maxScrollTop > 0 ? Math.min(Math.max(wrapper.scrollTop / maxScrollTop, 0), 1) : 0
+      const renderedContentHeight = contentEl.scrollHeight * minimapScale
+      const maxContentOffsetPx = Math.max(renderedContentHeight - wrapper.clientHeight, 0)
+      const nextOffsetPx = scrollRatio * maxContentOffsetPx
+      if (Math.abs(minimapMetricsRef.current.contentOffsetPx - nextOffsetPx) > 0.5) {
+        contentEl.style.transform = `translate3d(0, ${-nextOffsetPx}px, 0) scale(${minimapScale})`
+      }
+      contentOffsetPx = nextOffsetPx
+    }
+
+    minimapMetricsRef.current = {
+      topRatio,
+      heightRatio,
+      scrollbarWidth,
+      scrollbarHeight,
+      laneHeight,
+      contentOffsetPx,
+    }
+  }, [])
+
+  const scheduleMinimapViewportUpdate = useCallback(() => {
+    if (minimapViewportRafRef.current != null) return
+    minimapViewportRafRef.current = window.requestAnimationFrame(() => {
+      minimapViewportRafRef.current = null
+      updateMinimapViewport()
+    })
+  }, [updateMinimapViewport])
+
+  const jumpByMinimapClientY = useCallback((clientY: number, behavior: ScrollBehavior = 'smooth') => {
+    const wrapper = wrapperRef.current
+    const track = minimapTrackRef.current
+    if (!wrapper || !track) return
+    const rect = track.getBoundingClientRect()
+    const ratio = Math.min(Math.max((clientY - rect.top) / Math.max(rect.height, 1), 0), 1)
+    const targetTop = ratio * Math.max(wrapper.scrollHeight - wrapper.clientHeight, 0)
+    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    wrapper.scrollTo({ top: targetTop, behavior: prefersReducedMotion ? 'auto' : behavior })
+    const maxLineIndex = Math.max(currentText.split('\n').length - 1, 0)
+    lastFocusedLine.current = Math.round(ratio * maxLineIndex)
+  }, [currentText])
+
+  const handleMinimapMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    jumpByMinimapClientY(e.clientY, 'smooth')
+    const wrapper = wrapperRef.current
+    if (!wrapper) return
+    try {
+      wrapper.focus({ preventScroll: true })
+    } catch {
+      wrapper.focus()
+    }
+  }, [jumpByMinimapClientY])
+
+  const handleMinimapWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    const wrapper = wrapperRef.current
+    if (!wrapper) return
+    if (e.deltaY === 0 && e.deltaX === 0) return
+    e.preventDefault()
+    wrapper.scrollBy({ top: e.deltaY, left: e.deltaX, behavior: 'auto' })
+  }, [])
+
+  const handleMinimapKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    const wrapper = wrapperRef.current
+    if (!wrapper) return
+    const lineStep = Math.max(editorLineHeight, 16)
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      wrapper.scrollBy({ top: lineStep, behavior: 'auto' })
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      wrapper.scrollBy({ top: -lineStep, behavior: 'auto' })
+      return
+    }
+    if (e.key === 'PageDown') {
+      e.preventDefault()
+      wrapper.scrollBy({ top: wrapper.clientHeight * 0.9, behavior: 'auto' })
+      return
+    }
+    if (e.key === 'PageUp') {
+      e.preventDefault()
+      wrapper.scrollBy({ top: -wrapper.clientHeight * 0.9, behavior: 'auto' })
+      return
+    }
+    if (e.key === 'Home') {
+      e.preventDefault()
+      scrollToLineIndex(0, 'auto')
+      return
+    }
+    if (e.key === 'End') {
+      e.preventDefault()
+      scrollToLineIndex(Math.max(currentText.split('\n').length - 1, 0), 'auto')
+    }
+  }, [currentText, editorLineHeight, scrollToLineIndex])
+
+  useEffect(() => {
+    scheduleMinimapViewportUpdate()
+  }, [scheduleMinimapViewportUpdate, currentText])
+
+  useEffect(() => {
+    const wrapper = wrapperRef.current
+    if (!wrapper) return
+    const onScroll = (): void => scheduleMinimapViewportUpdate()
+    wrapper.addEventListener('scroll', onScroll, { passive: true })
+    const onResize = (): void => scheduleMinimapViewportUpdate()
+    window.addEventListener('resize', onResize)
+    let resizeObserver: ResizeObserver | null = null
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(() => scheduleMinimapViewportUpdate())
+      resizeObserver.observe(wrapper)
+    }
+    return () => {
+      if (minimapViewportRafRef.current != null) {
+        window.cancelAnimationFrame(minimapViewportRafRef.current)
+        minimapViewportRafRef.current = null
+      }
+      wrapper.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onResize)
+      resizeObserver?.disconnect()
+    }
+  }, [scheduleMinimapViewportUpdate])
+
   const focusWrapper = useCallback(() => {
     const wrapper = wrapperRef.current
     if (!wrapper) return
@@ -454,7 +700,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       // Ctrl+A：全选所有行（只要焦点在编辑器区域）
       if (ctrl && e.key === 'a' && inEditor) {
         e.preventDefault()
-        const ls = currentText.split('\n')
+        const ls = prevRef.current.split('\n')
         const all = new Set<number>()
         for (let i = 0; i < ls.length; i++) all.add(i)
         setSelectedLines(all)
@@ -468,7 +714,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         e.preventDefault()
         if (undoStack.current.length > 0) {
           const prev = undoStack.current.pop()!
-          redoStack.current.push(currentText)
+          redoStack.current.push(prevRef.current)
           setCurrentText(prev); prevRef.current = prev; onChange(prev)
         }
         return
@@ -477,7 +723,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         e.preventDefault()
         if (redoStack.current.length > 0) {
           const next = redoStack.current.pop()!
-          undoStack.current.push(currentText)
+          undoStack.current.push(prevRef.current)
           setCurrentText(next); prevRef.current = next; onChange(next)
         }
         return
@@ -490,15 +736,21 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         if (shouldUseNativeInputPaste(editCellRef.current)) return
         e.preventDefault()
         navigator.clipboard.readText().then(clipText => {
+          const latestText = prevRef.current
           const cursorLine = editCellRef.current?.lineIndex ?? lastFocusedLine.current
           const pasteResult = buildMultiLinePasteResult({
-            currentText,
+            currentText: latestText,
             clipText,
             cursorLine,
             sanitizePastedText: sanitizePastedTextForCurrent,
+            extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
+            extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
           })
           if (!pasteResult) return
-          pushUndo(currentText)
+          if (pasteResult.routedDeclarations.length > 0) {
+            onRouteDeclarationPaste?.(pasteResult.routedDeclarations)
+          }
+          pushUndo(latestText)
           const nt = pasteResult.nextText
           setCurrentText(nt); prevRef.current = nt; onChange(nt)
           const newSel = new Set<number>()
@@ -578,7 +830,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedLines, currentText, onChange, pushUndo])
+  }, [selectedLines, onChange, pushUndo])
 
   // ===== 自动补全状态 =====
   const [acItems, setAcItems] = useState<AcDisplayItem[]>([])
@@ -1099,12 +1351,198 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return [prefix + cmdName + '（' + paramSlots + '）']
   }, [])
 
+  const normalizeNonFlowCommandIndent = useCallback((text: string): string => {
+    if (isResourceTableDoc) return text
+    const linesForNormalize = text.split('\n')
+    if (linesForNormalize.length === 0) return text
+
+    let flowMap = new Map<number, FlowSegment[]>()
+    try {
+      const normalizeBlocks = buildBlocks(text, isClassModule, isResourceTableDoc)
+      flowMap = computeFlowLines(normalizeBlocks).map
+    } catch {
+      // ignore parse/flow errors and fallback to conservative line-based normalization
+    }
+
+    let changed = false
+    for (let i = 0; i < linesForNormalize.length; i++) {
+      const line = linesForNormalize[i]
+      if (!/^[ \t]+/.test(line)) continue
+
+      const trimmed = line.replace(/[\r\t]/g, '').trim()
+      if (!trimmed) continue
+      if (trimmed.startsWith('.')) continue
+      if (trimmed.startsWith("'")) continue
+      if (isFlowMarkerLine(line)) continue
+      if ((flowMap.get(i)?.length || 0) > 0) continue
+
+      const deindented = line.replace(/^[ \t]+/, '')
+      if (deindented !== line) {
+        linesForNormalize[i] = deindented
+        changed = true
+      }
+    }
+
+    return changed ? linesForNormalize.join('\n') : text
+  }, [isClassModule, isResourceTableDoc])
+
   useEffect(() => {
-    if (value !== prevRef.current) { setCurrentText(value); prevRef.current = value }
-  }, [value])
+    const normalizedValue = normalizeNonFlowCommandIndent(value)
+    if (normalizedValue !== prevRef.current) {
+      setCurrentText(normalizedValue)
+      prevRef.current = normalizedValue
+    }
+    if (normalizedValue !== value) {
+      onChange(normalizedValue)
+    }
+  }, [value, normalizeNonFlowCommandIndent, onChange])
 
   const lines = useMemo(() => currentText.split('\n'), [currentText])
   const parsedLines = useMemo(() => parseLines(currentText), [currentText])
+
+  const resolveStickyTableHeader = useCallback((): {
+    lineIndex: number
+    nextStartLine: number | null
+    colCount: number
+    rows: Array<{
+      lineIndex: number
+      isHeader: boolean
+      cells: Array<{ text: string; cls: string; colSpan?: number; align?: string; fieldIdx?: number; sliceField?: boolean }>
+    }>
+  } | null => {
+    if (!shouldFreezeTableHeader) return null
+    const wrapper = wrapperRef.current
+    if (!wrapper) return null
+
+    const metas = subTableMetaRef.current
+    if (metas.length === 0) return null
+
+    // 缓存每个子程序起始行在滚动容器内的绝对 top，滚动时仅做数字比较，
+    // 避免每帧 querySelector + getBoundingClientRect 带来的切换卡顿。
+    const topCache = stickyStartTopByLineRef.current
+    if (topCache.size !== metas.length) {
+      topCache.clear()
+      const wrapperRect = wrapper.getBoundingClientRect()
+      const scrollTop = wrapper.scrollTop
+      for (const meta of metas) {
+        const el = wrapper.querySelector<HTMLElement>(`[data-line-index="${meta.startLine}"]`)
+        if (!el) continue
+        const startTop = el.getBoundingClientRect().top - wrapperRect.top + scrollTop
+        topCache.set(meta.startLine, startTop)
+      }
+    }
+
+    const currentTop = wrapper.scrollTop + 0.5
+    type MetaItem = typeof metas[number]
+    let activeMeta: MetaItem | null = null
+    for (const meta of metas) {
+      const startTop = topCache.get(meta.startLine)
+      if (startTop == null) continue
+      if (startTop <= currentTop) {
+        activeMeta = meta
+      } else {
+        // metas 按文件顺序排列，后续子程序一定位于更下方
+        break
+      }
+    }
+
+    if (!activeMeta) return null
+    return {
+      lineIndex: activeMeta.startLine,
+      nextStartLine: activeMeta.nextStartLine,
+      colCount: activeMeta.colCount,
+      rows: activeMeta.rows,
+    }
+  }, [shouldFreezeTableHeader])
+
+  const computeStickyPushOffset = useCallback((state: {
+    nextStartLine: number | null
+  } | null): number => {
+    if (!state || state.nextStartLine == null) return 0
+    const wrapper = wrapperRef.current
+    const frozenRow = stickyScopeRowRef.current
+    if (!wrapper || !frozenRow) return 0
+    const nextEl = wrapper.querySelector<HTMLElement>(`[data-line-index="${state.nextStartLine}"]`)
+    if (!nextEl) return 0
+    const frozenHeight = Math.max(frozenRow.offsetHeight, 0)
+    if (frozenHeight <= 0) return 0
+    // 用 getBoundingClientRect 相对 wrapper 视口顶计算，避免 <tr>.offsetTop 的 offsetParent 不稳定问题。
+    const nextTopInViewport = nextEl.getBoundingClientRect().top - wrapper.getBoundingClientRect().top
+    return Math.min(0, nextTopInViewport - frozenHeight)
+  }, [])
+
+  const scheduleStickyScopeUpdate = useCallback(() => {
+    if (stickyScopeRafRef.current != null) return
+    stickyScopeRafRef.current = window.requestAnimationFrame(() => {
+      stickyScopeRafRef.current = null
+      const next = resolveStickyTableHeader()
+      setStickySubTable(prev => {
+        if (!prev && !next) return prev
+        if (!prev || !next) return next
+        if (prev.lineIndex === next.lineIndex && prev.nextStartLine === next.nextStartLine && prev.colCount === next.colCount) {
+          return prev
+        }
+        return next
+      })
+      setStickyPushOffsetPx(computeStickyPushOffset(next))
+    })
+  }, [computeStickyPushOffset, resolveStickyTableHeader])
+
+  useEffect(() => {
+    if (!shouldFreezeTableHeader) {
+      stickyStartTopByLineRef.current.clear()
+      setStickySubTable(null)
+      setStickyPushOffsetPx(0)
+      return
+    }
+    stickyStartTopByLineRef.current.clear()
+    scheduleStickyScopeUpdate()
+  }, [scheduleStickyScopeUpdate, currentText, shouldFreezeTableHeader])
+
+  useEffect(() => {
+    if (!shouldFreezeTableHeader || !stickySubTable) {
+      setStickyPushOffsetPx(0)
+      return
+    }
+    const raf = window.requestAnimationFrame(() => {
+      setStickyPushOffsetPx(computeStickyPushOffset(stickySubTable))
+    })
+    return () => window.cancelAnimationFrame(raf)
+  }, [computeStickyPushOffset, shouldFreezeTableHeader, stickySubTable])
+
+  useEffect(() => {
+    if (!shouldFreezeTableHeader) return
+    const wrapper = wrapperRef.current
+    if (!wrapper) return
+
+    const onScroll = (): void => scheduleStickyScopeUpdate()
+    const onResize = (): void => {
+      stickyStartTopByLineRef.current.clear()
+      scheduleStickyScopeUpdate()
+    }
+
+    wrapper.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('resize', onResize)
+
+    let resizeObserver: ResizeObserver | null = null
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(() => {
+        stickyStartTopByLineRef.current.clear()
+        scheduleStickyScopeUpdate()
+      })
+      resizeObserver.observe(wrapper)
+    }
+
+    return () => {
+      if (stickyScopeRafRef.current != null) {
+        window.cancelAnimationFrame(stickyScopeRafRef.current)
+        stickyScopeRafRef.current = null
+      }
+      wrapper.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onResize)
+      resizeObserver?.disconnect()
+    }
+  }, [scheduleStickyScopeUpdate, shouldFreezeTableHeader])
 
   const findOwnerSubName = useCallback((lineIndex: number): string => {
     for (let i = lineIndex; i >= 0; i--) {
@@ -1162,6 +1600,57 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }))
     }
   }, [currentText, isClassModule, isResourceTableDoc])
+
+  blocksRef.current = blocks
+
+  subTableMetaRef.current = (() => {
+    type StickyMeta = typeof subTableMetaRef.current[number]
+    const subTables = blocks.filter((blk): blk is RenderBlock & { kind: 'table'; tableType: 'sub' } => blk.kind === 'table' && blk.tableType === 'sub')
+    const starts = subTables.map(blk => {
+      const dataLines = Array.from(new Set(
+        blk.rows
+          .filter(row => !row.isHeader)
+          .map(row => row.lineIndex)
+          .filter(li => Number.isFinite(li) && li >= 0)
+      ))
+      return dataLines.length > 0 ? Math.min(...dataLines) : -1
+    })
+
+    const list: StickyMeta[] = []
+    for (let idx = 0; idx < subTables.length; idx++) {
+      const blk = subTables[idx]
+      const startLine = starts[idx]
+      if (startLine < 0) continue
+
+      const nextStartLine = starts.slice(idx + 1).find(li => li >= 0) ?? null
+      const rows: StickyMeta['rows'] = blk.rows.map(row => ({
+        lineIndex: row.lineIndex,
+        isHeader: !!row.isHeader,
+        cells: row.cells.map(cell => ({
+          text: cell.text,
+          cls: cell.cls,
+          colSpan: cell.colSpan,
+          align: cell.align,
+          fieldIdx: cell.fieldIdx,
+          sliceField: cell.sliceField,
+        })),
+      }))
+      if (rows.length === 0) continue
+
+      const colCount = Math.max(
+        ...rows.map(row => row.cells.reduce((sum, cell) => sum + (cell.colSpan || 1), 0)),
+        1,
+      )
+
+      list.push({
+        startLine,
+        nextStartLine,
+        colCount,
+        rows,
+      })
+    }
+    return list
+  })()
   const flowLines = useMemo(() => {
     try {
       return computeFlowLines(blocks)
@@ -1170,6 +1659,155 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return { map: new Map<number, FlowSegment[]>(), maxDepth: 0 }
     }
   }, [blocks])
+
+  const lineMarkerTypeMap = useMemo(() => {
+    type MarkerType = 'none' | 'error' | 'added' | 'edited'
+    const map = new Map<number, MarkerType>()
+
+    const parsed = parseLines(diagnosticsText)
+    const localSubNames = new Set<string>()
+    const localVarNames = new Set<string>()
+    for (const ln of parsed) {
+      if (ln.type === 'sub' && ln.fields[0]) localSubNames.add((ln.fields[0] || '').trim())
+      if ((ln.type === 'localVar' || ln.type === 'subParam' || ln.type === 'assemblyVar' || ln.type === 'globalVar') && ln.fields[0]) {
+        localVarNames.add((ln.fields[0] || '').trim())
+      }
+    }
+
+    const approxValidCommandNames = new Set<string>()
+    for (const c of allCommandsRef.current) approxValidCommandNames.add(c.name)
+    for (const c of dllCompletionItemsRef.current) approxValidCommandNames.add(c.name)
+    for (const k of FLOW_KW) approxValidCommandNames.add(k)
+    for (const n of localSubNames) approxValidCommandNames.add(n)
+    for (const n of localVarNames) approxValidCommandNames.add(n)
+
+    for (let i = 0; i < parsed.length; i++) {
+      const ln = parsed[i]
+      if (ln.type === 'localVar' || ln.type === 'assemblyVar' || ln.type === 'globalVar' || ln.type === 'subParam') {
+        const name = (ln.fields[0] || '').trim()
+        if (name && !isValidVariableLikeName(name)) map.set(i, 'error')
+      }
+      if (ln.type === 'code') {
+        const raw = ln.raw || ''
+        if (getMissingAssignmentRhsTarget(raw.replace(FLOW_AUTO_TAG, ''))) map.set(i, 'error')
+      }
+    }
+
+    for (let i = 0; i < parsed.length; i++) {
+      const ln = parsed[i]
+      if (ln.type !== 'code') continue
+      const rawLine = (ln.raw || '').replace(FLOW_AUTO_TAG, '')
+      const spans = colorize(rawLine)
+      for (const s of spans) {
+        if (s.cls === 'funccolor' && !approxValidCommandNames.has(s.text)) {
+          map.set(i, 'error')
+          break
+        }
+        if (s.cls === 'assignTarget' && !localVarNames.has(s.text)) {
+          map.set(i, 'error')
+          break
+        }
+      }
+    }
+
+    const applyIfNotError = (lineIndex: number, marker: MarkerType): void => {
+      if (lineIndex < 0) return
+      if (map.get(lineIndex) === 'error') return
+      map.set(lineIndex, marker)
+    }
+
+    for (const lineIndex of diffAddedLines) applyIfNotError(lineIndex, 'added')
+    for (const lineIndex of diffEditedLines) applyIfNotError(lineIndex, 'edited')
+    if (diffHighlightLines) {
+      for (const lineIndex of diffHighlightLines) {
+        if (!map.has(lineIndex)) applyIfNotError(lineIndex, 'edited')
+      }
+    }
+
+    return map
+  }, [diagnosticsText, diffAddedLines, diffEditedLines, diffHighlightLines])
+
+  // 为指定行生成 diff 相关的 CSS 类后缀（含前导空格）。
+  // - added: 绿色；edited: 蓝色
+  // 删除行通过独立占位行渲染，不再依赖 deleted-anchor 细线。
+  // added/edited 互斥，diffHighlightLines 视为 added 的后备（保留旧行为）。
+  const diffClassSuffixFor = useCallback((lineIndex: number): string => {
+    if (lineIndex < 0) return ''
+    const isEdited = diffEditedLines.has(lineIndex)
+    const isAdded = !isEdited && (diffAddedLines.has(lineIndex) || (diffHighlightLines?.has(lineIndex) ?? false))
+    const parts: string[] = []
+    if (isAdded || isEdited) parts.push('eyc-diff-highlight')
+    if (isEdited) parts.push('eyc-diff-edited')
+    else if (isAdded) parts.push('eyc-diff-added')
+    return parts.length > 0 ? ' ' + parts.join(' ') : ''
+  }, [diffAddedLines, diffEditedLines, diffHighlightLines])
+
+  const minimapPreviewRows = useMemo(() => {
+    type MiniTableCell = { text: string; cls: string }
+    type MiniMarker = 'none' | 'error' | 'added' | 'edited' | 'deleted'
+    type MiniRow =
+      | { kind: 'table'; cells: MiniTableCell[]; lineIndex: number; marker: MiniMarker; selected: boolean }
+      | { kind: 'code'; spans: Array<{ text: string; cls: string }>; lineIndex: number; marker: MiniMarker; selected: boolean }
+      | { kind: 'deleted'; marker: 'deleted' }
+
+    const resolveMarker = (lineIndex: number): MiniMarker => {
+      if (lineIndex < 0) return 'none'
+      const marker = lineMarkerTypeMap.get(lineIndex)
+      if (marker && marker !== 'none') return marker
+      return 'none'
+    }
+
+    const sourceRows: MiniRow[] = []
+    for (const blk of blocks) {
+      if (blk.kind === 'table') {
+        for (const row of blk.rows) {
+          if (row.isHeader) continue
+          const cells = row.cells
+            .map(cell => ({
+              text: (cell.text || '').replace(/\u00A0/g, ' ').trim() || ' ',
+              cls: cell.cls || '',
+            }))
+          sourceRows.push({
+            kind: 'table',
+            lineIndex: row.lineIndex,
+            marker: resolveMarker(row.lineIndex),
+            selected: selectedLines.has(row.lineIndex),
+            cells: cells.length > 0 ? cells : [{ text: ' ', cls: '' }],
+          })
+          if (diffDeletedAfterLines.has(row.lineIndex)) {
+            sourceRows.push({ kind: 'deleted', marker: 'deleted' })
+          }
+        }
+        continue
+      }
+      const codeText = (blk.codeLine || '')
+        .replace(FLOW_AUTO_TAG, '')
+        .replace(/\u200B/g, '')
+      const spans = colorize(codeText)
+      sourceRows.push({
+        kind: 'code',
+        lineIndex: blk.lineIndex,
+        marker: resolveMarker(blk.lineIndex),
+        selected: selectedLines.has(blk.lineIndex),
+        spans: spans.length > 0 ? spans.map(s => ({ text: s.text || ' ', cls: s.cls || '' })) : [{ text: ' ', cls: '' }],
+      })
+      if (diffDeletedAfterLines.has(blk.lineIndex)) {
+        sourceRows.push({ kind: 'deleted', marker: 'deleted' })
+      }
+    }
+
+    const total = Math.max(sourceRows.length, 1)
+    const count = Math.max(1, Math.min(total, 260))
+    return Array.from({ length: count }, (_, i) => {
+      const start = Math.floor((i * total) / count)
+      const end = Math.max(start + 1, Math.floor(((i + 1) * total) / count))
+      const bucket = sourceRows.slice(start, end)
+      const selectedRow = bucket.find(row => row.kind !== 'deleted' && row.selected)
+      if (selectedRow) return selectedRow
+      const mid = Math.min(Math.max(Math.floor((start + end) / 2), 0), total - 1)
+      return sourceRows[mid] || { kind: 'code' as const, lineIndex: -1, marker: 'none' as const, selected: false, spans: [{ text: ' ', cls: '' }] }
+    })
+  }, [blocks, diffDeletedAfterLines, lineMarkerTypeMap, selectedLines])
 
   // 对实际渲染的可见行按顺序分配连续行号（跳过 isHeader / isVirtual）
   // 注意：表格内可能存在多个可见行映射到同一源码 lineIndex（如 DLL 命令块），
@@ -1199,6 +1837,142 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     return { tableRowNumMap, codeLineNumMap, sourceLineNumMap }
   }, [blocks])
+
+  const scrollbarStatusMarkers = useMemo(() => {
+    type MarkerType = 'error' | 'added' | 'edited' | 'deleted'
+    type MarkerSeg = { topRatio: number; heightRatio: number; type: MarkerType }
+    const sourceMap = lineNumMaps.sourceLineNumMap
+    let maxDisplay = 0
+    for (const val of sourceMap.values()) {
+      if (val > maxDisplay) maxDisplay = val
+    }
+    const total = Math.max(maxDisplay, 1)
+    const sourceLinesByType = new Map<MarkerType, Set<number>>([
+      ['error', new Set<number>()],
+      ['added', new Set<number>()],
+      ['edited', new Set<number>()],
+      ['deleted', new Set<number>()],
+    ])
+
+    const toSegment = (startLine: number, endLine: number, type: MarkerType): MarkerSeg => {
+      if (total <= 1) return { topRatio: 0, heightRatio: 1, type }
+      const topRatio = Math.min(Math.max((startLine - 1) / total, 0), 1)
+      const bottomRatio = Math.min(Math.max(endLine / total, 0), 1)
+      const minRatio = 1 / Math.max(total, 240)
+      const heightRatio = Math.max(bottomRatio - topRatio, minRatio)
+      return { topRatio, heightRatio: Math.min(heightRatio, 1 - topRatio), type }
+    }
+
+    const buildTypeSegments = (type: MarkerType): MarkerSeg[] => {
+      const set = sourceLinesByType.get(type)
+      if (!set || set.size === 0) return []
+      const lines = [...set].sort((a, b) => a - b)
+      const segs: MarkerSeg[] = []
+      let start = lines[0]
+      let prev = lines[0]
+      const pushSourceSegment = (startLine: number, endLine: number): void => {
+        let startDisplay = Number.POSITIVE_INFINITY
+        let endDisplay = Number.NEGATIVE_INFINITY
+        for (let sourceLine = startLine; sourceLine <= endLine; sourceLine++) {
+          const displayLine = sourceMap.get(sourceLine)
+          if (!displayLine) continue
+          if (displayLine < startDisplay) startDisplay = displayLine
+          if (displayLine > endDisplay) endDisplay = displayLine
+        }
+        if (!Number.isFinite(startDisplay) || !Number.isFinite(endDisplay)) return
+        segs.push(toSegment(startDisplay, endDisplay, type))
+      }
+      for (let i = 1; i < lines.length; i++) {
+        const curr = lines[i]
+        if (curr === prev + 1) {
+          prev = curr
+          continue
+        }
+        pushSourceSegment(start, prev)
+        start = curr
+        prev = curr
+      }
+      pushSourceSegment(start, prev)
+      return segs
+    }
+
+    for (const [lineIndex, marker] of lineMarkerTypeMap.entries()) {
+      if (marker === 'none') continue
+      sourceLinesByType.get(marker)?.add(lineIndex)
+    }
+
+    for (const lineIndex of diffDeletedAfterLines) {
+      // 若同一显示行已标为 edited（变更行同时也是删除锚点），跳过 deleted 段，
+      // 避免 deleted（绘制顺序靠后）覆盖 edited 蓝色段导致看不到蓝色标记。
+      if (sourceLinesByType.get('edited')?.has(lineIndex)) continue
+      sourceLinesByType.get('deleted')?.add(lineIndex)
+    }
+
+    return [
+      ...buildTypeSegments('error'),
+      ...buildTypeSegments('added'),
+      ...buildTypeSegments('edited'),
+      ...buildTypeSegments('deleted'),
+    ]
+  }, [diffDeletedAfterLines, lineMarkerTypeMap, lineNumMaps])
+
+  const laidOutScrollbarStatusMarkers = useMemo(() => {
+    type MarkerType = 'error' | 'added' | 'edited' | 'deleted'
+    type LayoutMarker = { type: MarkerType; topPx: number; heightPx: number }
+
+    const laneHeight = Math.max(scrollbarLaneHeightPx, 1)
+    const minDiffHeightPx = 6
+    const minErrorHeightPx = 3
+
+    const raw: LayoutMarker[] = scrollbarStatusMarkers.map(marker => {
+      const baseTop = Math.min(Math.max(marker.topRatio * laneHeight, 0), laneHeight)
+      const baseHeight = marker.heightRatio * laneHeight
+      const minHeight = marker.type === 'error' ? minErrorHeightPx : minDiffHeightPx
+      const heightPx = Math.min(Math.max(baseHeight, minHeight), laneHeight)
+      return { type: marker.type, topPx: baseTop, heightPx }
+    })
+
+    const errorMarkers = raw
+      .filter(marker => marker.type === 'error')
+      .map(marker => {
+        let topPx = marker.topPx
+        if (topPx + marker.heightPx > laneHeight) topPx = Math.max(0, laneHeight - marker.heightPx)
+        return { ...marker, topPx }
+      })
+
+    const diffMarkers = raw
+      .filter(marker => marker.type !== 'error')
+      .sort((a, b) => a.topPx - b.topPx)
+
+    const laidOutDiffMarkers: LayoutMarker[] = []
+    let cursor = 0
+    for (const marker of diffMarkers) {
+      let topPx = marker.topPx
+      if (topPx < cursor) topPx = cursor
+      laidOutDiffMarkers.push({ ...marker, topPx })
+      cursor = topPx + marker.heightPx
+    }
+
+    const overflow = cursor - laneHeight
+    if (overflow > 0 && laidOutDiffMarkers.length > 0) {
+      let remaining = overflow
+      const shift = Math.min(remaining, laidOutDiffMarkers[0].topPx)
+      if (shift > 0) {
+        for (const marker of laidOutDiffMarkers) marker.topPx -= shift
+        remaining -= shift
+      }
+
+      if (remaining > 0) {
+        let packedTop = 0
+        for (const marker of laidOutDiffMarkers) {
+          marker.topPx = packedTop
+          packedTop += marker.heightPx
+        }
+      }
+    }
+
+    return [...errorMarkers, ...laidOutDiffMarkers].sort((a, b) => a.topPx - b.topPx)
+  }, [scrollbarLaneHeightPx, scrollbarStatusMarkers])
 
   const getSelectedSourceText = useCallback((): string => {
     const sorted = [...selectedLines].sort((a, b) => a - b)
@@ -1641,20 +2415,22 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   useEffect(() => {
     if (!onProblemsChange) return
     const problems: FileProblem[] = []
+    const parsedForDiagnostics = parseLines(diagnosticsText)
 
     // 无效命令检查
     if (allCommandsRef.current.length > 0) {
-      for (const blk of blocks) {
-        if (blk.kind !== 'codeline' || !blk.codeLine) continue
-        const rawLine = blk.codeLine.replace(FLOW_AUTO_TAG, '')
+      for (let i = 0; i < parsedForDiagnostics.length; i++) {
+        const ln = parsedForDiagnostics[i]
+        if (ln.type !== 'code') continue
+        const rawLine = (ln.raw || '').replace(FLOW_AUTO_TAG, '')
         const spans = colorize(rawLine)
         let col = 1
         for (const s of spans) {
           if (s.cls === 'funccolor' && !validCommandNames.has(s.text)) {
-            problems.push({ line: blk.lineIndex + 1, column: col, message: `未知命令"${s.text}"`, severity: 'error' })
+            problems.push({ line: i + 1, column: col, message: `未知命令"${s.text}"`, severity: 'error' })
           }
           if (s.cls === 'assignTarget' && !isKnownAssignmentTarget(s.text, allKnownVarNames)) {
-            problems.push({ line: blk.lineIndex + 1, column: col, message: `未知变量"${s.text}"`, severity: 'error' })
+            problems.push({ line: i + 1, column: col, message: `未知变量"${s.text}"`, severity: 'error' })
           }
           col += s.text.length
         }
@@ -1664,13 +2440,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         if (missingTarget) {
           const eqPos = rawLine.search(/(?:=|＝)\s*$/)
           const column = eqPos >= 0 ? eqPos + 1 : 1
-          problems.push({ line: blk.lineIndex + 1, column, message: `赋值语句缺少右值（${missingTarget}）`, severity: 'error' })
+          problems.push({ line: i + 1, column, message: `赋值语句缺少右值（${missingTarget}）`, severity: 'error' })
         }
       }
     }
 
     // 变量名冲突检查
-    const parsedLines = parseLines(currentText)
+    const parsedLines = parsedForDiagnostics
     const assemblyVars = new Map<string, number>()
     const globalVars = new Map<string, number>()
     let localVarsByName = new Map<string, number[]>()
@@ -1760,7 +2536,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     checkLocalVars()
 
     onProblemsChange(problems)
-  }, [blocks, validCommandNames, allKnownVarNames, onProblemsChange, currentText, reservedNameSet])
+  }, [validCommandNames, allKnownVarNames, onProblemsChange, diagnosticsText, reservedNameSet])
 
   const commit = useCallback((overrideVal?: string) => {
     if (!editCell || commitGuardRef.current) return
@@ -1828,11 +2604,19 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     if (editCell.cellIndex < 0) {
-      if (effectiveVal === codeLineEditOrigValRef.current) {
+      // 流程上下文中，若文本未改动则直接退出编辑，避免仅点击/失焦触发格式化导致流程结构漂移。
+      const unchanged = overrideVal === undefined && effectiveVal === codeLineEditOrigValRef.current
+      const flowContext = !!flowMarkRef.current || wasFlowStartRef.current || flowIndentRef.current.length > 0
+      if (unchanged && flowContext) {
+        flowMarkRef.current = ''
         flowIndentRef.current = ''
+        wasFlowStartRef.current = false
+        wasFlowKwRef.current = ''
+        wasFlowOrigIndentRef.current = ''
         setEditCell(null)
         return
       }
+
       // 流程标记行：检查是否输入了流程命令（嵌套流程控制）
       if (flowMarkRef.current) {
         const markerChar = flowMarkRef.current.trimStart().charAt(0) // '\u200C' or '\u200D' or '\u2060'
@@ -1928,37 +2712,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       // 检查是否需要插入自动补齐的后续行（只在新输入时插入，已有匹配结束标记时不重复插入）
       let extraLines = formattedLines.slice(1)
       if (extraLines.length > 0) {
-        // 检查后续行是否已存在对应的结束/分支关键词（只在新输入时插入，已有匹配结束标记时不重复插入）
-        // 扫描在当前子程序范围内，且遇到同缩进的普通代码行就停止，避免跨块错误复用远处标记
         const afterIdx = editCell.isVirtual ? editCell.lineIndex + 2 : editCell.lineIndex + 1
-        const mainIndentLen = mainLine.length - mainLine.replace(/^ +/, '').length
-        const remainingLines: string[] = []
-        for (let ri = afterIdx; ri < lines.length; ri++) {
-          const rawRl = lines[ri]
-          const rlTrim = rawRl.replace(/[\r\t]/g, '').trim()
-          if (rlTrim.startsWith('.子程序 ') || rlTrim.startsWith('.程序集 ')) break
-          if (rlTrim === '') { remainingLines.push(rawRl); continue }
-          const rlIndent = rawRl.length - rawRl.replace(/^ +/, '').length
-          if (rlIndent < mainIndentLen) break
-          remainingLines.push(rawRl)
-          if (rlIndent === mainIndentLen) {
-            const rlKw = extractFlowKw(rawRl)
-            // 同缩进且不是流程标记/结束/分支：属于块外普通代码，停止扫描
-            if (!rlKw) break
-          }
-        }
-        const kwLines = extraLines.filter(el => {
-          const t = el.trim()
-          return el.includes(FLOW_AUTO_TAG) || t === FLOW_TRUE_MARK || t === FLOW_ELSE_MARK || t === FLOW_JUDGE_END_MARK
-        })
-        const hasEnding = kwLines.length > 0 && kwLines.every(el => {
-          const t = el.trim()
-          const rawKw = (t === FLOW_TRUE_MARK || t === FLOW_ELSE_MARK || t === FLOW_JUDGE_END_MARK) ? t : el.replace(FLOW_AUTO_TAG, '').trim()
-          // 提取纯关键词名（去掉括号和参数部分）
-          const kw = rawKw.split(/[\s(（]/)[0] || rawKw
-          return remainingLines.some(rl => extractFlowKw(rl) === kw)
-        })
-        if (hasEnding) extraLines = []
+        const remainingLines = collectRemainingLinesInCurrentScope(lines, afterIdx)
+        extraLines = removeDuplicateFlowAutoEndings(extraLines, remainingLines)
       }
       if (editCell.isVirtual) {
         // 虚拟代码行：插入新行而非替换
@@ -2362,9 +3118,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const stripCount = lineMaxDepth * 4
         const leadingSpaces = text.match(/^ */)?.[0] || ''
         const actualStrip = Math.min(stripCount, leadingSpaces.length)
-        // 已有内容的行使用真实剥离的缩进，避免嵌套流程起始行在反复点击后重复右移；
-        // 只有空行/无足够前导空格时才回退到流程深度占位，保证新输入命令仍能落在正确层级。
-        flowIndent = ' '.repeat(actualStrip > 0 ? actualStrip : stripCount)
+        const hasEditableContent = text.trim().length > 0
+        // 仅空行采用流程深度占位缩进；
+        // 对已有内容行，若没有可剥离的真实前导空格，则不注入虚拟缩进，避免失焦格式化时凭空 +4/+8。
+        flowIndent = actualStrip > 0
+          ? ' '.repeat(actualStrip)
+          : (hasEditableContent ? '' : ' '.repeat(stripCount))
         if (actualStrip > 0) {
           text = text.slice(actualStrip)
         }
@@ -2914,8 +3673,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         clipText,
         cursorLine,
         sanitizePastedText: sanitizePastedTextForCurrent,
+        extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
+        extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
       })
       if (!pasteResult) return
+      if (pasteResult.routedDeclarations.length > 0) {
+        onRouteDeclarationPaste?.(pasteResult.routedDeclarations)
+      }
       debugFlowPaste('paste-shortcut:result', {
         insertAt: pasteResult.insertAt,
         pastedLineCount: pasteResult.pastedLineCount,
@@ -3068,6 +3832,36 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return { handled: true, preventDefault: false }
   }, [])
 
+  // 参数展开小输入框专用 Ctrl+Z/Y 路由：原先这些输入框只处理 Enter/Escape，
+  // Ctrl+Z 落入浏览器原生输入撤销（只撤输入内的打字历史），与文档级 undoStack 无关；
+  // 而全局 keydown 监听器遇到 INPUT 焦点会直接跳过。结果就是"按 Ctrl+Z 毫无反应"。
+  // 这里显式把 Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z 路由到文档撤销栈，并关闭当前未提交的编辑，
+  // 避免撤销后 blur 再把旧 editVal 提交回去覆盖已恢复的文本。
+  const handleParamInputCtrlKey = useCallback((e: React.KeyboardEvent<HTMLInputElement>): boolean => {
+    if (!(e.ctrlKey || e.metaKey)) return false
+    const key = e.key.toLowerCase()
+    if (key !== 'z' && key !== 'y') return false
+    const action = dispatchCtrlShortcutWithHistory({
+      key,
+      shiftKey: e.shiftKey,
+      undoStack: undoStack.current,
+      redoStack: redoStack.current,
+      currentText: prevRef.current,
+      applyTextChange: (next) => {
+        // 先关编辑再应用文本，保证撤销后 onBlur 的 commit 不会写回旧值。
+        setEditCell(null)
+        applyTextChange(next)
+      },
+      onSelectAll: () => { /* 参数输入框内 Ctrl+A 交给浏览器原生 */ },
+      onPaste: () => false,
+    })
+    if (action.handled) {
+      if (action.preventDefault) e.preventDefault()
+      return true
+    }
+    return false
+  }, [applyTextChange])
+
   const onKey = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     const cursorPos = e.currentTarget.selectionStart ?? 0
     // 先过守卫层：补全弹窗、Ctrl 组合键、括号上下文等高优先行为。
@@ -3083,8 +3877,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         shiftKey,
         undoStack: undoStack.current,
         redoStack: redoStack.current,
-        currentText,
-        applyTextChange,
+        currentText: prevRef.current,
+        applyTextChange: (next) => {
+          // Ctrl+Z/Y 命中文档栈时先结束当前输入态，避免 blur 后旧 editVal 被再次提交。
+          setEditCell(null)
+          applyTextChange(next)
+        },
         onSelectAll: () => {
           // 全选基于最新文本快照，避免使用过期闭包内容。
           const ls = prevRef.current.split('\n')
@@ -3128,7 +3926,6 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     applyTypeCellSpaceGuard,
     applyTextChange,
     applyCustomPasteShortcut,
-    currentText,
     focusWrapper,
   ])
 
@@ -3372,15 +4169,24 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     navigateToLine: (line: number) => {
       const lineIndex = line - 1
       lastFocusedLine.current = lineIndex
-      setTimeout(() => {
+      const focusTargetLine = (): void => {
+        // 先走统一跳转逻辑：找得到目标行时精准定位，找不到时按比例跳转。
+        scrollToLineIndex(lineIndex, 'auto')
         const el = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${lineIndex}"]`)
-        el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        // 高亮闪烁效果
         if (el) {
+          el.scrollIntoView({ behavior: 'auto', block: 'center' })
           el.classList.add('highlight-flash')
           setTimeout(() => el.classList.remove('highlight-flash'), 1500)
         }
-      }, 50)
+      }
+
+      // 立即执行一次，再在布局稳定后补两次对齐，避免跨文档长文件首跳未到位。
+      focusTargetLine()
+      window.requestAnimationFrame(() => {
+        focusTargetLine()
+        window.requestAnimationFrame(() => focusTargetLine())
+      })
+      window.setTimeout(() => focusTargetLine(), 180)
     },
     getVisibleLineForSourceLine: (line: number) => {
       if (!Number.isFinite(line) || line <= 0) return line
@@ -3494,6 +4300,29 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     applyTextChange(nt)
   }, [applyTextChange, editCell, lines, replaceCallArg, parseAssignmentLineParts])
 
+  // 输入高频（尤其长按退格）时将文档同步节流到固定频率，降低全量重算导致的卡顿。
+  const scheduleLiveUpdate = useCallback((val: string) => {
+    pendingLiveUpdateValRef.current = val
+    if (liveUpdateTimerRef.current != null) return
+    liveUpdateTimerRef.current = window.setTimeout(() => {
+      liveUpdateTimerRef.current = null
+      const nextVal = pendingLiveUpdateValRef.current
+      pendingLiveUpdateValRef.current = null
+      if (nextVal == null) return
+      liveUpdate(nextVal)
+    }, 24)
+  }, [liveUpdate])
+
+  useEffect(() => {
+    return () => {
+      if (liveUpdateTimerRef.current != null) {
+        window.clearTimeout(liveUpdateTimerRef.current)
+        liveUpdateTimerRef.current = null
+      }
+      pendingLiveUpdateValRef.current = null
+    }
+  }, [])
+
   /** 渲染某行的流程线段 */
   const renderFlowSegs = (lineIndex: number, isExpanded?: boolean): { node: React.ReactNode; skipTreeLines: number } => {
     return renderFlowSegsLine({
@@ -3550,6 +4379,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     applyTextChange,
     pushUndo,
     sanitizePastedTextForCurrent,
+    extractAssemblyVarLinesFromPasted,
+    extractRoutedDeclarationLinesFromPasted,
+    onRouteDeclarationPaste,
     shouldUseNativeInputPaste,
     suppressInlineBlurCommit,
     commitActiveEditor: () => commitRef.current(),
@@ -3565,6 +4397,65 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     openResourcePreview,
   })
 
+  const stickyRenderView = useMemo(() => {
+    if (!stickySubTable) return null
+
+    const base = {
+      rows: stickySubTable.rows,
+      colCount: stickySubTable.colCount,
+      translateY: stickyPushOffsetPx,
+    }
+
+    if (stickyPushOffsetPx >= 0 || stickySubTable.nextStartLine == null) return base
+    const nextMeta = subTableMetaRef.current.find(meta => meta.startLine === stickySubTable.nextStartLine)
+    if (!nextMeta || nextMeta.rows.length === 0) return base
+
+    const overlapPx = Math.max(0, -stickyPushOffsetPx)
+    const rowStepPx = Math.max(editorLineHeight, 1)
+    const replaceRows = Math.min(
+      Math.floor(overlapPx / rowStepPx),
+      stickySubTable.rows.length,
+      nextMeta.rows.length,
+    )
+
+    if (replaceRows <= 0) return base
+
+    // 逐行裁切：旧冻结表顶部每上移一行，就从底部补入下一子程序一行。
+    const rows = [
+      ...stickySubTable.rows.slice(replaceRows),
+      ...nextMeta.rows.slice(0, replaceRows),
+    ]
+    const residualPx = overlapPx - replaceRows * rowStepPx
+
+    return {
+      rows,
+      colCount: Math.max(stickySubTable.colCount, nextMeta.colCount),
+      translateY: -residualPx,
+    }
+  }, [editorLineHeight, stickyPushOffsetPx, stickySubTable])
+
+  const handleStickySubTableCellClick = useCallback((
+    e: React.MouseEvent<HTMLTableCellElement>,
+    action: {
+      rowIsHeader: boolean
+      lineIndex: number
+      cellIndex: number
+      fieldIdx?: number
+      text: string
+      sliceField?: boolean
+    },
+  ) => {
+    e.stopPropagation()
+    if (action.rowIsHeader) return
+
+    // 点击冻结区后立即跳回对应主表格行，确保编辑输入框在主表格中定位。
+    scrollToLineIndex(action.lineIndex, 'auto')
+
+    if (tryToggleTableBooleanCell('sub', action.lineIndex, action.cellIndex)) return
+    handleTableCellHint(action.lineIndex, action.fieldIdx ?? -1, action.text)
+    startEditCell(action.lineIndex, action.cellIndex, action.text, action.fieldIdx, action.sliceField)
+  }, [handleTableCellHint, scrollToLineIndex, startEditCell, tryToggleTableBooleanCell])
+
   return (
     <div
       className="eyc-table-editor ebackcolor1"
@@ -3577,6 +4468,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       } as React.CSSProperties}
       onClick={() => onCommandClear?.()}
     >
+      <div className="eyc-editor-main">
+      <div
+        className="eyc-table-shell"
+        ref={tableShellRef}
+        style={{
+          '--eyc-minimap-width': `${showMinimapPreview ? minimapWidthPx : 0}px`,
+        } as React.CSSProperties}
+      >
       <div
         className="eyc-table-wrapper"
         ref={wrapperRef}
@@ -3586,9 +4485,68 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         tabIndex={0}
         style={{ outline: 'none', position: 'relative' }}
       >
+        {shouldFreezeTableHeader && stickyRenderView && stickyRenderView.rows.length > 0 && (
+          <div className="eyc-sticky-scope" aria-hidden="true">
+            <div
+              className="eyc-sticky-scope-row"
+              ref={stickyScopeRowRef}
+              style={{ transform: `translateY(${stickyRenderView.translateY}px)` }}
+            >
+              <div className="eyc-line-gutter eyc-sticky-scope-gutter">
+                {stickyRenderView.rows.map((row, idx) => (
+                  <div key={`sticky-gutter-${row.lineIndex}-${idx}`} className="eyc-gutter-cell">
+                    <span className="eyc-breakpoint-dot">●</span>
+                    <span className="eyc-gutter-linenum">{row.isHeader ? '\u00A0' : (lineNumMaps.sourceLineNumMap.get(row.lineIndex) ?? (row.lineIndex + 1))}</span>
+                    <span className="eyc-gutter-fold-area" />
+                  </div>
+                ))}
+              </div>
+              <div className="eyc-sticky-scope-table-wrap">
+                <table className="eyc-decl-table eyc-sticky-scope-table" cellSpacing={0}>
+                  <tbody>
+                    {stickyRenderView.rows.map((row, rowIdx) => (
+                      <tr key={`sticky-row-${row.lineIndex}-${rowIdx}`} className={row.isHeader ? 'eyc-hdr-row' : 'eyc-data-row'}>
+                        {row.cells.map((cell, idx) => (
+                          <td
+                            key={`sticky-cell-${row.lineIndex}-${rowIdx}-${idx}`}
+                            className={`${cell.cls} Rowheight`}
+                            colSpan={cell.colSpan}
+                            style={cell.align ? { textAlign: cell.align as 'center' } : undefined}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => handleStickySubTableCellClick(e, {
+                              rowIsHeader: !!row.isHeader,
+                              lineIndex: row.lineIndex,
+                              cellIndex: idx,
+                              fieldIdx: cell.fieldIdx,
+                              text: cell.text,
+                              sliceField: cell.sliceField,
+                            })}
+                          >
+                            {cell.text}
+                          </td>
+                        ))}
+                        {row.cells.reduce((sum, cell) => sum + (cell.colSpan || 1), 0) < stickyRenderView.colCount && (
+                          <td className="Rowheight" colSpan={stickyRenderView.colCount - row.cells.reduce((sum, cell) => sum + (cell.colSpan || 1), 0)}>&nbsp;</td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
         {blocks.map((blk, bi) => {
           if (blk.kind === 'table') {
             const tableLineIndices = blk.rows.filter(r => !r.isHeader).map(r => r.lineIndex)
+            const tableColCount = Math.max(1, blk.rows[0]?.cells.reduce((sum, cell) => sum + (cell.colSpan || 1), 0) || 1)
+            const tableRenderRows = blk.rows.flatMap((row, ri) => {
+              const rows: Array<{ row: typeof row; ri: number; isDeletedPlaceholder: boolean }> = [{ row, ri, isDeletedPlaceholder: false }]
+              if (!row.isHeader && diffDeletedAfterLines.has(row.lineIndex)) {
+                rows.push({ row, ri, isDeletedPlaceholder: true })
+              }
+              return rows
+            })
             return (
               <div
                 key={bi}
@@ -3596,111 +4554,131 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 onMouseDown={(e) => handleTableBlockMouseDown(e, tableLineIndices)}
               >
                 <div className="eyc-line-gutter">
-                  {blk.rows.map((row, ri) => (
-                    <div
-                      key={ri}
-                      className={row.isHeader ? 'eyc-gutter-cell' : `eyc-gutter-cell${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}`}
-                    >
-                      {(() => {
-                        const actualLine = row.isHeader ? 0 : (lineNumMaps.tableRowNumMap.get(`${bi}:${ri}`) ?? row.lineIndex + 1)
-                        const sourceLine = row.isHeader ? 0 : (row.lineIndex + 1)
-                        const hasBreakpoint = sourceLine > 0 && breakpointLineSet.has(sourceLine)
-                        return (
-                          <>
-                            <span className={`eyc-breakpoint-dot${hasBreakpoint ? ' active' : ''}`}>●</span>
-                            <span className="eyc-gutter-linenum">{row.isHeader ? '' : actualLine}</span>
-                          </>
+                  {tableRenderRows.map(({ row, ri, isDeletedPlaceholder }, renderIndex) => (
+                    isDeletedPlaceholder
+                      ? (
+                          <div key={`gutter-del-${ri}-${renderIndex}`} className="eyc-gutter-cell eyc-diff-deleted-placeholder-gutter" aria-hidden="true">
+                            <span className="eyc-breakpoint-dot">●</span>
+                            <span className="eyc-gutter-linenum">&nbsp;</span>
+                            <span className="eyc-gutter-fold-area" />
+                          </div>
                         )
-                      })()}
-                      <span className="eyc-gutter-fold-area" />
-                    </div>
+                      : (
+                          <div
+                            key={`gutter-row-${ri}-${renderIndex}`}
+                            className={row.isHeader
+                              ? 'eyc-gutter-cell'
+                              : `eyc-gutter-cell${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                          >
+                            {(() => {
+                              const actualLine = row.isHeader ? 0 : (lineNumMaps.tableRowNumMap.get(`${bi}:${ri}`) ?? row.lineIndex + 1)
+                              const sourceLine = row.isHeader ? 0 : (row.lineIndex + 1)
+                              const hasBreakpoint = sourceLine > 0 && breakpointLineSet.has(sourceLine)
+                              return (
+                                <>
+                                  <span className={`eyc-breakpoint-dot${hasBreakpoint ? ' active' : ''}`}>●</span>
+                                  <span className="eyc-gutter-linenum">{row.isHeader ? '' : actualLine}</span>
+                                </>
+                              )
+                            })()}
+                            <span className="eyc-gutter-fold-area" />
+                          </div>
+                        )
                   ))}
                 </div>
                 <div className="eyc-block-content">
                   <table className="eyc-decl-table" cellSpacing={0}>
                     <tbody>
-                      {blk.rows.map((row, ri) => (
-                        <tr
-                          key={ri}
-                          className={row.isHeader ? 'eyc-hdr-row' : `eyc-data-row${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${diffHighlightLines && diffHighlightLines.has(row.lineIndex) ? ' eyc-diff-highlight' : ''}`}
-                          {...(!row.isHeader ? { 'data-line-index': row.lineIndex } : {})}
-                          onMouseDown={row.isHeader ? undefined : (e) => handleTableRowMouseDown(e, row.lineIndex)}
-                        >
-                      {row.cells.map((cell, ci) => (
-                        (() => {
-                          const isInvalidVarNameCell = !row.isHeader && cell.fieldIdx === 0 && invalidVarNameLineSet.has(row.lineIndex)
-                          return (
-                        <td
-                          key={ci}
-                          className={`${cell.cls} Rowheight${isInvalidVarNameCell ? ' eyc-cell-invalid' : ''}`}
-                          colSpan={cell.colSpan}
-                          style={cell.align ? { textAlign: cell.align as 'center' } : undefined}
-                          onMouseDown={handleTableCellMouseDown}
-                          onClick={(e) => handleTableCellClick(e, {
-                            rowIsHeader: !!row.isHeader,
-                            tableType: blk.tableType,
-                            lineIndex: row.lineIndex,
-                            cellIndex: ci,
-                            fieldIdx: cell.fieldIdx,
-                            text: cell.text,
-                            sliceField: cell.sliceField,
-                          })}
-                          onDoubleClick={(e) => handleTableCellDoubleClick(e, {
-                            rowIsHeader: !!row.isHeader,
-                            tableType: blk.tableType,
-                            lineIndex: row.lineIndex,
-                            cellIndex: ci,
-                            fieldIdx: cell.fieldIdx,
-                            text: cell.text,
-                            sliceField: cell.sliceField,
-                          })}
-                        >
-                          {editCell && editCell.lineIndex === row.lineIndex && editCell.cellIndex === ci && editCell.fieldIdx === cell.fieldIdx && !row.isHeader ? (
-                            <div style={{ position: 'relative', display: 'inline-grid' }}>
-                              <span style={{ gridArea: '1/1', visibility: 'hidden', whiteSpace: 'pre', font: 'inherit', padding: 0 }}>
-                                {(editVal.length > (cell.text || '\u00A0').length ? editVal : (cell.text || '\u00A0')) + '\u00A0'}
-                              </span>
-                              <input
-                                ref={inputRef}
-                                className={`eyc-cell-input${isInvalidVarNameCell ? ' eyc-input-invalid' : ''}`}
-                                style={{ gridArea: '1/1' }}
-                                value={editVal}
-                                onPaste={(e) => e.stopPropagation()}
-                                onMouseDown={(e) => {
-                                  if (e.button !== 0) return
-                                  // 单元格输入框内拖选仅限单元格，不切换到行拖选
-                                  pendingInputDragRef.current = { lineIndex: row.lineIndex, x: e.clientX, y: e.clientY, allowRowDrag: false }
-                                }}
-                                onChange={e => {
-                                  let v = e.target.value
-                                  // 数据类型单元格禁止空格（类型名不含空格，防止粘贴/IME 串入多个类型）
-                                  if (editCell && editCell.cellIndex >= 0
-                                    && canUseTypeCompletion(editCell.lineIndex, editCell.fieldIdx)
-                                    && /\s/.test(v)) {
-                                    v = v.replace(/\s+/g, '')
-                                  }
-                                  setEditVal(v)
-                                  liveUpdate(v)
-                                  const pos = e.target.selectionStart ?? v.length
-                                  updateCompletion(v, pos)
-                                }}
-                                onBlur={() => {
-                                  if (shouldSuppressBlurCommit()) return
-                                  commit()
-                                }}
-                                onKeyDown={onKey}
-                                spellCheck={false}
-                              />
-                            </div>
-                          ) : (
-                            cell.text || '\u00A0'
-                          )}
-                        </td>
+                      {tableRenderRows.map(({ row, ri, isDeletedPlaceholder }, renderIndex) => (
+                        isDeletedPlaceholder
+                          ? (
+                              <tr key={`tbl-del-${ri}-${renderIndex}`} className="eyc-data-row eyc-diff-deleted-placeholder-row" aria-hidden="true">
+                                <td className="eyc-diff-deleted-placeholder-cell" colSpan={tableColCount}>&nbsp;</td>
+                              </tr>
+                            )
+                          : (
+                              <tr
+                                key={`tbl-row-${ri}-${renderIndex}`}
+                                className={row.isHeader ? 'eyc-hdr-row' : `eyc-data-row${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                                {...(!row.isHeader ? { 'data-line-index': row.lineIndex } : {})}
+                                onMouseDown={row.isHeader ? undefined : (e) => handleTableRowMouseDown(e, row.lineIndex)}
+                              >
+                            {row.cells.map((cell, ci) => (
+                              (() => {
+                                const isInvalidVarNameCell = !row.isHeader && cell.fieldIdx === 0 && invalidVarNameLineSet.has(row.lineIndex)
+                                return (
+                              <td
+                                key={ci}
+                                className={`${cell.cls} Rowheight${isInvalidVarNameCell ? ' eyc-cell-invalid' : ''}`}
+                                colSpan={cell.colSpan}
+                                style={cell.align ? { textAlign: cell.align as 'center' } : undefined}
+                                onMouseDown={handleTableCellMouseDown}
+                                onClick={(e) => handleTableCellClick(e, {
+                                  rowIsHeader: !!row.isHeader,
+                                  tableType: blk.tableType,
+                                  lineIndex: row.lineIndex,
+                                  cellIndex: ci,
+                                  fieldIdx: cell.fieldIdx,
+                                  text: cell.text,
+                                  sliceField: cell.sliceField,
+                                })}
+                                onDoubleClick={(e) => handleTableCellDoubleClick(e, {
+                                  rowIsHeader: !!row.isHeader,
+                                  tableType: blk.tableType,
+                                  lineIndex: row.lineIndex,
+                                  cellIndex: ci,
+                                  fieldIdx: cell.fieldIdx,
+                                  text: cell.text,
+                                  sliceField: cell.sliceField,
+                                })}
+                              >
+                                {editCell && editCell.lineIndex === row.lineIndex && editCell.cellIndex === ci && editCell.fieldIdx === cell.fieldIdx && !row.isHeader ? (
+                                  <div style={{ position: 'relative', display: 'inline-grid' }}>
+                                    <span style={{ gridArea: '1/1', visibility: 'hidden', whiteSpace: 'pre', font: 'inherit', padding: 0 }}>
+                                      {(editVal.length > (cell.text || '\u00A0').length ? editVal : (cell.text || '\u00A0')) + '\u00A0'}
+                                    </span>
+                                    <input
+                                      ref={inputRef}
+                                      className={`eyc-cell-input${isInvalidVarNameCell ? ' eyc-input-invalid' : ''}`}
+                                      style={{ gridArea: '1/1' }}
+                                      value={editVal}
+                                      onPaste={(e) => e.stopPropagation()}
+                                      onMouseDown={(e) => {
+                                        if (e.button !== 0) return
+                                        // 单元格输入框内拖选仅限单元格，不切换到行拖选
+                                        pendingInputDragRef.current = { lineIndex: row.lineIndex, x: e.clientX, y: e.clientY, allowRowDrag: false }
+                                      }}
+                                      onChange={e => {
+                                        let v = e.target.value
+                                        // 数据类型单元格禁止空格（类型名不含空格，防止粘贴/IME 串入多个类型）
+                                        if (editCell && editCell.cellIndex >= 0
+                                          && canUseTypeCompletion(editCell.lineIndex, editCell.fieldIdx)
+                                          && /\s/.test(v)) {
+                                          v = v.replace(/\s+/g, '')
+                                        }
+                                        setEditVal(v)
+                                        scheduleLiveUpdate(v)
+                                        const pos = e.target.selectionStart ?? v.length
+                                        updateCompletion(v, pos)
+                                      }}
+                                      onBlur={() => {
+                                        if (shouldSuppressBlurCommit()) return
+                                        commit()
+                                      }}
+                                      onKeyDown={onKey}
+                                      spellCheck={false}
+                                    />
+                                  </div>
+                                ) : (
+                                  cell.text || '\u00A0'
+                                )}
+                              </td>
+                                )
+                              })()
+                            ))}
+                            </tr>
                           )
-                        })()
                       ))}
-                      </tr>
-                    ))}
                   </tbody>
                 </table>
               </div>
@@ -3723,9 +4701,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           const hasBreakpoint = sourceLine > 0 && breakpointLineSet.has(sourceLine)
           const isDebugLine = !!debugSourceLine && sourceLine === debugSourceLine
           return (
+            <Fragment key={bi}>
             <div
-              key={bi}
-              className={`eyc-block-row eyc-block-row-wrap${isAutoFlowLine ? ' eyc-flow-auto-line' : ''}${isLineSelected ? ' eyc-line-selected' : ''}${isDebugLine ? ' eyc-debug-line' : ''}${diffHighlightLines && diffHighlightLines.has(blk.lineIndex) ? ' eyc-diff-highlight' : ''}`}
+              className={`eyc-block-row eyc-block-row-wrap${isAutoFlowLine ? ' eyc-flow-auto-line' : ''}${isLineSelected ? ' eyc-line-selected' : ''}${isDebugLine ? ' eyc-debug-line' : ''}${diffClassSuffixFor(blk.lineIndex)}`}
               data-line-index={blk.lineIndex}
               onMouseDown={(e) => handleCodeBlockMouseDown(e, blk.lineIndex)}
             >
@@ -3788,7 +4766,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                         const v = e.target.value
                         // 命令行括号保护已移除：允许自由编辑命令名与括号外内容
                         setEditVal(v)
-                        liveUpdate(v)
+                        scheduleLiveUpdate(v)
                         const pos = e.target.selectionStart ?? v.length
                         updateCompletion(v, pos)
                       }}
@@ -3884,12 +4862,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                 ref={paramInputRef}
                                 className="eyc-param-val-input"
                                 value={editVal}
-                                onChange={e => { setEditVal(e.target.value); liveUpdate(e.target.value) }}
+                                onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
                                 onBlur={() => {
                                   if (shouldSuppressBlurCommit()) return
                                   commit()
                                 }}
                                 onKeyDown={e => {
+                                  if (handleParamInputCtrlKey(e)) return
                                   if (e.key === 'Enter') { e.preventDefault(); commit() }
                                   else if (e.key === 'Escape') setEditCell(null)
                                 }}
@@ -3959,12 +4938,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                             ref={paramInputRef}
                             className="eyc-param-val-input"
                             value={editVal}
-                            onChange={e => { setEditVal(e.target.value); liveUpdate(e.target.value) }}
+                            onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
                             onBlur={() => {
                               if (shouldSuppressBlurCommit()) return
                               commit()
                             }}
                             onKeyDown={e => {
+                              if (handleParamInputCtrlKey(e)) return
                               if (e.key === 'Enter') { e.preventDefault(); commit() }
                               else if (e.key === 'Escape') setEditCell(null)
                             }}
@@ -4006,12 +4986,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                     ref={paramInputRef}
                                     className="eyc-param-val-input"
                                     value={editVal}
-                                    onChange={e => { setEditVal(e.target.value); liveUpdate(e.target.value) }}
+                                    onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
                                     onBlur={() => {
                                       if (shouldSuppressBlurCommit()) return
                                       commit()
                                     }}
                                     onKeyDown={e => {
+                                      if (handleParamInputCtrlKey(e)) return
                                       if (e.key === 'Enter') { e.preventDefault(); commit() }
                                       else if (e.key === 'Escape') setEditCell(null)
                                     }}
@@ -4030,8 +5011,90 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 )
               })()}
             </div>
+            {diffDeletedAfterLines.has(blk.lineIndex) && (
+              <div className="eyc-block-row eyc-block-row-wrap eyc-diff-deleted-placeholder" aria-hidden="true">
+                <div className="eyc-line-gutter">
+                  <div className="eyc-gutter-cell eyc-diff-deleted-placeholder-gutter">
+                    <span className="eyc-breakpoint-dot">●</span>
+                    <span className="eyc-gutter-linenum">&nbsp;</span>
+                    <span className="eyc-gutter-fold-area" />
+                  </div>
+                </div>
+                <div className="eyc-code-line eyc-diff-deleted-placeholder-line">
+                  <span className="eyc-code-spans">&nbsp;</span>
+                </div>
+              </div>
+            )}
+            </Fragment>
           )
         })}
+      </div>
+
+      {showMinimapPreview && (
+        <div
+          className="eyc-minimap"
+          role="region"
+          aria-label="代码预览缩略图"
+          tabIndex={0}
+          onKeyDown={handleMinimapKeyDown}
+          onWheel={handleMinimapWheel}
+        >
+          <div
+            className="eyc-minimap-track"
+            ref={minimapTrackRef}
+            onMouseDown={handleMinimapMouseDown}
+            aria-hidden="true"
+          >
+            <div className="eyc-minimap-content" ref={minimapContentRef} aria-hidden="true">
+              {minimapPreviewRows.map((row, rowIndex) => (
+                row.kind === 'deleted'
+                  ? (
+                      <div key={`mini-row-${rowIndex}`} className="eyc-minimap-row eyc-minimap-row-deleted">
+                        <span className="eyc-minimap-marker eyc-minimap-marker-deleted" />
+                        <span className="eyc-minimap-deleted-line" />
+                      </div>
+                    )
+                  : row.kind === 'table'
+                  ? (
+                      <div key={`mini-row-${rowIndex}`} className={`eyc-minimap-row eyc-minimap-row-table${row.selected ? ' eyc-minimap-row-selected' : ''}${row.marker === 'error' ? ' eyc-minimap-row-error' : ''}`}>
+                        <span className={`eyc-minimap-marker eyc-minimap-marker-${row.marker}`} />
+                        {row.cells.map((cell, cellIndex) => (
+                          <span key={`mini-cell-${rowIndex}-${cellIndex}`} className={`eyc-minimap-cell ${cell.cls}`}>{cell.text}</span>
+                        ))}
+                      </div>
+                    )
+                  : (
+                      <div key={`mini-row-${rowIndex}`} className={`eyc-minimap-row eyc-minimap-row-code${row.selected ? ' eyc-minimap-row-selected' : ''}${row.marker === 'error' ? ' eyc-minimap-row-error' : ''}`}>
+                        <span className={`eyc-minimap-marker eyc-minimap-marker-${row.marker}`} />
+                        {row.spans.map((span, spanIndex) => (
+                          <span key={`mini-span-${rowIndex}-${spanIndex}`} className={span.cls}>{span.text}</span>
+                        ))}
+                      </div>
+                    )
+              ))}
+            </div>
+            <div
+              className="eyc-minimap-viewport"
+              ref={minimapViewportRef}
+            />
+          </div>
+        </div>
+      )}
+      <div className="eyc-scrollbar-status-lane eyc-scrollbar-status-lane-vertical" aria-hidden="true">
+        {laidOutScrollbarStatusMarkers.map((marker, idx) => (
+          <span
+            key={`v-marker-${idx}`}
+            className={`eyc-scrollbar-status-marker eyc-scrollbar-status-marker-${marker.type} ${marker.type === 'error' ? 'eyc-scrollbar-status-marker-errorlane' : 'eyc-scrollbar-status-marker-difflane'}`}
+            style={{
+              top: `${marker.topPx}px`,
+              height: `${marker.heightPx}px`,
+            }}
+          />
+        ))}
+      </div>
+      <div className="eyc-scrollbar-mask eyc-scrollbar-mask-left" aria-hidden="true" />
+      <div className="eyc-scrollbar-mask eyc-scrollbar-mask-right" aria-hidden="true" />
+      </div>
       </div>
 
       <EycResourcePreview

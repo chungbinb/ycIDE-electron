@@ -6,6 +6,63 @@
   background: var(--bg-primary);
 }
 
+.editor-external-change-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--error) 58%, transparent);
+  background: color-mix(in srgb, var(--error) 20%, transparent);
+  font-family: var(--font-family);
+  font-size: var(--font-size);
+  line-height: 1.4;
+  flex-shrink: 0;
+  order: 0;
+}
+
+.editor-tabs-top .editor-external-change-banner {
+  order: 1;
+}
+
+.editor-tabs-top .editor-content {
+  order: 2;
+}
+
+.editor-external-change-text {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.editor-external-change-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.editor-external-change-btn {
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.editor-external-change-btn:hover {
+  background: var(--bg-hover);
+}
+
+.editor-external-change-btn.primary {
+  border-color: var(--accent);
+}
+
 /* AI Diff 高亮装饰 */
 .ai-diff-added-line {
   background: rgba(40, 167, 69, 0.18) !important;
@@ -45,6 +102,7 @@
   border-top: 1px solid var(--border-color);
   flex-shrink: 0;
   overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .editor-tabs-top .editor-tabs {
@@ -65,7 +123,34 @@
   order: 1;
 }
 .editor-tabs::-webkit-scrollbar {
+  height: 0;
+}
+
+.editor-tabs:hover,
+.editor-tabs:focus-within {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.editor-tabs:hover::-webkit-scrollbar,
+.editor-tabs:focus-within::-webkit-scrollbar {
   height: 3px;
+}
+
+.editor-tabs::-webkit-scrollbar-track {
+  background: transparent;
+  border: none;
+}
+
+.editor-tabs::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: none;
+  border-radius: 0;
+}
+
+.editor-tabs:hover::-webkit-scrollbar-thumb,
+.editor-tabs:focus-within::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb-hover);
 }
 
 .editor-tab {

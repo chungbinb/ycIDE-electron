@@ -26,8 +26,15 @@
   justify-content: center;
   width: 36px;
   height: 100%;
-  color: var(--accent);
   -webkit-app-region: no-drag;
+}
+
+.titlebar-icon-image {
+  width: 24px;
+  height: 24px;
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
 }
 
 .titlebar-menu {

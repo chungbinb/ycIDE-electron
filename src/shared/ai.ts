@@ -1,4 +1,4 @@
-export type AIBuiltinModel = 'deepseek' | 'glm'
+export type AIBuiltinModel = 'deepseek' | 'deepseek-v4-flash' | 'deepseek-v3.2' | 'glm'
 export type AISupportedModel = string
 
 export interface AICustomModelConfig {
@@ -10,8 +10,31 @@ export interface AICustomModelConfig {
 }
 
 export interface AIChatMessage {
-  role: 'system' | 'user' | 'assistant'
+  role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  name?: string
+  tool_call_id?: string
+  tool_calls?: AIChatToolCall[]
+}
+
+export interface AIChatToolFunction {
+  name: string
+  description?: string
+  parameters?: unknown
+}
+
+export interface AIChatTool {
+  type: 'function'
+  function: AIChatToolFunction
+}
+
+export interface AIChatToolCall {
+  id: string
+  type: 'function'
+  function: {
+    name: string
+    arguments: string
+  }
 }
 
 export interface AIChatRequest {
@@ -19,10 +42,21 @@ export interface AIChatRequest {
   messages: AIChatMessage[]
 }
 
+export interface AIChatWithToolsRequest {
+  model: AISupportedModel
+  messages: AIChatMessage[]
+  tools: AIChatTool[]
+  tool_choice?: 'auto' | 'none'
+}
+
 export interface AIChatResult {
   ok: boolean
   message: string
   error?: string
+}
+
+export interface AIChatWithToolsResult extends AIChatResult {
+  toolCalls?: AIChatToolCall[]
 }
 
 export interface AIEditRequest {

@@ -200,3 +200,12 @@ Do not make direct repo edits outside a GSD workflow unless the user explicitly 
 > Profile not yet configured. Run `/gsd-profile-user` to generate your developer profile.
 > This section is managed by `generate-claude-profile` -- do not edit manually.
 <!-- GSD:profile-end -->
+
+## Release Notes Workflow
+
+- 完成功能开发、问题修复、优化调整后，先同步记录到 `版本开发日志.md` 的“待发版条目”。
+- 发版时更新 `版本更新说明.md` 前，必须先读取 `版本开发日志.md` 并据此生成“新增功能 / 问题修复 / 优化调整”。
+- 发版号变更时，必须同步修改以下两个位置并保持一致：
+	- `src/renderer/src/components/StatusBar/StatusBar.tsx`
+	- `src/renderer/src/App.tsx`（`aiIdeContext` 中的 IDE 版本字符串）
+- 发布完成后，将已发布条目从“待发版条目”迁移到“已发布归档”并标注版本号与日期。

@@ -12,6 +12,13 @@ const AI_PANEL_DEFAULT_WIDTH = 420
 type ChatEntry = {
   role: 'user' | 'assistant'
   content: string
+  toolTrace?: {
+    id: string
+    tool: string
+    ok: boolean
+    args: string
+    result: string
+  }
 }
 
 type DiffHunk = {
@@ -27,6 +34,26 @@ type EditChangeSummary = {
   addedLines: number
   deletedLines: number
   applied: boolean
+}
+
+type PanelMode = 'chat' | 'edit' | 'plan' | 'agent'
+
+type AgentDecision = {
+  intent: 'answer' | 'edit'
+  message: string
+  editInstruction?: string
+}
+
+type AgentTaskResult = {
+  ok: boolean
+  logs: string[]
+  finalMessage?: string
+  error?: string
+  primaryEdit?: {
+    filePath: string
+    addedLines: number
+    deletedLines: number
+  }
 }
 
 interface AIAssistantPanelProps {
@@ -47,6 +74,12 @@ interface AIAssistantPanelProps {
   onApplyEdit: (result: AIEditResult, overrideContent?: string) => Promise<boolean>
   onUndoEdit: (result: AIEditResult) => Promise<boolean>
   onKeepEdit: () => void
+  onCancelRunning?: () => void
+  onAgentTask?: (
+    goal: string,
+    onLog?: (line: string) => void,
+    onToolTrace?: (trace: { id: string; tool: string; ok: boolean; args: string; result: string }) => void,
+  ) => Promise<AgentTaskResult>
 }
 
 function parseDiffHunks(diffText: string): DiffHunk[] {
@@ -127,6 +160,42 @@ function getFileName(pathOrLabel: string): string {
   return segments[segments.length - 1] || pathOrLabel
 }
 
+function tryParseJsonBlock(text: string): unknown {
+  const trimmed = (text || '').trim()
+  if (!trimmed) return null
+
+  if (trimmed.startsWith('```')) {
+    const firstBreak = trimmed.indexOf('\n')
+    const lastFence = trimmed.lastIndexOf('```')
+    if (firstBreak >= 0 && lastFence > firstBreak) {
+      const body = trimmed.slice(firstBreak + 1, lastFence).trim()
+      try {
+        return JSON.parse(body)
+      } catch {
+        return null
+      }
+    }
+  }
+
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return null
+  }
+}
+
+function parseAgentDecision(text: string): AgentDecision {
+  const parsed = tryParseJsonBlock(text) as Partial<AgentDecision> | null
+  const intent = parsed?.intent === 'edit' ? 'edit' : 'answer'
+  const message = typeof parsed?.message === 'string' && parsed.message.trim()
+    ? parsed.message.trim()
+    : (text || '').trim()
+  const editInstruction = typeof parsed?.editInstruction === 'string' && parsed.editInstruction.trim()
+    ? parsed.editInstruction.trim()
+    : undefined
+  return { intent, message, editInstruction }
+}
+
 function AIAssistantPanel({
   model,
   customModels,
@@ -145,6 +214,8 @@ function AIAssistantPanel({
   onApplyEdit,
   onUndoEdit,
   onKeepEdit,
+  onCancelRunning,
+  onAgentTask,
 }: AIAssistantPanelProps): React.JSX.Element {
   const [panelWidth, setPanelWidth] = useState(() => {
     try {
@@ -176,21 +247,31 @@ function AIAssistantPanel({
     try { localStorage.setItem('ycide.aiPanel.width.v1', String(panelWidth)) } catch {}
   }, [panelWidth])
 
-  const [mode, setModeState] = useState<'chat' | 'edit'>(() => {
-    try { const v = localStorage.getItem('ycide.aiPanel.mode.v1'); return v === 'edit' ? 'edit' : 'chat' } catch { return 'chat' }
+  const [mode, setModeState] = useState<PanelMode>(() => {
+    try {
+      const v = localStorage.getItem('ycide.aiPanel.mode.v1')
+      return v === 'edit' || v === 'plan' || v === 'agent' ? v : 'chat'
+    } catch {
+      return 'chat'
+    }
   })
-  const setMode = (m: 'chat' | 'edit'): void => {
+  const setMode = (m: PanelMode): void => {
     setModeState(m)
     try { localStorage.setItem('ycide.aiPanel.mode.v1', m) } catch {}
   }
   const [chatInput, setChatInput] = useState('')
   const [editInput, setEditInput] = useState('')
+  const [planInput, setPlanInput] = useState('')
+  const [agentInput, setAgentInput] = useState('')
   const [chatHistory, setChatHistory] = useState<ChatEntry[]>([])
+  const [planHistory, setPlanHistory] = useState<ChatEntry[]>([])
+  const [agentHistory, setAgentHistory] = useState<ChatEntry[]>([])
   const [pendingEdit, setPendingEdit] = useState<AIEditResult | null>(null)
   const [lastEditInstruction, setLastEditInstruction] = useState('')
   const [editMessages, setEditMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([])
   const [editBusy, setEditBusy] = useState(false)
   const [editApplying, setEditApplying] = useState(false)
+  const [agentRunning, setAgentRunning] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [selectedHunks, setSelectedHunks] = useState<number[]>([])
@@ -202,10 +283,15 @@ function AIAssistantPanel({
   const [configCustomModels, setConfigCustomModels] = useState<AICustomModelConfig[]>([])
   const [configBusy, setConfigBusy] = useState(false)
   const [configStatus, setConfigStatus] = useState<string | null>(null)
+  const runIdCounterRef = useRef(0)
+  const activeRunIdRef = useRef<number | null>(null)
+  const canceledRunIdsRef = useRef<Set<number>>(new Set())
 
   const modelOptions: Array<{ value: AISupportedModel; label: string }> = useMemo(() => {
     const builtins: Array<{ value: AISupportedModel; label: string }> = [
-      { value: 'deepseek', label: 'DeepSeek' },
+      { value: 'deepseek', label: 'DeepSeek V4-Pro' },
+      { value: 'deepseek-v4-flash', label: 'DeepSeek V4-Flash' },
+      { value: 'deepseek-v3.2', label: 'DeepSeek V3.2' },
       { value: 'glm', label: 'GLM' },
     ]
     const customs = (customModels || []).map((item) => ({ value: item.id, label: item.label }))
@@ -223,8 +309,34 @@ function AIAssistantPanel({
     setSelectedHunks(parsedHunks.map(item => item.id))
   }, [parsedHunks])
 
-  const composerValue = mode === 'chat' ? chatInput : editInput
-  const primaryActionLabel = mode === 'chat' ? '发送' : '生成 DIFF'
+  const composerValue = mode === 'chat'
+    ? chatInput
+    : mode === 'edit'
+      ? editInput
+      : mode === 'plan'
+        ? planInput
+        : agentInput
+  const primaryActionLabel = mode === 'chat'
+    ? '发送'
+    : mode === 'edit'
+      ? '生成 DIFF'
+      : mode === 'plan'
+        ? '生成计划'
+        : '执行 Agent'
+  const composerPlaceholder = mode === 'chat'
+    ? '输入你的问题...'
+    : mode === 'edit'
+      ? '描述你要对当前文件做的修改...'
+      : mode === 'plan'
+        ? '输入你的目标，生成结构化执行计划...'
+        : '输入你的目标，Agent 将自动拆解并执行可执行步骤...'
+  const composerAriaLabel = mode === 'chat'
+    ? '聊天输入'
+    : mode === 'edit'
+      ? '编辑指令'
+      : mode === 'plan'
+        ? '计划指令'
+        : 'Agent 任务指令'
 
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const autoResizeComposer = useCallback((): void => {
@@ -241,12 +353,53 @@ function AIAssistantPanel({
     if (e.key !== 'Enter' || e.shiftKey) return
     if ((e.nativeEvent as KeyboardEvent).isComposing) return
     e.preventDefault()
-    void (mode === 'chat' ? handleSendChat() : handleGenerateEdit())
+    if (mode === 'chat') {
+      void handleSendChat()
+      return
+    }
+    if (mode === 'edit') {
+      void handleGenerateEdit()
+      return
+    }
+    if (mode === 'plan') {
+      void handleGeneratePlan()
+      return
+    }
+    void handleRunAgent()
+  }
+
+  const beginRun = (): number => {
+    const runId = ++runIdCounterRef.current
+    activeRunIdRef.current = runId
+    canceledRunIdsRef.current.delete(runId)
+    return runId
+  }
+
+  const isRunCanceled = (runId: number): boolean => canceledRunIdsRef.current.has(runId)
+
+  const finishRun = (runId: number): void => {
+    canceledRunIdsRef.current.delete(runId)
+    if (activeRunIdRef.current === runId) activeRunIdRef.current = null
+  }
+
+  const handleStopRunning = (): void => {
+    const activeRunId = activeRunIdRef.current
+    if (activeRunId !== null) {
+      canceledRunIdsRef.current.add(activeRunId)
+      activeRunIdRef.current = null
+    }
+    onCancelRunning?.()
+    setBusy(false)
+    setEditBusy(false)
+    setEditApplying(false)
+    setAgentRunning(false)
+    setStatus('已停止当前 AI 任务。')
   }
 
   const handleSendChat = async (): Promise<void> => {
     const prompt = chatInput.trim()
     if (!prompt || busy) return
+    const runId = beginRun()
 
     const nextHistory = [...chatHistory, { role: 'user' as const, content: prompt }]
     setChatHistory([...nextHistory, { role: 'assistant', content: '' }])
@@ -276,7 +429,7 @@ function AIAssistantPanel({
     ]
 
     const appendAssistantDelta = (delta: string): void => {
-      if (!delta) return
+      if (!delta || isRunCanceled(runId)) return
       setChatHistory((prev) => {
         if (prev.length === 0) return prev
         const next = [...prev]
@@ -294,6 +447,11 @@ function AIAssistantPanel({
       ? await onChatStream(messages, appendAssistantDelta)
       : await onChat(messages)
 
+    if (isRunCanceled(runId)) {
+      finishRun(runId)
+      return
+    }
+
     if (!result.ok) {
       setChatHistory((prev) => {
         if (prev.length === 0) return prev
@@ -308,6 +466,7 @@ function AIAssistantPanel({
       })
       setStatus(result.error || '聊天请求失败。')
       setBusy(false)
+      finishRun(runId)
       return
     }
 
@@ -325,6 +484,277 @@ function AIAssistantPanel({
       })
     }
     setBusy(false)
+    finishRun(runId)
+  }
+
+  const handleGeneratePlan = async (): Promise<void> => {
+    const prompt = planInput.trim()
+    if (!prompt || busy) return
+    const runId = beginRun()
+
+    const nextHistory = [...planHistory, { role: 'user' as const, content: prompt }]
+    setPlanHistory([...nextHistory, { role: 'assistant', content: '' }])
+    setPlanInput('')
+    setBusy(true)
+    setStatus(null)
+
+    const problemsContext = (problems && problems.length > 0)
+      ? '\n\n当前问题面板的诊断信息:\n' + problems.map(p => {
+        const loc = p.file ? `${p.file} 行${p.line}:${p.column}` : `行${p.line}:${p.column}`
+        return `  [${p.severity}] ${loc} - ${p.message}`
+      }).join('\n')
+      : ''
+    const ideInfo = ideContext ? `\n\n当前 IDE 环境信息:\n${ideContext}` : ''
+    const fileInfo = resolvedEditTarget
+      ? `\n\n当前激活文件: ${resolvedEditTarget}`
+      : '\n\n当前没有激活可编辑源码文件。'
+
+    const messages: AIChatMessage[] = [
+      {
+        role: 'system',
+        content: `你是 ycIDE 的 Plan 模式助手。请基于用户目标输出结构化执行计划，要求包含：目标、前置假设、执行步骤（编号）、风险与回退、验证清单。回复使用中文，格式用 Markdown。不要直接修改代码。${ideInfo}${fileInfo}${problemsContext}`,
+      },
+      ...nextHistory.map(item => ({ role: item.role, content: item.content })),
+    ]
+
+    const appendAssistantDelta = (delta: string): void => {
+      if (!delta || isRunCanceled(runId)) return
+      setPlanHistory((prev) => {
+        if (prev.length === 0) return prev
+        const next = [...prev]
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].role === 'assistant') {
+            next[i] = { ...next[i], content: `${next[i].content}${delta}` }
+            return next
+          }
+        }
+        return [...next, { role: 'assistant', content: delta }]
+      })
+    }
+
+    const result = onChatStream
+      ? await onChatStream(messages, appendAssistantDelta)
+      : await onChat(messages)
+
+    if (isRunCanceled(runId)) {
+      finishRun(runId)
+      return
+    }
+
+    if (!result.ok) {
+      setPlanHistory((prev) => {
+        if (prev.length === 0) return prev
+        const next = [...prev]
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].role === 'assistant') {
+            next[i] = { ...next[i], content: result.error || '计划生成失败。' }
+            return next
+          }
+        }
+        return [...next, { role: 'assistant', content: result.error || '计划生成失败。' }]
+      })
+      setStatus(result.error || '计划生成失败。')
+      setBusy(false)
+      finishRun(runId)
+      return
+    }
+
+    if (!onChatStream) {
+      setPlanHistory((prev) => {
+        if (prev.length === 0) return prev
+        const next = [...prev]
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].role === 'assistant') {
+            next[i] = { ...next[i], content: result.message }
+            return next
+          }
+        }
+        return [...next, { role: 'assistant', content: result.message }]
+      })
+    }
+    setBusy(false)
+    finishRun(runId)
+  }
+
+  const handleRunAgent = async (): Promise<void> => {
+    const goal = agentInput.trim()
+    if (!goal || busy) return
+    const runId = beginRun()
+
+    if (onAgentTask) {
+      setAgentInput('')
+      setAgentRunning(true)
+      setBusy(true)
+      setStatus(null)
+      setPendingEdit(null)
+
+      setAgentHistory(prev => [
+        ...prev,
+        { role: 'user', content: goal },
+      ])
+
+      const streamedLogSet = new Set<string>()
+      const result = await onAgentTask(goal, (line) => {
+        if (!line || isRunCanceled(runId)) return
+        streamedLogSet.add(line)
+        setAgentHistory(prev => [...prev, { role: 'assistant', content: line }])
+      }, (trace) => {
+        if (!trace || isRunCanceled(runId)) return
+        setAgentHistory(prev => [...prev, {
+          role: 'assistant',
+          content: `工具 ${trace.tool} (${trace.ok ? '成功' : '失败'})`,
+          toolTrace: trace,
+        }])
+      })
+      if (isRunCanceled(runId)) {
+        finishRun(runId)
+        return
+      }
+      const logEntries = (result.logs || []).filter(Boolean)
+      const remainingLogs = logEntries.filter(line => !streamedLogSet.has(line))
+      if (remainingLogs.length > 0) {
+        setAgentHistory(prev => [...prev, ...remainingLogs.map(content => ({ role: 'assistant' as const, content }))])
+      }
+      if (result.finalMessage) {
+        const finalMessage = result.finalMessage
+        setAgentHistory(prev => [...prev, { role: 'assistant', content: finalMessage }])
+      }
+      if (result.primaryEdit) {
+        setEditChangeSummary({
+          filePath: result.primaryEdit.filePath,
+          fileName: getFileName(result.primaryEdit.filePath),
+          addedLines: result.primaryEdit.addedLines,
+          deletedLines: result.primaryEdit.deletedLines,
+          applied: true,
+        })
+      } else {
+        setEditChangeSummary(null)
+      }
+      if (!result.ok) {
+        setStatus(result.error || 'Agent 执行失败。')
+      }
+      setAgentRunning(false)
+      setBusy(false)
+      finishRun(runId)
+      return
+    }
+
+    setAgentInput('')
+    setAgentRunning(true)
+    setBusy(true)
+    setStatus(null)
+    setPendingEdit(null)
+
+    setAgentHistory(prev => [
+      ...prev,
+      { role: 'user', content: goal },
+      { role: 'assistant', content: '正在制定执行方案...' },
+    ])
+
+    const problemsContext = (problems && problems.length > 0)
+      ? '\n\n当前问题面板的诊断信息:\n' + problems.map(p => {
+        const loc = p.file ? `${p.file} 行${p.line}:${p.column}` : `行${p.line}:${p.column}`
+        return `  [${p.severity}] ${loc} - ${p.message}`
+      }).join('\n')
+      : ''
+    const ideInfo = ideContext ? `\n\n当前 IDE 环境信息:\n${ideContext}` : ''
+    const fileInfo = resolvedEditTarget
+      ? `\n\n当前激活文件: ${resolvedEditTarget}`
+      : '\n\n当前没有激活可编辑源码文件。'
+
+    const agentMessages: AIChatMessage[] = [
+      {
+        role: 'system',
+        content: `你是 ycIDE 的 Agent 模式编程助手。请先判断用户目标是否需要修改代码。必须只返回 JSON，格式：{"intent":"answer|edit","message":"给用户的说明","editInstruction":"当 intent=edit 时提供具体编辑指令"}。如果无需改代码，用 answer。若需要改代码，用 edit 并提供可直接执行的单文件编辑指令。${ideInfo}${fileInfo}${problemsContext}`,
+      },
+      { role: 'user', content: goal },
+    ]
+
+    const decisionResult = await onChat(agentMessages)
+    if (isRunCanceled(runId)) {
+      finishRun(runId)
+      return
+    }
+    if (!decisionResult.ok) {
+      setAgentHistory(prev => [...prev, { role: 'assistant', content: decisionResult.error || 'Agent 执行失败。' }])
+      setStatus(decisionResult.error || 'Agent 执行失败。')
+      setAgentRunning(false)
+      setBusy(false)
+      finishRun(runId)
+      return
+    }
+
+    const decision = parseAgentDecision(decisionResult.message)
+    setAgentHistory(prev => [...prev, { role: 'assistant', content: decision.message || '已完成分析。' }])
+
+    if (decision.intent !== 'edit' || !decision.editInstruction) {
+      setAgentRunning(false)
+      setBusy(false)
+      finishRun(runId)
+      return
+    }
+
+    if (!resolvedEditTarget) {
+      setAgentHistory(prev => [...prev, { role: 'assistant', content: '当前没有激活可编辑文件，无法执行自动修改。' }])
+      setStatus('请先激活一个可编辑源码文件后再运行 Agent。')
+      setAgentRunning(false)
+      setBusy(false)
+      finishRun(runId)
+      return
+    }
+
+    setAgentHistory(prev => [...prev, { role: 'assistant', content: `开始自动修改 ${getFileName(resolvedEditTarget)} ...` }])
+    const editResult = onRequestEditStream
+      ? await onRequestEditStream(decision.editInstruction, resolvedEditTarget, () => {}, () => {})
+      : await onRequestEdit(decision.editInstruction, resolvedEditTarget)
+
+    if (isRunCanceled(runId)) {
+      finishRun(runId)
+      return
+    }
+
+    setPendingEdit(editResult)
+    if (!editResult.ok) {
+      setAgentHistory(prev => [...prev, { role: 'assistant', content: editResult.error || '自动修改失败。' }])
+      setStatus(editResult.error || '自动修改失败。')
+      setEditChangeSummary(null)
+      setAgentRunning(false)
+      setBusy(false)
+      finishRun(runId)
+      return
+    }
+
+    const applied = await onApplyEdit(editResult)
+    if (!applied) {
+      setAgentHistory(prev => [...prev, { role: 'assistant', content: '已生成修改方案，但自动应用失败。' }])
+      setStatus('自动应用失败，请检查目标文件状态。')
+      setEditChangeSummary(null)
+      setAgentRunning(false)
+      setBusy(false)
+      finishRun(runId)
+      return
+    }
+
+    const hunks = parseDiffHunks(editResult.diff)
+    let added = 0
+    let deleted = 0
+    for (const hunk of hunks) {
+      for (const line of hunk.lines) {
+        if (line.startsWith('+')) added++
+        else if (line.startsWith('-')) deleted++
+      }
+    }
+    setEditChangeSummary({
+      filePath: editResult.filePath,
+      fileName: getFileName(editResult.filePath),
+      addedLines: added,
+      deletedLines: deleted,
+      applied: true,
+    })
+    setAgentHistory(prev => [...prev, { role: 'assistant', content: editResult.summary || 'Agent 已完成自动修改并应用。' }])
+    setAgentRunning(false)
+    setBusy(false)
+    finishRun(runId)
   }
 
   const handleGenerateEdit = async (): Promise<void> => {
@@ -334,6 +764,7 @@ function AIAssistantPanel({
       setStatus('请先在编辑器中激活一个可编辑文件。')
       return
     }
+    const runId = beginRun()
 
     setEditInput('')
     setLastEditInstruction(instruction)
@@ -354,7 +785,7 @@ function AIAssistantPanel({
     let hasReasoningContent = false
 
     const appendReasoningDelta = (delta: string): void => {
-      if (!delta) return
+      if (!delta || isRunCanceled(runId)) return
       hasReasoningContent = true
       setEditMessages(prev => {
         if (streamingIdx < 0 || streamingIdx >= prev.length) return prev
@@ -365,6 +796,7 @@ function AIAssistantPanel({
     }
 
     const appendContentDelta = (_delta: string): void => {
+      if (isRunCanceled(runId)) return
       // content delta 是 JSON 文本，不适合展示
       // 如果没有 reasoning 内容，至少显示在思考
       if (!hasReasoningContent) {
@@ -384,6 +816,11 @@ function AIAssistantPanel({
     const result = onRequestEditStream
       ? await onRequestEditStream(instruction, resolvedEditTarget, appendContentDelta, appendReasoningDelta)
       : await onRequestEdit(instruction, resolvedEditTarget)
+
+    if (isRunCanceled(runId)) {
+      finishRun(runId)
+      return
+    }
 
     // AI 返回完成，进入应用阶段
     setEditApplying(true)
@@ -429,6 +866,7 @@ function AIAssistantPanel({
     }
     setEditApplying(false)
     setBusy(false)
+    finishRun(runId)
   }
 
   const handleApplyEdit = async (): Promise<void> => {
@@ -556,7 +994,11 @@ function AIAssistantPanel({
         .filter(item => item.label && item.endpoint && item.modelName)
 
       const currentModelIsCustom = !!sanitizedCustomModels.find(item => item.id === configModel)
-      const nextModel = configModel === 'deepseek' || configModel === 'glm' || currentModelIsCustom
+      const nextModel = configModel === 'deepseek'
+        || configModel === 'deepseek-v4-flash'
+        || configModel === 'deepseek-v3.2'
+        || configModel === 'glm'
+        || currentModelIsCustom
         ? configModel
         : 'deepseek'
 
@@ -604,6 +1046,53 @@ function AIAssistantPanel({
         </div>
       )}
 
+      {mode === 'plan' && (
+        <div className="ai-panel-section">
+          <div className="ai-chat-log" role="log" aria-label="计划记录">
+            {planHistory.length === 0 && <div className="ai-empty">描述你的目标，Plan 模式会生成结构化执行计划。</div>}
+            {planHistory.map((item, idx) => (
+              <div key={`plan-${item.role}-${idx}`} className={`ai-chat-item ai-chat-${item.role}`}>
+                <pre className="ai-chat-content">{item.content}</pre>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {mode === 'agent' && (
+        <div className="ai-panel-section">
+          <div className="ai-chat-log" role="log" aria-label="Agent 执行记录">
+            {agentHistory.length === 0 && <div className="ai-empty">输入任务目标，Agent 模式会自动拆解步骤并尽量执行修改。</div>}
+            {agentHistory.map((item, idx) => (
+              <div key={`agent-${item.role}-${idx}`} className={`ai-chat-item ai-chat-${item.role}`}>
+                {item.toolTrace ? (
+                  <details className="ai-tool-trace" open={false}>
+                    <summary className="ai-tool-trace-summary">
+                      {item.content}
+                    </summary>
+                    <div className="ai-tool-trace-section">
+                      <div className="ai-tool-trace-title">参数</div>
+                      <pre className="ai-chat-content">{item.toolTrace.args}</pre>
+                    </div>
+                    <div className="ai-tool-trace-section">
+                      <div className="ai-tool-trace-title">返回</div>
+                      <pre className="ai-chat-content">{item.toolTrace.result}</pre>
+                    </div>
+                  </details>
+                ) : (
+                  <pre className="ai-chat-content">{item.content}</pre>
+                )}
+              </div>
+            ))}
+            {agentRunning && (
+              <div className="ai-chat-item ai-chat-assistant">
+                <pre className="ai-chat-content">Agent 执行中<span className="ai-dots-anim" /></pre>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {mode === 'edit' && (
         <div className="ai-panel-section">
           <div className="ai-chat-log" role="log" aria-label="编辑记录">
@@ -622,7 +1111,7 @@ function AIAssistantPanel({
         </div>
       )}
 
-      {mode === 'edit' && editChangeSummary && (
+      {(mode === 'edit' || mode === 'agent') && editChangeSummary && (
         <div className="ai-change-bar" aria-label="文件变更摘要">
           <div className="ai-change-bar-file">
             <Icon name="module" size={14} />
@@ -663,11 +1152,11 @@ function AIAssistantPanel({
       )}
 
       <div className="ai-composer" aria-label="AI 输入框">
-        {mode === 'edit' && (
+        {(mode === 'edit' || mode === 'agent') && (
           <div className="ai-composer-target-row">
             <div
               className="ai-composer-target-name"
-              aria-label="编辑目标文件"
+              aria-label={mode === 'edit' ? '编辑目标文件' : 'Agent 目标文件'}
               title={activeFileLabel || undefined}
             >
               {activeFileLabel ? getFileName(activeFileLabel) : '未激活可编辑文件'}
@@ -681,23 +1170,27 @@ function AIAssistantPanel({
           value={composerValue}
           onChange={(e) => {
             if (mode === 'chat') setChatInput(e.target.value)
-            else setEditInput(e.target.value)
+            else if (mode === 'edit') setEditInput(e.target.value)
+            else if (mode === 'plan') setPlanInput(e.target.value)
+            else setAgentInput(e.target.value)
             autoResizeComposer()
           }}
           onKeyDown={handleComposerKeyDown}
-          placeholder={mode === 'chat' ? '输入你的问题...' : '描述你要对当前文件做的修改...'}
-          aria-label={mode === 'chat' ? '聊天输入' : '编辑指令'}
+          placeholder={composerPlaceholder}
+          aria-label={composerAriaLabel}
         />
         <div className="ai-composer-footer">
           <div className="ai-inline-select-wrap">
             <select
               className="ai-model-select ai-mode-select ai-inline-select"
               value={mode}
-              onChange={(e) => setMode(e.target.value as 'chat' | 'edit')}
+              onChange={(e) => setMode(e.target.value as PanelMode)}
               aria-label="AI 模式"
             >
               <option value="chat">Ask</option>
               <option value="edit">Edit</option>
+              <option value="plan">Plan</option>
+              <option value="agent">Agent</option>
             </select>
           </div>
           <div className="ai-inline-select-wrap ai-inline-select-wrap-fill">
@@ -723,8 +1216,32 @@ function AIAssistantPanel({
           </div>
           <button
             type="button"
+            className="ai-btn ai-btn-icon ai-stop-btn"
+            onClick={handleStopRunning}
+            disabled={!busy}
+            aria-label="停止"
+            title="停止"
+          >
+            <Icon name="close" size={14} />
+          </button>
+          <button
+            type="button"
             className="ai-btn ai-btn-icon ai-send-btn"
-            onClick={() => { void (mode === 'chat' ? handleSendChat() : handleGenerateEdit()) }}
+            onClick={() => {
+              if (mode === 'chat') {
+                void handleSendChat()
+                return
+              }
+              if (mode === 'edit') {
+                void handleGenerateEdit()
+                return
+              }
+              if (mode === 'plan') {
+                void handleGeneratePlan()
+                return
+              }
+              void handleRunAgent()
+            }}
             disabled={busy}
             aria-label={primaryActionLabel}
             title={primaryActionLabel}

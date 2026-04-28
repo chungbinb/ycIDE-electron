@@ -14,13 +14,15 @@ function toPlain(value) {
 
 function loadTsModule(tsPath, mockRequire = {}) {
   const source = fs.readFileSync(tsPath, 'utf-8')
-  const compiled = ts.transpileModule(source, {
+  const compiledRaw = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2020,
     },
     fileName: tsPath,
   }).outputText
+  // vm + CommonJS 测试桩不支持 import.meta，统一降级为非 DEV 分支。
+  const compiled = compiledRaw.replace(/import\.meta\.env\.DEV/g, 'false')
 
   const module = { exports: {} }
   const localRequire = (request) => {
@@ -47,6 +49,15 @@ const flowUtilsPath = path.resolve(process.cwd(), 'src/renderer/src/components/E
 const flowPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/eycFlow.ts')
 const coreUtilsPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/editorCoreUtils.ts')
 const formatPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/eycFormat.ts')
+const blocksPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/eycBlocks.ts')
+const pasteUtilsPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/editorPasteUtils.ts')
+
+function loadFormatModule() {
+  const { parseLines } = loadTsModule(blocksPath)
+  return loadTsModule(formatPath, {
+    './eycBlocks': { parseLines },
+  })
+}
 
 test('table utils: template lookup returns expected insert line', () => {
   const { getTableRowInsertTemplate } = loadTsModule(tableUtilsPath)
@@ -77,6 +88,117 @@ test('table utils: scoped variable rename stays in current declaration scope', (
 
   assert.equal(renamed[3].includes('变量B'), true)
   assert.equal(renamed[5].includes('变量B'), false)
+})
+
+test('paste utils: dll declarations paste into dll section instead of current sub', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+  })
+
+  const currentText = [
+    '.版本 2',
+    '.DLL命令 旧命令, 整数型, , ""',
+    '    .参数 p, 整数型',
+    '.程序集 窗口程序集_启动窗口',
+    '.子程序 A, 整数型',
+    '    如果真 (1)',
+    '        返回 (0)',
+    '    如果真结束',
+  ].join('\n')
+
+  const clipText = [
+    '.DLL命令 新命令, 整数型, , ""',
+    '    .参数 x, 整数型',
+  ].join('\n')
+
+  const result = buildMultiLinePasteResult({
+    currentText,
+    clipText,
+    cursorLine: 6,
+    sanitizePastedText: (t) => t,
+  })
+
+  assert.ok(result)
+  assert.equal(result.insertAt, 3)
+  const lines = result.nextText.split('\n')
+  assert.equal(lines[3], '.DLL命令 新命令, 整数型, , ""')
+  assert.equal(lines[4], '    .参数 x, 整数型')
+})
+
+test('paste utils: dll declarations without existing dll section insert before first assembly/sub', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+  })
+
+  const currentText = [
+    '.版本 2',
+    '.支持库 spec',
+    '.程序集 窗口程序集_启动窗口',
+    '.子程序 A, 整数型',
+    '    返回 (0)',
+  ].join('\n')
+
+  const clipText = '.DLL命令 新命令, 整数型, , ""'
+
+  const result = buildMultiLinePasteResult({
+    currentText,
+    clipText,
+    cursorLine: 4,
+    sanitizePastedText: (t) => t,
+  })
+
+  assert.ok(result)
+  assert.equal(result.insertAt, 2)
+  assert.equal(result.nextText.split('\n')[2], '.DLL命令 新命令, 整数型, , ""')
+})
+
+test('paste utils: routed declarations can skip inline insertion when only special declarations exist', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+  })
+
+  const currentText = ['.程序集 Demo', '.子程序 A, 整数型', '    返回 (0)'].join('\n')
+  const clipText = '.DLL命令 新命令, 整数型, , ""\n    .参数 x, 整数型'
+
+  const result = buildMultiLinePasteResult({
+    currentText,
+    clipText,
+    cursorLine: 2,
+    sanitizePastedText: (t) => t,
+    extractRoutedDeclarationLines: () => [{ language: 'ell', lines: clipText.split('\n') }],
+  })
+
+  assert.ok(result)
+  assert.equal(result.nextText, currentText)
+  assert.equal(result.pastedLineCount, 0)
+  assert.deepEqual(toPlain(result.routedDeclarations), [{ language: 'ell', lines: clipText.split('\n') }])
+})
+
+test('paste utils: mixed paste routes declarations and keeps normal code inline', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+  })
+
+  const currentText = ['.程序集 Demo', '.子程序 A, 整数型', '    返回 (0)'].join('\n')
+  const clipText = ['.常量 版本号, "1.0"', '输出调试文本 ("ok")'].join('\n')
+
+  const result = buildMultiLinePasteResult({
+    currentText,
+    clipText,
+    cursorLine: 2,
+    sanitizePastedText: (t) => t,
+    extractRoutedDeclarationLines: () => [{ language: 'ecs', lines: ['.常量 版本号, "1.0"'] }],
+  })
+
+  assert.ok(result)
+  const lines = result.nextText.split('\n')
+  assert.equal(lines[2], '    输出调试文本 ("ok")')
+  assert.equal(result.pastedLineCount, 1)
+  assert.deepEqual(toPlain(result.routedDeclarations), [{ language: 'ecs', lines: ['.常量 版本号, "1.0"'] }])
 })
 
 test('flow auto-expand utils: marker parsing and loop body building are deterministic', () => {
@@ -261,7 +383,7 @@ test('colorize: parentheses and operators use eyc-punct (non-bold) class', () =>
 })
 
 test('paste sanitize: internal flow text stays idempotent and does not drift into judge marker', () => {
-  const { sanitizePastedTextForCurrent, normalizeEycText } = loadTsModule(formatPath)
+  const { sanitizePastedTextForCurrent, normalizeEycText } = loadFormatModule()
   const C = '\u200C'
   const D = '\u200D'
   const internal = [
@@ -279,8 +401,148 @@ test('paste sanitize: internal flow text stays idempotent and does not drift int
   assert.equal(out.includes('\u2060'), false)
 })
 
+test('format save: keep .否则 when previous 200D belongs to nested inner branch', () => {
+  const { eycToYiFormat } = loadFormatModule()
+  const C = '\u200C'
+  const D = '\u200D'
+  const internal = [
+    '.子程序 A, , , ',
+    '    如果 (A)',
+    `    ${C}`,
+    '        如果 (X)',
+    `        ${C}111`,
+    `        ${D}`,
+    `    ${D}如果 (B)`,
+    `    ${D}222`,
+    `    ${D}`,
+  ].join('\n')
+
+  const out = eycToYiFormat(internal)
+  assert.equal(out.includes('    .否则'), true)
+})
+
+test('format save: still emits .否则 when previous same-indent 200D is an empty end marker', () => {
+  const { eycToYiFormat } = loadFormatModule()
+  const C = '\u200C'
+  const D = '\u200D'
+  const internal = [
+    '.子程序 A, , , ',
+    '    如果 (A)',
+    `    ${C}111`,
+    `    ${D}222`,
+    `    ${D}`,
+  ].join('\n')
+
+  const out = eycToYiFormat(internal)
+  assert.equal(out.includes('    .否则'), true)
+})
+
+test('format save: never generate .否则 for 如果真 branch', () => {
+  const { eycToYiFormat } = loadFormatModule()
+  const D = '\u200D'
+  const internal = [
+    '.子程序 A, , , ',
+    '    如果真 ()',
+    `    ${D}22222`,
+    `    ${D}`,
+  ].join('\n')
+
+  const out = eycToYiFormat(internal)
+  assert.equal(out.includes('.否则'), false)
+  assert.equal(out.includes('.如果真结束'), true)
+  assert.equal(out.includes('22222'), true)
+})
+
+test('roundtrip: complex yi flow keeps else branches and if-true has no else', () => {
+  const { eycToInternalFormat, eycToYiFormat } = loadFormatModule()
+  const yi = [
+    '.版本 2',
+    '',
+    '.如果 ()',
+    '    .如果 ()',
+    '        .如果真 ()',
+    '            .如果 ()',
+    '                22222',
+    '            .否则',
+    '',
+    '            .如果结束',
+    '',
+    '        .如果真结束',
+    '',
+    '    .否则',
+    '        .如果 ()',
+    '',
+    '        .否则',
+    '            .如果 ()',
+    '',
+    '            .否则',
+    '                .如果 ()',
+    '',
+    '                .否则',
+    '',
+    '                .如果结束',
+    '',
+    '            .如果结束',
+    '',
+    '        .如果结束',
+    '',
+    '    .如果结束',
+    '',
+    '.否则',
+    '',
+    '.如果结束',
+    '',
+    '.如果 ()',
+    '',
+    '.否则',
+    '    .如果 ()',
+    '',
+    '    .否则',
+    '',
+    '    .如果结束',
+    '',
+    '.如果结束',
+    '',
+    '.如果真 ()',
+    '',
+    '.如果真结束',
+  ].join('\n')
+
+  const roundtrip = eycToYiFormat(eycToInternalFormat(yi))
+  assert.equal(roundtrip.includes('.否则'), true)
+  assert.equal(roundtrip.includes('.如果真 ()\n.否则'), false)
+})
+
+test('roundtrip: if inside else branch stays inside else branch', () => {
+  const { eycToInternalFormat, eycToYiFormat } = loadFormatModule()
+  const yi = [
+    '.版本 2',
+    '',
+    '.如果 ()',
+    '',
+    '.否则',
+    '    .如果 ()',
+    '',
+    '    .否则',
+    '',
+    '    .如果结束',
+    '',
+    '.如果结束',
+  ].join('\n')
+
+  const roundtrip = eycToYiFormat(eycToInternalFormat(yi))
+  // 显式 else-open 标记保证内层 .如果 恢复时位于 .否则 之后。
+  assert.equal(roundtrip.includes('.如果 ()'), true)
+  assert.equal(roundtrip.includes('.如果结束'), true)
+  const idxOuterElse = roundtrip.indexOf('\n.否则')
+  const idxInnerIf = roundtrip.indexOf('\n    .如果 ()')
+  assert.ok(idxOuterElse >= 0, 'outer .否则 should be emitted')
+  assert.ok(idxInnerIf >= 0, 'inner .如果 should be emitted with indent')
+  assert.ok(idxOuterElse < idxInnerIf, 'inner .如果 should appear inside outer .否则 branch')
+})
+
 test('paste sanitize: Yi flow source still converts into internal markers', () => {
-  const { sanitizePastedTextForCurrent } = loadTsModule(formatPath)
+  const { sanitizePastedTextForCurrent } = loadFormatModule()
   const yi = [
     '.子程序 A, , , ',
     '    .如果 (a)',
@@ -296,7 +558,7 @@ test('paste sanitize: Yi flow source still converts into internal markers', () =
 })
 
 test('paste sanitize: strips assembly/file directives from pasted Yi snippet', () => {
-  const { sanitizePastedTextForCurrent } = loadTsModule(formatPath)
+  const { sanitizePastedTextForCurrent } = loadFormatModule()
   const yi = [
     '.版本 2',
     '.支持库 spec',
@@ -312,7 +574,7 @@ test('paste sanitize: strips assembly/file directives from pasted Yi snippet', (
 })
 
 test('paste sanitize: removes standalone true-marker ghost lines from Yi flow source', () => {
-  const { sanitizePastedTextForCurrent } = loadTsModule(formatPath)
+  const { sanitizePastedTextForCurrent } = loadFormatModule()
   const yi = [
     '.如果 (a)',
     '    111',
@@ -331,7 +593,7 @@ test('paste sanitize: removes standalone true-marker ghost lines from Yi flow so
 })
 
 test('paste sanitize: trims edge blanks and skips blank rows inside flow blocks', () => {
-  const { sanitizePastedTextForCurrent } = loadTsModule(formatPath)
+  const { sanitizePastedTextForCurrent } = loadFormatModule()
   const yi = [
     '.版本 2',
     '',
@@ -353,7 +615,7 @@ test('paste sanitize: trims edge blanks and skips blank rows inside flow blocks'
 })
 
 test('paste sanitize: inserts minimal true-marker when true branch only contains nested flow', () => {
-  const { sanitizePastedTextForCurrent } = loadTsModule(formatPath)
+  const { sanitizePastedTextForCurrent } = loadFormatModule()
   const C = '\u200C'
   const yi = [
     '.如果 ()',
@@ -366,7 +628,12 @@ test('paste sanitize: inserts minimal true-marker when true branch only contains
   ].join('\n')
 
   const out = sanitizePastedTextForCurrent(yi, '.程序集 Demo')
-  const hasStandaloneTrueMarker = out.split('\n').some(line => line.trimStart() === C)
-  assert.equal(hasStandaloneTrueMarker, true)
+  // 真分支的 [C] 标记既可独立成行（原行为），也可与 [D] 合并为 `[C][D]` 占同一行
+  // （新行为，减少表格模式空行）。两种形式都保留了 [C] 的渲染语义。
+  const hasTrueMarker = out.split('\n').some(line => {
+    const t = line.trimStart()
+    return t === C || t.startsWith(C)
+  })
+  assert.equal(hasTrueMarker, true)
   assert.equal(out.includes('\u200D'), true)
 })

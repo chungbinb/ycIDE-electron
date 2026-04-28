@@ -1,6 +1,8 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell, type BrowserWindowConstructorOptions, type MenuItemConstructorOptions } from 'electron'
 import { join, dirname, basename, extname } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync, unlinkSync } from 'fs'
+import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import iconv from 'iconv-lite'
 import { libraryManager } from './libraryManager'
 import { compileProject, runExecutable, stopExecutable, isRunning, continueDebugExecutable } from './compiler'
 import { normalizeRuntimePlatform } from '../shared/platform'
@@ -33,8 +35,8 @@ import {
 import { THEME_TOKEN_GROUPS } from '../shared/theme-tokens'
 import { scanYcmdRegistry } from './ycmd-registry'
 import { resolveIDESettings, type IDESettings } from '../shared/settings'
-import type { AIChatRequest, AIEditRequest } from '../shared/ai'
-import { runAIChat, runAIChatStream, runAIEdit, runAIEditStream } from './ai-assistant'
+import type { AIChatRequest, AIChatWithToolsRequest, AIEditRequest } from '../shared/ai'
+import { runAIChat, runAIChatStream, runAIChatWithTools, runAIEdit, runAIEditStream } from './ai-assistant'
 
 const isDev = !app.isPackaged
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
@@ -58,8 +60,171 @@ const BUILTIN_THEME_IDS: ThemeId[] = [BUILTIN_DARK_THEME_ID, BUILTIN_LIGHT_THEME
 const BUILTIN_THEME_COMPARE_KEYS = THEME_TOKEN_GROUPS.flatMap(group => group.items.map(item => item.tokenKey))
 let previousBuiltInThemeId: ThemeId = BUILTIN_DARK_THEME_ID
 const closeBypassWindowIds = new Set<number>()
+let terminalProcess: ChildProcessWithoutNullStreams | null = null
+let terminalRestartRequested = false
+const terminalOutputBuffer: string[] = []
+const terminalCommandHistory: string[] = []
+const TERMINAL_OUTPUT_LIMIT = 2000
+const TERMINAL_COMMAND_LIMIT = 500
 
 app.setName(APP_DISPLAY_NAME)
+
+function resolveWindowIconPath(): string | undefined {
+  const iconFileName = process.platform === 'win32' ? 'icon.ico' : 'icon.png'
+  const candidates = [
+    join(process.cwd(), 'resources', iconFileName),
+    join(app.getAppPath(), 'resources', iconFileName),
+    join(process.resourcesPath, iconFileName),
+    join(process.resourcesPath, 'resources', iconFileName),
+  ]
+  return candidates.find(candidate => existsSync(candidate))
+}
+
+function pushTerminalOutput(text: string): void {
+  if (!text) return
+  terminalOutputBuffer.push(text)
+  if (terminalOutputBuffer.length > TERMINAL_OUTPUT_LIMIT) {
+    terminalOutputBuffer.splice(0, terminalOutputBuffer.length - TERMINAL_OUTPUT_LIMIT)
+  }
+  for (const w of BrowserWindow.getAllWindows()) {
+    w.webContents.send('terminal:output', text)
+  }
+}
+
+function pushTerminalOutputUnique(text: string): void {
+  if (!text) return
+  const last = terminalOutputBuffer.length > 0 ? terminalOutputBuffer[terminalOutputBuffer.length - 1] : ''
+  if (last === text) return
+  pushTerminalOutput(text)
+}
+
+function decodeTerminalChunk(chunk: Buffer): string {
+  const utf8 = chunk.toString('utf-8')
+  // cmd.exe 在中文 Windows 下常见为 GBK/CP936，出现大量替换符时回退 GBK 解码。
+  if (utf8.includes('�')) {
+    try {
+      return iconv.decode(chunk, 'gbk')
+    } catch {
+      return utf8
+    }
+  }
+  return utf8
+}
+
+function pushTerminalCommand(command: string): void {
+  const normalized = (command || '').trim()
+  if (!normalized) return
+  terminalCommandHistory.push(normalized)
+  if (terminalCommandHistory.length > TERMINAL_COMMAND_LIMIT) {
+    terminalCommandHistory.splice(0, terminalCommandHistory.length - TERMINAL_COMMAND_LIMIT)
+  }
+  for (const w of BrowserWindow.getAllWindows()) {
+    w.webContents.send('terminal:command', normalized)
+  }
+}
+
+function createTerminalProcess(): void {
+  if (terminalProcess) return
+  const shell = process.platform === 'win32'
+    ? (process.env.ComSpec || 'cmd.exe')
+    : (process.env.SHELL || '/bin/bash')
+  terminalProcess = spawn(shell, [], {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: 'pipe',
+    windowsHide: true,
+  })
+
+  pushTerminalOutputUnique(`[terminal] 已启动: ${shell}\n`)
+  pushTerminalOutputUnique(`[terminal] 当前目录: ${process.cwd()}\n`)
+
+  terminalProcess.stdout.on('data', (chunk: Buffer) => {
+    pushTerminalOutput(decodeTerminalChunk(chunk))
+  })
+  terminalProcess.stderr.on('data', (chunk: Buffer) => {
+    pushTerminalOutput(decodeTerminalChunk(chunk))
+  })
+  terminalProcess.on('close', (code, signal) => {
+    pushTerminalOutput(`[terminal] 已退出 (code=${code ?? 'null'}, signal=${signal ?? 'null'})\n`)
+    terminalProcess = null
+    if (terminalRestartRequested) {
+      terminalRestartRequested = false
+      createTerminalProcess()
+      return
+    }
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.webContents.send('terminal:exit', { code, signal })
+    }
+  })
+  terminalProcess.on('error', (error) => {
+    pushTerminalOutput(`[terminal] 启动失败: ${error.message}\n`)
+    terminalProcess = null
+  })
+}
+
+function ensureTerminalProcess(): ChildProcessWithoutNullStreams {
+  if (!terminalProcess) createTerminalProcess()
+  return terminalProcess as ChildProcessWithoutNullStreams
+}
+
+function stopTerminalProcess(): void {
+  if (!terminalProcess) return
+  try {
+    terminalProcess.kill()
+  } catch {
+    // ignore
+  }
+  terminalProcess = null
+}
+
+function interruptTerminalProcess(): { ok: boolean; error?: string } {
+  if (!terminalProcess || terminalProcess.killed) {
+    return { ok: false, error: '终端未启动。' }
+  }
+
+  const proc = terminalProcess
+  terminalRestartRequested = true
+  pushTerminalOutput('^C\n')
+  pushTerminalOutput('[terminal] 已发送中断信号，正在重置终端会话...\n')
+
+  if (process.platform === 'win32') {
+    try {
+      const killer = spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      })
+      killer.on('error', () => {
+        try {
+          proc.kill()
+        } catch {
+          // ignore
+        }
+      })
+      return { ok: true }
+    } catch {
+      try {
+        proc.kill()
+      } catch {
+        terminalRestartRequested = false
+        return { ok: false, error: '发送中断失败。' }
+      }
+      return { ok: true }
+    }
+  }
+
+  try {
+    proc.kill('SIGINT')
+    return { ok: true }
+  } catch {
+    try {
+      proc.kill()
+      return { ok: true }
+    } catch {
+      terminalRestartRequested = false
+      return { ok: false, error: '发送中断失败。' }
+    }
+  }
+}
 
 function getRendererErrorLogPath(): string {
   const baseDir = isDev ? process.cwd() : dirname(process.execPath)
@@ -537,6 +702,8 @@ function resolveThemeConfig(): ThemeResolutionResult {
 }
 
 function createWindow(): void {
+  const windowIconPath = resolveWindowIconPath()
+
   const chromeOptions: Pick<BrowserWindowConstructorOptions, 'frame' | 'titleBarStyle'> = runtimePlatform === 'macos'
     ? {
       frame: true,
@@ -553,6 +720,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 600,
     ...chromeOptions,
+    ...(windowIconPath ? { icon: windowIconPath } : {}),
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -561,6 +729,10 @@ function createWindow(): void {
       nodeIntegration: false
     }
   })
+
+  if (windowIconPath) {
+    mainWindow.setIcon(windowIconPath)
+  }
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -780,6 +952,10 @@ function setupNativeMenu(): void {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.ycide.app')
+  }
+
   try {
     appendRendererDebugLog({
       source: 'main',
@@ -1065,6 +1241,50 @@ app.whenReady().then(() => {
   ipcMain.handle('file:readDir', (_event, dirPath: string) => {
     if (!existsSync(dirPath)) return []
     return readdirSync(dirPath)
+  })
+
+  ipcMain.handle('terminal:start', () => {
+    const wasRunning = !!terminalProcess
+    if (!wasRunning) {
+      terminalOutputBuffer.length = 0
+    }
+    ensureTerminalProcess()
+    return {
+      running: !!terminalProcess,
+      output: terminalOutputBuffer,
+      commands: terminalCommandHistory,
+      lastCommand: terminalCommandHistory.length > 0 ? terminalCommandHistory[terminalCommandHistory.length - 1] : '',
+    }
+  })
+
+  ipcMain.handle('terminal:send', (_event, command: string) => {
+    const normalized = typeof command === 'string' ? command : ''
+    const proc = ensureTerminalProcess()
+    if (!proc || !proc.stdin || proc.killed) {
+      return { ok: false, error: '终端未启动。' }
+    }
+    const toSend = normalized.length > 0 ? normalized : ''
+    pushTerminalCommand(toSend)
+    pushTerminalOutput(`> ${toSend}\n`)
+    proc.stdin.write(`${toSend}\n`)
+    return { ok: true }
+  })
+
+  ipcMain.handle('terminal:getSnapshot', () => {
+    return {
+      running: !!terminalProcess,
+      output: terminalOutputBuffer,
+      commands: terminalCommandHistory,
+      lastCommand: terminalCommandHistory.length > 0 ? terminalCommandHistory[terminalCommandHistory.length - 1] : '',
+    }
+  })
+
+  ipcMain.handle('terminal:getLastCommand', () => {
+    return terminalCommandHistory.length > 0 ? terminalCommandHistory[terminalCommandHistory.length - 1] : ''
+  })
+
+  ipcMain.handle('terminal:interrupt', () => {
+    return interruptTerminalProcess()
   })
 
   // 窗口重命名：重命名文件、更新 .epp、更新所有 .eyc 内容引用
@@ -1511,10 +1731,21 @@ app.whenReady().then(() => {
     const custom = settings.aiCustomModels.find(item => item.id === request.model)
     const apiKey = request.model === 'glm'
       ? settings.aiGlmApiKey
-      : request.model === 'deepseek'
+      : request.model === 'deepseek' || request.model === 'deepseek-v4-flash' || request.model === 'deepseek-v3.2'
         ? settings.aiDeepseekApiKey
         : (custom?.apiKey || '')
     return runAIChat(request, apiKey, settings.aiCustomModels)
+  })
+
+  ipcMain.handle('ai:chatWithTools', (_event, request: AIChatWithToolsRequest) => {
+    const settings = readIDESettings()
+    const custom = settings.aiCustomModels.find(item => item.id === request.model)
+    const apiKey = request.model === 'glm'
+      ? settings.aiGlmApiKey
+      : request.model === 'deepseek' || request.model === 'deepseek-v4-flash' || request.model === 'deepseek-v3.2'
+        ? settings.aiDeepseekApiKey
+        : (custom?.apiKey || '')
+    return runAIChatWithTools(request, apiKey, settings.aiCustomModels)
   })
 
   ipcMain.handle('ai:chatStream', (event, request: AIChatRequest, requestId: string) => {
@@ -1522,7 +1753,7 @@ app.whenReady().then(() => {
     const custom = settings.aiCustomModels.find(item => item.id === request.model)
     const apiKey = request.model === 'glm'
       ? settings.aiGlmApiKey
-      : request.model === 'deepseek'
+      : request.model === 'deepseek' || request.model === 'deepseek-v4-flash' || request.model === 'deepseek-v3.2'
         ? settings.aiDeepseekApiKey
         : (custom?.apiKey || '')
 
@@ -1545,7 +1776,7 @@ app.whenReady().then(() => {
     const custom = settings.aiCustomModels.find(item => item.id === request.model)
     const apiKey = request.model === 'glm'
       ? settings.aiGlmApiKey
-      : request.model === 'deepseek'
+      : request.model === 'deepseek' || request.model === 'deepseek-v4-flash' || request.model === 'deepseek-v3.2'
         ? settings.aiDeepseekApiKey
         : (custom?.apiKey || '')
     return runAIEdit(request, apiKey, settings.aiCustomModels)
@@ -1556,7 +1787,7 @@ app.whenReady().then(() => {
     const custom = settings.aiCustomModels.find(item => item.id === request.model)
     const apiKey = request.model === 'glm'
       ? settings.aiGlmApiKey
-      : request.model === 'deepseek'
+      : request.model === 'deepseek' || request.model === 'deepseek-v4-flash' || request.model === 'deepseek-v3.2'
         ? settings.aiDeepseekApiKey
         : (custom?.apiKey || '')
 
@@ -2253,4 +2484,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('before-quit', () => {
+  stopTerminalProcess()
 })

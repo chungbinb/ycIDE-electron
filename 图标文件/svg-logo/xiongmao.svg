@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="100%" height="100%">
+  <defs>
+    <!-- 深色渐变背景 -->
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1E2430" />
+      <stop offset="100%" stop-color="#0B0E14" />
+    </radialGradient>
+    
+    <!-- 科技感发光效果 -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 圆形背景 -->
+  <circle cx="200" cy="200" r="190" fill="url(#bgGrad)" stroke="#2A3441" stroke-width="6" />
+
+  <!-- 熊猫耳朵 -->
+  <!-- 左耳 -->
+  <circle cx="100" cy="100" r="45" fill="#1A1C25" />
+  <circle cx="100" cy="100" r="20" fill="#44475A" />
+  
+  <!-- 右耳 -->
+  <circle cx="300" cy="100" r="45" fill="#1A1C25" />
+  <circle cx="300" cy="100" r="20" fill="#44475A" />
+
+  <!-- 熊猫头部（白色大圆） -->
+  <circle cx="200" cy="200" r="125" fill="#FFFFFF" />
+
+  <!-- 黑色眼罩 -->
+  <ellipse cx="140" cy="200" rx="42" ry="52" transform="rotate(-25 140 200)" fill="#1A1C25" />
+  <ellipse cx="260" cy="200" rx="42" ry="52" transform="rotate(25 260 200)" fill="#1A1C25" />
+
+  <!-- 科技感眼睛（青色发光瞳孔） -->
+  <circle cx="135" cy="200" r="14" fill="#00E5FF" filter="url(#glow)" />
+  <circle cx="135" cy="200" r="6" fill="#FFFFFF" />
+  
+  <circle cx="265" cy="200" r="14" fill="#00E5FF" filter="url(#glow)" />
+  <circle cx="265" cy="200" r="6" fill="#FFFFFF" />
+
+  <!-- 鼻子 -->
+  <ellipse cx="200" cy="235" rx="14" ry="9" fill="#1A1C25" />
+
+  <!-- 微笑 -->
+  <path d="M 175 260 Q 200 280 225 260" fill="none" stroke="#1A1C25" stroke-width="6" stroke-linecap="round" />
+
+  <!-- 腮红（增强亲和力） -->
+  <ellipse cx="125" cy="245" rx="18" ry="12" fill="#FF5555" opacity="0.25" />
+  <ellipse cx="275" cy="245" rx="18" ry="12" fill="#FF5555" opacity="0.25" />
+
+  <!-- AR 科技眼镜框架 -->
+  <path d="M 90 185 L 120 195 L 280 195 L 310 185" fill="none" stroke="#BD93F9" stroke-width="6" stroke-linecap="round" />
+  <path d="M 120 195 L 120 220" fill="none" stroke="#BD93F9" stroke-width="5" stroke-linecap="round" />
+  <path d="M 280 195 L 280 220" fill="none" stroke="#BD93F9" stroke-width="5" stroke-linecap="round" />
+
+  <!-- 眼镜中的代码元素（保留品牌气质） -->
+  <text x="125" y="215" font-family="'Courier New', monospace" font-size="18" fill="#F1FA8C" font-weight="bold">&lt;/&gt;</text>
+  <text x="260" y="215" font-family="'Courier New', monospace" font-size="18" fill="#50FA7B" font-weight="bold">{ }</text>
+</svg>

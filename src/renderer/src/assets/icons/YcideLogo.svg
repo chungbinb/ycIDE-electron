@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="100%" height="100%">
+  <defs>
+    <!-- 背景渐变（保持深色 IDE 风格） -->
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1E2430" />
+      <stop offset="100%" stop-color="#0B0E14" />
+    </radialGradient>
+    
+    <!-- 科技感发光效果 -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 圆形深色背景 -->
+<!--   <circle cx="200" cy="200" r="190" fill="url(#bgGrad)" stroke="#2A3441" stroke-width="6" /> -->
+
+  <!-- 黔金丝猴特征：金色毛发底座（蓬松的头部外轮廓） -->
+  <circle cx="200" cy="200" r="115" fill="#F4C542" />
+
+  <!-- 面部区域（浅金色/米色） -->
+  <circle cx="200" cy="210" r="88" fill="#FCE6B4" />
+
+  <!-- 黔金丝猴标志性的“蓝灰色”面部皮肤（口鼻区域） -->
+  <ellipse cx="200" cy="230" rx="50" ry="35" fill="#89A7C5" />
+  
+  <!-- 粉扑扑的腮红 -->
+  <ellipse cx="145" cy="225" rx="18" ry="12" fill="#FFAAAA" opacity="0.6" />
+  <ellipse cx="255" cy="225" rx="18" ry="12" fill="#FFAAAA" opacity="0.6" />
+
+  <!-- 耳朵（毛茸茸的小圆耳） -->
+  <circle cx="110" cy="115" r="30" fill="#F4C542" />
+  <circle cx="110" cy="115" r="16" fill="#E5A83D" />
+  <circle cx="290" cy="115" r="30" fill="#F4C542" />
+  <circle cx="290" cy="115" r="16" fill="#E5A83D" />
+
+  <!-- 白色小点缀：额头上一点毛色 -->
+  <ellipse cx="200" cy="140" rx="18" ry="10" fill="#FCE6B4" opacity="0.8" />
+
+  <!-- 黑色眼罩（类似熊猫，但黔金丝猴是白眼圈，不过为了科技感保留类似结构） -->
+  <!-- 用深棕色表示眼周皮肤 -->
+  <ellipse cx="145" cy="195" rx="40" ry="45" transform="rotate(-15 145 195)" fill="#4A3C28" />
+  <ellipse cx="255" cy="195" rx="40" ry="45" transform="rotate(15 255 195)" fill="#4A3C28" />
+
+  <!-- 大眼睛（圆溜溜，高光） -->
+  <circle cx="145" cy="195" r="18" fill="#FFFFFF" />
+  <circle cx="255" cy="195" r="18" fill="#FFFFFF" />
+  
+  <!-- 瞳孔（科技感青色发光） -->
+  <circle cx="145" cy="195" r="12" fill="#00E5FF" filter="url(#glow)" />
+  <circle cx="145" cy="192" r="4" fill="#FFFFFF" />
+  
+  <circle cx="255" cy="195" r="12" fill="#00E5FF" filter="url(#glow)" />
+  <circle cx="255" cy="192" r="4" fill="#FFFFFF" />
+
+  <!-- 小鼻子（深褐色） -->
+  <ellipse cx="200" cy="235" rx="8" ry="5" fill="#5C4033" />
+
+  <!-- 可爱的微笑 -->
+  <path d="M 180 250 Q 200 265 220 250" fill="none" stroke="#5C4033" stroke-width="4" stroke-linecap="round" />
+
+  <!-- AR 科技眼镜框架（金色） -->
+  <path d="M 95 180 L 125 190 L 275 190 L 305 180" fill="none" stroke="#F1FA8C" stroke-width="5" stroke-linecap="round" />
+  <path d="M 125 190 L 125 215" fill="none" stroke="#F1FA8C" stroke-width="4" stroke-linecap="round" />
+  <path d="M 275 190 L 275 215" fill="none" stroke="#F1FA8C" stroke-width="4" stroke-linecap="round" />
+
+  <!-- 镜片中显示代码符号（突出 IDE 属性） -->
+  <!-- 左镜片： </> -->
+  <text x="132" y="212" font-family="'Courier New', monospace" font-size="16" fill="#F1FA8C" font-weight="bold">&lt;/&gt;</text>
+  <!-- 右镜片： { } -->
+  <text x="238" y="212" font-family="'Courier New', monospace" font-size="16" fill="#50FA7B" font-weight="bold">{ }</text>
+
+  <!-- 头顶装饰：一根呆毛（增加可爱度） -->
+  <path d="M 200 115 Q 210 90 195 80" fill="none" stroke="#F4C542" stroke-width="6" stroke-linecap="round" />
+  <circle cx="195" cy="80" r="5" fill="#FCE6B4" />
+
+</svg>

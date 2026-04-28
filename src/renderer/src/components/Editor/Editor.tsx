@@ -3,8 +3,9 @@ import MonacoEditor, { OnMount, OnChange, type Monaco } from '@monaco-editor/rea
 import type { editor } from 'monaco-editor'
 import EycTableEditor, { type EycTableEditorHandle, type FileProblem } from './EycTableEditor'
 import VisualDesigner, { type DesignForm, type DesignControl, type SelectionTarget, type LibWindowUnit, type LibUnitEvent, type AlignAction } from './VisualDesigner'
-import { eycToInternalFormat, eycToYiFormat } from './eycFormat'
+import { eycToInternalFormat, eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
 import { parseLines } from './eycBlocks'
+import { buildMultiLinePasteResult } from './editorPasteUtils'
 import { buildMonacoThemeTokens } from './monacoThemeTokens'
 import Icon from '../Icon/Icon'
 import '../Icon/Icon.css'
@@ -283,6 +284,32 @@ function joinPathByBaseDir(baseDir: string, fileName: string): string {
   return `${normalizedBaseDir}${separator}${normalizedFileName}`
 }
 
+function extractAssemblyLabel(content: string): string | null {
+  const lines = (content || '').replace(/\r\n/g, '\n').split('\n')
+  for (const line of lines) {
+    const match = /^\s*\.程序集\s+([^,\s，]+)/.exec(line)
+    if (!match) continue
+    const name = (match[1] || '').trim()
+    if (name) return name
+  }
+  return null
+}
+
+function stripFileExtension(fileName: string): string {
+  const name = (fileName || '').trim()
+  if (!name) return name
+  const idx = name.lastIndexOf('.')
+  if (idx <= 0) return name
+  return name.slice(0, idx)
+}
+
+function resolveEycTabLabel(filePath: string, content: string): string {
+  const assembly = extractAssemblyLabel(content)
+  if (assembly) return assembly
+  const fileName = filePath.split(/[\\/]/).pop() || filePath
+  return stripFileExtension(fileName)
+}
+
 interface ProjectDllParam {
   name: string
   type: string
@@ -299,8 +326,27 @@ interface ProjectDllCommand {
   params: ProjectDllParam[]
 }
 
+type RoutedDeclLanguage = 'ell' | 'egv' | 'ecs' | 'edt'
+
+const ROUTED_DECL_DEFAULTS: Record<RoutedDeclLanguage, { label: string; language: RoutedDeclLanguage }> = {
+  ell: { label: 'DLL命令.ell', language: 'ell' },
+  egv: { label: '全局变量.egv', language: 'egv' },
+  ecs: { label: '常量.ecs', language: 'ecs' },
+  edt: { label: '自定义数据类型.edt', language: 'edt' },
+}
+
 type TabBarPosition = 'top' | 'bottom'
+type EycEditorMode = 'table' | 'text'
 const EDITOR_TAB_BAR_POS_KEY = 'ycide.editor.tabbar.position'
+
+function isEycSourceLanguage(language?: string): boolean {
+  return language === 'eyc'
+    || language === 'egv'
+    || language === 'ecs'
+    || language === 'edt'
+    || language === 'ell'
+    || language === 'erc'
+}
 
 interface EycEditorErrorBoundaryProps {
   tabId: string
@@ -335,7 +381,7 @@ class EycEditorErrorBoundary extends Component<EycEditorErrorBoundaryProps, EycE
   }
 }
 
-const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }>; currentTheme?: string; themeTokenValues?: Record<string, string>; editorFontFamily?: string; editorFontSize?: number; editorLineHeight?: number }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [], currentTheme = '', themeTokenValues = {}, editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20 }, ref) {
+const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }>; currentTheme?: string; themeTokenValues?: Record<string, string>; editorFontFamily?: string; editorFontSize?: number; editorLineHeight?: number; editorFreezeSubTableHeader?: boolean; editorShowMinimapPreview?: boolean }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [], currentTheme = '', themeTokenValues = {}, editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, editorFreezeSubTableHeader = false, editorShowMinimapPreview = true }, ref) {
   const [tabs, setTabs] = useState<EditorTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [tabBarPosition, setTabBarPosition] = useState<TabBarPosition>(() => {
@@ -346,21 +392,32 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       return 'bottom'
     }
   })
-  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tabId: string | null } | null>(null)
   const [eycFallbackTabs, setEycFallbackTabs] = useState<Record<string, true>>({})
+  const [eycEditorModeTabs, setEycEditorModeTabs] = useState<Record<string, EycEditorMode>>({})
   const [projectGlobalVars, setProjectGlobalVars] = useState<Array<{ name: string; type: string }>>([])
   const [projectConstants, setProjectConstants] = useState<Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>>([])
   const [projectDllCommands, setProjectDllCommands] = useState<ProjectDllCommand[]>([])
   const [projectDataTypes, setProjectDataTypes] = useState<Array<{ name: string; fields: Array<{ name: string; type: string }> }>>([])
   const [projectClassNames, setProjectClassNames] = useState<Array<{ name: string }>>([])
+  const [externalChangePrompt, setExternalChangePrompt] = useState<{
+    tabId: string
+    filePath: string
+    externalContent: string
+  } | null>(null)
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<Monaco | null>(null)
   const eycEditorRef = useRef<EycTableEditorHandle | null>(null)
   const diffDecorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null)
   const diffViewZoneIdsRef = useRef<string[]>([])
   const [eycDiffHighlightLines, setEycDiffHighlightLines] = useState<Set<number>>(new Set())
+  const [eycDiffAddedLines, setEycDiffAddedLines] = useState<Set<number>>(new Set())
+  const [eycDiffEditedLines, setEycDiffEditedLines] = useState<Set<number>>(new Set())
+  const [eycDiffDeletedAfterLines, setEycDiffDeletedAfterLines] = useState<Set<number>>(new Set())
   const [windowUnits, setWindowUnits] = useState<LibWindowUnit[]>([])
   const pendingNavigateRef = useRef<{ subName: string; params: Array<{ name: string; dataType: string; isByRef: boolean }> } | null>(null)
+  const tabsRef = useRef<EditorTab[]>([])
+  const activeTabIdRef = useRef<string | null>(null)
   const monacoThemeId = currentTheme === '默认浅色' ? 'ycide-light' : 'ycide-dark'
   const monacoEditorOptions = useMemo(
     () => createMonacoEditorOptions(editorFontFamily, editorFontSize, editorLineHeight),
@@ -389,6 +446,11 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     return getTabPersistContent(tab)
   }
 
+  const getTabSavedDiskContent = (tab: EditorTab): string => {
+    if (isEycSourceLanguage(tab.language)) return eycToYiFormat(tab.savedValue)
+    return tab.savedValue
+  }
+
   const syncSidebarByLanguage = useCallback((language?: string) => {
     if (!language) return
     if (language === 'efw') onSidebarTab?.('property')
@@ -396,7 +458,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   }, [onSidebarTab])
 
   const normalizeIncomingTab = (tab: EditorTab): EditorTab => {
-    if (tab.language !== 'eyc' && tab.language !== 'egv' && tab.language !== 'ecs' && tab.language !== 'edt' && tab.language !== 'ell' && tab.language !== 'erc') return tab
+    if (!isEycSourceLanguage(tab.language)) return tab
     return {
       ...tab,
       value: eycToInternalFormat(tab.value),
@@ -405,6 +467,14 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   }
 
   const isTabModified = (tab: EditorTab): boolean => getTabPersistContent(tab) !== tab.savedValue
+
+  useEffect(() => {
+    tabsRef.current = tabs
+  }, [tabs])
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId
+  }, [activeTabId])
 
   // 保存当前文件
   const saveCurrentFile = useCallback(() => {
@@ -430,6 +500,67 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       })
     )
   }, [])
+
+  const applyExternalFileContent = useCallback(() => {
+    setTabs(prev => {
+      if (!externalChangePrompt) return prev
+      const nextTabs = prev.map(t => {
+        if (t.id !== externalChangePrompt.tabId) return t
+        if (isEycSourceLanguage(t.language)) {
+          const normalized = normalizeIncomingTab({
+            ...t,
+            value: externalChangePrompt.externalContent,
+            savedValue: externalChangePrompt.externalContent,
+          })
+          return {
+            ...t,
+            value: normalized.value,
+            savedValue: normalized.savedValue,
+          }
+        }
+        if (t.language === 'efw') {
+          let parsedForm: DesignForm | undefined = t.formData
+          try {
+            parsedForm = JSON.parse(externalChangePrompt.externalContent) as DesignForm
+          } catch {
+            // keep previous formData when external JSON is invalid
+          }
+          return {
+            ...t,
+            value: externalChangePrompt.externalContent,
+            savedValue: externalChangePrompt.externalContent,
+            formData: parsedForm,
+          }
+        }
+        return {
+          ...t,
+          value: externalChangePrompt.externalContent,
+          savedValue: externalChangePrompt.externalContent,
+        }
+      })
+      onOpenTabsChange?.(nextTabs)
+      return nextTabs
+    })
+    setExternalChangePrompt(null)
+  }, [externalChangePrompt, onOpenTabsChange])
+
+  const keepIdeContentAndOverwriteExternal = useCallback(async () => {
+    const prompt = externalChangePrompt
+    if (!prompt) return
+    const currentTab = tabsRef.current.find(t => t.id === prompt.tabId)
+    if (!currentTab?.filePath) {
+      setExternalChangePrompt(null)
+      return
+    }
+    const contentToSave = getTabSaveContent(currentTab)
+    await window.api?.file?.save(currentTab.filePath, contentToSave)
+    setTabs(prev => {
+      const nextTabs = prev.map(t => t.id === prompt.tabId ? { ...t, savedValue: getTabPersistContent(t) } : t)
+      onOpenTabsChange?.(nextTabs)
+      return nextTabs
+    })
+    setExternalChangePrompt(null)
+  }, [externalChangePrompt, onOpenTabsChange])
 
   // 统一关闭标签逻辑：有改动时先提示保存（保存/不保存/取消）
   const closeTabWithPrompt = useCallback(async (tabId: string) => {
@@ -469,6 +600,12 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         delete next[tabId]
         return next
       })
+      setEycEditorModeTabs(prevModes => {
+        if (!prevModes[tabId]) return prevModes
+        const next = { ...prevModes }
+        delete next[tabId]
+        return next
+      })
       return newTabs
     })
   }, [tabs, activeTabId, onOpenTabsChange])
@@ -483,6 +620,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const clearAllTabs = useCallback(() => {
     setTabs([])
     setActiveTabId(null)
+    setEycFallbackTabs({})
+    setEycEditorModeTabs({})
     onOpenTabsChange?.([])
   }, [onOpenTabsChange])
 
@@ -638,14 +777,14 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                 let newValue = applyWindowRenameToContent(t.value, oldName, newName, !!oldEycPath && !!t.filePath && t.filePath === oldEycPath)
                 // 若是当前窗口关联的 .eyc 标签页，同时更新路径
                 if (oldEycPath && t.filePath === oldEycPath && newEycPath) {
-                  return { ...t, id: newEycPath, label: newName + '.eyc', filePath: newEycPath, value: newValue }
+                  return { ...t, id: newEycPath, label: resolveEycTabLabel(newEycPath, newValue), filePath: newEycPath, value: newValue }
                 }
                 return { ...t, value: newValue }
               }
               // 即使内容未命中旧名，也要确保当前窗口关联 .eyc 的程序集名规则迁移并更新路径
               if (oldEycPath && t.filePath === oldEycPath && newEycPath) {
                 const normalizedValue = applyWindowRenameToContent(t.value, oldName, newName, true)
-                return { ...t, id: newEycPath, label: newName + '.eyc', filePath: newEycPath, value: normalizedValue }
+                return { ...t, id: newEycPath, label: resolveEycTabLabel(newEycPath, normalizedValue), filePath: newEycPath, value: normalizedValue }
               }
             }
             return t
@@ -783,9 +922,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     } else {
       const content = await window.api?.project?.readFile(eycPath)
       if (content === null || content === undefined) return
-      const fileName = eycPath.split(/[\\/]/).pop() || ''
       const newTab: EditorTab = {
-        id: eycPath, label: fileName, language: 'eyc',
+        id: eycPath, label: resolveEycTabLabel(eycPath, content), language: 'eyc',
         value: content, savedValue: content, filePath: eycPath,
       }
       setTabs(prev => {
@@ -962,10 +1100,21 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     hasModifiedTabs: () => tabs.some(t => isTabModified(t)),
     editorAction: (action: string) => {
       const active = tabs.find(t => t.id === activeTabId)
-      if (active?.language === 'eyc' || active?.language === 'egv' || active?.language === 'ecs' || active?.language === 'edt' || active?.language === 'ell' || active?.language === 'erc') {
+      const activeIsEycSource = !!active && isEycSourceLanguage(active.language)
+      const activeIsTableMode = !!active && activeIsEycSource
+        && (eycEditorModeTabs[active.id] || 'table') === 'table'
+        && !eycFallbackTabs[active.id]
+
+      if (activeIsTableMode) {
         eycEditorRef.current?.editorAction(action)
         return
       }
+
+      if (action === 'paste' && (activeIsEycSource || active?.language === 'efw')) {
+        void handleCommandPaste()
+        return
+      }
+
       const ed = editorRef.current
       if (!ed) return
       switch (action) {
@@ -1033,13 +1182,59 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       const active = tabs.find(t => t.id === activeTabId)
       const isEycLang = active && ['eyc', 'egv', 'ecs', 'edt', 'ell', 'erc'].includes(active.language)
       if (isEycLang) {
-        // EycTableEditor: convert 1-based addedLines to 0-based lineIndex Set, merge with existing
-        const newLines = diffInfo.addedLines.map(l => l - 1)
-        setTimeout(() => setEycDiffHighlightLines(prev => {
-          const merged = new Set(prev)
-          for (const l of newLines) merged.add(l)
-          return merged
-        }), 60)
+        // EycTableEditor: split diff markers into added/edited/deleted lanes for minimap rendering.
+        const incomingAdded = new Set<number>(diffInfo.addedLines.map(l => l - 1))
+        const incomingDeletedAfter = new Set<number>(
+          diffInfo.deletedGroups
+            .map(g => Math.max(g.afterLine - 1, 0))
+            .filter(line => Number.isInteger(line) && line >= 0),
+        )
+        // 在同一次 hunk 内，若新增行与删除锚点相邻（|Δ|≤1）视为"变更"而非"新增"。
+        // 但 applyDiffHighlight 是按 hunk 流式下发的，add 与 delete 可能分多次到达，
+        // 因此在 setter 内以累计状态（prev + incoming）交叉判定，并在 added 与 edited 之间迁移。
+        const NEAR = 1
+        const isNear = (a: number, b: number): boolean => Math.abs(a - b) <= NEAR
+
+        setTimeout(() => {
+          // 先合并 deletedAfter，并拿到合并后的完整集合（用于判定 added 是否应改为 edited）
+          let mergedDeletedAfter: Set<number> = new Set(incomingDeletedAfter)
+          setEycDiffDeletedAfterLines(prev => {
+            mergedDeletedAfter = new Set(prev)
+            for (const line of incomingDeletedAfter) mergedDeletedAfter.add(line)
+            return mergedDeletedAfter
+          })
+          // 再据此计算 added 的最终集合：排除相邻 deletedAnchor 的行
+          const promotedFromAdded = new Set<number>()
+          setEycDiffAddedLines(prev => {
+            const next = new Set<number>()
+            // a) 旧 added 中与本次或历史 deletedAnchor 相邻的，迁出到 edited
+            for (const a of prev) {
+              let near = false
+              for (const d of mergedDeletedAfter) { if (isNear(a, d)) { near = true; break } }
+              if (near) promotedFromAdded.add(a)
+              else next.add(a)
+            }
+            // b) 本次 incomingAdded：相邻任何（历史或本次）deletedAnchor 则走 edited
+            for (const a of incomingAdded) {
+              let near = false
+              for (const d of mergedDeletedAfter) { if (isNear(a, d)) { near = true; break } }
+              if (near) promotedFromAdded.add(a)
+              else next.add(a)
+            }
+            return next
+          })
+          setEycDiffEditedLines(prev => {
+            const merged = new Set(prev)
+            for (const line of promotedFromAdded) merged.add(line)
+            return merged
+          })
+          setEycDiffHighlightLines(prev => {
+            const merged = new Set(prev)
+            for (const line of incomingAdded) merged.add(line)
+            for (const line of promotedFromAdded) merged.add(line)
+            return merged
+          })
+        }, 60)
       } else {
         // Monaco: append decorations to existing ones
         setTimeout(() => appendDiffDecorations(diffInfo), 60)
@@ -1048,6 +1243,9 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     clearDiffHighlight: () => {
       clearDiffDecorations()
       setEycDiffHighlightLines(new Set())
+      setEycDiffAddedLines(new Set())
+      setEycDiffEditedLines(new Set())
+      setEycDiffDeletedAfterLines(new Set())
     },
     insertDeclaration: () => {
       eycEditorRef.current?.insertSubroutine()
@@ -1106,6 +1304,51 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       onDocTypeChange?.('')
     }
   }, [activeTabId])
+
+  useEffect(() => {
+    if (!activeTabId) {
+      setExternalChangePrompt(null)
+      return
+    }
+    const active = tabs.find(t => t.id === activeTabId)
+    if (!active?.filePath) {
+      setExternalChangePrompt(null)
+      return
+    }
+
+    let disposed = false
+    const checkExternalChange = async (): Promise<void> => {
+      const latestActiveTabId = activeTabIdRef.current
+      if (!latestActiveTabId) return
+      const latestTab = tabsRef.current.find(t => t.id === latestActiveTabId)
+      if (!latestTab?.filePath) return
+      const diskContent = await window.api?.project?.readFile(latestTab.filePath)
+      if (disposed || diskContent == null) return
+
+      const savedDiskContent = getTabSavedDiskContent(latestTab)
+      if (diskContent !== savedDiskContent) {
+        setExternalChangePrompt(prev => {
+          if (prev && prev.tabId === latestTab.id && prev.externalContent === diskContent) return prev
+          return {
+            tabId: latestTab.id,
+            filePath: latestTab.filePath!,
+            externalContent: diskContent,
+          }
+        })
+      } else {
+        setExternalChangePrompt(prev => (prev && prev.tabId === latestTab.id ? null : prev))
+      }
+    }
+
+    void checkExternalChange()
+    const timer = window.setInterval(() => {
+      void checkExternalChange()
+    }, 2000)
+    return () => {
+      disposed = true
+      window.clearInterval(timer)
+    }
+  }, [activeTabId, tabs])
 
   // 收集项目内全局变量（.egv + 已打开标签页），用于 EYC 补全
   useEffect(() => {
@@ -1504,9 +1747,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       // 读取并打开 .eyc 文件
       const content = await window.api?.project?.readFile(eycPath)
       if (content === null || content === undefined) return
-      const fileName = eycPath.split(/[\\/]/).pop() || ''
       const newTab: EditorTab = {
-        id: eycPath, label: fileName, language: 'eyc',
+        id: eycPath, label: resolveEycTabLabel(eycPath, content), language: 'eyc',
         value: content, savedValue: content, filePath: eycPath,
       }
       setTabs(prev => {
@@ -1550,9 +1792,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     } else {
       const content = await window.api?.project?.readFile(eycPath)
       if (content === null || content === undefined) return
-      const fileName = eycPath.split(/[\\/]/).pop() || ''
       const newTab: EditorTab = {
-        id: eycPath, label: fileName, language: 'eyc',
+        id: eycPath, label: resolveEycTabLabel(eycPath, content), language: 'eyc',
         value: content, savedValue: content, filePath: eycPath,
       }
       setTabs(prev => {
@@ -1579,9 +1820,16 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   }, [activeTabId, tabs, syncProjectTreeAfterEventSubChange])
 
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0] || null
+  const activeTabEycMode: EycEditorMode = activeTab ? (eycEditorModeTabs[activeTab.id] || 'table') : 'table'
+  const activeTabFallbackTextMode = !!(activeTab && eycFallbackTabs[activeTab.id])
+  const activeTabUseTextMode = activeTabEycMode === 'text' || activeTabFallbackTextMode
+  const activeTabTextModeValue = useMemo(() => {
+    if (!activeTab || !isEycSourceLanguage(activeTab.language)) return ''
+    return eycToYiFormat(activeTab.value)
+  }, [activeTab])
   const activeWindowControls = useMemo(() => {
     if (!activeTab) return [] as Array<{ name: string; type: string }>
-    const isSourceTab = activeTab.language === 'eyc' || activeTab.language === 'egv' || activeTab.language === 'ecs' || activeTab.language === 'edt' || activeTab.language === 'ell' || activeTab.language === 'erc'
+    const isSourceTab = isEycSourceLanguage(activeTab.language)
     if (!isSourceTab) return [] as Array<{ name: string; type: string }>
 
     const sourceFileName = (activeTab.filePath?.split(/[\\/]/).pop() || activeTab.label).toLowerCase()
@@ -1651,6 +1899,16 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     )
   }, [activeTabId])
 
+  const handleEycTextEditorChange: OnChange = useCallback((value) => {
+    if (value === undefined) return
+    const internal = eycToInternalFormat(value)
+    setTabs(prev =>
+      prev.map(t =>
+        t.id === activeTabId ? { ...t, value: internal } : t
+      )
+    )
+  }, [activeTabId])
+
   // 直接接收 string 的 onChange（给 EycTableEditor 用）
   const handleEycChange = useCallback((value: string) => {
     setTabs(prev =>
@@ -1659,6 +1917,158 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       )
     )
   }, [activeTabId])
+
+  const handleRouteDeclarationPaste = useCallback((routes: Array<{ language: RoutedDeclLanguage; lines: string[] }>) => {
+    if (!routes || routes.length === 0) return
+    const persistedTargets: Array<{ id: string; language: RoutedDeclLanguage; filePath?: string; content: string }> = []
+    setTabs(prev => {
+      let next = [...prev]
+
+      for (const route of routes) {
+        const lines = route.lines.filter(line => line.trim().length > 0)
+        if (lines.length === 0) continue
+
+        let targetIndex = next.findIndex(t => t.language === route.language)
+        if (targetIndex < 0) {
+          const meta = ROUTED_DECL_DEFAULTS[route.language]
+          const id = projectDir ? joinPathByBaseDir(projectDir, meta.label) : `__auto__/${meta.label}`
+          const created: EditorTab = normalizeIncomingTab({
+            id,
+            label: meta.label,
+            language: meta.language,
+            value: '',
+            savedValue: '',
+            filePath: projectDir ? id : undefined,
+          })
+          next = [...next, created]
+          targetIndex = next.length - 1
+        }
+
+        const target = next[targetIndex]
+        const current = target.value || ''
+        const appended = current.trim().length > 0
+          ? `${current.replace(/\n+$/, '')}\n${lines.join('\n')}`
+          : lines.join('\n')
+        next[targetIndex] = { ...target, value: appended }
+        persistedTargets.push({ id: next[targetIndex].id, language: route.language, filePath: next[targetIndex].filePath, content: appended })
+      }
+
+      onOpenTabsChange?.(next)
+      return next
+    })
+
+    // 将自动路由到声明文档的内容立即落盘，确保文件被项目树识别。
+    // 对应标签同时更新 savedValue，避免显示为未保存脏状态。
+    void (async () => {
+      if (!projectDir || persistedTargets.length === 0) return
+      const unique = new Map<string, { id: string; language: RoutedDeclLanguage; filePath?: string; content: string }>()
+      for (const item of persistedTargets) unique.set(item.id, item)
+      let wroteAny = false
+
+      for (const target of unique.values()) {
+        if (!target.filePath) continue
+        const fileName = target.filePath.replace(/^.*[\\/]/, '')
+        const fileType = target.language.toUpperCase()
+        // addFile 同时负责写盘与将文件注册进 .epp；若已存在会跳过重复注册。
+        await window.api?.project?.addFile(projectDir, fileName, fileType, target.content)
+        wroteAny = true
+      }
+
+      if (wroteAny) {
+        setTabs(prev => prev.map(t => {
+          const target = unique.get(t.id)
+          if (!target) return t
+          return { ...t, savedValue: target.content }
+        }))
+        onProjectTreeRefresh?.()
+      }
+    })()
+  }, [onOpenTabsChange, onProjectTreeRefresh, projectDir])
+
+  const handleEditorContentPasteCapture = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    if (!activeTab) return
+    const clipText = e.clipboardData?.getData('text/plain') || ''
+    if (!clipText || clipText.trim().length === 0) return
+
+    const sourceLanguage = isEycSourceLanguage(activeTab.language)
+    const tableModeSource = sourceLanguage && !activeTabUseTextMode
+
+    // 表格模式由 EycTableEditor 内部统一处理，避免重复拦截。
+    if (tableModeSource) return
+
+    if (sourceLanguage && activeTabUseTextMode) {
+      const cursorLine = Math.max(0, (editorRef.current?.getPosition()?.lineNumber || 1) - 1)
+      const result = buildMultiLinePasteResult({
+        currentText: activeTab.value || '',
+        clipText,
+        cursorLine,
+        sanitizePastedText: sanitizePastedTextForCurrent,
+        extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
+        extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+      })
+      if (!result) return
+
+      e.preventDefault()
+      e.stopPropagation()
+
+      if (result.routedDeclarations.length > 0) {
+        handleRouteDeclarationPaste(result.routedDeclarations)
+      }
+
+      setTabs(prev => prev.map(t => {
+        if (t.id !== activeTab.id) return t
+        return { ...t, value: result.nextText }
+      }))
+      return
+    }
+
+    // 可视化设计器或其它编辑器：若粘贴内容中包含声明，则执行跨文档路由。
+    const routed = extractRoutedDeclarationLinesFromPasted(clipText, '')
+    if (routed.length === 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    handleRouteDeclarationPaste(routed)
+  }, [activeTab, activeTabUseTextMode, handleRouteDeclarationPaste])
+
+  const handleCommandPaste = useCallback(async () => {
+    if (!activeTab) return
+    let clipText = ''
+    try {
+      clipText = await navigator.clipboard.readText()
+    } catch {
+      return
+    }
+    if (!clipText || clipText.trim().length === 0) return
+
+    const sourceLanguage = isEycSourceLanguage(activeTab.language)
+    if (sourceLanguage && activeTabUseTextMode) {
+      const cursorLine = Math.max(0, (editorRef.current?.getPosition()?.lineNumber || 1) - 1)
+      const result = buildMultiLinePasteResult({
+        currentText: activeTab.value || '',
+        clipText,
+        cursorLine,
+        sanitizePastedText: sanitizePastedTextForCurrent,
+        extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
+        extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+      })
+      if (!result) return
+
+      if (result.routedDeclarations.length > 0) {
+        handleRouteDeclarationPaste(result.routedDeclarations)
+      }
+
+      setTabs(prev => prev.map(t => {
+        if (t.id !== activeTab.id) return t
+        return { ...t, value: result.nextText }
+      }))
+      return
+    }
+
+    const routed = extractRoutedDeclarationLinesFromPasted(clipText, sourceLanguage ? (activeTab.value || '') : '')
+    if (routed.length > 0) {
+      handleRouteDeclarationPaste(routed)
+    }
+  }, [activeTab, activeTabUseTextMode, handleRouteDeclarationPaste])
 
   // 可视化设计器 form 改变
   const handleFormChange = useCallback((form: DesignForm) => {
@@ -1713,10 +2123,10 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     }
   }, [tabContextMenu])
 
-  const handleTabContextMenu = useCallback((e: React.MouseEvent) => {
+  const handleTabContextMenu = useCallback((e: React.MouseEvent, tabId: string | null = null) => {
     e.preventDefault()
     e.stopPropagation()
-    setTabContextMenu({ x: e.clientX, y: e.clientY })
+    setTabContextMenu({ x: e.clientX, y: e.clientY, tabId })
   }, [])
 
   const toggleTabBarPosition = useCallback(() => {
@@ -1724,10 +2134,61 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     setTabContextMenu(null)
   }, [])
 
+  const contextMenuTab = tabContextMenu
+    ? tabs.find(t => t.id === (tabContextMenu.tabId ?? activeTabId)) || null
+    : null
+  const contextMenuTabIsEyc = isEycSourceLanguage(contextMenuTab?.language)
+  const contextMenuTabMode: EycEditorMode = contextMenuTab ? (eycEditorModeTabs[contextMenuTab.id] || 'table') : 'table'
+  const contextMenuTabFallbackTextMode = !!(contextMenuTab && eycFallbackTabs[contextMenuTab.id])
+  const contextMenuTabUseTextMode = contextMenuTabMode === 'text' || contextMenuTabFallbackTextMode
+
+  const toggleContextMenuTabEditorMode = useCallback(() => {
+    const targetTabId = tabContextMenu?.tabId ?? activeTabId
+    if (!targetTabId) {
+      setTabContextMenu(null)
+      return
+    }
+    const targetTab = tabs.find(t => t.id === targetTabId)
+    if (!targetTab || !isEycSourceLanguage(targetTab.language)) {
+      setTabContextMenu(null)
+      return
+    }
+    const mode = eycEditorModeTabs[targetTabId] || 'table'
+    const fallbackTextMode = !!eycFallbackTabs[targetTabId]
+    const useTextMode = mode === 'text' || fallbackTextMode
+    const nextMode: EycEditorMode = useTextMode ? 'table' : 'text'
+    setEycEditorModeTabs(prev => {
+      const next = { ...prev }
+      if (nextMode === 'table') delete next[targetTabId]
+      else next[targetTabId] = 'text'
+      return next
+    })
+    if (nextMode === 'table') {
+      setEycFallbackTabs(prev => {
+        if (!prev[targetTabId]) return prev
+        const next = { ...prev }
+        delete next[targetTabId]
+        return next
+      })
+    }
+    setTabContextMenu(null)
+  }, [tabContextMenu, activeTabId, tabs, eycEditorModeTabs, eycFallbackTabs])
+
   return (
     <div className={`editor ${tabBarPosition === 'top' ? 'editor-tabs-top' : 'editor-tabs-bottom'}`} role="main" aria-label="代码编辑器">
+      {externalChangePrompt && activeTab && externalChangePrompt.tabId === activeTab.id && (
+        <div className="editor-external-change-banner" role="alert">
+          <span className="editor-external-change-text">
+            文件已被外部修改
+          </span>
+          <div className="editor-external-change-actions">
+            <button type="button" className="editor-external-change-btn" onClick={applyExternalFileContent}>更新为外部内容</button>
+            <button type="button" className="editor-external-change-btn primary" onClick={() => { void keepIdeContentAndOverwriteExternal() }}>保留 IDE 当前内容</button>
+          </div>
+        </div>
+      )}
       {/* 编辑区 */}
-      <div className="editor-content">
+      <div className="editor-content" onPasteCapture={handleEditorContentPasteCapture}>
         {!activeTab ? (
           <div className="editor-empty">
             <div className="editor-empty-text">没有打开的文件</div>
@@ -1746,40 +2207,42 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             onControlDoubleClick={handleControlDblClick}
             onFormDoubleClick={handleFormDblClick}
           />
-        ) : (activeTab.language === 'eyc' || activeTab.language === 'egv' || activeTab.language === 'ecs' || activeTab.language === 'edt' || activeTab.language === 'ell' || activeTab.language === 'erc') ? (
-          eycFallbackTabs[activeTab.id] ? (
+        ) : isEycSourceLanguage(activeTab.language) ? (
+          activeTabUseTextMode ? (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#2d2d2d', borderBottom: '1px solid #3a3a3a' }}>
-                <span style={{ color: '#f2c97d', fontSize: 12 }}>表格模式异常，已临时切换到文本模式</span>
-                <button
-                  type="button"
-                  style={{
-                    padding: '2px 10px',
-                    borderRadius: 4,
-                    border: '1px solid #5a5a5a',
-                    background: '#3a3a3a',
-                    color: '#d4d4d4',
-                    cursor: 'pointer',
-                    fontSize: 12,
-                  }}
-                  onClick={() => {
-                    setEycFallbackTabs(prev => {
-                      const next = { ...prev }
-                      delete next[activeTab.id]
-                      return next
-                    })
-                  }}
-                >
-                  重试表格模式
-                </button>
-              </div>
+              {activeTabFallbackTextMode && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#2d2d2d', borderBottom: '1px solid #3a3a3a' }}>
+                  <span style={{ color: '#f2c97d', fontSize: 12 }}>表格模式异常，已临时切换到文本模式</span>
+                  <button
+                    type="button"
+                    style={{
+                      padding: '2px 10px',
+                      borderRadius: 4,
+                      border: '1px solid #5a5a5a',
+                      background: '#3a3a3a',
+                      color: '#d4d4d4',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                    }}
+                    onClick={() => {
+                      setEycFallbackTabs(prev => {
+                        const next = { ...prev }
+                        delete next[activeTab.id]
+                        return next
+                      })
+                    }}
+                  >
+                    重试表格模式
+                  </button>
+                </div>
+              )}
               <div style={{ flex: 1 }}>
                 <MonacoEditor
                   key={activeTab.id}
                   language="eyc"
-                  value={activeTab.value}
+                  value={activeTabTextModeValue}
                   theme={monacoThemeId}
-                  onChange={handleEditorChange}
+                  onChange={handleEycTextEditorChange}
                   onMount={handleEditorMount}
                   beforeMount={(monaco) => {
                     registerEycLanguage(monaco)
@@ -1818,6 +2281,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                 editorFontFamily={editorFontFamily}
                 editorFontSize={editorFontSize}
                 editorLineHeight={editorLineHeight}
+                freezeSubTableHeader={editorFreezeSubTableHeader}
+                showMinimapPreview={editorShowMinimapPreview}
                 projectDir={projectDir}
                 isClassModule={activeTab.label.toLowerCase().endsWith('.ecc')}
                 projectGlobalVars={projectGlobalVars}
@@ -1834,10 +2299,14 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                 onCommandClear={onCommandClear}
                 onProblemsChange={onProblemsChange}
                 onCursorChange={onCursorChange}
+                onRouteDeclarationPaste={handleRouteDeclarationPaste}
                 breakpointLines={breakpointsByFile[activeTab.label] || []}
                 debugSourceLine={debugLocation?.file === activeTab.label ? debugLocation.line : undefined}
                 debugVariables={debugLocation?.file === activeTab.label ? debugVariables : []}
                 diffHighlightLines={eycDiffHighlightLines}
+                diffAddedLines={eycDiffAddedLines}
+                diffEditedLines={eycDiffEditedLines}
+                diffDeletedAfterLines={eycDiffDeletedAfterLines}
               />
             </EycEditorErrorBoundary>
           )
@@ -1869,7 +2338,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         className="editor-tabs"
         role="tablist"
         aria-label="打开的文件"
-        onContextMenu={handleTabContextMenu}
+        onContextMenu={(e) => handleTabContextMenu(e, activeTabId)}
       >
         {tabs.map((tab) => (
           <button
@@ -1878,7 +2347,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             role="tab"
             aria-selected={tab.id === activeTabId}
             onClick={() => switchTab(tab.id)}
-            onContextMenu={handleTabContextMenu}
+            onContextMenu={(e) => handleTabContextMenu(e, tab.id)}
             title={tab.filePath || tab.label}
           >
             <span className="editor-tab-icon">
@@ -1911,6 +2380,15 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
           >
             {tabBarPosition === 'bottom' ? '将文件标签移到编辑器上边' : '将文件标签移到编辑器下边'}
           </button>
+          {contextMenuTabIsEyc && (
+            <button
+              type="button"
+              className="editor-tab-context-item"
+              onClick={toggleContextMenuTabEditorMode}
+            >
+              {contextMenuTabUseTextMode ? '切换为表格模式' : '切换为文本模式'}
+            </button>
+          )}
         </div>
       )}
     </div>

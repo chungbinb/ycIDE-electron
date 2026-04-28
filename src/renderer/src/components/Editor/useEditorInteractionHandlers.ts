@@ -50,6 +50,9 @@ interface UseEditorInteractionHandlersParams {
   applyTextChange: (nextText: string) => void
   pushUndo: (text: string) => void
   sanitizePastedTextForCurrent: (clipText: string, currentText: string) => string
+  extractAssemblyVarLinesFromPasted: (clipText: string, currentText: string) => string[]
+  extractRoutedDeclarationLinesFromPasted: (clipText: string, currentText: string) => Array<{ language: 'ell' | 'egv' | 'ecs' | 'edt'; lines: string[] }>
+  onRouteDeclarationPaste?: (routes: Array<{ language: 'ell' | 'egv' | 'ecs' | 'edt'; lines: string[] }>) => void
   shouldUseNativeInputPaste: (editCell: EditCellLike | null) => boolean
   suppressInlineBlurCommit: (durationMs?: number) => void
   commitActiveEditor: () => void
@@ -90,6 +93,9 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     applyTextChange,
     pushUndo,
     sanitizePastedTextForCurrent,
+    extractAssemblyVarLinesFromPasted,
+    extractRoutedDeclarationLinesFromPasted,
+    onRouteDeclarationPaste,
     shouldUseNativeInputPaste,
     suppressInlineBlurCommit,
     commitActiveEditor,
@@ -243,8 +249,13 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
       clipText,
       cursorLine,
       sanitizePastedText: sanitizePastedTextForCurrent,
+      extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
+      extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
     })
     if (!pasteResult) return
+    if (pasteResult.routedDeclarations.length > 0) {
+      onRouteDeclarationPaste?.(pasteResult.routedDeclarations)
+    }
     debugFlowPaste('paste-wrapper:result', {
       insertAt: pasteResult.insertAt,
       pastedLineCount: pasteResult.pastedLineCount,
@@ -266,7 +277,10 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     applyTextChange,
     currentText,
     editCellRef,
+    extractAssemblyVarLinesFromPasted,
+    extractRoutedDeclarationLinesFromPasted,
     lastFocusedLineRef,
+    onRouteDeclarationPaste,
     pushUndo,
     sanitizePastedTextForCurrent,
     setSelectedLines,
