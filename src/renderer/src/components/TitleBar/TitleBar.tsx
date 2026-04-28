@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import './TitleBar.css'
 import { getPrimaryModifierLabel, getQuitShortcutLabel, getRedoShortcutLabel, isMacOSPlatform, type RuntimePlatform } from '../../utils/shortcuts'
+import ycideLogo from '../../assets/icons/YcideLogo.svg'
 
 interface MenuItem {
   label: string
@@ -194,12 +195,7 @@ function TitleBar({ onMenuAction, onWindowClose, runtimePlatform = 'windows', ha
       <div className="titlebar-drag">
         {!isMacOS && (
           <div className="titlebar-icon" aria-hidden="true">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <rect x="1" y="1" width="6" height="6" rx="1" />
-            <rect x="9" y="1" width="6" height="6" rx="1" />
-            <rect x="1" y="9" width="6" height="6" rx="1" />
-            <rect x="9" y="9" width="6" height="6" rx="1" />
-          </svg>
+            <img src={ycideLogo} className="titlebar-icon-image" alt="" draggable={false} />
           </div>
         )}
         {!isMacOS && (

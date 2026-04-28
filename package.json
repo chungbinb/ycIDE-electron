@@ -1,6 +1,6 @@
 {
   "name": "ycide",
-  "version": "1.0.0",
+  "version": "0.0.3-beta.52",
   "description": "ycIDE - 易语言集成开发环境 (HTML版)",
   "main": "./out/main/index.js",
   "scripts": {

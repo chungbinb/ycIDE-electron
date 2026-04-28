@@ -197,6 +197,7 @@
   border-radius: 6px;
   padding: 8px;
   background: color-mix(in srgb, var(--bg-primary) 92%, var(--bg-tertiary));
+  user-select: text;
 }
 
 .ai-chat-item {
@@ -230,6 +231,38 @@
   word-break: break-word;
   font-family: inherit;
   font-size: inherit;
+  user-select: text;
+  cursor: text;
+}
+
+.ai-tool-trace {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-tool-trace-summary {
+  cursor: pointer;
+  color: var(--text-primary);
+  user-select: text;
+}
+
+.ai-tool-trace-summary:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.ai-tool-trace-section {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-primary) 92%, var(--bg-tertiary));
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.ai-tool-trace-title {
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .ai-textarea {
@@ -325,6 +358,18 @@
   background: transparent;
   border-color: transparent;
   color: var(--text-primary);
+}
+
+.ai-stop-btn {
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+  border-color: color-mix(in srgb, var(--error) 40%, var(--border-color));
+  color: var(--error);
+}
+
+.ai-stop-btn:hover:not(:disabled),
+.ai-stop-btn:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 24%, transparent);
+  border-color: color-mix(in srgb, var(--error) 55%, var(--border-color));
 }
 
 .ai-send-btn:hover:not(:disabled),

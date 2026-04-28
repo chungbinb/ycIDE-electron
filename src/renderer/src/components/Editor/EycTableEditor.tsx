@@ -2712,37 +2712,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       // 检查是否需要插入自动补齐的后续行（只在新输入时插入，已有匹配结束标记时不重复插入）
       let extraLines = formattedLines.slice(1)
       if (extraLines.length > 0) {
-        // 检查后续行是否已存在对应的结束/分支关键词（只在新输入时插入，已有匹配结束标记时不重复插入）
-        // 扫描在当前子程序范围内，且遇到同缩进的普通代码行就停止，避免跨块错误复用远处标记
         const afterIdx = editCell.isVirtual ? editCell.lineIndex + 2 : editCell.lineIndex + 1
-        const mainIndentLen = mainLine.length - mainLine.replace(/^ +/, '').length
-        const remainingLines: string[] = []
-        for (let ri = afterIdx; ri < lines.length; ri++) {
-          const rawRl = lines[ri]
-          const rlTrim = rawRl.replace(/[\r\t]/g, '').trim()
-          if (rlTrim.startsWith('.子程序 ') || rlTrim.startsWith('.程序集 ')) break
-          if (rlTrim === '') { remainingLines.push(rawRl); continue }
-          const rlIndent = rawRl.length - rawRl.replace(/^ +/, '').length
-          if (rlIndent < mainIndentLen) break
-          remainingLines.push(rawRl)
-          if (rlIndent === mainIndentLen) {
-            const rlKw = extractFlowKw(rawRl)
-            // 同缩进且不是流程标记/结束/分支：属于块外普通代码，停止扫描
-            if (!rlKw) break
-          }
-        }
-        const kwLines = extraLines.filter(el => {
-          const t = el.trim()
-          return el.includes(FLOW_AUTO_TAG) || t === FLOW_TRUE_MARK || t === FLOW_ELSE_MARK || t === FLOW_JUDGE_END_MARK
-        })
-        const hasEnding = kwLines.length > 0 && kwLines.every(el => {
-          const t = el.trim()
-          const rawKw = (t === FLOW_TRUE_MARK || t === FLOW_ELSE_MARK || t === FLOW_JUDGE_END_MARK) ? t : el.replace(FLOW_AUTO_TAG, '').trim()
-          // 提取纯关键词名（去掉括号和参数部分）
-          const kw = rawKw.split(/[\s(（]/)[0] || rawKw
-          return remainingLines.some(rl => extractFlowKw(rl) === kw)
-        })
-        if (hasEnding) extraLines = []
+        const remainingLines = collectRemainingLinesInCurrentScope(lines, afterIdx)
+        extraLines = removeDuplicateFlowAutoEndings(extraLines, remainingLines)
       }
       if (editCell.isVirtual) {
         // 虚拟代码行：插入新行而非替换

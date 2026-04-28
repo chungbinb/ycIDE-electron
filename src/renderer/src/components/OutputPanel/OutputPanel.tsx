@@ -68,9 +68,15 @@ interface OutputPanelProps {
   onDebugContinue?: () => void
   forceTab?: OutputTab | null
   onProblemClick?: (problem: FileProblem) => void
+  terminalOutput?: string[]
+  terminalRunning?: boolean
+  terminalLastCommand?: string
+  onTerminalSend?: (command: string) => Promise<{ ok: boolean; error?: string }>
+  onTerminalInterrupt?: () => Promise<{ ok: boolean; error?: string }>
+  onTerminalActivate?: () => Promise<void> | void
 }
 
-function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, highlightParamIndex, problems = [], debugPause = null, debugDisplayLine = null, isDebugPaused = false, onDebugContinue, forceTab, onProblemClick }: OutputPanelProps): React.JSX.Element {
+function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, highlightParamIndex, problems = [], debugPause = null, debugDisplayLine = null, isDebugPaused = false, onDebugContinue, forceTab, onProblemClick, terminalOutput = [], terminalRunning = false, terminalLastCommand = '', onTerminalSend, onTerminalInterrupt, onTerminalActivate }: OutputPanelProps): React.JSX.Element {
   const OUTPUT_MIN_HEIGHT = 100
   const OUTPUT_MAX_HEIGHT = 500
   const OUTPUT_RESIZE_STEP = 16
@@ -90,6 +96,11 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
     }
   })
   const [tabsContextMenu, setTabsContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [terminalInput, setTerminalInput] = useState('')
+  const [terminalBusy, setTerminalBusy] = useState(false)
+  const [terminalStatus, setTerminalStatus] = useState<string | null>(null)
+  const [terminalFocused, setTerminalFocused] = useState(false)
+  const terminalRef = useRef<HTMLDivElement>(null)
 
   // 外部强制切换标签（编译/运行时自动切到编译输出）
   useEffect(() => {
@@ -130,6 +141,25 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
       contentRef.current.scrollTop = contentRef.current.scrollHeight
     }
   }, [messages, activeTab])
+
+  useEffect(() => {
+    if (activeTab === 'terminal' && terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight
+    }
+  }, [terminalOutput, activeTab, terminalInput])
+
+  useEffect(() => {
+    if (activeTab !== 'terminal') return
+    const frame = window.requestAnimationFrame(() => {
+      terminalRef.current?.focus()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeTab])
+
+  useEffect(() => {
+    if (activeTab !== 'terminal') return
+    void onTerminalActivate?.()
+  }, [activeTab, onTerminalActivate])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -317,6 +347,70 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
     }
   }
 
+  const handleTerminalRun = useCallback(async () => {
+    const command = terminalInput
+    if (!command.trim() || terminalBusy || !onTerminalSend) return
+    setTerminalBusy(true)
+    setTerminalStatus(null)
+    const result = await onTerminalSend(command)
+    if (!result.ok) {
+      setTerminalStatus(result.error || '命令执行失败。')
+    } else {
+      setTerminalInput('')
+    }
+    setTerminalBusy(false)
+  }, [onTerminalSend, terminalBusy, terminalInput])
+
+  const handleTerminalInterrupt = useCallback(async () => {
+    if (terminalBusy || !onTerminalInterrupt) return
+    setTerminalBusy(true)
+    setTerminalStatus(null)
+    const result = await onTerminalInterrupt()
+    if (!result.ok) {
+      setTerminalStatus(result.error || '发送中断失败。')
+    }
+    setTerminalInput('')
+    setTerminalBusy(false)
+  }, [onTerminalInterrupt, terminalBusy])
+
+  const handleTerminalKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.ctrlKey && !event.altKey && !event.metaKey && (event.key === 'c' || event.key === 'C')) {
+      event.preventDefault()
+      void handleTerminalInterrupt()
+      return
+    }
+
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      void handleTerminalRun()
+      return
+    }
+
+    if (event.key === 'Backspace') {
+      event.preventDefault()
+      setTerminalInput(prev => prev.slice(0, -1))
+      return
+    }
+
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      setTerminalInput(prev => prev + '\t')
+      return
+    }
+
+    if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault()
+      setTerminalInput(prev => prev + event.key)
+    }
+  }, [handleTerminalInterrupt, handleTerminalRun])
+
+  const handleTerminalPaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
+    const text = event.clipboardData.getData('text')
+    if (!text) return
+    event.preventDefault()
+    setTerminalInput(prev => prev + text.replace(/\r\n/g, '\n'))
+  }, [])
+
   const toolbarNode = (
     <div className={`output-toolbar ${tabsPlacement === 'bottom' ? 'output-toolbar-bottom' : 'output-toolbar-top'}`} onContextMenu={handleTabsContextMenu}>
       <div className="output-tabs" role="tablist" aria-label="输出面板标签">
@@ -372,7 +466,41 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
       {/* 终端内容（预留） */}
       {activeTab === 'terminal' && (
         <div id="output-panel-terminal" className="output-content output-terminal-content" role="tabpanel" aria-labelledby="output-tab-terminal" tabIndex={0}>
-          <div className="output-terminal-empty">终端功能正在开发中</div>
+          <div className="output-terminal-meta" role="status" aria-live="polite">
+            {terminalRunning && <span>状态：运行中</span>}
+            {terminalLastCommand && <span>最近命令：{terminalLastCommand}</span>}
+          </div>
+          <div className="output-terminal-shell">
+            <div
+              className="output-terminal-log"
+              ref={terminalRef}
+              role="textbox"
+              aria-label="终端控制台"
+              aria-multiline="true"
+              tabIndex={0}
+              onKeyDown={handleTerminalKeyDown}
+              onPaste={handleTerminalPaste}
+              onFocus={() => setTerminalFocused(true)}
+              onBlur={() => setTerminalFocused(false)}
+              onMouseDown={(event) => {
+                event.preventDefault()
+                terminalRef.current?.focus()
+              }}
+            >
+              {terminalOutput.length === 0
+                ? <div className="output-terminal-empty">暂无终端输出</div>
+                : terminalOutput.map((line, i) => <pre key={`term-${i}`} className="output-terminal-line">{line}</pre>)}
+              <div className="output-terminal-commandline output-terminal-commandline-inline">
+                <span className="output-terminal-prompt" aria-hidden="true">&gt;</span>
+                <span className="output-terminal-inline-input">{terminalInput}</span>
+                <span
+                  className={`output-terminal-cursor ${terminalFocused ? 'active' : ''}`}
+                  aria-hidden="true"
+                />
+              </div>
+            </div>
+          </div>
+          {terminalStatus && <div className="output-terminal-status" role="alert">{terminalStatus}</div>}
         </div>
       )}
 
