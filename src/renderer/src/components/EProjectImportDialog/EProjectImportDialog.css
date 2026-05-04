@@ -1,0 +1,175 @@
+.eimport-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--overlay-bg);
+}
+
+.eimport-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--dialog-bg);
+  border: 1px solid var(--dialog-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px var(--dialog-shadow);
+}
+
+.eimport-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.eimport-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.eimport-close {
+  padding: 0 4px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-secondary);
+}
+
+.eimport-close:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.eimport-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow: auto;
+}
+
+.eimport-text {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.eimport-path {
+  min-height: 28px;
+  padding: 6px 8px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+}
+
+.eimport-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eimport-label {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.eimport-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.eimport-choice-row {
+  display: flex;
+  gap: 8px;
+}
+
+.eimport-choice {
+  height: 28px;
+  padding: 0 14px;
+  color: var(--text-primary);
+  background: var(--button-secondary-bg);
+  border: 1px solid var(--button-secondary-border);
+  border-radius: 3px;
+}
+
+.eimport-choice:hover:not(:disabled) {
+  background: var(--button-secondary-hover);
+}
+
+.eimport-choice.selected {
+  background: var(--bg-active);
+  border-color: var(--accent);
+}
+
+.eimport-input {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 3px;
+}
+
+.eimport-alert {
+  padding: 8px;
+  color: var(--error);
+  background: var(--bg-primary);
+  border: 1px solid var(--error);
+  border-radius: 3px;
+}
+
+.eimport-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.eimport-btn {
+  height: 28px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+}
+
+.eimport-btn-primary {
+  color: var(--danger-contrast);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.eimport-btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.eimport-btn-secondary {
+  color: var(--text-primary);
+  background: var(--button-secondary-bg);
+  border-color: var(--button-secondary-border);
+}
+
+.eimport-btn-secondary:hover:not(:disabled) {
+  background: var(--button-secondary-hover);
+}
+
+.eimport-close:focus-visible,
+.eimport-choice:focus-visible,
+.eimport-input:focus-visible,
+.eimport-btn:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+.eimport-btn:disabled,
+.eimport-choice:disabled,
+.eimport-close:disabled,
+.eimport-input:disabled {
+  cursor: default;
+  opacity: 0.55;
+}

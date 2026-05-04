@@ -146,7 +146,7 @@ function registerEycLanguage(monaco: Monaco): void {
       { open: '\u201c', close: '\u201d' },
     ],
     indentationRules: {
-      increaseIndentPattern: /^\s*\.(子程序|如果|否则|判断|计次循环首|循环判断首|变量循环首)/,
+      increaseIndentPattern: /^\s*\.(子程序|如果|否则|判断开始|判断|计次循环首|循环判断首|变量循环首)/,
       decreaseIndentPattern: /^\s*\.(如果结束|如果真结束|否则|判断结束|计次循环尾|循环判断尾|变量循环尾)/,
     },
   })
@@ -2109,6 +2109,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 
   useEffect(() => {
     if (!tabContextMenu) return
+    document.documentElement.style.setProperty('--editor-tab-context-menu-x', `${tabContextMenu.x}px`)
+    document.documentElement.style.setProperty('--editor-tab-context-menu-y', `${tabContextMenu.y}px`)
     const close = (): void => setTabContextMenu(null)
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') close()
@@ -2209,21 +2211,13 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
           />
         ) : isEycSourceLanguage(activeTab.language) ? (
           activeTabUseTextMode ? (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div className="editor-eyc-textmode-shell">
               {activeTabFallbackTextMode && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#2d2d2d', borderBottom: '1px solid #3a3a3a' }}>
-                  <span style={{ color: '#f2c97d', fontSize: 12 }}>表格模式异常，已临时切换到文本模式</span>
+                <div className="editor-eyc-fallback-banner" role="alert">
+                  <span className="editor-eyc-fallback-text">表格模式异常，已临时切换到文本模式</span>
                   <button
                     type="button"
-                    style={{
-                      padding: '2px 10px',
-                      borderRadius: 4,
-                      border: '1px solid #5a5a5a',
-                      background: '#3a3a3a',
-                      color: '#d4d4d4',
-                      cursor: 'pointer',
-                      fontSize: 12,
-                    }}
+                    className="editor-eyc-fallback-btn"
                     onClick={() => {
                       setEycFallbackTabs(prev => {
                         const next = { ...prev }
@@ -2236,7 +2230,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                   </button>
                 </div>
               )}
-              <div style={{ flex: 1 }}>
+              <div className="editor-eyc-textmode-main">
                 <MonacoEditor
                   key={activeTab.id}
                   language="eyc"
@@ -2336,7 +2330,6 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       {/* 标签页 */}
       <div
         className="editor-tabs"
-        role="tablist"
         aria-label="打开的文件"
         onContextMenu={(e) => handleTabContextMenu(e, activeTabId)}
       >
@@ -2344,8 +2337,6 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
           <button
             key={tab.id}
             className={`editor-tab ${tab.id === activeTabId ? 'active' : ''}`}
-            role="tab"
-            aria-selected={tab.id === activeTabId}
             onClick={() => switchTab(tab.id)}
             onContextMenu={(e) => handleTabContextMenu(e, tab.id)}
             title={tab.filePath || tab.label}
@@ -2369,7 +2360,6 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       {tabContextMenu && (
         <div
           className="editor-tab-context-menu"
-          style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
           onClick={e => e.stopPropagation()}
           onContextMenu={e => e.preventDefault()}
         >

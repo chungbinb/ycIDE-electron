@@ -135,14 +135,12 @@ function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): 
           {/* 目标平台 */}
           <div className="np-field">
             <span className="np-field-label">目标平台：</span>
-            <div className="np-platform-row" role="radiogroup" aria-label="目标平台">
+            <div className="np-platform-row" aria-label="目标平台">
               {PLATFORMS.map(p => (
                 <button
                   key={p.id}
                   type="button"
                   className={`np-platform-btn ${selectedPlatform === p.id ? 'selected' : ''}`}
-                  role="radio"
-                  aria-checked={selectedPlatform === p.id}
                   onClick={() => setSelectedPlatform(p.id)}
                 >
                   <span>{p.icon}</span>
@@ -155,14 +153,12 @@ function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): 
           {/* 项目类型 */}
           <div className="np-field">
             <span className="np-field-label">项目类型：</span>
-            <div className="np-type-list" role="radiogroup" aria-label="项目类型">
+            <div className="np-type-list" aria-label="项目类型">
               {PROJECT_TYPES.map(t => (
                 <button
                   key={t.id}
                   type="button"
                   className={`np-type-item ${selectedType === t.id ? 'selected' : ''}`}
-                  role="radio"
-                  aria-checked={selectedType === t.id}
                   onClick={() => setSelectedType(t.id)}
                 >
                   <span className="np-type-icon">{t.icon}</span>

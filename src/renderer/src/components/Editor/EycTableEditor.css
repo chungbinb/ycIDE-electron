@@ -78,6 +78,8 @@
 .eyc-scrollbar-status-marker {
   position: absolute;
   pointer-events: none;
+  top: var(--eyc-scrollbar-marker-top, 0px);
+  height: var(--eyc-scrollbar-marker-height, 0px);
 }
 
 .eyc-scrollbar-status-lane-vertical .eyc-scrollbar-status-marker {
@@ -120,7 +122,27 @@
   min-width: 0;
   overflow: auto;
   padding: 8px calc(var(--eyc-minimap-width) + var(--eyc-scrollbar-width, 0px)) 8px 0;
+  position: relative;
+  outline: none;
+  -webkit-user-select: none;
   user-select: none;
+}
+
+.eyc-virtual-spacer {
+  height: var(--eyc-virtual-spacer-height, 0px);
+}
+
+.eyc-virtual-gutter-spacer {
+  flex: 0 0 var(--eyc-virtual-table-spacer-height, 0px);
+  min-height: var(--eyc-virtual-table-spacer-height, 0px);
+}
+
+.eyc-virtual-table-spacer-cell {
+  height: var(--eyc-virtual-table-spacer-height, 0px);
+  min-height: var(--eyc-virtual-table-spacer-height, 0px);
+  border: none;
+  padding: 0;
+  background: transparent;
 }
 
 .eyc-sticky-scope {
@@ -139,8 +161,9 @@
   min-width: max-content;
   pointer-events: auto;
   background: color-mix(in srgb, var(--table-bg, var(--bg-primary, #1e1e1e)) 90%, var(--bg-secondary, #252526));
-  border-bottom: 1px solid color-mix(in srgb, var(--table-border, var(--border-color, #3c3c3c)) 72%, transparent);
+  border-bottom: 1px solid var(--table-border, var(--border-color, #3c3c3c));
   box-shadow: 0 1px 0 color-mix(in srgb, var(--menu-shadow, rgba(0, 0, 0, 0.35)) 35%, transparent);
+  transform: translateY(var(--eyc-sticky-translate-y, 0px));
   will-change: transform;
 }
 
@@ -227,9 +250,10 @@
   margin: 0;
   padding: 2px 3px;
   pointer-events: none;
+  -webkit-user-select: none;
   user-select: none;
   white-space: nowrap;
-  color: color-mix(in srgb, var(--text-primary) 72%, transparent);
+  color: var(--text-secondary, #858585);
   font-family: var(--editor-font-family, "Consolas", monospace);
   font-size: 11px;
   line-height: 1.1;
@@ -251,7 +275,7 @@
 
 .eyc-minimap-row-table {
   background: color-mix(in srgb, var(--table-header-bg, var(--bg-secondary)) 30%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--table-border, var(--border-color)) 36%, transparent);
+  border-bottom: 1px solid var(--table-border, var(--border-color, #3c3c3c));
 }
 
 .eyc-minimap-row-code {
@@ -302,8 +326,8 @@
 .eyc-minimap-deleted-line {
   flex: 1;
   min-width: 0;
-  border-top: 1px solid color-mix(in srgb, var(--error, #d9534f) 70%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--error, #d9534f) 30%, transparent);
+  border-top: 1px solid var(--error, #d9534f);
+  border-bottom: 1px solid var(--error, #d9534f);
 }
 
 .eyc-minimap-cell {
@@ -312,7 +336,7 @@
   padding: 0 1px;
   overflow: hidden;
   text-overflow: clip;
-  border-right: 1px solid color-mix(in srgb, var(--table-border, var(--border-color)) 28%, transparent);
+  border-right: 1px solid var(--table-border, var(--border-color, #3c3c3c));
 }
 
 .eyc-minimap-cell:last-child {
@@ -321,6 +345,8 @@
 
 .eyc-minimap-viewport {
   position: absolute;
+  top: var(--eyc-minimap-viewport-top, 0%);
+  height: var(--eyc-minimap-viewport-height, 8%);
   left: 0;
   right: 0;
   min-height: 14px;
@@ -437,6 +463,8 @@
 
 .eyc-debug-hover-tooltip {
   position: fixed;
+  left: var(--eyc-debug-tooltip-left, 0px);
+  top: var(--eyc-debug-tooltip-top, 0px);
   z-index: 3000;
   min-width: 180px;
   max-width: 420px;
@@ -616,15 +644,28 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   --flow-join-gap: 1.5px;
 }
 
+.eyc-flow-overlap-slot {
+  position: relative;
+  display: inline-block;
+  width: 4ch;
+  height: 22px;
+  vertical-align: top;
+  pointer-events: none;
+}
+
+.eyc-flow-overlap-slot > .eyc-flow-seg {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
 /* 统一竖向虚线周期：压缩到更紧凑的 3/7 节距，减少行内过大空隙 */
 .eyc-flow-through::before,
 .eyc-flow-start::before,
 .eyc-flow-end::before,
 .eyc-flow-branch::before,
 .eyc-flow-inner-vert,
-.eyc-flow-branch.eyc-flow-marker::before,
 .eyc-flow-outer-resume,
-.eyc-flow-end.eyc-flow-marker::before,
 .eyc-flow-link-vert,
 .eyc-param-expand-row::after {
   background-size: 1px 7px;
@@ -678,21 +719,13 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   height: 1px;
   background-image: repeating-linear-gradient(to right, var(--flow-main-color, var(--flow-line-main, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
-/* 如果真等无分支命令结束：竖线直通到底+向下箭头，无横线 */
-.eyc-flow-end.eyc-flow-straight-end::before {
-  height: auto;
-  bottom: 5px;
-}
-.eyc-flow-end.eyc-flow-straight-end::after {
-  display: none;
-}
 /* 分支 ├─ */
 .eyc-flow-branch::before {
   content: '';
   position: absolute;
   left: 4px;
   top: var(--flow-join-gap);
-  bottom: var(--flow-join-gap);
+  height: 50%;
   width: 1px;
   background-image: repeating-linear-gradient(to bottom, var(--flow-branch-color, var(--flow-line-branch, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
@@ -740,6 +773,11 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   border-top-color: var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 
+/* judge 分支重叠衔接场景：统一禁用该行的向下三角，避免残留箭头漏网。 */
+.eyc-flow-seg.eyc-flow-hide-down-arrows .eyc-flow-arrow-down {
+  display: none !important;
+}
+
 /* 内部竖线（标记行用） */
 .eyc-flow-inner-vert {
   position: absolute;
@@ -751,6 +789,16 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 .eyc-flow-inner-through {
   top: var(--flow-join-gap);
   bottom: var(--flow-join-gap);
+}
+
+/* 有内侧横线的起始行：内侧竖线从横线高度开始，避免从行顶起画。 */
+.eyc-flow-seg.eyc-flow-has-inner-link .eyc-flow-inner-through {
+  top: 9px;
+}
+
+/* 仅当内侧竖线确实从上一行延续下来时，恢复上半段连通。 */
+.eyc-flow-seg.eyc-flow-has-inner-link.eyc-flow-inner-from-above .eyc-flow-inner-through {
+  top: var(--flow-join-gap);
 }
 /* 无外部流程线（额外 \u200D 行） */
 .eyc-flow-seg.eyc-flow-no-outer::before { display: none !important; }
@@ -768,40 +816,13 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   background-image: repeating-linear-gradient(to bottom, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 8px);
 }
 
-/* ===== 标记行流程线（\u200C/\u200D）===== */
-/* 标记分支行：左侧竖线穿过 + 内部竖线从中间向下 + 横线从内部竖线向右 */
-.eyc-flow-branch.eyc-flow-marker::before {
-  /* 左竖线穿过（跟through一样） */
-  content: '';
-  position: absolute;
-  left: 4px;
-  top: var(--flow-join-gap);
-  bottom: var(--flow-join-gap);
-  width: 1px;
-  background-image: repeating-linear-gradient(to bottom, var(--flow-branch-color, var(--flow-line-branch, #4fc1ff)) 0 3px, transparent 3px 8px);
-}
-.eyc-flow-branch.eyc-flow-marker::after {
-  /* 横线从内部竖线位置向右 */
-  content: '';
-  position: absolute;
-  left: calc(1ch + 4px);
-  right: 1ch;
-  top: 50%;
-  height: 1px;
-  background-image: repeating-linear-gradient(to right, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 6px);
-}
-.eyc-flow-branch.eyc-flow-marker .eyc-flow-inner-vert {
-  top: 50%;
-  bottom: var(--flow-join-gap);
-}
-
-/* 非标记分支有内部竖线穿过：外层竖线分裂为上下两段，间距=文本高度 */
-.eyc-flow-branch:not(.eyc-flow-marker).eyc-flow-has-inner-link::before {
+/* 分支有内部竖线穿过：外层竖线分裂为上下两段，间距=文本高度 */
+.eyc-flow-branch.eyc-flow-has-inner-link::before {
   /* 上段：从顶部到文本顶边 */
   bottom: auto;
   height: 20%;
 }
-.eyc-flow-branch:not(.eyc-flow-marker).eyc-flow-has-inner-link::after {
+.eyc-flow-branch.eyc-flow-has-inner-link::after {
   /* 横线移到文本底部 */
   top: 80%;
 }
@@ -845,37 +866,6 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   border-left-color: var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 
-/* 标记分支有外层连接：横线和内部竖线下移 */
-.eyc-flow-branch.eyc-flow-marker.eyc-flow-has-outer-link::after {
-  top: 70%;
-}
-.eyc-flow-branch.eyc-flow-marker.eyc-flow-has-outer-link .eyc-flow-inner-vert {
-  top: var(--flow-join-gap);
-  bottom: var(--flow-join-gap);
-}
-
-/* 标记结束行：左侧竖线到中间结束 + 横线向右 + 右箭头 */
-.eyc-flow-end.eyc-flow-marker::before {
-  /* 左竖线从顶部到中间 */
-  content: '';
-  position: absolute;
-  left: 4px;
-  top: var(--flow-join-gap);
-  height: 50%;
-  width: 1px;
-  background-image: repeating-linear-gradient(to bottom, var(--flow-main-color, var(--flow-line-main, #4fc1ff)) 0 3px, transparent 3px 8px);
-}
-.eyc-flow-end.eyc-flow-marker::after {
-  /* 横线从左到右 */
-  content: '';
-  position: absolute;
-  left: 4px;
-  right: 1ch;
-  top: 50%;
-  height: 1px;
-  background-image: repeating-linear-gradient(to right, var(--flow-main-color, var(--flow-line-main, #4fc1ff)) 0 3px, transparent 3px 6px);
-}
-
 /* 右箭头▶ */
 .eyc-flow-arrow-right {
   position: absolute;
@@ -892,26 +882,7 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   border-left-color: var(--flow-arrow-color, var(--flow-line-arrow, #4fc1ff));
 }
 
-.eyc-flow-end.eyc-flow-marker .eyc-flow-inner-vert {
-  top: var(--flow-join-gap);
-  bottom: 5px;
-}
-.eyc-flow-end.eyc-flow-marker .eyc-flow-arrow-down {
-  left: calc(1ch + 4px - 4px);
-}
-
-/* 标记行循环色 */
-.eyc-flow-loop.eyc-flow-branch.eyc-flow-marker::before {
-  background-image: repeating-linear-gradient(to bottom, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 8px);
-}
-.eyc-flow-loop.eyc-flow-branch.eyc-flow-marker::after {
-  background-image: repeating-linear-gradient(to right, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 6px);
-}
-.eyc-flow-loop.eyc-flow-end.eyc-flow-marker::before {
-  background-image: repeating-linear-gradient(to bottom, var(--flow-loop-color, var(--flow-line-loop, #4fc1ff)) 0 3px, transparent 3px 8px);
-}
-
-/* ===== \u200D 后紧跟流程命令的连接线 ===== */
+/* ===== 紧邻流程命令的连接线 ===== */
 /* 有前方流程连接的起始行：横线和竖线下移腾出空间 */
 .eyc-flow-start.eyc-flow-has-prev-end::before {
   top: 70%;
@@ -954,8 +925,6 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 .eyc-flow-start::after,
 .eyc-flow-end::after,
 .eyc-flow-branch::after,
-.eyc-flow-branch.eyc-flow-marker::after,
-.eyc-flow-end.eyc-flow-marker::after,
 .eyc-flow-outer-horz,
 .eyc-flow-link-horz,
 .eyc-flow-inner-link-horz {
@@ -967,8 +936,9 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 /* 外层 through 段内部竖线分支横线（从左侧延伸到内层命令横线起始处） */
 .eyc-flow-inner-link-horz {
   position: absolute;
-  left: 4px;
-  right: calc(-3ch - 4px);
+  left: calc(1ch + 4px);
+  right: auto;
+  width: 11px;
   top: 9px;
   height: 1px;
   background-image: repeating-linear-gradient(to right, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 6px);
@@ -993,44 +963,33 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   top: 70%;
 }
 
-/* 外层竖线隐藏（嵌套流程后续行和结束行） */
-.eyc-flow-seg.eyc-flow-outer-hidden::before { display: none !important; }
-.eyc-flow-seg.eyc-flow-outer-hidden::after { display: none !important; }
+/* 同行出现外层结束横线与内层开始横线时，做上下错位避免重叠。 */
+.eyc-flow-branch.eyc-flow-stagger-upper::before {
+  height: 35%;
+}
 
-/* hasInnerLink 行的外层竖线：从顶部到 40% 终止（像 end 段） */
+.eyc-flow-branch.eyc-flow-stagger-upper::after {
+  top: 35%;
+  right: 1ch;
+}
+
+.eyc-flow-branch.eyc-flow-stagger-upper .eyc-flow-arrow-right {
+  top: 35%;
+  right: 1ch;
+}
+
+.eyc-flow-start.eyc-flow-stagger-lower::before {
+  top: 68%;
+}
+
+.eyc-flow-start.eyc-flow-stagger-lower::after {
+  top: 68%;
+}
+
+/* hasInnerLink 的 through 行：外侧竖线需完整贯通，避免出现中段断裂 */
 .eyc-flow-through.eyc-flow-has-inner-link::before {
-  bottom: auto !important;
-  height: 40%;
-}
-
-/* 自动补齐的流程结束/分支行：隐藏代码文本，只保留流程线 */
-.eyc-flow-auto-line {
-  min-height: 4px;
-  height: 4px;
-}
-.eyc-flow-auto-line .eyc-gutter-linenum {
-  visibility: hidden;
-}
-.eyc-flow-auto-line .eyc-gutter-fold-area {
-  visibility: hidden;
-}
-.eyc-flow-auto-line .eyc-code-line {
-  height: 4px;
-  min-height: 4px;
-  line-height: 4px;
-}
-.eyc-flow-auto-line .eyc-code-spans {
-  visibility: hidden;
-  height: 0;
-  overflow: hidden;
-  display: block;
-}
-.eyc-flow-auto-line .eyc-gutter-cell {
-  min-height: 4px;
-  height: 4px;
-}
-.eyc-flow-auto-line .eyc-flow-seg {
-  height: 4px;
+  bottom: var(--flow-join-gap) !important;
+  height: auto;
 }
 
 /* 代码行包裹（支持展开参数） */
@@ -1042,6 +1001,7 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 .eyc-param-expand {
   width: 100%;
   position: relative;
+  padding-left: var(--eyc-param-expand-padding-left, 0px);
 }
 .eyc-param-expand-gutter-fold-area {
   position: absolute;
@@ -1081,6 +1041,7 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 /* 向上指向命令的三角箭头 */
 .eyc-param-expand-arrow {
   position: absolute;
+  left: var(--eyc-param-expand-arrow-left, 0px);
   top: -6px;
   width: 0;
   height: 0;
@@ -1091,6 +1052,7 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   transform: translateX(2.5px);
 }
 .eyc-param-expand-inner {
+  --vline-offset: calc(-20px + 1.5ch);
   background: var(--table-header-bg, var(--bg-secondary, #252526));
   border-left: none;
   margin: 0 0 2px 0;
@@ -1106,6 +1068,9 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   padding: 1px 0;
   line-height: 20px;
   position: relative;
+}
+.eyc-param-expand-row-clickable {
+  cursor: text;
 }
 .eyc-param-expand-secondary {
   position: relative;
@@ -1340,6 +1305,8 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 
 /* 代码行容器 */
 .eyc-code-line {
+  display: flex;
+  align-items: flex-start;
   flex: 1;
   min-width: max-content;
   min-height: 22px;
@@ -1373,7 +1340,8 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
 }
 
 .eyc-code-spans {
-  display: inline;
+  display: inline-flex;
+  align-items: flex-start;
 }
 
 /* 代码行 token 统一以基线对齐，避免命令名与括号上下错位（不影响流程线段） */
@@ -1481,6 +1449,39 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
   box-shadow: none;
 }
 
+.eyc-cell-align-center {
+  text-align: center;
+}
+
+.eyc-inline-edit-sizing {
+  position: relative;
+  display: inline-grid;
+}
+
+.eyc-code-inline-edit-sizing {
+  min-width: 1ch;
+}
+
+.eyc-inline-edit-measure {
+  grid-area: 1 / 1;
+  visibility: hidden;
+  white-space: pre;
+  font: inherit;
+  padding: 0;
+}
+
+.eyc-code-inline-edit-measure {
+  font-family: "Consolas", "Cascadia Mono", "MS Gothic", "NSimSun", "Microsoft YaHei UI", monospace;
+  font-size: 13px;
+  line-height: 22px;
+  margin: 0;
+}
+
+.eyc-inline-input,
+.eyc-cell-input {
+  grid-area: 1 / 1;
+}
+
 /* 单元格内编辑 — 透明融入 */
 .eyc-cell-input {
   width: 100%;
@@ -1511,6 +1512,8 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
 /* ===== 自动补全弹窗 ===== */
 .eyc-ac-container {
   position: fixed;
+  left: var(--eyc-ac-left, 0px);
+  top: var(--eyc-ac-top, 0px);
   z-index: 1000;
   display: flex;
   align-items: flex-start;

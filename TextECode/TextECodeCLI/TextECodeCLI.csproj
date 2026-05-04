@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+    <RootNamespace>OpenEpl.TextECodeCLI</RootNamespace>
+    <LangVersion>9.0</LangVersion>
+    <Authors>OpenEpl</Authors>
+    <AssemblyName>TextECode</AssemblyName>
+    <RuntimeIdentifiers>win-x86;win-x64</RuntimeIdentifiers>
+    <RollForward>Major</RollForward>
+    <ApplicationIcon>../AppIcon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommandLineParser" Version="2.9.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TextECode\TextECode.csproj" />
+  </ItemGroup>
+
+</Project>

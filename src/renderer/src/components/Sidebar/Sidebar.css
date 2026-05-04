@@ -1,10 +1,15 @@
 .sidebar {
+  --sidebar-width: 260px;
+  --sidebar-menu-x: 0px;
+  --sidebar-menu-y: 0px;
+  --tree-item-padding-left: var(--tree-indent-base, 8px);
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border-color);
   position: relative;
   flex-shrink: 0;
+  width: var(--sidebar-width);
 }
 
 .sidebar-right {
@@ -61,6 +66,7 @@
   display: flex;
   align-items: center;
   min-height: var(--tree-row-height, 24px);
+  padding-left: var(--tree-item-padding-left);
   padding-right: var(--spacing-md);
   cursor: pointer;
   white-space: nowrap;
@@ -197,6 +203,8 @@
 
 .sidebar-tabs-context-menu {
   position: fixed;
+  left: var(--sidebar-menu-x);
+  top: var(--sidebar-menu-y);
   z-index: 2200;
   min-width: 220px;
   background: var(--bg-secondary, #252526);
@@ -354,5 +362,6 @@
 
 .prop-value-bool {
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 }

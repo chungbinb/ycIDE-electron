@@ -10,6 +10,7 @@ import OutputPanel, { type OutputMessage, type CommandDetail, type FileProblem, 
 import StatusBar from './components/StatusBar/StatusBar'
 import LibraryDialog from './components/LibraryDialog/LibraryDialog'
 import NewProjectDialog from './components/NewProjectDialog/NewProjectDialog'
+import EProjectImportDialog, { type EProjectImportDialogSubmit } from './components/EProjectImportDialog/EProjectImportDialog'
 import ThemeSettingsDialog from './components/ThemeSettingsDialog/ThemeSettingsDialog'
 import ThemeManager from './components/ThemeManager/ThemeManager'
 import SettingsDialog from './components/SettingsDialog/SettingsDialog'
@@ -34,6 +35,7 @@ import { createThemeDraftSession, type ThemeDraftSession } from '../../shared/th
 import { THEME_TOKEN_GROUPS, type FlowLineMode, type FlowLineMultiConfig, type ThemeTokenGroupId } from '../../shared/theme-tokens'
 import { DEFAULT_IDE_SETTINGS, resolveIDESettings, type IDESettings } from '../../shared/settings'
 import type { AIChatMessage, AIChatTool, AIChatWithToolsResult, AIEditResult, AISupportedModel } from '../../shared/ai'
+import type { EProjectImportConflictAction } from '../../shared/eprojectImport'
 import './App.css'
 
 type ProjectSessionState = {
@@ -65,6 +67,19 @@ type ThemeManagerImportPrepareResult =
   | { status: 'invalid'; diagnostics: ThemeImportValidationDiagnostic[] }
   | { status: 'conflict'; importedTheme: ThemeDefinition; existingThemeId: string; allowedDecisions: ThemeImportConflictDecision['decision'][] }
   | { status: 'ready'; importedTheme: ThemeDefinition; targetThemeId: string }
+
+type EProjectImportDialogState = {
+  eFilePath: string
+  projectName: string
+  targetDir: string
+  targetExists: boolean
+  needsPassword: boolean
+  passwordInvalid: boolean
+  passwordHint?: string
+  conflictAction?: EProjectImportConflictAction
+  busy: boolean
+  error?: string
+}
 
 const RECENT_OPENED_KEY = 'ycide.recentOpened.v1'
 const ACTIVITY_BAR_SIDE_KEY = 'ycide.activityBar.side.v1'
@@ -608,6 +623,7 @@ function App(): React.JSX.Element {
   const [openProjectFiles, setOpenProjectFiles] = useState<EditorTab[]>()
   const [projectTree, setProjectTree] = useState<TreeNode[]>([])
   const [currentProjectDir, setCurrentProjectDir] = useState<string>('')
+  const [eProjectImportDialog, setEProjectImportDialog] = useState<EProjectImportDialogState | null>(null)
   const currentProjectDirRef = useRef('')
   const editorRef = useRef<EditorHandle>(null)
   const [themeList, setThemeList] = useState<string[]>([])
@@ -714,6 +730,8 @@ function App(): React.JSX.Element {
   useEffect(() => {
     if (!activityBarContextMenu) return
     const close = (): void => setActivityBarContextMenu(null)
+    document.documentElement.style.setProperty('--activity-context-menu-x', `${activityBarContextMenu.x}px`)
+    document.documentElement.style.setProperty('--activity-context-menu-y', `${activityBarContextMenu.y}px`)
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') close()
     }
@@ -2463,7 +2481,8 @@ function App(): React.JSX.Element {
     return null
   }, [])
 
-  const openProjectByEppPath = useCallback(async (eppPath: string) => {
+  const openProjectByEppPath = useCallback(async (eppPath: string, options: { restoreSession?: boolean } = {}) => {
+    const restoreSession = options.restoreSession !== false
     const eppInfo = await window.api?.project?.parseEpp(eppPath)
     if (!eppInfo) return false
     const dir = getDirName(eppPath)
@@ -2473,8 +2492,8 @@ function App(): React.JSX.Element {
     setTargetArch(prev => coerceArchByPlatform(normalizedPlatform, normalizeTargetArch(eppInfo.platform) || prev))
     setProjectTree(await buildProjectTreeFromEpp(eppInfo.projectName, eppInfo.files, dir))
 
-    const session = await window.api?.project?.loadOpenTabs(dir)
-    const savedPaths = session?.openTabs || []
+    const session = restoreSession ? await window.api?.project?.loadOpenTabs(dir) : null
+    const savedPaths = restoreSession ? (session?.openTabs || []) : []
     const restoredTabs: EditorTab[] = []
     if (savedPaths && savedPaths.length > 0) {
       for (const fp of savedPaths) {
@@ -2510,6 +2529,85 @@ function App(): React.JSX.Element {
     try { localStorage.setItem(LAST_PROJECT_EPP_KEY, eppPath) } catch {}
     return true
   }, [buildProjectTreeFromEpp, buildTabFromPath, getBaseName, getDirName, joinPath, pushRecentOpened])
+
+  const runEProjectImport = useCallback(async (
+    baseState: Omit<EProjectImportDialogState, 'busy' | 'error' | 'needsPassword' | 'passwordInvalid'> & Partial<Pick<EProjectImportDialogState, 'needsPassword' | 'passwordInvalid' | 'error'>>,
+    request: { password?: string; conflictAction?: EProjectImportConflictAction } = {},
+  ) => {
+    setEProjectImportDialog({
+      ...baseState,
+      needsPassword: baseState.needsPassword ?? false,
+      passwordInvalid: baseState.passwordInvalid ?? false,
+      busy: true,
+      error: undefined,
+    })
+    const result = await window.api?.project?.importEFile?.({
+      eFilePath: baseState.eFilePath,
+      password: request.password,
+      conflictAction: request.conflictAction,
+    })
+    if (!result) {
+      setEProjectImportDialog(prev => prev ? { ...prev, busy: false, error: '导入接口不可用。' } : null)
+      return
+    }
+
+    if (result.status === 'success') {
+      setEProjectImportDialog(null)
+      if (result.warnings.length > 0) {
+        const warningItems: Array<{ type: 'warning'; text: string }> = []
+        for (const warningText of result.warnings as unknown[]) {
+          if (typeof warningText !== 'string') continue
+          warningItems.push({ type: 'warning', text: warningText })
+        }
+        setOutputMessages(prev => [
+          ...prev,
+          ...warningItems,
+        ])
+        setShowOutput(true)
+        setForceOutputTab('compile')
+        window.setTimeout(() => setForceOutputTab(null), 100)
+      }
+      await openProjectByEppPath(result.eppPath, { restoreSession: false })
+      return
+    }
+
+    if (result.status === 'passwordRequired' || result.status === 'passwordInvalid') {
+      setEProjectImportDialog(prev => ({
+        ...(prev || baseState),
+        needsPassword: true,
+        passwordInvalid: result.status === 'passwordInvalid',
+        passwordHint: result.passwordHint,
+        conflictAction: request.conflictAction,
+        busy: false,
+        error: undefined,
+      }))
+      return
+    }
+
+    if (result.status === 'targetConflict') {
+      setEProjectImportDialog(prev => ({
+        ...(prev || baseState),
+        targetExists: true,
+        targetDir: result.targetDir,
+        projectName: result.projectName,
+        needsPassword: baseState.needsPassword ?? false,
+        passwordInvalid: false,
+        busy: false,
+        error: undefined,
+      }))
+      return
+    }
+
+    setEProjectImportDialog(prev => prev ? { ...prev, busy: false, error: result.message } : null)
+  }, [openProjectByEppPath])
+
+  const handleEProjectImportSubmit = useCallback((value: EProjectImportDialogSubmit) => {
+    if (!eProjectImportDialog) return
+    void runEProjectImport(eProjectImportDialog, {
+      password: value.password,
+      conflictAction: value.conflictAction || eProjectImportDialog.conflictAction,
+    })
+  }, [eProjectImportDialog, runEProjectImport])
 
   // 启动时自动恢复上次打开的项目
   const startupRestoredRef = useRef(false)
@@ -2571,9 +2669,26 @@ function App(): React.JSX.Element {
         setShowNewProject(true)
         break
       case 'file:openProject': {
-        const eppPath = await window.api?.project?.openEpp()
-        if (!eppPath) return
-        await openProjectByEppPath(eppPath)
+        const selection = await window.api?.project?.openEpp()
+        if (!selection || selection.status === 'canceled') return
+        if (selection.status === 'epp') {
+          await openProjectByEppPath(selection.eppPath)
+          return
+        }
+        const baseState: EProjectImportDialogState = {
+          eFilePath: selection.eFilePath,
+          projectName: selection.projectName,
+          targetDir: selection.targetDir,
+          targetExists: selection.targetExists,
+          needsPassword: false,
+          passwordInvalid: false,
+          busy: false,
+        }
+        if (selection.targetExists) {
+          setEProjectImportDialog(baseState)
+          return
+        }
+        await runEProjectImport(baseState)
         break
       }
       case 'file:save':
@@ -3049,7 +3164,7 @@ function App(): React.JSX.Element {
         }
         break
     }
-  }, [openProjectByEppPath, openFileByPath, extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, applyTheme, handleCompile, handleCompileRun, handleStop, handleAppClose, joinPath, projectTree, refreshProjectTree, toggleBreakpoint, cursorLine, cursorSourceLine, currentProjectDir, breakpointsByFile, targetArch, continueDebugRun, getBaseName])
+  }, [openProjectByEppPath, openFileByPath, extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, applyTheme, handleCompile, handleCompileRun, handleStop, handleAppClose, joinPath, projectTree, refreshProjectTree, toggleBreakpoint, cursorLine, cursorSourceLine, currentProjectDir, breakpointsByFile, targetArch, continueDebugRun, getBaseName, runEProjectImport])
 
   useEffect(() => {
     const handleNativeMenuAction = (action: unknown) => {
@@ -3300,7 +3415,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.3.52（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.3-beta.53（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -4335,13 +4450,13 @@ function App(): React.JSX.Element {
         {activityBarContextMenu && (
           <div
             className="activity-context-menu"
-            style={{ left: activityBarContextMenu.x, top: activityBarContextMenu.y }}
             role="menu"
             onClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
           >
             <button
               type="button"
+              role="menuitem"
               className="activity-context-menu-item"
               onClick={toggleActivityBarSideFromMenu}
             >
@@ -4445,6 +4560,19 @@ function App(): React.JSX.Element {
       />
       <LibraryDialog open={showLibrary} onClose={() => setShowLibrary(false)} />
       <NewProjectDialog open={showNewProject} onClose={() => setShowNewProject(false)} onConfirm={handleNewProjectConfirm} />
+      <EProjectImportDialog
+        open={!!eProjectImportDialog}
+        projectName={eProjectImportDialog?.projectName || ''}
+        targetDir={eProjectImportDialog?.targetDir || ''}
+        targetExists={!!eProjectImportDialog?.targetExists}
+        needsPassword={!!eProjectImportDialog?.needsPassword}
+        passwordInvalid={!!eProjectImportDialog?.passwordInvalid}
+        passwordHint={eProjectImportDialog?.passwordHint}
+        busy={!!eProjectImportDialog?.busy}
+        error={eProjectImportDialog?.error}
+        onSubmit={handleEProjectImportSubmit}
+        onCancel={() => setEProjectImportDialog(null)}
+      />
       {showSettings && settingsPortalRoot && createPortal(
         <SettingsDialog
           settings={ideSettings}

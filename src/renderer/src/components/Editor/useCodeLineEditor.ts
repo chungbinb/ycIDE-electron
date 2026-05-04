@@ -19,10 +19,13 @@ export type EmptyCodeLineDeleteAction =
 
 export type MarkerEndEnterAction = 'insertBodyAbove' | 'shiftMarkerDown'
 
-function normalizeFlowCommandName(input: string): string {
+export function normalizeFlowCommandName(input: string): string {
   const trimmed = input.trim()
   if (!trimmed) return ''
-  return trimmed.startsWith('.') ? trimmed : trimmed.split(/[\s(（]/)[0]
+  const token = trimmed
+    .replace(/^[\u200B]+/, '')
+    .split(/[\s(（]/)[0]
+  return token.startsWith('.') ? token.slice(1) : token
 }
 
 function hasOuterParenRange(text: string): boolean {
