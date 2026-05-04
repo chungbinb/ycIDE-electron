@@ -1,0 +1,45 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0</TargetFrameworks>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <Title>Epl Project Editor</Title>
+    <Description>Epl Project Editor</Description>
+    <Company>OpenEpl</Company>
+    <Copyright>A free and unencumbered software released into the public domain (https://unlicense.org/)</Copyright>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageId>QIQI.EProjectFile</PackageId>
+    <Tags>EPL</Tags>
+    <Authors>OpenEpl</Authors>
+    <PackageProjectUrl>https://github.com/OpenEpl/EProjectFile</PackageProjectUrl>
+    <RootNamespace>QIQI.EProjectFile</RootNamespace>
+    <Version>1.9.4</Version>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
+    <GenerateDocumentationFile>True</GenerateDocumentationFile>
+    <NoWarn>1591;1701;1702</NoWarn>
+    <PackageReadmeFile>docs/README.md</PackageReadmeFile>
+    <LangVersion>8.0</LangVersion>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <None Include="../README.md" Pack="true" PackagePath="/docs" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="OpenEpl.ELibInfo" Version="0.1.1">
+      <PrivateAssets>build; analyzers</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="System.Collections.Immutable" Version="6.0.0" />
+    <PackageReference Include="System.Text.Json" Version="6.0.5" />
+  </ItemGroup>
+</Project>

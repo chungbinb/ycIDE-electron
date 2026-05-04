@@ -148,6 +148,7 @@ html, body, #root {
   color: var(--text-primary);
   background: var(--bg-primary);
   -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
   user-select: none;
 }
 

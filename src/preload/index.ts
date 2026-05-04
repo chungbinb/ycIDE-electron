@@ -3,6 +3,7 @@ import { normalizeRuntimePlatform } from '../shared/platform'
 import { THEME_CONFIG_VERSION } from '../shared/theme'
 import type { IDESettings } from '../shared/settings'
 import type { AIChatRequest, AIChatResult, AIChatWithToolsRequest, AIChatWithToolsResult, AIEditRequest, AIEditResult } from '../shared/ai'
+import type { EProjectImportRequest, EProjectImportResult, OpenProjectSelectionResult } from '../shared/eprojectImport'
 import type {
   SaveAsCustomThemeRequest,
   SaveAsCustomThemeResult,
@@ -64,7 +65,8 @@ const api = {
     updatePlatform: (projectDir: string, platform: string) => ipcRenderer.invoke('project:updatePlatform', projectDir, platform),
     saveOpenTabs: (projectDir: string, session: { openTabs: string[]; activeTabPath?: string }) => ipcRenderer.invoke('project:saveOpenTabs', projectDir, session),
     loadOpenTabs: (projectDir: string) => ipcRenderer.invoke('project:loadOpenTabs', projectDir) as Promise<{ openTabs: string[]; activeTabPath?: string }>,
-    openEpp: () => ipcRenderer.invoke('project:openEpp') as Promise<string | null>,
+    openEpp: () => ipcRenderer.invoke('project:openEpp') as Promise<OpenProjectSelectionResult>,
+    importEFile: (request: EProjectImportRequest) => ipcRenderer.invoke('project:importEFile', request) as Promise<EProjectImportResult>,
     addFile: (projectDir: string, fileName: string, fileType: string, content: string) =>
       ipcRenderer.invoke('project:addFile', projectDir, fileName, fileType, content) as Promise<string>,
     addResources: (projectDir: string) =>

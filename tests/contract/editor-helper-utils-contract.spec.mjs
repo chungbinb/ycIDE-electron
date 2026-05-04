@@ -51,6 +51,7 @@ const coreUtilsPath = path.resolve(process.cwd(), 'src/renderer/src/components/E
 const formatPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/eycFormat.ts')
 const blocksPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/eycBlocks.ts')
 const pasteUtilsPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/editorPasteUtils.ts')
+const codeLineEditorPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/useCodeLineEditor.ts')
 
 function loadFormatModule() {
   const { parseLines } = loadTsModule(blocksPath)
@@ -247,6 +248,24 @@ test('flow auto-expand utils: marker parsing and loop body building are determin
   assert.deepEqual(toPlain(markerLines), ['X', 'N1', 'N2', '    \u200D', 'Z'])
 })
 
+test('flow command normalize: dotted visible command matches auto expand key', () => {
+  const { normalizeFlowCommandName } = loadTsModule(codeLineEditorPath, {
+    react: { useCallback: (fn) => fn },
+    './eycBlocks': { parseLines: () => [] },
+    './eycFlow': {
+      extractFlowKw: () => null,
+      FLOW_BRANCH_KW: new Set(['否则', '默认']),
+      FLOW_END_KW: new Set(['如果结束', '如果真结束', '判断结束']),
+      getFlowStructureAround: () => null,
+    },
+  })
+
+  assert.equal(normalizeFlowCommandName('如果'), '如果')
+  assert.equal(normalizeFlowCommandName('.如果'), '如果')
+  assert.equal(normalizeFlowCommandName('.如果 (调试模式)'), '如果')
+  assert.equal(normalizeFlowCommandName('\u200B.判断'), '判断')
+})
+
 test('flow auto-expand utils: duplicate endings are removed only when scope already contains all endings', () => {
   const mockFlowModule = {
     FLOW_AUTO_TAG: '[AUTO]',
@@ -280,66 +299,68 @@ test('flow auto-expand utils: duplicate endings are removed only when scope alre
   assert.deepEqual(toPlain(trimTrailingEmptyFormattedLine(['A', 'B'])), ['A', 'B'])
 })
 
-test('flow lines: keep inner vertical line when else marker is followed by nested flow', () => {
+test('flow lines: visible else followed by nested flow keeps parent lane', () => {
   const { computeFlowLines } = loadTsModule(flowPath)
-  const FLOW_TRUE_MARK = '\u200C'
-  const FLOW_ELSE_MARK = '\u200D'
   const lines = [
     '.子程序 A, , , ',
     '    .如果 (x)',
-    `    ${FLOW_TRUE_MARK}`,
     '        .如果 (y)',
     '            执行()',
-    `        ${FLOW_ELSE_MARK}`,
-    `    ${FLOW_ELSE_MARK}`,
+    '        .否则',
+    '            执行2()',
+    '        .如果结束',
+    '    .否则',
+    '        执行3()',
+    '    .如果结束',
     '',
   ]
   const blocks = lines.map((codeLine, lineIndex) => ({ kind: 'codeline', lineIndex, codeLine, rows: [] }))
 
   const result = computeFlowLines(blocks)
-  const linkLineSegs = result.map.get(3) || []
-  const outerThroughOnLinkLine = linkLineSegs.find(seg => seg.depth === 0 && seg.type === 'through')
-  const segs = result.map.get(4) || []
-  const outerThroughSeg = segs.find(seg => seg.depth === 0 && seg.type === 'through')
+  const nestedStartSegs = result.map.get(2) || []
+  const outerThroughOnNestedStart = nestedStartSegs.find(seg => seg.depth === 0 && seg.type === 'through')
+  const innerStart = nestedStartSegs.find(seg => seg.depth === 1 && seg.type === 'start')
+  const outerElseSegs = result.map.get(7) || []
+  const outerElseBranch = outerElseSegs.find(seg => seg.depth === 0 && seg.type === 'branch')
 
-  assert.ok(outerThroughOnLinkLine)
-  assert.equal(outerThroughOnLinkLine.hasInnerLink, true)
-  assert.equal(outerThroughOnLinkLine.hasInnerVert, true)
-  assert.ok(outerThroughSeg)
-  assert.equal(outerThroughSeg.outerHidden, true)
-  assert.equal(outerThroughSeg.hasInnerVert, true)
+  assert.ok(outerThroughOnNestedStart)
+  assert.ok(innerStart)
+  assert.ok(outerElseBranch)
+  assert.equal(Object.prototype.hasOwnProperty.call(outerElseBranch, 'isMarker'), false)
 })
 
-test('flow lines: preserve inner vertical continuity across multi-line nested branch under 200D', () => {
+test('flow lines: visible nested branches keep outer through continuity', () => {
   const { computeFlowLines } = loadTsModule(flowPath)
-  const FLOW_TRUE_MARK = '\u200C'
-  const FLOW_ELSE_MARK = '\u200D'
   const lines = [
     '.子程序 A, , , ',
     '    .如果 (A)',
-    `        ${FLOW_TRUE_MARK}`,
     '        .如果 (B)',
     '            .如果 (C)',
     '                执行1()',
     '                执行2()',
-    `            ${FLOW_ELSE_MARK}`,
-    `        ${FLOW_ELSE_MARK}`,
-    `    ${FLOW_ELSE_MARK}`,
+    '            .否则',
+    '                执行3()',
+    '            .如果结束',
+    '        .否则',
+    '            执行4()',
+    '        .如果结束',
+    '    .否则',
+    '        执行5()',
+    '    .如果结束',
   ]
   const blocks = lines.map((codeLine, lineIndex) => ({ kind: 'codeline', lineIndex, codeLine, rows: [] }))
 
   const result = computeFlowLines(blocks)
+  const line5Segs = result.map.get(4) || []
   const line6Segs = result.map.get(5) || []
-  const line7Segs = result.map.get(6) || []
+  const outerThroughAt5 = line5Segs.find(seg => seg.depth === 0 && seg.type === 'through')
   const outerThroughAt6 = line6Segs.find(seg => seg.depth === 0 && seg.type === 'through')
-  const outerThroughAt7 = line7Segs.find(seg => seg.depth === 0 && seg.type === 'through')
+  const innerThroughAt6 = line6Segs.find(seg => seg.depth === 1 && seg.type === 'through')
 
+  assert.ok(outerThroughAt5)
   assert.ok(outerThroughAt6)
-  assert.equal(outerThroughAt6.outerHidden, true)
-  assert.equal(outerThroughAt6.hasInnerVert, true)
-  assert.ok(outerThroughAt7)
-  assert.equal(outerThroughAt7.outerHidden, true)
-  assert.equal(outerThroughAt7.hasInnerVert, true)
+  assert.ok(innerThroughAt6)
+  assert.equal(Object.prototype.hasOwnProperty.call(outerThroughAt6, 'outerHidden'), false)
 })
 
 test('flow lines: ignore unmatched 200C marker indentation instead of binding to top stack flow', () => {
@@ -382,7 +403,7 @@ test('colorize: parentheses and operators use eyc-punct (non-bold) class', () =>
   assert.equal(punctTexts.includes(')'), true)
 })
 
-test('paste sanitize: internal flow text stays idempotent and does not drift into judge marker', () => {
+test('paste sanitize: legacy internal flow markers normalize to visible text', () => {
   const { sanitizePastedTextForCurrent, normalizeEycText } = loadFormatModule()
   const C = '\u200C'
   const D = '\u200D'
@@ -397,8 +418,17 @@ test('paste sanitize: internal flow text stays idempotent and does not drift int
   ].join('\n')
 
   const out = sanitizePastedTextForCurrent(internal, '.程序集 Demo')
-  assert.equal(out, normalizeEycText(internal))
-  assert.equal(out.includes('\u2060'), false)
+  const expected = [
+    '.子程序 A, , , ',
+    '    如果（）',
+    '',
+    '        如果（）',
+    '            333',
+    '        如果结束',
+    '    如果结束',
+  ].join('\n')
+  assert.equal(out, normalizeEycText(expected))
+  assert.equal(out.includes('\u200C') || out.includes('\u200D') || out.includes('\u2060'), false)
 })
 
 test('format save: keep .否则 when previous 200D belongs to nested inner branch', () => {
@@ -541,7 +571,24 @@ test('roundtrip: if inside else branch stays inside else branch', () => {
   assert.ok(idxOuterElse < idxInnerIf, 'inner .如果 should appear inside outer .否则 branch')
 })
 
-test('paste sanitize: Yi flow source still converts into internal markers', () => {
+test('format load: Yi flow source keeps explicit visible branch lines', () => {
+  const { eycToInternalFormat } = loadFormatModule()
+  const yi = [
+    '.如果 (a)',
+    '    333',
+    '.否则',
+    '    444',
+    '.如果结束',
+  ].join('\n')
+
+  const out = eycToInternalFormat(yi)
+  assert.equal(out.includes('\u200C') || out.includes('\u200D') || out.includes('\u2060'), false)
+  assert.equal(out.includes('如果 (a)'), true)
+  assert.equal(out.includes('否则'), true)
+  assert.equal(out.includes('如果结束'), true)
+})
+
+test('paste sanitize: Yi flow source keeps explicit visible branch lines', () => {
   const { sanitizePastedTextForCurrent } = loadFormatModule()
   const yi = [
     '.子程序 A, , , ',
@@ -553,8 +600,10 @@ test('paste sanitize: Yi flow source still converts into internal markers', () =
   ].join('\n')
 
   const out = sanitizePastedTextForCurrent(yi, '.程序集 Demo')
-  assert.equal(out.includes('\u200C'), true)
-  assert.equal(out.includes('\u200D'), true)
+  assert.equal(out.includes('\u200C') || out.includes('\u200D') || out.includes('\u2060'), false)
+  assert.equal(out.includes('如果 (a)'), true)
+  assert.equal(out.includes('否则'), true)
+  assert.equal(out.includes('如果结束'), true)
 })
 
 test('paste sanitize: strips assembly/file directives from pasted Yi snippet', () => {
@@ -570,7 +619,9 @@ test('paste sanitize: strips assembly/file directives from pasted Yi snippet', (
   const out = sanitizePastedTextForCurrent(yi, '.程序集 Demo')
   assert.equal(out.includes('.版本 '), false)
   assert.equal(out.includes('.支持库 '), false)
-  assert.equal(out.includes('\u200C') || out.includes('\u200D') || out.includes('\u2060'), true)
+  assert.equal(out.includes('\u200C') || out.includes('\u200D') || out.includes('\u2060'), false)
+  assert.equal(out.includes('如果 (a)'), true)
+  assert.equal(out.includes('如果结束'), true)
 })
 
 test('paste sanitize: removes standalone true-marker ghost lines from Yi flow source', () => {
@@ -589,7 +640,8 @@ test('paste sanitize: removes standalone true-marker ghost lines from Yi flow so
     .split('\n')
     .some(line => line.trimStart() === '\u200C')
   assert.equal(hasStandaloneTrueMarker, false)
-  assert.equal(out.includes('\u200D'), true)
+  assert.equal(out.includes('\u200D'), false)
+  assert.equal(out.includes('否则'), true)
 })
 
 test('paste sanitize: trims edge blanks and skips blank rows inside flow blocks', () => {
@@ -611,12 +663,11 @@ test('paste sanitize: trims edge blanks and skips blank rows inside flow blocks'
   const outLines = out.split('\n')
   assert.equal(outLines[0] === '', false)
   assert.equal(outLines[outLines.length - 1] === '', false)
-  assert.equal(out.includes('\n\n'), false)
+  assert.equal(out.includes('\u200C') || out.includes('\u200D') || out.includes('\u2060'), false)
 })
 
-test('paste sanitize: inserts minimal true-marker when true branch only contains nested flow', () => {
+test('paste sanitize: nested flow in true branch remains visible text', () => {
   const { sanitizePastedTextForCurrent } = loadFormatModule()
-  const C = '\u200C'
   const yi = [
     '.如果 ()',
     '    .如果 ()',
@@ -628,12 +679,7 @@ test('paste sanitize: inserts minimal true-marker when true branch only contains
   ].join('\n')
 
   const out = sanitizePastedTextForCurrent(yi, '.程序集 Demo')
-  // 真分支的 [C] 标记既可独立成行（原行为），也可与 [D] 合并为 `[C][D]` 占同一行
-  // （新行为，减少表格模式空行）。两种形式都保留了 [C] 的渲染语义。
-  const hasTrueMarker = out.split('\n').some(line => {
-    const t = line.trimStart()
-    return t === C || t.startsWith(C)
-  })
-  assert.equal(hasTrueMarker, true)
-  assert.equal(out.includes('\u200D'), true)
+  assert.equal(out.includes('\u200C') || out.includes('\u200D') || out.includes('\u2060'), false)
+  assert.equal(out.includes('    如果 ()'), true)
+  assert.equal(out.includes('否则'), true)
 })

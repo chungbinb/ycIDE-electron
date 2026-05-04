@@ -113,10 +113,17 @@ test('table editor applies flow-line mode engine output to render styles', () =>
   assert.doesNotMatch(css, /#569cd6|#4ec9b0/)
 })
 
+test('auto completed flow rows stay visible in table mode', () => {
+  const tsx = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+  const css = fs.readFileSync(tableEditorCssPath, 'utf-8')
+  assert.doesNotMatch(tsx, /eyc-flow-auto-line/)
+  assert.doesNotMatch(css, /eyc-flow-auto-line/)
+})
+
 test('flow horizontal lines keep 1px appearance under editor zoom', () => {
   const tsx = fs.readFileSync(tableEditorTsxPath, 'utf-8')
   const css = fs.readFileSync(tableEditorCssPath, 'utf-8')
-  assert.match(tsx, /'--eyc-scale':\s*`\$\{eycScale\}`/)
+  assert.match(tsx, /setProperty\('--eyc-scale',\s*`\$\{eycScale\}`\)/)
   assert.match(css, /\.eyc-flow-link-horz[\s\S]*top:\s*9px;/)
   assert.match(css, /\.eyc-flow-inner-link-horz[\s\S]*top:\s*9px;/)
   assert.match(css, /scaleY\(calc\(1 \/ var\(--eyc-scale, 1\)\)\)/)

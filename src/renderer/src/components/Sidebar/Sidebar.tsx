@@ -36,6 +36,13 @@ const TREE_TYPE_LABEL: Record<TreeNode['type'], string> = {
   resource: '资源',
 }
 
+const setCssVars = (element: HTMLElement | null, vars: Record<string, string>): void => {
+  if (!element) return
+  for (const [name, value] of Object.entries(vars)) {
+    element.style.setProperty(name, value)
+  }
+}
+
 interface SidebarProps {
   width: number
   onResize: (width: number) => void
@@ -105,7 +112,7 @@ function TreeItem({
     : `${TREE_TYPE_LABEL[node.type] || '节点'} ${node.label}${isActiveLeaf ? '，当前已选中' : ''}`
 
   const focusAdjacentTreeItem = (currentItem: HTMLElement, direction: 'up' | 'down' | 'home' | 'end'): void => {
-    const treeRoot = currentItem.closest('[role="tree"]')
+    const treeRoot = currentItem.closest('.tree')
     if (!treeRoot) return
     const items = Array.from(treeRoot.querySelectorAll<HTMLElement>('.tree-item'))
     const currentIndex = items.indexOf(currentItem)
@@ -128,7 +135,7 @@ function TreeItem({
   }
 
   const focusParentTreeItem = (currentItem: HTMLElement): void => {
-    const parentLi = currentItem.parentElement?.parentElement?.closest('li[role="treeitem"]')
+    const parentLi = currentItem.parentElement?.parentElement?.closest('.tree-node')
     if (!parentLi) return
     const parentItem = parentLi.firstElementChild
     if (parentItem instanceof HTMLElement && parentItem.classList.contains('tree-item')) {
@@ -137,14 +144,15 @@ function TreeItem({
   }
 
   return (
-    <li role="treeitem" aria-level={depth + 1} aria-expanded={hasChildren ? expanded : undefined}>
+    <li className="tree-node">
       <div
         className={`tree-item ${hasChildren ? 'tree-branch' : 'tree-leaf'}${isActiveLeaf ? ' tree-item-active' : ''}`}
         data-level={depth + 1}
         aria-label={treeItemAriaLabel}
-        aria-selected={isActiveLeaf}
-        id={`project-tree-item-${node.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`}
-        style={{ paddingLeft: `calc(${depth} * var(--tree-indent-step, 16px) + var(--tree-indent-base, 8px))` }}
+        aria-current={isActiveLeaf ? 'page' : undefined}
+        ref={(element) => setCssVars(element, {
+          '--tree-item-padding-left': `calc(${depth} * var(--tree-indent-step, 16px) + var(--tree-indent-base, 8px))`,
+        })}
         onClick={() => hasChildren && setExpanded(!expanded)}
         onDoubleClick={() => {
           if (node.type === 'module' && onOpenFile) {
@@ -218,7 +226,7 @@ function TreeItem({
         <span className="tree-label">{node.label}</span>
       </div>
       {hasChildren && expanded && (
-        <ul role="group">
+        <ul>
           {node.children!.map((child) => (
             <TreeItem
               key={child.id}
@@ -341,7 +349,7 @@ function LibraryPanel(): React.JSX.Element {
   }, [visibleLibraryItemIds])
 
   const focusAdjacentLibraryItem = useCallback((currentItem: HTMLElement, direction: 'up' | 'down' | 'home' | 'end') => {
-    const treeRoot = currentItem.closest('[role="tree"]')
+    const treeRoot = currentItem.closest('.tree')
     if (!treeRoot) return
     const items = Array.from(treeRoot.querySelectorAll<HTMLElement>('.tree-item[data-library-item="true"]'))
     const currentIndex = items.indexOf(currentItem)
@@ -364,7 +372,7 @@ function LibraryPanel(): React.JSX.Element {
   }, [])
 
   const focusParentLibraryItem = useCallback((currentItem: HTMLElement) => {
-    const parentLi = currentItem.parentElement?.parentElement?.closest('li[role="treeitem"]')
+    const parentLi = currentItem.parentElement?.parentElement?.closest('.tree-node')
     if (!parentLi) return
     const parentItem = parentLi.firstElementChild
     if (parentItem instanceof HTMLElement && parentItem.classList.contains('tree-item')) {
@@ -424,7 +432,7 @@ function LibraryPanel(): React.JSX.Element {
 
   return (
     <div className="sidebar-panel">
-      <ul className="tree" role="tree" aria-label="支持库列表">
+      <ul className="tree" aria-label="支持库列表">
         {loadedLibs.map(lib => {
           const isExpanded = expandedLibs.has(lib.name)
           const detail = libDetails[lib.name]
@@ -441,7 +449,7 @@ function LibraryPanel(): React.JSX.Element {
           const catNames = Object.keys(catMap)
 
           return (
-            <li key={lib.name} role="treeitem" aria-expanded={isExpanded}>
+            <li key={lib.name} className="tree-node">
               {(() => {
                 const libItemId = getLibraryItemId('lib', lib.name)
                 const isRovingFocused = focusedLibraryItemId ? focusedLibraryItemId === libItemId : visibleLibraryItemIds[0] === libItemId
@@ -450,7 +458,9 @@ function LibraryPanel(): React.JSX.Element {
                 className="tree-item tree-branch"
                 data-library-item="true"
                 aria-label={`支持库 ${lib.libName || lib.name}，${isExpanded ? '已展开' : '已折叠'}`}
-                style={{ paddingLeft: 'var(--tree-indent-base, 8px)' }}
+                ref={(element) => setCssVars(element, {
+                  '--tree-item-padding-left': 'var(--tree-indent-base, 8px)',
+                })}
                 tabIndex={isRovingFocused ? 0 : -1}
                 onFocus={() => setFocusedLibraryItemId(libItemId)}
                 onClick={() => { setFocusedLibraryItemId(libItemId); void toggleLib(lib.name) }}
@@ -467,7 +477,7 @@ function LibraryPanel(): React.JSX.Element {
                 )
               })()}
               {isExpanded && detail && (
-                <ul role="group">
+                <ul>
                   {/* 数据类型分组 */}
                   {detail.dataTypes.length > 0 && (() => {
                     const dtKey = `${lib.name}::__dt__`
@@ -475,12 +485,14 @@ function LibraryPanel(): React.JSX.Element {
                     const dtGroupItemId = getLibraryItemId('dt-group', lib.name)
                     const isDtGroupFocused = focusedLibraryItemId ? focusedLibraryItemId === dtGroupItemId : visibleLibraryItemIds[0] === dtGroupItemId
                     return (
-                      <li role="treeitem" aria-expanded={dtExpanded}>
+                      <li className="tree-node">
                         <div
                           className="tree-item tree-branch"
                           data-library-item="true"
                           aria-label={`数据类型分组，${dtExpanded ? '已展开' : '已折叠'}，共 ${detail.dataTypes.length} 项`}
-                          style={{ paddingLeft: 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px))' }}
+                          ref={(element) => setCssVars(element, {
+                            '--tree-item-padding-left': 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px))',
+                          })}
                           tabIndex={isDtGroupFocused ? 0 : -1}
                           onFocus={() => setFocusedLibraryItemId(dtGroupItemId)}
                           onClick={() => { setFocusedLibraryItemId(dtGroupItemId); toggleCat(dtKey) }}
@@ -496,10 +508,14 @@ function LibraryPanel(): React.JSX.Element {
                           <span className="tree-badge">{detail.dataTypes.length}</span>
                         </div>
                         {dtExpanded && (
-                          <ul role="group">
+                          <ul>
                             {detail.dataTypes.map(dt => (
-                              <li key={dt.name} role="treeitem" aria-selected={focusedLibraryItemId === getLibraryItemId('dt', lib.name, dt.name)}>
-                                <div className="tree-item tree-leaf" data-library-item="true" aria-label={`数据类型 ${dt.name}${dt.description ? `，${dt.description}` : ''}`} style={{ paddingLeft: 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px) * 2)' }} title={dt.description}
+                              <li key={dt.name} className="tree-node">
+                                <div className="tree-item tree-leaf" data-library-item="true" aria-label={`数据类型 ${dt.name}${dt.description ? `，${dt.description}` : ''}`}
+                                  ref={(element) => setCssVars(element, {
+                                    '--tree-item-padding-left': 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px) * 2)',
+                                  })}
+                                  title={dt.description}
                                   tabIndex={(focusedLibraryItemId ? focusedLibraryItemId === getLibraryItemId('dt', lib.name, dt.name) : visibleLibraryItemIds[0] === getLibraryItemId('dt', lib.name, dt.name)) ? 0 : -1}
                                   onFocus={() => setFocusedLibraryItemId(getLibraryItemId('dt', lib.name, dt.name))}
                                   onClick={() => setFocusedLibraryItemId(getLibraryItemId('dt', lib.name, dt.name))}
@@ -524,12 +540,14 @@ function LibraryPanel(): React.JSX.Element {
                     const catItemId = getLibraryItemId('cat', lib.name, cat)
                     const isCatFocused = focusedLibraryItemId ? focusedLibraryItemId === catItemId : visibleLibraryItemIds[0] === catItemId
                     return (
-                      <li key={cat} role="treeitem" aria-expanded={catExpanded}>
+                      <li key={cat} className="tree-node">
                         <div
                           className="tree-item tree-branch"
                           data-library-item="true"
                           aria-label={`命令分类 ${cat}，${catExpanded ? '已展开' : '已折叠'}，共 ${cmds.length} 项`}
-                          style={{ paddingLeft: 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px))' }}
+                          ref={(element) => setCssVars(element, {
+                            '--tree-item-padding-left': 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px))',
+                          })}
                           tabIndex={isCatFocused ? 0 : -1}
                           onFocus={() => setFocusedLibraryItemId(catItemId)}
                           onClick={() => { setFocusedLibraryItemId(catItemId); toggleCat(catKey) }}
@@ -545,10 +563,14 @@ function LibraryPanel(): React.JSX.Element {
                           <span className="tree-badge">{cmds.length}</span>
                         </div>
                         {catExpanded && (
-                          <ul role="group">
+                          <ul>
                             {cmds.map(cmd => (
-                              <li key={cmd.name} role="treeitem" aria-selected={focusedLibraryItemId === getLibraryItemId('cmd', lib.name, cat, cmd.name)}>
-                                <div className="tree-item tree-leaf" data-library-item="true" aria-label={`命令 ${cmd.name}${cmd.description ? `，${cmd.description}` : ''}`} style={{ paddingLeft: 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px) * 2)' }} title={cmd.description}
+                              <li key={cmd.name} className="tree-node">
+                                <div className="tree-item tree-leaf" data-library-item="true" aria-label={`命令 ${cmd.name}${cmd.description ? `，${cmd.description}` : ''}`}
+                                  ref={(element) => setCssVars(element, {
+                                    '--tree-item-padding-left': 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px) * 2)',
+                                  })}
+                                  title={cmd.description}
                                   tabIndex={(focusedLibraryItemId ? focusedLibraryItemId === getLibraryItemId('cmd', lib.name, cat, cmd.name) : visibleLibraryItemIds[0] === getLibraryItemId('cmd', lib.name, cat, cmd.name)) ? 0 : -1}
                                   onFocus={() => setFocusedLibraryItemId(getLibraryItemId('cmd', lib.name, cat, cmd.name))}
                                   onClick={() => setFocusedLibraryItemId(getLibraryItemId('cmd', lib.name, cat, cmd.name))}
@@ -1193,6 +1215,7 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
   const [tabsContextMenu, setTabsContextMenu] = useState<{ x: number; y: number } | null>(null)
   const eventSubsCacheRef = useRef<Map<string, Set<string>>>(new Map())
   const sidebarTabRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const sidebarRef = useRef<HTMLElement>(null)
 
   const sidebarTabs: Array<{ id: SidebarTab; label: string }> = [
     { id: 'library', label: '支持库' },
@@ -1244,6 +1267,10 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
   }, [tabsPlacement])
 
   useEffect(() => {
+    sidebarRef.current?.style.setProperty('--sidebar-width', `${width}px`)
+  }, [width])
+
+  useEffect(() => {
     if (!tabsContextMenu) return
     const close = (): void => setTabsContextMenu(null)
     const onKeyDown = (e: KeyboardEvent): void => {
@@ -1275,8 +1302,6 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
   const tabsNode = (
     <div
       className={`sidebar-tabs ${tabsPlacement === 'top' ? 'sidebar-tabs-top' : 'sidebar-tabs-bottom'}`}
-      role="tablist"
-      aria-label="侧栏标签"
       onContextMenu={handleTabsContextMenu}
     >
       {sidebarTabs.map((tab, index) => (
@@ -1285,9 +1310,6 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
           ref={(element) => { sidebarTabRefs.current[index] = element }}
           id={`sidebar-tab-${tab.id}`}
           className={`sidebar-tab ${activeTab === tab.id ? 'active' : ''}`}
-          role="tab"
-          aria-selected={activeTab === tab.id}
-          aria-controls={`sidebar-panel-${tab.id}`}
           tabIndex={activeTab === tab.id ? 0 : -1}
           onClick={() => onTabChange(tab.id)}
           onKeyDown={(event) => handleSidebarTabKeyDown(event, tab.id)}
@@ -1369,14 +1391,14 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
   }, [activeTab, projectTree])
 
   return (
-    <aside className={`sidebar ${placement === 'right' ? 'sidebar-right' : ''}`} style={{ width: `${width}px` }} role="complementary" aria-label="项目导航">
+    <aside ref={sidebarRef} className={`sidebar ${placement === 'right' ? 'sidebar-right' : ''}`} role="complementary" aria-label="项目导航">
       {headerNode}
       {tabsPlacement === 'top' && tabsNode}
       <div className="sidebar-content">
         {activeTab === 'project' && (
-          <div id="sidebar-panel-project" role="tabpanel" aria-labelledby="sidebar-tab-project">
+          <div id="sidebar-panel-project">
             {projectTree && projectTree.length > 0 ? (
-              <ul className="tree" role="tree" aria-label="项目结构">
+              <ul className="tree" aria-label="项目结构">
                 {projectTree.map((node) => (
                   <TreeItem
                     key={node.id}
@@ -1394,12 +1416,12 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
           </div>
         )}
         {activeTab === 'library' && (
-          <div id="sidebar-panel-library" role="tabpanel" aria-labelledby="sidebar-tab-library">
+          <div id="sidebar-panel-library">
             <LibraryPanel />
           </div>
         )}
         {activeTab === 'property' && (
-          <div id="sidebar-panel-property" role="tabpanel" aria-labelledby="sidebar-tab-property">
+          <div id="sidebar-panel-property">
             <PropertyPanel selection={selection} windowUnits={windowUnits} onSelectControl={onSelectControl} onPropertyChange={onPropertyChange} projectNames={projectNames} />
           </div>
         )}
@@ -1408,6 +1430,7 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
         <div className="sidebar-event-bar">
           <select
             className="sidebar-event-selector"
+            title="选择并加入事件处理子程序"
             value={selectedEventIndex}
             onChange={(e) => {
               const idx = parseInt(e.target.value, 10)
@@ -1448,13 +1471,17 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
       {tabsContextMenu && (
         <div
           className="sidebar-tabs-context-menu"
-          style={{ left: tabsContextMenu.x, top: tabsContextMenu.y }}
+          ref={(element) => setCssVars(element, {
+            '--sidebar-menu-x': `${tabsContextMenu.x}px`,
+            '--sidebar-menu-y': `${tabsContextMenu.y}px`,
+          })}
           role="menu"
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
           <button
             type="button"
+            role="menuitem"
             className="sidebar-tabs-context-menu-item"
             onClick={toggleTabsPlacementFromMenu}
           >
@@ -1469,9 +1496,6 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
         role="separator"
         aria-label="调整侧栏宽度"
         aria-orientation="vertical"
-        aria-valuemin={SIDEBAR_MIN_WIDTH}
-        aria-valuemax={SIDEBAR_MAX_WIDTH}
-        aria-valuenow={width}
         tabIndex={0}
       />
     </aside>

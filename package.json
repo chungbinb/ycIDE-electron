@@ -1,6 +1,6 @@
 {
   "name": "ycide",
-  "version": "0.0.3-beta.52",
+  "version": "0.0.3-beta.53",
   "description": "ycIDE - 易语言集成开发环境 (HTML版)",
   "main": "./out/main/index.js",
   "scripts": {
@@ -87,6 +87,7 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "@tanstack/react-virtual": "^3.13.24",
     "diff": "^9.0.0",
     "iconv-lite": "^0.7.2",
     "monaco-editor": "^0.55.1",

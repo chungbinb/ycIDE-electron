@@ -1,0 +1,40 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <RootNamespace>OpenEpl.TextECode</RootNamespace>
+    <LangVersion>9.0</LangVersion>
+    <Authors>OpenEpl</Authors>
+    <AssemblyName>OpenEpl.TextECode</AssemblyName>
+    <PackageId>OpenEpl.TextECode</PackageId>
+    <RuntimeIdentifiers>win-x86;win-x64</RuntimeIdentifiers>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Antlr4 Include="Grammar/EplLexer.g4">
+      <Package>OpenEpl.TextECode.Grammar</Package>
+    </Antlr4>
+    <Antlr4 Include="Grammar/EplParser.g4">
+      <Package>OpenEpl.TextECode.Grammar</Package>
+    </Antlr4>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Mime-Detective" Version="24.7.1" />
+    <PackageReference Include="Mime-Detective.Definitions.Condensed" Version="24.7.1" />
+    <PackageReference Include="QIQI.EProjectFile" Version="1.9.4">
+      <PrivateAssets>build; analyzers</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Antlr4.Runtime.Standard" Version="4.13.1" />
+    <PackageReference Include="Antlr4BuildTasks" Version="12.3.0" PrivateAssets="all" />
+    <PackageReference Include="QuikGraph" Version="2.5.0" />
+    <PackageReference Include="System.Text.Json" Version="8.0.6" />
+  </ItemGroup>
+
+</Project>

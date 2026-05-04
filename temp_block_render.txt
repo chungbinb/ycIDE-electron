@@ -1,0 +1,200 @@
+          </div>
+        )}
+        {blocks.map((blk, bi) => {
+          if (blk.kind === 'table') {
+            const tableLineIndices = blk.rows.filter(r => !r.isHeader).map(r => r.lineIndex)
+            const tableColCount = Math.max(1, blk.rows[0]?.cells.reduce((sum, cell) => sum + (cell.colSpan || 1), 0) || 1)
+            const tableRenderRows = blk.rows.flatMap((row, ri) => {
+              const rows: Array<{ row: typeof row; ri: number; isDeletedPlaceholder: boolean }> = [{ row, ri, isDeletedPlaceholder: false }]
+              if (!row.isHeader && diffDeletedAfterLines.has(row.lineIndex)) {
+                rows.push({ row, ri, isDeletedPlaceholder: true })
+              }
+              return rows
+            })
+            return (
+              <div
+                key={bi}
+                className="eyc-block-row"
+                onMouseDown={(e) => handleTableBlockMouseDown(e, tableLineIndices)}
+              >
+                <div className="eyc-line-gutter">
+                  {tableRenderRows.map(({ row, ri, isDeletedPlaceholder }, renderIndex) => (
+                    isDeletedPlaceholder
+                      ? (
+                          <div key={`gutter-del-${ri}-${renderIndex}`} className="eyc-gutter-cell eyc-diff-deleted-placeholder-gutter" aria-hidden="true">
+                            <span className="eyc-breakpoint-dot">●</span>
+                            <span className="eyc-gutter-linenum">&nbsp;</span>
+                            <span className="eyc-gutter-fold-area" />
+                          </div>
+                        )
+                      : (
+                          <div
+                            key={`gutter-row-${ri}-${renderIndex}`}
+                            className={row.isHeader
+                              ? 'eyc-gutter-cell'
+                              : `eyc-gutter-cell${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                          >
+                            {(() => {
+                              const actualLine = row.isHeader ? 0 : (lineNumMaps.tableRowNumMap.get(`${bi}:${ri}`) ?? row.lineIndex + 1)
+                              const sourceLine = row.isHeader ? 0 : (row.lineIndex + 1)
+                              const hasBreakpoint = sourceLine > 0 && breakpointLineSet.has(sourceLine)
+                              return (
+                                <>
+                                  <span className={`eyc-breakpoint-dot${hasBreakpoint ? ' active' : ''}`}>●</span>
+                                  <span className="eyc-gutter-linenum">{row.isHeader ? '' : actualLine}</span>
+                                </>
+                              )
+                            })()}
+                            <span className="eyc-gutter-fold-area" />
+                          </div>
+                        )
+                  ))}
+                </div>
+                <div className="eyc-block-content">
+                  <table className="eyc-decl-table" cellSpacing={0}>
+                    <tbody>
+                      {tableRenderRows.map(({ row, ri, isDeletedPlaceholder }, renderIndex) => (
+                        isDeletedPlaceholder
+                          ? (
+                              <tr key={`tbl-del-${ri}-${renderIndex}`} className="eyc-data-row eyc-diff-deleted-placeholder-row" aria-hidden="true">
+                                <td className="eyc-diff-deleted-placeholder-cell" colSpan={tableColCount}>&nbsp;</td>
+                              </tr>
+                            )
+                          : (
+                              <tr
+                                key={`tbl-row-${ri}-${renderIndex}`}
+                                className={row.isHeader ? 'eyc-hdr-row' : `eyc-data-row${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                                {...(!row.isHeader ? { 'data-line-index': row.lineIndex } : {})}
+                                onMouseDown={row.isHeader ? undefined : (e) => handleTableRowMouseDown(e, row.lineIndex)}
+                              >
+                            {row.cells.map((cell, ci) => (
+                              (() => {
+                                const isInvalidVarNameCell = !row.isHeader && cell.fieldIdx === 0 && invalidVarNameLineSet.has(row.lineIndex)
+                                return (
+                              <td
+                                key={ci}
+                                className={`${cell.cls} Rowheight${cell.align ? ' eyc-cell-align-center' : ''}${isInvalidVarNameCell ? ' eyc-cell-invalid' : ''}`}
+                                colSpan={cell.colSpan}
+                                onMouseDown={handleTableCellMouseDown}
+                                onClick={(e) => handleTableCellClick(e, {
+                                  rowIsHeader: !!row.isHeader,
+                                  tableType: blk.tableType,
+                                  lineIndex: row.lineIndex,
+                                  cellIndex: ci,
+                                  fieldIdx: cell.fieldIdx,
+                                  text: cell.text,
+                                  sliceField: cell.sliceField,
+                                })}
+                                onDoubleClick={(e) => handleTableCellDoubleClick(e, {
+                                  rowIsHeader: !!row.isHeader,
+                                  tableType: blk.tableType,
+                                  lineIndex: row.lineIndex,
+                                  cellIndex: ci,
+                                  fieldIdx: cell.fieldIdx,
+                                  text: cell.text,
+                                  sliceField: cell.sliceField,
+                                })}
+                              >
+                                {editCell && editCell.lineIndex === row.lineIndex && editCell.cellIndex === ci && editCell.fieldIdx === cell.fieldIdx && !row.isHeader ? (
+                                  <div className="eyc-inline-edit-sizing eyc-cell-inline-edit-sizing">
+                                    <span className="eyc-inline-edit-measure">
+                                      {(editVal.length > (cell.text || '\u00A0').length ? editVal : (cell.text || '\u00A0')) + '\u00A0'}
+                                    </span>
+                                    <input
+                                      ref={inputRef}
+                                      className={`eyc-cell-input${isInvalidVarNameCell ? ' eyc-input-invalid' : ''}`}
+                                      aria-label="编辑表格单元格"
+                                      value={editVal}
+                                      onPaste={(e) => e.stopPropagation()}
+                                      onMouseDown={(e) => {
+                                        if (e.button !== 0) return
+                                        // 单元格输入框内拖选仅限单元格，不切换到行拖选
+                                        pendingInputDragRef.current = { lineIndex: row.lineIndex, x: e.clientX, y: e.clientY, allowRowDrag: false }
+                                      }}
+                                      onChange={e => {
+                                        let v = e.target.value
+                                        // 数据类型单元格禁止空格（类型名不含空格，防止粘贴/IME 串入多个类型）
+                                        if (editCell && editCell.cellIndex >= 0
+                                          && canUseTypeCompletion(editCell.lineIndex, editCell.fieldIdx)
+                                          && /\s/.test(v)) {
+                                          v = v.replace(/\s+/g, '')
+                                        }
+                                        setEditVal(v)
+                                        scheduleLiveUpdate(v)
+                                        const pos = e.target.selectionStart ?? v.length
+                                        updateCompletion(v, pos)
+                                      }}
+                                      onBlur={() => {
+                                        if (shouldSuppressBlurCommit()) return
+                                        commit()
+                                      }}
+                                      onKeyDown={onKey}
+                                      spellCheck={false}
+                                    />
+                                  </div>
+                                ) : (
+                                  cell.text || '\u00A0'
+                                )}
+                              </td>
+                                )
+                              })()
+                            ))}
+                            </tr>
+                          )
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            )
+          }
+
+          // 代码行
+          const codeLineRaw = blk.codeLine || ''
+          const spans = colorize((blk.codeLine || '').replace(FLOW_AUTO_TAG, ''))
+          const lineCmd = blk.isVirtual ? null : findCmdWithParams((blk.codeLine || '').replace(FLOW_AUTO_TAG, ''))
+          const assignDetail = blk.isVirtual ? null : parseAssignmentDetail((blk.codeLine || '').replace(FLOW_AUTO_TAG, ''))
+          const hasExpandableDetail = !!lineCmd || !!assignDetail
+          const isExpanded = expandedLines.has(blk.lineIndex)
+          const isLineSelected = selectedLines.has(blk.lineIndex)
+          const actualLine = blk.isVirtual ? 0 : (lineNumMaps.codeLineNumMap.get(blk.lineIndex) ?? blk.lineIndex + 1)
+          const sourceLine = blk.isVirtual ? 0 : (blk.lineIndex + 1)
+          const hasBreakpoint = sourceLine > 0 && breakpointLineSet.has(sourceLine)
+          const isDebugLine = !!debugSourceLine && sourceLine === debugSourceLine
+          return (
+            <Fragment key={bi}>
+            <div
+              className={`eyc-block-row eyc-block-row-wrap${isLineSelected ? ' eyc-line-selected' : ''}${isDebugLine ? ' eyc-debug-line' : ''}${diffClassSuffixFor(blk.lineIndex)}`}
+              data-line-index={blk.lineIndex}
+              onMouseDown={(e) => handleCodeBlockMouseDown(e, blk.lineIndex)}
+            >
+              <div className="eyc-line-gutter">
+                <div className="eyc-gutter-cell">
+                  <span className={`eyc-breakpoint-dot${hasBreakpoint ? ' active' : ''}`}>●</span>
+                  <span className="eyc-gutter-linenum">{blk.isVirtual ? '' : actualLine}</span>
+                  <span className="eyc-gutter-fold-area">
+                    {hasExpandableDetail && (isLineSelected || (editCell && editCell.lineIndex === blk.lineIndex && editCell.paramIdx === undefined)) && (
+                      <span
+                        className="eyc-gutter-fold"
+                        onMouseDown={handleCodeLineFoldMouseDown}
+                        onClick={(e) => handleCodeLineFoldClick(e, blk.lineIndex)}
+                      >{isExpanded ? '−' : '+'}</span>
+                    )}
+                  </span>
+                </div>
+              </div>
+              <div
+                className={`eyc-code-line${editCell && editCell.lineIndex === blk.lineIndex && editCell.isVirtual === blk.isVirtual && editCell.paramIdx === undefined ? ' eyc-code-line-editing' : ''}`}
+                onClick={(e) => handleCodeLineClick(e, {
+                  lineIndex: blk.lineIndex,
+                  codeLineRaw,
+                  isVirtual: blk.isVirtual,
+                })}
+              >
+              {editCell && editCell.lineIndex === blk.lineIndex && editCell.isVirtual === blk.isVirtual && editCell.paramIdx === undefined ? (
+                <>
+                  {renderFlowSegs(blk.lineIndex, isExpanded).node}
+                  <div className="eyc-inline-edit-sizing eyc-code-inline-edit-sizing">
+                    <span
+                      className="eyc-inline-edit-measure eyc-code-inline-edit-measure"
+                    >

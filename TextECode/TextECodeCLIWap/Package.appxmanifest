@@ -1,0 +1,87 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  IgnorableNamespaces="uap uap3 desktop4 desktop5 com rescap">
+
+  <Identity
+    Name="b74b3903-090f-4c4c-b09e-ae5a854d3990"
+    Publisher="CN=OpenEpl"
+    Version="0.0.1.0" />
+
+  <Properties>
+    <DisplayName>TextECode</DisplayName>
+    <PublisherDisplayName>OpenEpl</PublisherDisplayName>
+    <Logo>Images\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.14393.0" MaxVersionTested="10.0.14393.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate"/>
+  </Resources>
+
+  <Applications>
+    <Application Id="TextECode"
+      Executable="TextECodeCLI\TextECode.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="TextECode"
+        Description="TextECode"
+        BackgroundColor="transparent"
+        Square150x150Logo="Images\Square150x150Logo.png"
+        Square44x44Logo="Images\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Images\Wide310x150Logo.png"  ShortName="TEC" Square71x71Logo="Images\SmallTile.png" Square310x310Logo="Images\LargeTile.png"/>
+        <uap:SplashScreen Image="Images\SplashScreen.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <uap3:Extension
+            Category="windows.appExecutionAlias"
+            Executable="TextECodeCLI\TextECode.exe"
+            EntryPoint="Windows.FullTrustApplication">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="TextECode.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap3:FileTypeAssociation Name="texteproject" Parameters="view &quot;%1&quot;">
+            <uap:SupportedFileTypes>
+              <uap:FileType>.eproject</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap3:FileTypeAssociation>
+        </uap:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="TextECode Shell Extension">
+              <com:Class Id="e77317d4-6e4f-4703-940b-a775267fce10" Path="TextECode.ShellExtension\TextECode.ShellExtension.dll" ThreadingModel="Both"/>
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <desktop5:ItemType Type=".e">
+              <desktop5:Verb Id="TextECodeShellExtension" Clsid="e77317d4-6e4f-4703-940b-a775267fce10" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".eproject">
+              <desktop5:Verb Id="TextECodeShellExtension" Clsid="e77317d4-6e4f-4703-940b-a775267fce10" />
+            </desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

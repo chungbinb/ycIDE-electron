@@ -1,0 +1,100 @@
+import { Fragment, useState, useCallback, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react'
+import { eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
+import {
+  buildBlocks,
+  inferResourceTypeByFileName,
+  parseLines,
+  splitCSV,
+  unquote,
+} from './eycBlocks'
+import {
+  FLOW_AUTO_COMPLETE,
+  FLOW_AUTO_TAG,
+  FLOW_KW,
+  FLOW_LOOP_KW,
+  FLOW_START,
+  computeFlowLines,
+  extractFlowKw,
+  findFlowStartLine,
+  getFlowStructureAround,
+  isFlowMarkerLine,
+} from './eycFlow'
+import type { FlowSegment } from './eycFlow'
+import type { RenderBlock } from './eycTableModel'
+import type { LibWindowUnit } from './VisualDesigner'
+import Icon from '../Icon/Icon'
+import '../Icon/Icon.css'
+import './EycTableEditor.css'
+import EycResourcePreview from './EycResourcePreview'
+import { resolveFlowLineColors } from './flowLineTheme'
+import { useCodeLineEditor, type CodeLineNavigationAction, type EmptyCodeLineDeleteAction, type ParenScopedKeyAction } from './useCodeLineEditor'
+import {
+  isQuotedTextLiteral,
+  parseAssignmentDetail,
+  parseAssignmentLineParts,
+  parseCallArgs,
+  replaceCallArg,
+} from './editorTextUtils'
+import {
+  dispatchCtrlShortcutWithHistory,
+  handleCompletionPopupKey,
+  handleTypeCellSpaceGuard,
+  dispatchMainEditingKey,
+  dispatchPreKeyGuards,
+} from './editorKeyboardDispatch'
+import {
+  applyScopedVariableRename,
+  getTableRowInsertTemplate,
+} from './editorTableRowUtils'
+import {
+  applyFlowMarkerSection,
+  applyMainAndExtraLines,
+  buildLoopFlowBodyLines,
+  collectRemainingLinesInCurrentScope,
+  getAutoExpandCursorBaseLine,
+  parseFlowMarkerTargetLine,
+  removeDuplicateFlowAutoEndings,
+  trimTrailingEmptyFormattedLine,
+} from './editorFlowAutoExpandUtils'
+import {
+  renderFlowContinuationLine,
+  renderFlowSegsLine,
+} from './editorFlowRenderUtils'
+import { buildMultiLinePasteResult } from './editorPasteUtils'
+import { useEditorInteractionHandlers } from './useEditorInteractionHandlers'
+import {
+  getCmdIconClass,
+  getCmdIconLabel,
+  getOuterParenRange,
+} from './editorCommandDisplayUtils'
+import { readFlowLineConfigFromCss } from './editorFlowLineConfig'
+import {
+  AC_PAGE_SIZE,
+  BUILTIN_LITERAL_COMPLETION_ITEMS,
+  BUILTIN_TYPE_ITEMS,
+  MEMBER_DELIMITER_REGEX,
+  clampNumber,
+  colorize,
+  formatOps,
+  getMissingAssignmentRhsTarget,
+  isKnownAssignmentTarget,
+  isValidVariableLikeName,
+  normalizeMemberTypeName,
+  rebuildLineField,
+  rebuildLineFlagField,
+  splitDebugRenderableText,
+} from './editorCoreUtils'
+import type { CompletionItem, CompletionParam } from './editorCoreUtils'
+import { buildCompletionCatalog } from './editorCompletionCatalogUtils'
+import {
+  buildCompletionMatches,
+  computeCompletionPopupPosition,
+  paginateCompletionDisplayItems,
+  type AcDisplayItem,
+} from './editorCompletionDisplayUtils'
+import {
+  selectCompletionSourceList,
+} from './editorCompletionSourceUtils'
+import {
+  isCursorInsideQuotedText,
+  resolveCompletionWordContext,

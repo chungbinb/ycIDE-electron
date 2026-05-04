@@ -108,6 +108,8 @@
 
 .activity-context-menu {
   position: fixed;
+  left: var(--activity-context-menu-x, 0px);
+  top: var(--activity-context-menu-y, 0px);
   z-index: 2100;
   min-width: 190px;
   background: var(--bg-secondary);

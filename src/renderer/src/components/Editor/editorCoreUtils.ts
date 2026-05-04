@@ -255,6 +255,13 @@ function colorExpr(expr: string): Span[] {
       continue
     }
 
+    const flow = r.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)(?=[\s(（），=＝<>+\-*\/]|$)/)
+    if (flow && FLOW_KW.has(flow[1])) {
+      out.push({ text: flow[1], cls: 'comecolor' })
+      r = r.slice(flow[1].length)
+      continue
+    }
+
     if ('()（）{}[]'.includes(r[0])) {
       out.push({ text: r[0], cls: 'eyc-punct' })
       r = r.slice(1)

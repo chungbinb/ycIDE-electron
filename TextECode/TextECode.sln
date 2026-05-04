@@ -1,0 +1,65 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.2.32616.157
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TextECode", "TextECode\TextECode.csproj", "{7E0C0625-69A3-4260-AE10-E87A461E56AF}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TextECodeCLI", "TextECodeCLI\TextECodeCLI.csproj", "{2D78EF99-763A-490E-AF3C-BD83F66B78D2}"
+EndProject
+Project("{C7167F0D-BC9F-4E6E-AFE1-012C56B48DB5}") = "TextECodeCLIWap", "TextECodeCLIWap\TextECodeCLIWap.wapproj", "{1085E739-E546-46DC-B153-47BEDAB6B435}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TextECode.ShellExtension", "TextECode.ShellExtension\TextECode.ShellExtension.vcxproj", "{BB3030B7-8C6B-4F35-B7C8-7D2AD6B46E31}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7E0C0625-69A3-4260-AE10-E87A461E56AF}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7E0C0625-69A3-4260-AE10-E87A461E56AF}.Debug|x64.Build.0 = Debug|Any CPU
+		{7E0C0625-69A3-4260-AE10-E87A461E56AF}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{7E0C0625-69A3-4260-AE10-E87A461E56AF}.Debug|x86.Build.0 = Debug|Any CPU
+		{7E0C0625-69A3-4260-AE10-E87A461E56AF}.Release|x64.ActiveCfg = Release|Any CPU
+		{7E0C0625-69A3-4260-AE10-E87A461E56AF}.Release|x64.Build.0 = Release|Any CPU
+		{7E0C0625-69A3-4260-AE10-E87A461E56AF}.Release|x86.ActiveCfg = Release|Any CPU
+		{7E0C0625-69A3-4260-AE10-E87A461E56AF}.Release|x86.Build.0 = Release|Any CPU
+		{2D78EF99-763A-490E-AF3C-BD83F66B78D2}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{2D78EF99-763A-490E-AF3C-BD83F66B78D2}.Debug|x64.Build.0 = Debug|Any CPU
+		{2D78EF99-763A-490E-AF3C-BD83F66B78D2}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{2D78EF99-763A-490E-AF3C-BD83F66B78D2}.Debug|x86.Build.0 = Debug|Any CPU
+		{2D78EF99-763A-490E-AF3C-BD83F66B78D2}.Release|x64.ActiveCfg = Release|Any CPU
+		{2D78EF99-763A-490E-AF3C-BD83F66B78D2}.Release|x64.Build.0 = Release|Any CPU
+		{2D78EF99-763A-490E-AF3C-BD83F66B78D2}.Release|x86.ActiveCfg = Release|Any CPU
+		{2D78EF99-763A-490E-AF3C-BD83F66B78D2}.Release|x86.Build.0 = Release|Any CPU
+		{1085E739-E546-46DC-B153-47BEDAB6B435}.Debug|x64.ActiveCfg = Debug|x64
+		{1085E739-E546-46DC-B153-47BEDAB6B435}.Debug|x64.Build.0 = Debug|x64
+		{1085E739-E546-46DC-B153-47BEDAB6B435}.Debug|x64.Deploy.0 = Debug|x64
+		{1085E739-E546-46DC-B153-47BEDAB6B435}.Debug|x86.ActiveCfg = Debug|x86
+		{1085E739-E546-46DC-B153-47BEDAB6B435}.Debug|x86.Build.0 = Debug|x86
+		{1085E739-E546-46DC-B153-47BEDAB6B435}.Debug|x86.Deploy.0 = Debug|x86
+		{1085E739-E546-46DC-B153-47BEDAB6B435}.Release|x64.ActiveCfg = Release|x64
+		{1085E739-E546-46DC-B153-47BEDAB6B435}.Release|x64.Build.0 = Release|x64
+		{1085E739-E546-46DC-B153-47BEDAB6B435}.Release|x64.Deploy.0 = Release|x64
+		{1085E739-E546-46DC-B153-47BEDAB6B435}.Release|x86.ActiveCfg = Release|x86
+		{1085E739-E546-46DC-B153-47BEDAB6B435}.Release|x86.Build.0 = Release|x86
+		{1085E739-E546-46DC-B153-47BEDAB6B435}.Release|x86.Deploy.0 = Release|x86
+		{BB3030B7-8C6B-4F35-B7C8-7D2AD6B46E31}.Debug|x64.ActiveCfg = Debug|x64
+		{BB3030B7-8C6B-4F35-B7C8-7D2AD6B46E31}.Debug|x64.Build.0 = Debug|x64
+		{BB3030B7-8C6B-4F35-B7C8-7D2AD6B46E31}.Debug|x86.ActiveCfg = Debug|Win32
+		{BB3030B7-8C6B-4F35-B7C8-7D2AD6B46E31}.Debug|x86.Build.0 = Debug|Win32
+		{BB3030B7-8C6B-4F35-B7C8-7D2AD6B46E31}.Release|x64.ActiveCfg = Release|x64
+		{BB3030B7-8C6B-4F35-B7C8-7D2AD6B46E31}.Release|x64.Build.0 = Release|x64
+		{BB3030B7-8C6B-4F35-B7C8-7D2AD6B46E31}.Release|x86.ActiveCfg = Release|Win32
+		{BB3030B7-8C6B-4F35-B7C8-7D2AD6B46E31}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {016E249E-C626-43F1-ACC5-6E3F099550F7}
+	EndGlobalSection
+EndGlobal

@@ -430,7 +430,8 @@ export function validateThemeImportConflictDecision(value: unknown): ThemeImport
   }
 
   if (decision.decision === 'rename-import') {
-    if (typeof decision.newThemeName !== 'string' || !decision.newThemeName.trim()) {
+    const newThemeName = typeof decision.newThemeName === 'string' ? decision.newThemeName.trim() : ''
+    if (!newThemeName) {
       diagnostics.push({
         path: 'newThemeName',
         code: 'required',
@@ -449,13 +450,14 @@ export function validateThemeImportConflictDecision(value: unknown): ThemeImport
       success: true,
       value: {
         decision: 'rename-import',
-        newThemeName: decision.newThemeName.trim(),
+        newThemeName,
       },
     }
   }
 
   if (decision.decision === 'overwrite') {
-    if (typeof decision.overwriteThemeId !== 'string' || !decision.overwriteThemeId.trim()) {
+    const overwriteThemeId = typeof decision.overwriteThemeId === 'string' ? decision.overwriteThemeId.trim() : ''
+    if (!overwriteThemeId) {
       diagnostics.push({
         path: 'overwriteThemeId',
         code: 'required',
@@ -481,7 +483,7 @@ export function validateThemeImportConflictDecision(value: unknown): ThemeImport
       success: true,
       value: {
         decision: 'overwrite',
-        overwriteThemeId: decision.overwriteThemeId.trim(),
+        overwriteThemeId,
         overwriteConfirmed: true,
       },
     }

@@ -37,11 +37,14 @@ import { scanYcmdRegistry } from './ycmd-registry'
 import { resolveIDESettings, type IDESettings } from '../shared/settings'
 import type { AIChatRequest, AIChatWithToolsRequest, AIEditRequest } from '../shared/ai'
 import { runAIChat, runAIChatStream, runAIChatWithTools, runAIEdit, runAIEditStream } from './ai-assistant'
+import type { EProjectImportRequest, OpenProjectSelectionResult } from '../shared/eprojectImport'
+import { getEProjectImportTarget, importEProjectFile } from './eproject/importService'
 
 const isDev = !app.isPackaged
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
 const APP_DISPLAY_NAME = 'ycIDE'
 const BUILTIN_LIGHT_THEME_ID: ThemeId = '默认浅色'
+const ENABLE_RENDERER_FILE_LOG = process.env.YCIDE_ENABLE_RENDERER_FILE_LOG === '1'
 
 type RecentOpenedItem = {
   type: 'project' | 'file'
@@ -241,6 +244,7 @@ function getRendererDebugLogPath(): string {
 }
 
 function appendRendererErrorLog(payload: { source?: string; message: string; stack?: string; extra?: unknown }): void {
+  if (!ENABLE_RENDERER_FILE_LOG) return
   const now = new Date().toISOString()
   const source = payload.source || 'renderer'
   const stack = payload.stack ? `\n${payload.stack}` : ''
@@ -250,6 +254,7 @@ function appendRendererErrorLog(payload: { source?: string; message: string; sta
 }
 
 function appendRendererDebugLog(payload: { source?: string; message: string; extra?: unknown }): void {
+  if (!ENABLE_RENDERER_FILE_LOG) return
   const now = new Date().toISOString()
   const source = payload.source || 'renderer'
   const extra = payload.extra === undefined ? '' : `\nextra=${JSON.stringify(payload.extra)}`
@@ -956,18 +961,20 @@ app.whenReady().then(() => {
     app.setAppUserModelId('com.ycide.app')
   }
 
-  try {
-    appendRendererDebugLog({
-      source: 'main',
-      message: 'debug-log-ready',
-      extra: {
-        isDev,
-        runtimePlatform,
-        pid: process.pid,
-      },
-    })
-  } catch (error) {
-    console.error('[renderer-debug] failed to write startup heartbeat', error)
+  if (ENABLE_RENDERER_FILE_LOG) {
+    try {
+      appendRendererDebugLog({
+        source: 'main',
+        message: 'debug-log-ready',
+        extra: {
+          isDev,
+          runtimePlatform,
+          pid: process.pid,
+        },
+      })
+    } catch (error) {
+      console.error('[renderer-debug] failed to write startup heartbeat', error)
+    }
   }
 
   ensureBuiltinThemeFiles()
@@ -1218,17 +1225,25 @@ app.whenReady().then(() => {
     }
   })
 
-  // 打开项目文件对话框（选择 .epp 文件）
-  ipcMain.handle('project:openEpp', async () => {
+  // 打开项目文件对话框（支持 .epp/.e/.ec）
+  ipcMain.handle('project:openEpp', async (): Promise<OpenProjectSelectionResult> => {
     const win = BrowserWindow.getFocusedWindow()
-    if (!win) return null
+    if (!win) return { status: 'canceled' }
     const result = await dialog.showOpenDialog(win, {
       title: '打开项目',
-      filters: [{ name: '易语言项目', extensions: ['epp'] }],
+      filters: [{ name: '易语言项目', extensions: ['epp', 'e', 'ec'] }],
       properties: ['openFile'],
     })
-    if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
+    if (result.canceled || result.filePaths.length === 0) return { status: 'canceled' }
+    const selectedPath = result.filePaths[0]
+    const selectedExt = extname(selectedPath).toLowerCase()
+    if (selectedExt === '.epp') return { status: 'epp', eppPath: selectedPath }
+    const target = getEProjectImportTarget(selectedPath)
+    return { status: 'eFile', eFilePath: selectedPath, projectName: target.projectName, targetDir: target.targetDir, targetExists: target.targetExists }
+  })
+
+  ipcMain.handle('project:importEFile', (_event, request: EProjectImportRequest) => {
+    return importEProjectFile(request)
   })
 
   // 保存文件内容

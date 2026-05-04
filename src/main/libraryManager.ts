@@ -1272,16 +1272,28 @@ class LibraryManager {
 
   private parseLibraryConstants(value: unknown): LibraryConstant[] {
     if (!Array.isArray(value)) return []
-    return value
-      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
-      .map(item => ({
+    const parsed: LibraryConstant[] = []
+    for (const entry of value) {
+      if (!entry || typeof entry !== 'object') continue
+      const item = entry as Record<string, unknown>
+      const name = typeof item.name === 'string' ? item.name.trim() : ''
+      if (!name) continue
+
+      let constantType: LibraryConstant['type'] = 'null'
+      if (item.type === 'number' || item.type === 'bool' || item.type === 'text') {
+        constantType = item.type
+      }
+
+      parsed.push({
         name: typeof item.name === 'string' ? item.name.trim() : '',
         englishName: typeof item.englishName === 'string' ? item.englishName.trim() : '',
         description: typeof item.description === 'string' ? item.description.trim() : '',
-        type: item.type === 'number' || item.type === 'bool' || item.type === 'text' ? item.type : 'null',
+        type: constantType,
         value: typeof item.value === 'string' ? item.value : String(item.value ?? ''),
-      }))
-      .filter(item => item.name.length > 0)
+      })
+    }
+
+    return parsed
   }
 
   private parseWindowUnitProperties(value: unknown): LibraryWindowUnitProperty[] {

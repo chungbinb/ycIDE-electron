@@ -12,8 +12,8 @@
   justify-content: space-between;
   gap: 12px;
   padding: 8px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--error) 58%, transparent);
-  background: color-mix(in srgb, var(--error) 20%, transparent);
+  border-bottom: 1px solid var(--error);
+  background: var(--bg-tertiary);
   font-family: var(--font-family);
   font-size: var(--font-size);
   line-height: 1.4;
@@ -102,7 +102,6 @@
   border-top: 1px solid var(--border-color);
   flex-shrink: 0;
   overflow-x: auto;
-  scrollbar-width: none;
 }
 
 .editor-tabs-top .editor-tabs {
@@ -128,8 +127,6 @@
 
 .editor-tabs:hover,
 .editor-tabs:focus-within {
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .editor-tabs:hover::-webkit-scrollbar,
@@ -245,6 +242,8 @@
 
 .editor-tab-context-menu {
   position: fixed;
+  left: var(--editor-tab-context-menu-x, 0px);
+  top: var(--editor-tab-context-menu-y, 0px);
   z-index: 2000;
   min-width: 220px;
   background: var(--bg-secondary);
@@ -268,6 +267,44 @@
 
 .editor-tab-context-item:hover {
   background: var(--bg-hover);
+}
+
+.editor-eyc-textmode-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.editor-eyc-fallback-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--warning, #f2c97d);
+}
+
+.editor-eyc-fallback-text {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.editor-eyc-fallback-btn {
+  padding: 2px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.editor-eyc-fallback-btn:hover {
+  background: var(--bg-hover);
+}
+
+.editor-eyc-textmode-main {
+  flex: 1;
 }
 
 /* 编辑区 - Monaco Editor 容器 */
