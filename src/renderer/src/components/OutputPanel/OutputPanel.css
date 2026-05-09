@@ -6,6 +6,7 @@
   flex-shrink: 0;
   position: relative;
   min-height: 0;
+  height: var(--output-panel-height, 200px);
 }
 
 .output-resizer {
@@ -103,6 +104,8 @@
 
 .output-tabs-context-menu {
   position: fixed;
+  left: var(--output-tabs-menu-x, 0px);
+  top: var(--output-tabs-menu-y, 0px);
   z-index: 2200;
   min-width: 240px;
   background: var(--bg-secondary, #252526);
@@ -136,6 +139,7 @@
   padding: var(--spacing-sm) var(--spacing-md);
   font-family: var(--font-mono);
   font-size: var(--font-size);
+  -webkit-user-select: text;
   user-select: text;
 }
 
@@ -481,6 +485,10 @@
   flex-shrink: 0;
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+.output-debug-actions {
+  margin-top: 12px;
 }
 
 .output-debug-table {

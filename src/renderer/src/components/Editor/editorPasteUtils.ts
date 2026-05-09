@@ -1,5 +1,106 @@
 import { parseLines } from './eycBlocks'
 
+type SubBlock = {
+  name: string
+  start: number
+  end: number
+}
+
+function getSubNameByParsedLine(parsedLine: { type: string; fields: string[] }): string {
+  if (parsedLine.type !== 'sub') return ''
+  return (parsedLine.fields[0] || '').trim()
+}
+
+function collectSubBlocksByLines(lines: string[]): SubBlock[] {
+  const parsed = parseLines(lines.join('\n'))
+  const subHeaderIndices: number[] = []
+  for (let i = 0; i < parsed.length; i++) {
+    if (parsed[i].type === 'sub') subHeaderIndices.push(i)
+  }
+  if (subHeaderIndices.length === 0) return []
+
+  const blocks: SubBlock[] = []
+  for (let i = 0; i < subHeaderIndices.length; i++) {
+    const start = subHeaderIndices[i]
+    const name = getSubNameByParsedLine(parsed[start])
+    if (!name) continue
+
+    let end = lines.length
+    for (let j = start + 1; j < parsed.length; j++) {
+      if (parsed[j].type === 'sub' || parsed[j].type === 'assembly') {
+        end = j
+        break
+      }
+    }
+    blocks.push({ name, start, end })
+  }
+  return blocks
+}
+
+function splitPastedLinesForDuplicateSubMerge(currentLines: string[], pastedLines: string[]): {
+  linesToInsert: string[]
+  appendBySubName: Map<string, string[]>
+} {
+  const currentBlocks = collectSubBlocksByLines(currentLines)
+  const existingNames = new Set(currentBlocks.map(block => block.name))
+  if (existingNames.size === 0) {
+    return { linesToInsert: pastedLines, appendBySubName: new Map() }
+  }
+
+  const pastedBlocks = collectSubBlocksByLines(pastedLines)
+  if (pastedBlocks.length === 0) {
+    return { linesToInsert: pastedLines, appendBySubName: new Map() }
+  }
+
+  const keepMask = new Array<boolean>(pastedLines.length).fill(true)
+  const appendBySubName = new Map<string, string[]>()
+
+  for (const block of pastedBlocks) {
+    if (!existingNames.has(block.name)) continue
+
+    for (let i = block.start; i < block.end; i++) {
+      keepMask[i] = false
+    }
+
+    const bodyLines = pastedLines.slice(block.start + 1, block.end)
+    if (bodyLines.length === 0) continue
+    const prev = appendBySubName.get(block.name)
+    if (prev) prev.push(...bodyLines)
+    else appendBySubName.set(block.name, [...bodyLines])
+  }
+
+  return {
+    linesToInsert: pastedLines.filter((_, i) => keepMask[i]),
+    appendBySubName,
+  }
+}
+
+function appendSubBodiesToExistingText(lines: string[], appendBySubName: Map<string, string[]>): {
+  nextLines: string[]
+  firstInsertAt: number
+  insertedLineCount: number
+} {
+  if (appendBySubName.size === 0) {
+    return { nextLines: lines, firstInsertAt: -1, insertedLineCount: 0 }
+  }
+
+  const nextLines = [...lines]
+  let firstInsertAt = -1
+  let insertedLineCount = 0
+
+  for (const [subName, bodyLines] of appendBySubName) {
+    if (bodyLines.length === 0) continue
+    const blocks = collectSubBlocksByLines(nextLines)
+    const target = blocks.find(block => block.name === subName)
+    if (!target) continue
+    nextLines.splice(target.end, 0, ...bodyLines)
+    if (firstInsertAt < 0) firstInsertAt = target.end
+    insertedLineCount += bodyLines.length
+  }
+
+  return { nextLines, firstInsertAt, insertedLineCount }
+}
+
 export function findInsertAtForPastedSubs(lines: string[], cursorLine: number): number {
   if (cursorLine < 0 || cursorLine >= lines.length) return lines.length
 
@@ -205,7 +306,12 @@ export function buildMultiLinePasteResult(params: {
     }
   }
 
-  const nextLines = [...lines]
+  const mergeResult = pastedHasSub
+    ? splitPastedLinesForDuplicateSubMerge(lines, adjustedLines)
+    : { linesToInsert: adjustedLines, appendBySubName: new Map<string, string[]>() }
+  adjustedLines = mergeResult.linesToInsert
+
+  let nextLines = [...lines]
   if (hasInlineContent) {
     nextLines.splice(insertAt, 0, ...adjustedLines)
   }
@@ -223,10 +329,23 @@ export function buildMultiLinePasteResult(params: {
     }
   }
 
+  const appendResult = appendSubBodiesToExistingText(nextLines, mergeResult.appendBySubName)
+  nextLines = appendResult.nextLines
+
+  const insertedInlineCount = hasInlineContent ? adjustedLines.length : 0
+  const resultInsertAt = insertedInlineCount > 0
+    ? insertAt
+    : appendResult.firstInsertAt >= 0
+      ? appendResult.firstInsertAt
+      : nextLines.length
+  const resultLineCount = insertedInlineCount > 0
+    ? insertedInlineCount
+    : appendResult.insertedLineCount
+
   return {
     nextText: nextLines.join('\n'),
-    insertAt: hasInlineContent ? insertAt : nextLines.length,
-    pastedLineCount: hasInlineContent ? adjustedLines.length : 0,
+    insertAt: resultInsertAt,
+    pastedLineCount: resultLineCount,
     routedDeclarations,
   }
 }

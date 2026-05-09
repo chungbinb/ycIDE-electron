@@ -3,6 +3,8 @@
  * Normalizes SVG colors to currentColor so icon tint follows theme tokens.
  */
 
+import { useEffect, useRef } from 'react'
+
 // Toolbar icons
 import NewDocumentSvg from '../../assets/icons/NewDocument.svg?raw'
 import OpenFolderSvg from '../../assets/icons/OpenFolder.svg?raw'
@@ -26,6 +28,7 @@ import SpySvg from '../../assets/icons/Spy.svg?raw'
 // Debug icons
 import StopSvg from '../../assets/icons/Stop.svg?raw'
 import PauseSvg from '../../assets/icons/Pause.svg?raw'
+import StatusStoppedOutlineSvg from '../../assets/icons/StatusStoppedOutline.svg?raw'
 import StepIntoSvg from '../../assets/icons/StepInto.svg?raw'
 import StepOverSvg from '../../assets/icons/StepOver.svg?raw'
 import StepOutSvg from '../../assets/icons/StepOut.svg?raw'
@@ -98,6 +101,7 @@ export const ICON_MAP: Record<string, string> = {
   'redo': RedoSvg,
   'run': RunSvg,
   'stop': StopSvg,
+  'status-stopped-outline': StatusStoppedOutlineSvg,
   'pause': PauseSvg,
   'step-into': StepIntoSvg,
   'step-over': StepOverSvg,
@@ -233,17 +237,17 @@ interface IconProps {
   name: string
   size?: number
   className?: string
-  style?: React.CSSProperties
   title?: string
   preserveOriginalColors?: boolean
   /** Icon color mode: 'themed' = all→currentColor, 'original' = keep all, 'preserve-accent' = grey→currentColor + keep accents */
   colorMode?: IconColorMode
 }
 
-export default function Icon({ name, size = 16, className = '', style, title, preserveOriginalColors = false, colorMode }: IconProps): React.JSX.Element | null {
+export default function Icon({ name, size = 16, className = '', title, preserveOriginalColors = false, colorMode }: IconProps): React.JSX.Element | null {
   const raw = ICON_MAP[name]
   if (!raw) return null
   const effectiveMode: IconColorMode = colorMode ?? (preserveOriginalColors ? 'original' : 'themed')
+  const iconRef = useRef<HTMLSpanElement>(null)
   const cacheKey = `${name}_${effectiveMode}`
   let processedSvg = _svgCache.get(cacheKey)
   if (!processedSvg) {
@@ -260,10 +264,17 @@ export default function Icon({ name, size = 16, className = '', style, title, pr
     }
     _svgCache.set(cacheKey, processedSvg)
   }
+
+  useEffect(() => {
+    if (!iconRef.current) return
+    iconRef.current.style.width = `${size}px`
+    iconRef.current.style.height = `${size}px`
+  }, [size])
+
   return (
     <span
+      ref={iconRef}
       className={`vs-icon ${className}`}
-      style={{ width: size, height: size, ...style }}
       title={title}
       aria-label={title}
       dangerouslySetInnerHTML={{ __html: processedSvg }}

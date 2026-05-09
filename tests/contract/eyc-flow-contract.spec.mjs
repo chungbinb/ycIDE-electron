@@ -98,3 +98,77 @@ test('eyc flow: auto completed visible lines render as normal table rows', () =>
   assert.equal(structure.cmdLine, 0)
   assert.equal(structure.sections.some(section => section.char === '否则' && section.startLine === 2), true)
 })
+
+test('eyc flow: consecutive if/ifTrue blocks do not create judge-style link bridge', () => {
+  const { buildBlocks } = loadTsModule(blocksPath)
+  const { computeFlowLines } = loadTsModule(flowPath)
+
+  const ifText = [
+    '.如果 (条件1)',
+    '    处理1（）',
+    '.如果结束',
+    '.如果 (条件2)',
+    '    处理2（）',
+    '.如果结束',
+  ].join('\n')
+
+  const ifFlow = computeFlowLines(buildBlocks(ifText))
+  const ifEndLine = ifFlow.map.get(2) || []
+  const ifStartLine = ifFlow.map.get(3) || []
+  const ifEndSeg = ifEndLine.find(segment => segment.type === 'end' && segment.flowKind === 'if')
+  const ifStartSeg = ifStartLine.find(segment => segment.type === 'start' && segment.flowKind === 'if')
+
+  assert.ok(ifEndSeg)
+  assert.ok(ifStartSeg)
+  assert.equal(!!ifEndSeg.hasNextFlow, false)
+  assert.equal(!!ifStartSeg.hasPrevFlowEnd, false)
+
+  const ifTrueText = [
+    '.如果真 (条件1)',
+    '    处理1（）',
+    '.如果真结束',
+    '.如果真 (条件2)',
+    '    处理2（）',
+    '.如果真结束',
+  ].join('\n')
+
+  const ifTrueFlow = computeFlowLines(buildBlocks(ifTrueText))
+  const ifTrueEndLine = ifTrueFlow.map.get(2) || []
+  const ifTrueStartLine = ifTrueFlow.map.get(3) || []
+  const ifTrueEndSeg = ifTrueEndLine.find(segment => segment.type === 'end' && segment.flowKind === 'ifTrue')
+  const ifTrueStartSeg = ifTrueStartLine.find(segment => segment.type === 'start' && segment.flowKind === 'ifTrue')
+
+  assert.ok(ifTrueEndSeg)
+  assert.ok(ifTrueStartSeg)
+  assert.equal(!!ifTrueEndSeg.hasNextFlow, false)
+  assert.equal(!!ifTrueStartSeg.hasPrevFlowEnd, false)
+})
+
+test('eyc flow: judge blocks keep end-to-start link bridge', () => {
+  const { buildBlocks } = loadTsModule(blocksPath)
+  const { computeFlowLines } = loadTsModule(flowPath)
+
+  const text = [
+    '.判断开始 (条件1)',
+    '    处理1（）',
+    '.默认',
+    '    处理默认1（）',
+    '.判断结束',
+    '.判断开始 (条件2)',
+    '    处理2（）',
+    '.默认',
+    '    处理默认2（）',
+    '.判断结束',
+  ].join('\n')
+
+  const flow = computeFlowLines(buildBlocks(text))
+  const endLine = flow.map.get(4) || []
+  const startLine = flow.map.get(5) || []
+  const endSeg = endLine.find(segment => segment.type === 'end' && segment.flowKind === 'judge')
+  const startSeg = startLine.find(segment => segment.type === 'start' && segment.flowKind === 'judge')
+
+  assert.ok(endSeg)
+  assert.ok(startSeg)
+  assert.equal(!!endSeg.hasNextFlow, true)
+  assert.equal(!!startSeg.hasPrevFlowEnd, true)
+})

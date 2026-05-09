@@ -157,6 +157,9 @@ function TitleBar({ onMenuAction, onWindowClose, runtimePlatform = 'windows', ha
   const isMacOS = isMacOSPlatform(runtimePlatform)
   const [openMenu, setOpenMenu] = useState<number | null>(null)
   const menuBarRef = useRef<HTMLDivElement>(null)
+  const dragRegionRef = useRef<HTMLDivElement>(null)
+  const titlebarIconRef = useRef<HTMLDivElement>(null)
+  const titlebarControlsRef = useRef<HTMLDivElement>(null)
 
   const handleMinimize = () => window.api?.window.minimize()
   const handleMaximize = () => window.api?.window.maximize()
@@ -179,6 +182,14 @@ function TitleBar({ onMenuAction, onWindowClose, runtimePlatform = 'windows', ha
     return () => document.removeEventListener('mousedown', handler)
   }, [openMenu, closeMenu])
 
+  // Electron 标题栏拖拽区域通过运行时属性设置，避免 CSS 兼容性检查误报。
+  useEffect(() => {
+    dragRegionRef.current?.style.setProperty('-webkit-app-region', openMenu === null ? 'drag' : 'no-drag')
+    titlebarIconRef.current?.style.setProperty('-webkit-app-region', 'no-drag')
+    menuBarRef.current?.style.setProperty('-webkit-app-region', 'no-drag')
+    titlebarControlsRef.current?.style.setProperty('-webkit-app-region', 'no-drag')
+  }, [openMenu])
+
   const handleTitlebarMouseDownCapture = (event: React.MouseEvent<HTMLElement>) => {
     if (openMenu === null) return
     const target = event.target as Node
@@ -192,9 +203,9 @@ function TitleBar({ onMenuAction, onWindowClose, runtimePlatform = 'windows', ha
       role="banner"
       onMouseDownCapture={handleTitlebarMouseDownCapture}
     >
-      <div className="titlebar-drag">
+      <div className="titlebar-drag" ref={dragRegionRef}>
         {!isMacOS && (
-          <div className="titlebar-icon" aria-hidden="true">
+          <div className="titlebar-icon" aria-hidden="true" ref={titlebarIconRef}>
             <img src={ycideLogo} className="titlebar-icon-image" alt="" draggable={false} />
           </div>
         )}
@@ -266,7 +277,7 @@ function TitleBar({ onMenuAction, onWindowClose, runtimePlatform = 'windows', ha
         <div className="titlebar-title">ycIDE - 易承语言集成开发环境</div>
       </div>
       {!isMacOS && (
-        <div className="titlebar-controls" aria-label="窗口控制">
+        <div className="titlebar-controls" aria-label="窗口控制" ref={titlebarControlsRef}>
         <button
           className="titlebar-btn"
           onClick={handleMinimize}

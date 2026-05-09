@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AIChatMessage, AICustomModelConfig, AIEditResult, AISupportedModel } from '../../../../shared/ai'
 import { resolveIDESettings } from '../../../../shared/settings'
+import type { IDESettings } from '../../../../shared/settings'
 import type { FileProblem } from '../OutputPanel/OutputPanel'
 import Icon from '../Icon/Icon'
 import './AIAssistantPanel.css'
@@ -67,6 +68,7 @@ interface AIAssistantPanelProps {
   aiFontFamily?: string
   aiFontSize?: number
   onModelChange: (model: AISupportedModel, persist?: boolean) => void
+  onSettingsSync?: (partial: Partial<IDESettings>) => void
   onChat: (messages: AIChatMessage[]) => Promise<{ ok: boolean; message: string; error?: string }>
   onChatStream?: (messages: AIChatMessage[], onDelta: (delta: string) => void) => Promise<{ ok: boolean; message: string; error?: string }>
   onRequestEdit: (instruction: string, targetFilePath: string) => Promise<AIEditResult>
@@ -80,6 +82,13 @@ interface AIAssistantPanelProps {
     onLog?: (line: string) => void,
     onToolTrace?: (trace: { id: string; tool: string; ok: boolean; args: string; result: string }) => void,
   ) => Promise<AgentTaskResult>
+}
+
+function setCssVars(element: HTMLElement | null, vars: Record<string, string>): void {
+  if (!element) return
+  for (const [name, value] of Object.entries(vars)) {
+    element.style.setProperty(name, value)
+  }
 }
 
 function parseDiffHunks(diffText: string): DiffHunk[] {
@@ -207,6 +216,7 @@ function AIAssistantPanel({
   aiFontFamily,
   aiFontSize,
   onModelChange,
+  onSettingsSync,
   onChat,
   onChatStream,
   onRequestEdit,
@@ -337,6 +347,7 @@ function AIAssistantPanel({
       : mode === 'plan'
         ? '计划指令'
         : 'Agent 任务指令'
+  const canSend = composerValue.trim().length > 0
 
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const autoResizeComposer = useCallback((): void => {
@@ -631,7 +642,12 @@ function AIAssistantPanel({
         setEditChangeSummary(null)
       }
       if (!result.ok) {
-        setStatus(result.error || 'Agent 执行失败。')
+        const errorMessage = result.error || 'Agent 执行失败。'
+        const hasSameErrorInLogs = logEntries.some(line => line.includes(errorMessage))
+        if (!result.finalMessage && !hasSameErrorInLogs) {
+          setAgentHistory(prev => [...prev, { role: 'assistant', content: errorMessage }])
+        }
+        setStatus(null)
       }
       setAgentRunning(false)
       setBusy(false)
@@ -1010,6 +1026,12 @@ function AIAssistantPanel({
       })
       const resolved = resolveIDESettings(saved)
       onModelChange(resolved.aiModel, false)
+      onSettingsSync?.({
+        aiModel: resolved.aiModel,
+        aiDeepseekApiKey: resolved.aiDeepseekApiKey,
+        aiGlmApiKey: resolved.aiGlmApiKey,
+        aiCustomModels: resolved.aiCustomModels,
+      })
       setConfigStatus('模型配置已保存。')
       setShowModelConfig(false)
     } catch {
@@ -1020,7 +1042,15 @@ function AIAssistantPanel({
   }
 
   return (
-    <aside className={`ai-panel${placement === 'left' ? ' ai-panel-left' : ''}`} aria-label="AI 助手面板" style={{ width: panelWidth, fontFamily: aiFontFamily, fontSize: aiFontSize ? `${aiFontSize}px` : undefined }}>
+    <aside
+      className={`ai-panel${placement === 'left' ? ' ai-panel-left' : ''}`}
+      aria-label="AI 助手面板"
+      ref={(element) => setCssVars(element, {
+        '--ai-panel-width': `${panelWidth}px`,
+        '--ai-font-family': aiFontFamily || 'inherit',
+        '--ai-font-size': aiFontSize ? `${aiFontSize}px` : 'inherit',
+      })}
+    >
       <div
         className={`ai-panel-resizer${placement === 'left' ? ' ai-panel-resizer-right' : ''}`}
         onMouseDown={handleResizeMouseDown}
@@ -1214,40 +1244,42 @@ function AIAssistantPanel({
               <option value="__config__">模型配置...</option>
             </select>
           </div>
-          <button
-            type="button"
-            className="ai-btn ai-btn-icon ai-stop-btn"
-            onClick={handleStopRunning}
-            disabled={!busy}
-            aria-label="停止"
-            title="停止"
-          >
-            <Icon name="close" size={14} />
-          </button>
-          <button
-            type="button"
-            className="ai-btn ai-btn-icon ai-send-btn"
-            onClick={() => {
-              if (mode === 'chat') {
-                void handleSendChat()
-                return
-              }
-              if (mode === 'edit') {
-                void handleGenerateEdit()
-                return
-              }
-              if (mode === 'plan') {
-                void handleGeneratePlan()
-                return
-              }
-              void handleRunAgent()
-            }}
-            disabled={busy}
-            aria-label={primaryActionLabel}
-            title={primaryActionLabel}
-          >
-            <Icon name="go-to-previous" size={14} />
-          </button>
+          {busy ? (
+            <button
+              type="button"
+              className="ai-btn ai-btn-icon ai-stop-btn"
+              onClick={handleStopRunning}
+              aria-label="停止"
+              title="停止"
+            >
+              <Icon name="status-stopped-outline" size={14} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="ai-btn ai-btn-icon ai-send-btn"
+              onClick={() => {
+                if (mode === 'chat') {
+                  void handleSendChat()
+                  return
+                }
+                if (mode === 'edit') {
+                  void handleGenerateEdit()
+                  return
+                }
+                if (mode === 'plan') {
+                  void handleGeneratePlan()
+                  return
+                }
+                void handleRunAgent()
+              }}
+              disabled={!canSend}
+              aria-label={primaryActionLabel}
+              title={primaryActionLabel}
+            >
+              <Icon name="go-to-previous" size={14} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -1263,6 +1295,8 @@ function AIAssistantPanel({
                 className="ai-model-select ai-file-select"
                 value={configModel}
                 onChange={(e) => setConfigModel(e.target.value as AISupportedModel)}
+                title="默认模型"
+                aria-label="默认模型"
                 disabled={configBusy}
               >
                 {modelOptions.map((item) => (

@@ -103,6 +103,13 @@ function snap(v: number): number {
   return Math.round(v / GRID) * GRID
 }
 
+function setCssVars(element: HTMLElement | null, vars: Record<string, string>): void {
+  if (!element) return
+  for (const [name, value] of Object.entries(vars)) {
+    element.style.setProperty(name, value)
+  }
+}
+
 type AxisSnapResult = { pos: number; guide: number } | null
 
 interface FormVisualColors {
@@ -734,121 +741,67 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
   // 渲染单个控件的预览外观
   const renderControlPreview = (ctrl: DesignControl): React.JSX.Element => {
-    const common: React.CSSProperties = {
-      width: '100%', height: '100%',
-      boxSizing: 'border-box',
-      fontSize: 12,
-      fontFamily: 'var(--font-family)',
-      overflow: 'hidden',
-    }
     const controlColors = resolveControlVisualColors(ctrl)
 
     switch (ctrl.type) {
       case '按钮':
         return (
-          <div style={{
-            ...common,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: controlColors.bg,
-            border: `1px solid ${controlColors.border}`,
-            borderRadius: 3,
-            color: controlColors.text,
-            cursor: 'default',
-          }}>{ctrl.text}</div>
+          <div
+            className="vd-preview vd-preview-button"
+            ref={(element) => setCssVars(element, {
+              '--vd-preview-bg': controlColors.bg,
+              '--vd-preview-border': controlColors.border,
+              '--vd-preview-text': controlColors.text,
+            })}
+          >
+            {ctrl.text}
+          </div>
         )
       case '编辑框':
       case '超级编辑框':
         return (
-          <div style={{
-            ...common,
-            background: 'var(--bg-primary)',
-            border: '1px solid var(--border-color)',
-            padding: '2px 4px',
-            color: 'var(--text-primary)',
-          }}>{ctrl.text}</div>
+          <div className="vd-preview vd-preview-input">{ctrl.text}</div>
         )
       case '标签':
         return (
-          <div style={{
-            ...common,
-            display: 'flex', alignItems: 'center',
-            color: 'var(--text-primary)',
-            background: 'transparent',
-          }}>{ctrl.text}</div>
+          <div className="vd-preview vd-preview-label">{ctrl.text}</div>
         )
       case '图片框':
       case '影像框':
         return (
-          <div style={{
-            ...common,
-            background: 'var(--bg-primary)',
-            border: '1px solid var(--border-color)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: 'var(--text-disabled)',
-          }}>{ctrl.type}</div>
+          <div className="vd-preview vd-preview-image">{ctrl.type}</div>
         )
       case '列表框':
       case '选择列表框':
       case '超级列表框':
         return (
-          <div style={{
-            ...common,
-            background: 'var(--bg-primary)',
-            border: '1px solid var(--border-color)',
-            color: 'var(--text-primary)',
-          }} />
+          <div className="vd-preview vd-preview-list" />
         )
       case '组合框':
         return (
-          <div style={{
-            ...common,
-            background: 'var(--bg-primary)',
-            border: '1px solid var(--border-color)',
-            display: 'flex', alignItems: 'center',
-            paddingLeft: 4,
-            color: 'var(--text-primary)',
-          }}>
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{ctrl.text}</span>
-            <span style={{ width: 18, textAlign: 'center', borderLeft: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>▾</span>
+          <div className="vd-preview vd-preview-combo">
+            <span className="vd-preview-combo-text">{ctrl.text}</span>
+            <span className="vd-preview-combo-arrow">▾</span>
           </div>
         )
       case '选择框':
         return (
-          <div style={{
-            ...common,
-            display: 'flex', alignItems: 'center', gap: 4,
-            color: 'var(--text-primary)', background: 'transparent',
-          }}>
-            <span style={{ width: 13, height: 13, border: '1px solid var(--border-color)', background: 'var(--bg-primary)', flexShrink: 0 }} />
+          <div className="vd-preview vd-preview-check-like">
+            <span className="vd-preview-checkbox" />
             {ctrl.text}
           </div>
         )
       case '单选框':
         return (
-          <div style={{
-            ...common,
-            display: 'flex', alignItems: 'center', gap: 4,
-            color: 'var(--text-primary)', background: 'transparent',
-          }}>
-            <span style={{ width: 13, height: 13, border: '1px solid var(--border-color)', borderRadius: '50%', background: 'var(--bg-primary)', flexShrink: 0 }} />
+          <div className="vd-preview vd-preview-check-like">
+            <span className="vd-preview-radio" />
             {ctrl.text}
           </div>
         )
       case '分组框':
         return (
-          <div style={{
-            ...common,
-            border: '1px solid var(--button-secondary-border)',
-            borderRadius: 3,
-            paddingTop: 14,
-            position: 'relative',
-            background: 'transparent',
-          }}>
-            <span style={{
-              position: 'absolute', top: -8, left: 8,
-              background: 'var(--bg-primary)', padding: '0 4px',
-              color: 'var(--text-primary)', fontSize: 12,
-            }}>{ctrl.text}</span>
+          <div className="vd-preview vd-preview-group">
+            <span className="vd-preview-group-title">{ctrl.text}</span>
           </div>
         )
       case 'ycUI按钮': {
@@ -859,54 +812,38 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const primaryBg = readColorProperty(ctrl.properties, ['主色', '主色颜色']) || '#1677ff'
         const bg = isPrimary ? primaryBg : controlColors.bg
         const textColor = controlColors.text
-        const border = `1px solid ${isPrimary ? primaryBg : controlColors.border}`
+        const borderColor = isPrimary ? primaryBg : controlColors.border
         return (
-          <div style={{
-            ...common,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: bg,
-            border,
-            borderRadius: radius,
-            color: textColor,
-            cursor: 'default',
-            userSelect: 'none',
-          }}>{ctrl.text}</div>
+          <div
+            className="vd-preview vd-preview-ycui-button"
+            ref={(element) => setCssVars(element, {
+              '--vd-preview-bg': bg,
+              '--vd-preview-border': borderColor,
+              '--vd-preview-text': textColor,
+              '--vd-preview-radius': `${radius}px`,
+            })}
+          >
+            {ctrl.text}
+          </div>
         )
       }
       case '进度条':
         return (
-          <div style={{
-            ...common,
-            background: 'var(--bg-hover)',
-            border: '1px solid var(--button-secondary-border)',
-          }}>
-            <div style={{
-              width: '40%', height: '100%',
-              background: 'linear-gradient(180deg, var(--success) 0%, color-mix(in srgb, var(--success) 85%, var(--bg-primary)) 100%)',
-            }} />
+          <div className="vd-preview vd-preview-progress">
+            <div className="vd-preview-progress-fill" />
           </div>
         )
       case '时钟':
       case '图片组':
         return (
-          <div style={{
-            ...common,
-            background: 'var(--bg-input)',
-            border: '1px dashed var(--border-color)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: 'var(--text-disabled)', fontSize: 10,
-          }}>{UNIT_ICON_MAP[ctrl.type] ? <Icon name={UNIT_ICON_MAP[ctrl.type]} size={12} /> : '?'}</div>
+          <div className="vd-preview vd-preview-compact">
+            {UNIT_ICON_MAP[ctrl.type] ? <Icon name={UNIT_ICON_MAP[ctrl.type]} size={12} /> : '?'}
+          </div>
         )
       default:
         // 通用外观：显示组件名称
         return (
-          <div style={{
-            ...common,
-            background: 'var(--bg-primary)',
-            border: '1px solid var(--border-color)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: 'var(--text-secondary)', fontSize: 10,
-          }}>{ctrl.text || ctrl.type}</div>
+          <div className="vd-preview vd-preview-default">{ctrl.text || ctrl.type}</div>
         )
     }
   }
@@ -939,8 +876,17 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
   // 工具箱渲染
   const renderToolbox = (): React.JSX.Element => (
-    <div className={`vd-toolbox ${toolboxFloat ? 'vd-toolbox-float' : ''} ${toolboxViewMode === 'icon' ? 'vd-toolbox-icon-mode' : ''}`}
-      style={toolboxFloat ? { left: toolboxPos.x, top: toolboxPos.y, width: toolboxSize.w, height: toolboxSize.h } : undefined}
+    <div
+      className={`vd-toolbox ${toolboxFloat ? 'vd-toolbox-float' : ''} ${toolboxViewMode === 'icon' ? 'vd-toolbox-icon-mode' : ''}`}
+      ref={(element) => {
+        if (!toolboxFloat) return
+        setCssVars(element, {
+          '--vd-toolbox-left': `${toolboxPos.x}px`,
+          '--vd-toolbox-top': `${toolboxPos.y}px`,
+          '--vd-toolbox-width': `${toolboxSize.w}px`,
+          '--vd-toolbox-height': `${toolboxSize.h}px`,
+        })
+      }}
     >
       <div className="vd-toolbox-header" onMouseDown={handleToolboxDragStart}>
         <span className="vd-toolbox-title">控件工具箱</span>
@@ -1001,13 +947,13 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         {/* 窗口外壳 */}
         <div
           className={`vd-form-wrapper ${selectedId === '__form__' ? 'vd-form-wrapper-selected' : ''}`}
-          style={{
+          ref={(element) => setCssVars(element, {
             '--vd-form-title-bg': formVisualColors.titleBg,
             '--vd-form-title-text': formVisualColors.titleText,
             '--vd-form-canvas-bg': formVisualColors.canvasBg,
             '--vd-form-border': formVisualColors.border,
             '--vd-form-grid': formVisualColors.grid,
-          } as React.CSSProperties}
+          })}
         >
           <div className="vd-form-titlebar" onMouseDown={handleFormTitleClick} onDoubleClick={handleFormDblClick}>
             <span className="vd-form-titlebar-icon"><Icon name="windows-form" size={14} /></span>
@@ -1021,9 +967,14 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
           {/* 窗口客户区 */}
           <div
-            ref={canvasRef}
             className={`vd-form-canvas ${activeTool ? 'vd-crosshair' : ''} ${selectedId === '__form__' ? 'vd-form-selected' : ''}`}
-            style={{ width: form.width, height: form.height }}
+            ref={(element) => {
+              canvasRef.current = element
+              setCssVars(element, {
+                '--vd-form-width': `${form.width}px`,
+                '--vd-form-height': `${form.height}px`,
+              })
+            }}
             onMouseDown={handleCanvasMouseDown}
             onDoubleClick={handleFormDblClick}
           >
@@ -1031,14 +982,14 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               <div
                 key={`guide-x-${x}`}
                 className="vd-align-guide vd-align-guide-v"
-                style={{ left: x }}
+                ref={(element) => setCssVars(element, { '--vd-guide-x': `${x}px` })}
               />
             ))}
             {alignGuides.y.map(y => (
               <div
                 key={`guide-y-${y}`}
                 className="vd-align-guide vd-align-guide-h"
-                style={{ top: y }}
+                ref={(element) => setCssVars(element, { '--vd-guide-y': `${y}px` })}
               />
             ))}
 
@@ -1046,12 +997,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             {drawRect && drawRect.w > 0 && drawRect.h > 0 && activeTool && (
               <div
                 className="vd-draw-preview"
-                style={{
-                  left: drawRect.x,
-                  top: drawRect.y,
-                  width: drawRect.w,
-                  height: drawRect.h,
-                }}
+                ref={(element) => setCssVars(element, {
+                  '--vd-draw-left': `${drawRect.x}px`,
+                  '--vd-draw-top': `${drawRect.y}px`,
+                  '--vd-draw-width': `${drawRect.w}px`,
+                  '--vd-draw-height': `${drawRect.h}px`,
+                })}
               >
                 {renderControlPreview({
                   id: '__preview__',
@@ -1074,12 +1025,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
                 <div
                   key={ctrl.id}
                   className={`vd-control ${isSelected ? 'vd-control-selected' : ''} ${isMultiSelected ? 'vd-control-multi-selected' : ''}`}
-                  style={{
-                    left: ctrl.left,
-                    top: ctrl.top,
-                    width: ctrl.width,
-                    height: ctrl.height,
-                  }}
+                  ref={(element) => setCssVars(element, {
+                    '--vd-control-left': `${ctrl.left}px`,
+                    '--vd-control-top': `${ctrl.top}px`,
+                    '--vd-control-width': `${ctrl.width}px`,
+                    '--vd-control-height': `${ctrl.height}px`,
+                  })}
                   onMouseDown={(e) => handleControlMouseDown(e, ctrl)}
                   onDoubleClick={(e) => handleControlDblClick(e, ctrl)}
                 >

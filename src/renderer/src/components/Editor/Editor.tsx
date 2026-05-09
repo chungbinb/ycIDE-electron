@@ -259,7 +259,9 @@ export interface DiffLineInfo {
 export interface EditorHandle {
   save: () => void
   saveAll: () => void
+  saveProject: (projectDir: string) => void
   closeActiveTab: () => void
+  closeProjectTabs: (projectDir: string) => void
   clearAllTabs: () => void
   hasModifiedTabs: () => boolean
   editorAction: (action: string) => void
@@ -272,6 +274,7 @@ export interface EditorHandle {
   insertLocalVariable: () => void
   insertConstant: () => void
   navigateToLine: (line: number) => void
+  navigateToSubprogram: (subName: string, fallbackLine?: number) => void
   getVisibleLineForSourceLine: (line: number) => number
   updateFormProperty: (targetKind: 'form' | 'control', controlId: string | null, propName: string, value: string | number | boolean) => void
   navigateToEventSub: (sel: SelectionTarget, eventName: string, eventArgs: Array<{ name: string; description: string; dataType: string; isByRef: boolean }>) => void
@@ -282,6 +285,14 @@ function joinPathByBaseDir(baseDir: string, fileName: string): string {
   const normalizedBaseDir = (baseDir || '').replace(/[\\/]+$/, '')
   const normalizedFileName = (fileName || '').replace(/^[\\/]+/, '')
   return `${normalizedBaseDir}${separator}${normalizedFileName}`
+}
+
+function isFileInProjectDir(filePath: string | undefined, projectDir: string): boolean {
+  if (!filePath || !projectDir) return false
+  const normalize = (text: string) => text.replace(/\//g, '\\').replace(/[\\]+$/, '').toLowerCase()
+  const normalizedPath = normalize(filePath)
+  const normalizedDir = normalize(projectDir)
+  return normalizedPath === normalizedDir || normalizedPath.startsWith(`${normalizedDir}\\`)
 }
 
 function extractAssemblyLabel(content: string): string | null {
@@ -501,6 +512,18 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     )
   }, [])
 
+  const saveProjectFiles = useCallback((projectDir: string) => {
+    if (!projectDir) return
+    setTabs(prev =>
+      prev.map(t => {
+        if (!isFileInProjectDir(t.filePath, projectDir) || !isTabModified(t)) return t
+        const content = getTabSaveContent(t)
+        window.api?.file?.save(t.filePath!, content)
+        return { ...t, savedValue: getTabPersistContent(t) }
+      })
+    )
+  }, [])
+
   const applyExternalFileContent = useCallback(() => {
     setTabs(prev => {
       if (!externalChangePrompt) return prev
@@ -624,6 +647,39 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     setEycEditorModeTabs({})
     onOpenTabsChange?.([])
   }, [onOpenTabsChange])
+
+  const closeProjectTabs = useCallback((projectDir: string) => {
+    if (!projectDir) return
+    setTabs(prev => {
+      const filtered = prev.filter(t => !isFileInProjectDir(t.filePath, projectDir))
+      onOpenTabsChange?.(filtered)
+      setEycFallbackTabs(prevFallback => {
+        const next: Record<string, boolean> = {}
+        for (const [tabId, enabled] of Object.entries(prevFallback)) {
+          const tab = filtered.find(item => item.id === tabId)
+          if (!tab || !enabled) continue
+          next[tabId] = true
+        }
+        return next
+      })
+      setEycEditorModeTabs(prevModes => {
+        const next: Record<string, EycEditorMode> = {}
+        for (const [tabId, mode] of Object.entries(prevModes)) {
+          if (!filtered.some(item => item.id === tabId)) continue
+          next[tabId] = mode
+        }
+        return next
+      })
+
+      if (filtered.length === 0) {
+        setActiveTabId(null)
+      } else if (activeTabId && !filtered.some(t => t.id === activeTabId)) {
+        setActiveTabId(filtered[0].id)
+      }
+
+      return filtered
+    })
+  }, [activeTabId, onOpenTabsChange])
 
   // 磁盘级重命名：更新项目中未打开的 .eyc 文件
   // 磁盘级重命名：更新项目中未打开的 .eyc 文件（仅控件改名使用）
@@ -1095,7 +1151,9 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   useImperativeHandle(ref, () => ({
     save: saveCurrentFile,
     saveAll: saveAllFiles,
+    saveProject: saveProjectFiles,
     closeActiveTab: closeActiveFile,
+    closeProjectTabs,
     clearAllTabs,
     hasModifiedTabs: () => tabs.some(t => isTabModified(t)),
     editorAction: (action: string) => {
@@ -1259,12 +1317,15 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     navigateToLine: (line: number) => {
       eycEditorRef.current?.navigateToLine(line)
     },
+    navigateToSubprogram: (subName: string, fallbackLine?: number) => {
+      eycEditorRef.current?.navigateToSubprogram(subName, fallbackLine)
+    },
     getVisibleLineForSourceLine: (line: number) => {
       return eycEditorRef.current?.getVisibleLineForSourceLine(line) ?? line
     },
     updateFormProperty,
     navigateToEventSub,
-  }), [saveCurrentFile, saveAllFiles, closeActiveFile, clearAllTabs, tabs, activeTabId, onOpenTabsChange, syncSidebarByLanguage, updateFormProperty, navigateToEventSub, appendDiffDecorations, clearDiffDecorations, setEycDiffHighlightLines])
+  }), [saveCurrentFile, saveAllFiles, saveProjectFiles, closeActiveFile, closeProjectTabs, clearAllTabs, tabs, activeTabId, onOpenTabsChange, syncSidebarByLanguage, updateFormProperty, navigateToEventSub, appendDiffDecorations, clearDiffDecorations, setEycDiffHighlightLines])
 
   // 接收外部打开的项目文件
   useEffect(() => {
@@ -1704,14 +1765,13 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     return () => { cancelled = true }
   }, [projectDir, tabs])
 
-  // 设计器双击创建事件子程序后，同步保存并刷新项目树。
-  // navigateOrCreateSub 在表格编辑器内更新文本状态，需要稍等一拍再读取最新内容保存。
+  // 设计器双击/属性事件跳转创建子程序后，仅刷新项目树，不自动保存。
+  // 保持标签页 dirty 状态，避免“先变更后瞬间变已保存”的误导行为。
   const syncProjectTreeAfterEventSubChange = useCallback(() => {
     setTimeout(() => {
-      saveCurrentFile()
       onProjectTreeRefresh?.()
     }, 180)
-  }, [saveCurrentFile, onProjectTreeRefresh])
+  }, [onProjectTreeRefresh])
 
   // 双击可视化设计器控件 → 跳转到 .eyc 文件并定位/创建事件子程序
   const handleControlDblClick = useCallback(async (ctrl: DesignControl, defaultEvent: LibUnitEvent | null) => {
@@ -1892,31 +1952,37 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 
   const handleEditorChange: OnChange = useCallback((value) => {
     if (value === undefined) return
-    setTabs(prev =>
-      prev.map(t =>
+    setTabs(prev => {
+      const next = prev.map(t =>
         t.id === activeTabId ? { ...t, value } : t
       )
-    )
-  }, [activeTabId])
+      onOpenTabsChange?.(next)
+      return next
+    })
+  }, [activeTabId, onOpenTabsChange])
 
   const handleEycTextEditorChange: OnChange = useCallback((value) => {
     if (value === undefined) return
     const internal = eycToInternalFormat(value)
-    setTabs(prev =>
-      prev.map(t =>
+    setTabs(prev => {
+      const next = prev.map(t =>
         t.id === activeTabId ? { ...t, value: internal } : t
       )
-    )
-  }, [activeTabId])
+      onOpenTabsChange?.(next)
+      return next
+    })
+  }, [activeTabId, onOpenTabsChange])
 
   // 直接接收 string 的 onChange（给 EycTableEditor 用）
   const handleEycChange = useCallback((value: string) => {
-    setTabs(prev =>
-      prev.map(t =>
+    setTabs(prev => {
+      const next = prev.map(t =>
         t.id === activeTabId ? { ...t, value } : t
       )
-    )
-  }, [activeTabId])
+      onOpenTabsChange?.(next)
+      return next
+    })
+  }, [activeTabId, onOpenTabsChange])
 
   const handleRouteDeclarationPaste = useCallback((routes: Array<{ language: RoutedDeclLanguage; lines: string[] }>) => {
     if (!routes || routes.length === 0) return
@@ -2072,12 +2138,14 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 
   // 可视化设计器 form 改变
   const handleFormChange = useCallback((form: DesignForm) => {
-    setTabs(prev =>
-      prev.map(t =>
+    setTabs(prev => {
+      const next = prev.map(t =>
         t.id === activeTabId ? { ...t, formData: form } : t
       )
-    )
-  }, [activeTabId])
+      onOpenTabsChange?.(next)
+      return next
+    })
+  }, [activeTabId, onOpenTabsChange])
 
   // 可视化设计器选中控件变化
   const handleSelectControl = useCallback((target: SelectionTarget) => {
