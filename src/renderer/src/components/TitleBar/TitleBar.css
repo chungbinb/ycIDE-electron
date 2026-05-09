@@ -13,11 +13,6 @@
   align-items: center;
   flex: 1;
   height: 100%;
-  -webkit-app-region: drag;
-}
-
-.titlebar.menu-open .titlebar-drag {
-  -webkit-app-region: no-drag;
 }
 
 .titlebar-icon {
@@ -26,7 +21,6 @@
   justify-content: center;
   width: 36px;
   height: 100%;
-  -webkit-app-region: no-drag;
 }
 
 .titlebar-icon-image {
@@ -41,7 +35,6 @@
   display: flex;
   align-items: center;
   height: 100%;
-  -webkit-app-region: no-drag;
   font-family: var(--titlebar-menu-font-family);
 }
 
@@ -82,14 +75,15 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 8px 24px 8px 12px;
+  padding: 10px 24px 10px 12px;
+  margin: 6px 0px 6px 0px;
   font-size: var(--font-size);
   color: var(--text-primary);
   border-radius: 0;
   text-align: left;
   white-space: nowrap;
-  line-height: 1.8;
-  min-height: 18px;
+  line-height: 1.9;
+  min-height: 22px;
 }
 .titlebar-dropdown-item:hover:not(:disabled) {
   background: var(--accent);
@@ -145,6 +139,7 @@
   box-shadow: 0 4px 12px var(--menu-shadow);
   z-index: 10000;
   padding: 4px 0;
+  margin: 6px 0 6px 0;
 }
 .titlebar-dropdown-submenu-wrapper:hover > .titlebar-submenu {
   display: block;
@@ -163,7 +158,6 @@
 .titlebar-controls {
   display: flex;
   height: 100%;
-  -webkit-app-region: no-drag;
 }
 
 .titlebar-btn {

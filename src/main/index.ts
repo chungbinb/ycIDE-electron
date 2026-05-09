@@ -1255,7 +1255,13 @@ app.whenReady().then(() => {
   // 读取目录内容
   ipcMain.handle('file:readDir', (_event, dirPath: string) => {
     if (!existsSync(dirPath)) return []
-    return readdirSync(dirPath)
+    try {
+      const stat = statSync(dirPath)
+      if (!stat.isDirectory()) return []
+      return readdirSync(dirPath)
+    } catch {
+      return []
+    }
   })
 
   ipcMain.handle('terminal:start', () => {

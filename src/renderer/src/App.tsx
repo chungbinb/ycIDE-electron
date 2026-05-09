@@ -360,6 +360,25 @@ function stripFileExtension(fileName: string): string {
   return name.slice(0, idx)
 }
 
+function buildProjectRootId(projectDir: string): string {
+  return `root:${(projectDir || '').replace(/\\/g, '/').toLowerCase()}`
+}
+
+function isFilePathInProject(filePath: string | undefined, projectDir: string): boolean {
+  if (!filePath || !projectDir) return false
+  const normalize = (text: string) => text.replace(/\//g, '\\').replace(/[\\]+$/, '').toLowerCase()
+  const normalizedPath = normalize(filePath)
+  const normalizedDir = normalize(projectDir)
+  return normalizedPath === normalizedDir || normalizedPath.startsWith(`${normalizedDir}\\`)
+}
+
+function isEditorTabModifiedSnapshot(tab: EditorTab): boolean {
+  const persistedValue = tab.language === 'efw' && tab.formData
+    ? JSON.stringify(tab.formData, null, 2)
+    : tab.value
+  return persistedValue !== tab.savedValue
+}
+
 const DLL_DECL_PREFIX = '.DLL\u547D\u4EE4 '
 const PARAM_DECL_PREFIX = '.\u53C2\u6570 '
 const FLAG_OPTIONAL = '\u53EF\u7A7A'
@@ -621,6 +640,7 @@ function App(): React.JSX.Element {
   const [multiSelectCount, setMultiSelectCount] = useState(0)
 
   const [openProjectFiles, setOpenProjectFiles] = useState<EditorTab[]>()
+  const [openEditorTabs, setOpenEditorTabs] = useState<EditorTab[]>([])
   const [projectTree, setProjectTree] = useState<TreeNode[]>([])
   const [currentProjectDir, setCurrentProjectDir] = useState<string>('')
   const [eProjectImportDialog, setEProjectImportDialog] = useState<EProjectImportDialogState | null>(null)
@@ -2375,11 +2395,12 @@ function App(): React.JSX.Element {
     categories.push({ id: '_cat_dllcmds', label: 'DLL命令', type: 'folder', expanded: true, children: dllCmdFiles })
     categories.push({ id: '_cat_resources', label: '资源', type: 'folder', expanded: false, children: resourceFiles })
 
-    return [{ id: 'root', label: projectName, type: 'folder', expanded: true, children: categories }]
+    return [{ id: buildProjectRootId(projectDir), label: projectName, type: 'folder', expanded: true, children: categories, projectDir }]
   }, [extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, extractResourceNodes, joinPath])
 
   // 标签页变化时保存到项目目录，并重新检查设计时诊断
   const handleOpenTabsChange = useCallback((tabs: EditorTab[]) => {
+    setOpenEditorTabs(tabs)
     openTabsRef.current = tabs
     commandCacheRef.current.clear()
     const dir = currentProjectDirRef.current
@@ -2391,7 +2412,50 @@ function App(): React.JSX.Element {
       window.api?.project?.saveOpenTabs(dir, session)
     }
     checkDesignProblems(tabs)
-  }, [checkDesignProblems])
+
+    // 用标签页内存内容即时回写项目树声明节点，避免“未保存编辑”下项目树信息滞后。
+    const liveSourceModules = new Map<string, { label: string; children: TreeNode[] }>()
+    for (const tab of tabs) {
+      if (tab.language !== 'eyc') continue
+      const fileName = (tab.filePath || tab.id || '').replace(/^.*[\\/]/, '')
+      if (!fileName) continue
+      const content = tab.value || ''
+      liveSourceModules.set(fileName, {
+        label: extractAssemblyLabel(content) || stripFileExtension(fileName),
+        children: extractSubroutineNodes(content, fileName),
+      })
+    }
+
+    if (liveSourceModules.size > 0) {
+      const currentRootId = buildProjectRootId(currentProjectDirRef.current)
+      setProjectTree(prev => {
+        if (!prev || prev.length === 0) return prev
+        return prev.map(root => {
+          if (root.id !== currentRootId) return root
+          const cats = root.children || []
+          return {
+            ...root,
+            children: cats.map(cat => {
+              if (cat.id !== '_cat_sources') return cat
+              const modules = cat.children || []
+              return {
+                ...cat,
+                children: modules.map(mod => {
+                  const live = liveSourceModules.get(mod.id)
+                  if (!live) return mod
+                  return {
+                    ...mod,
+                    label: live.label,
+                    children: live.children,
+                  }
+                }),
+              }
+            }),
+          }
+        })
+      })
+    }
+  }, [checkDesignProblems, extractSubroutineNodes])
 
   // 刷新项目树（窗口重命名后调用）
   const refreshProjectTree = useCallback(async () => {
@@ -2403,7 +2467,16 @@ function App(): React.JSX.Element {
     if (!eppFile) return
     const eppInfo = await window.api?.project?.parseEpp(joinPath(dir, eppFile))
     if (eppInfo) {
-      setProjectTree(await buildProjectTreeFromEpp(eppInfo.projectName, eppInfo.files, dir))
+      const nextRoots = await buildProjectTreeFromEpp(eppInfo.projectName, eppInfo.files, dir)
+      const nextRoot = nextRoots[0]
+      if (!nextRoot) return
+      setProjectTree(prev => {
+        const idx = prev.findIndex(root => root.id === nextRoot.id)
+        if (idx < 0) return [...prev, nextRoot]
+        const cloned = [...prev]
+        cloned[idx] = nextRoot
+        return cloned
+      })
     }
   }, [buildProjectTreeFromEpp, joinPath])
 
@@ -2490,7 +2563,16 @@ function App(): React.JSX.Element {
     const normalizedPlatform = normalizeTargetPlatform(eppInfo.platform)
     setTargetPlatform(normalizedPlatform)
     setTargetArch(prev => coerceArchByPlatform(normalizedPlatform, normalizeTargetArch(eppInfo.platform) || prev))
-    setProjectTree(await buildProjectTreeFromEpp(eppInfo.projectName, eppInfo.files, dir))
+    {
+      const nextRoots = await buildProjectTreeFromEpp(eppInfo.projectName, eppInfo.files, dir)
+      const nextRoot = nextRoots[0]
+      if (nextRoot) {
+        setProjectTree(prev => {
+          const filtered = prev.filter(root => root.id !== nextRoot.id)
+          return [...filtered, nextRoot]
+        })
+      }
+    }
 
     const session = restoreSession ? await window.api?.project?.loadOpenTabs(dir) : null
     const savedPaths = restoreSession ? (session?.openTabs || []) : []
@@ -3189,12 +3271,56 @@ function App(): React.JSX.Element {
   }, [handleAppClose])
 
   // 双击资源管理器文件时打开
-  const handleOpenFile = useCallback(async (fileId: string, fileName: string, targetLine?: number) => {
+  const handleOpenFile = useCallback(async (fileId: string, fileName: string, targetLine?: number, targetType?: TreeNode['type'], targetLabel?: string) => {
     const dir = currentProjectDirRef.current
     if (!dir) return
     const filePath = joinPath(dir, fileName)
+
+    // 子程序节点优先按名称实时定位，避免项目树缓存行号在编辑后漂移到错误位置。
+    if (targetType === 'sub' && (targetLabel || '').trim()) {
+      await openFileByPath(filePath)
+      const subName = (targetLabel || '').trim()
+      editorRef.current?.navigateToSubprogram(subName, targetLine)
+      return
+    }
+
     await openFileByPath(filePath, targetLine)
   }, [joinPath, openFileByPath])
+
+  const handleSaveSingleProject = useCallback((projectDir: string) => {
+    if (!projectDir) return
+    editorRef.current?.saveProject(projectDir)
+  }, [])
+
+  const handleCloseSingleProject = useCallback(async (projectDir: string) => {
+    if (!projectDir) return
+
+    const hasUnsavedInProject = openEditorTabs.some(tab =>
+      isFilePathInProject(tab.filePath, projectDir) && isEditorTabModifiedSnapshot(tab)
+    )
+
+    if (hasUnsavedInProject) {
+      const action = await window.api?.dialog?.confirmSaveBeforeClose('未保存文件')
+      if (action === 'cancel') return
+      if (action === 'save') {
+        editorRef.current?.saveProject(projectDir)
+      }
+    }
+
+    editorRef.current?.closeProjectTabs(projectDir)
+    setProjectTree(prev => {
+      const remaining = prev.filter(node => node.projectDir !== projectDir)
+      const isClosingCurrent = currentProjectDirRef.current && currentProjectDirRef.current.toLowerCase() === projectDir.toLowerCase()
+      if (isClosingCurrent) {
+        const fallbackProjectDir = [...remaining].reverse().find(node => !!node.projectDir)?.projectDir || ''
+        setCurrentProjectDir(fallbackProjectDir)
+      }
+      if (remaining.length === 0) {
+        setSelection(null)
+      }
+      return remaining
+    })
+  }, [openEditorTabs])
 
   const handleNewProjectConfirm = useCallback(async (info: { name: string; path: string; type: string; platform: string }) => {
     try {
@@ -3209,7 +3335,14 @@ function App(): React.JSX.Element {
       // 通过解析 epp 文件获取所有关联文件并构建项目树
       const eppInfo = await window.api?.project?.parseEpp(result.eppPath)
       if (eppInfo) {
-        setProjectTree(await buildProjectTreeFromEpp(eppInfo.projectName, eppInfo.files, result.projectDir))
+        const nextRoots = await buildProjectTreeFromEpp(eppInfo.projectName, eppInfo.files, result.projectDir)
+        const nextRoot = nextRoots[0]
+        if (nextRoot) {
+          setProjectTree(prev => {
+            const filtered = prev.filter(root => root.id !== nextRoot.id)
+            return [...filtered, nextRoot]
+          })
+        }
       }
 
       // 窗口程序：仅打开 efw 窗口文件
@@ -3415,7 +3548,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.3-beta.53（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.3-beta.54（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -3452,28 +3585,40 @@ function App(): React.JSX.Element {
     }
   }, [ideSettings])
 
+  const handleAISettingsSync = useCallback((partial: Partial<IDESettings>) => {
+    setIdeSettings(prev => resolveIDESettings({ ...prev, ...partial }))
+  }, [])
+
   const handleAIChat = useCallback(async (messages: AIChatMessage[]) => {
-    const result = await window.api?.ai?.chat({ model: ideSettings.aiModel, messages })
-    if (!result) {
+    try {
+      const result = await window.api?.ai?.chat({ model: ideSettings.aiModel, messages })
+      if (!result) {
+        return { ok: false, message: '', error: 'AI 服务暂不可用。' }
+      }
+      return result
+    } catch (error) {
       return { ok: false, message: '', error: 'AI 服务暂不可用。' }
     }
-    return result
   }, [ideSettings.aiModel])
 
   const handleAIChatWithTools = useCallback(async (
     messages: AIChatMessage[],
     tools: AIChatTool[],
   ): Promise<AIChatWithToolsResult> => {
-    const result = await window.api?.ai?.chatWithTools({
-      model: ideSettings.aiModel,
-      messages,
-      tools,
-      tool_choice: 'auto',
-    })
-    if (!result) {
+    try {
+      const result = await window.api?.ai?.chatWithTools({
+        model: ideSettings.aiModel,
+        messages,
+        tools,
+        tool_choice: 'auto',
+      })
+      if (!result) {
+        return { ok: false, message: '', error: 'AI 服务暂不可用。' }
+      }
+      return result
+    } catch {
       return { ok: false, message: '', error: 'AI 服务暂不可用。' }
     }
-    return result
   }, [ideSettings.aiModel])
 
   const handleAIChatStream = useCallback(async (
@@ -3504,6 +3649,8 @@ function App(): React.JSX.Element {
         return { ok: false, message: '', error: 'AI 服务暂不可用。' }
       }
       return result
+    } catch {
+      return { ok: false, message: '', error: 'AI 服务暂不可用。' }
     } finally {
       aiActiveChatRequestIdsRef.current.delete(requestId)
       aiCanceledChatRequestIdsRef.current.delete(requestId)
@@ -4468,7 +4615,7 @@ function App(): React.JSX.Element {
           <div className="app-workspace">
             <div className={`app-side${activityBarSide === 'right' ? ' app-side-right' : ''}`}>
               {!sidebarCollapsed && (
-                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onLibraryChange={handleLibraryChange} />
+                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} openTabs={openEditorTabs} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onSaveProject={handleSaveSingleProject} onCloseProject={(projectDir) => { void handleCloseSingleProject(projectDir) }} onLibraryChange={handleLibraryChange} />
               )}
               <div className="app-main">
                 <Editor
@@ -4538,6 +4685,7 @@ function App(): React.JSX.Element {
             aiFontFamily={ideSettings.aiFontFamily}
             aiFontSize={ideSettings.aiFontSize}
             onModelChange={(model, persist) => { void handleAIModelChange(model, persist) }}
+            onSettingsSync={handleAISettingsSync}
             onChat={handleAIChat}
             onChatStream={handleAIChatStream}
             onRequestEdit={handleAIRequestEdit}

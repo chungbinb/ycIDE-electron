@@ -107,6 +107,7 @@ export interface EycTableEditorHandle {
   insertConstant: () => void
   navigateOrCreateSub: (subName: string, params: Array<{ name: string; dataType: string; isByRef: boolean }>) => void
   navigateToLine: (line: number) => void
+  navigateToSubprogram: (subName: string, fallbackLine?: number) => void
   getVisibleLineForSourceLine: (line: number) => number
   editorAction: (action: string) => void
 }
@@ -180,6 +181,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const prevRef = useRef(value)
   const [currentText, setCurrentText] = useState(value)
   const lastFocusedLine = useRef<number>(-1)
+  const subNavSeqRef = useRef(0) // 子程序跳转序列号：仅允许最后一次跳转生效，避免多重定时导致抖动
   const flowMarkRef = useRef<string>('')
   const flowIndentRef = useRef<string>('')
   const userVarNamesRef = useRef<Set<string>>(new Set())
@@ -736,6 +738,67 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   // 全局键盘处理（选择状态下 Ctrl+C 复制、Delete 删除；Ctrl+A 全选）
   useEffect(() => {
+    const getSubAnchorInfoForLine = (ls: string[], lineIndex: number): { anchorLine: number; ordinaryLines: number[] } | null => {
+      if (lineIndex < 0 || lineIndex >= ls.length) return null
+      let subStart = -1
+      for (let i = lineIndex; i >= 0; i--) {
+        const t = (ls[i] || '').replace(/[\r\t]/g, '').trim()
+        if (t.startsWith('.子程序 ')) { subStart = i; break }
+        if (t.startsWith('.程序集 ')) break
+      }
+      if (subStart < 0) return null
+
+      let subEnd = ls.length
+      for (let i = subStart + 1; i < ls.length; i++) {
+        const t = (ls[i] || '').replace(/[\r\t]/g, '').trim()
+        if (t.startsWith('.子程序 ') || t.startsWith('.程序集 ')) {
+          subEnd = i
+          break
+        }
+      }
+
+      const ordinaryLines: number[] = []
+      for (let i = subStart + 1; i < subEnd; i++) {
+        const t = (ls[i] || '').replace(/[\r\t]/g, '').trim()
+        if (t.startsWith('.')) continue
+        ordinaryLines.push(i)
+      }
+      if (ordinaryLines.length === 0) return null
+      return { anchorLine: ordinaryLines[0], ordinaryLines }
+    }
+
+    const applySubAnchorDeleteRule = (ls: string[], deletableInput: Set<number>): { deletable: Set<number>; forceBlank: Set<number> } => {
+      const deletable = new Set<number>(deletableInput)
+      const forceBlank = new Set<number>()
+      const touchedAnchors = new Set<number>()
+
+      for (const i of Array.from(deletable)) {
+        const info = getSubAnchorInfoForLine(ls, i)
+        if (!info) continue
+        const anchor = info.anchorLine
+        if (touchedAnchors.has(anchor)) continue
+        if (!deletable.has(anchor)) continue
+        touchedAnchors.add(anchor)
+
+        // 子程序首条普通行必须保留：
+        // 1) 有命令时改为空行保留；
+        // 2) 本来就是空行时，改删其下方普通行（若存在）。
+        deletable.delete(anchor)
+        if (((ls[anchor] || '').trim()) !== '') {
+          forceBlank.add(anchor)
+          continue
+        }
+
+        const hasOtherSelected = info.ordinaryLines.some(line => line > anchor && deletable.has(line))
+        if (!hasOtherSelected) {
+          const nextOrdinary = info.ordinaryLines.find(line => line > anchor)
+          if (nextOrdinary !== undefined) deletable.add(nextOrdinary)
+        }
+      }
+
+      return { deletable, forceBlank }
+    }
+
     const getProtectedDeclarationLine = (ls: string[]): number => {
       const parsed = parseLines(ls.join('\n'))
       for (let i = 0; i < parsed.length; i++) {
@@ -854,13 +917,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if (ctrl && e.key === 'x') {
         e.preventDefault()
         const ls = currentText.split('\n')
-        const { deletable, sorted } = getDeletableSelection(ls, selectedLines)
+        const { deletable: rawDeletable, sorted } = getDeletableSelection(ls, selectedLines)
         if (sorted.length === 0) return
         const selectedText = eycToYiFormat(sorted.map(i => ls[i]).join('\n'))
         navigator.clipboard.writeText(selectedText)
         // 删除选中行
+        const { deletable, forceBlank } = applySubAnchorDeleteRule(ls, rawDeletable)
         pushUndo(currentText)
-        const nl = preserveTrailingBlankLine(ls, ls.filter((_, i) => !deletable.has(i)))
+        const nl = preserveTrailingBlankLine(ls, ls.reduce<string[]>((acc, line, i) => {
+          if (deletable.has(i)) return acc
+          acc.push(forceBlank.has(i) ? '' : line)
+          return acc
+        }, []))
         const nt = nl.join('\n')
         setCurrentText(nt); prevRef.current = nt; onChange(nt)
         setSelectedLines(new Set())
@@ -869,10 +937,15 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         const ls = currentText.split('\n')
-        const { deletable, sorted: sortedSel } = getDeletableSelection(ls, selectedLines)
+        const { deletable: rawDeletable, sorted: sortedSel } = getDeletableSelection(ls, selectedLines)
         if (sortedSel.length === 0) return
+        const { deletable, forceBlank } = applySubAnchorDeleteRule(ls, rawDeletable)
         pushUndo(currentText)
-        const nl = preserveTrailingBlankLine(ls, ls.filter((_, i) => !deletable.has(i)))
+        const nl = preserveTrailingBlankLine(ls, ls.reduce<string[]>((acc, line, i) => {
+          if (deletable.has(i)) return acc
+          acc.push(forceBlank.has(i) ? '' : line)
+          return acc
+        }, []))
         const nt = nl.join('\n')
         setCurrentText(nt); prevRef.current = nt; onChange(nt)
         setSelectedLines(new Set())
@@ -3916,10 +3989,49 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const { action, lineIndex, isVirtual } = params
     if (action.type === 'forbidden') return
 
+    const getSubAnchorInfoForLine = (ls: string[], targetLine: number): { anchorLine: number; ordinaryLines: number[] } | null => {
+      if (targetLine < 0 || targetLine >= ls.length) return null
+      let subStart = -1
+      for (let i = targetLine; i >= 0; i--) {
+        const t = (ls[i] || '').replace(/[\r\t]/g, '').trim()
+        if (t.startsWith('.子程序 ')) { subStart = i; break }
+        if (t.startsWith('.程序集 ')) break
+      }
+      if (subStart < 0) return null
+
+      let subEnd = ls.length
+      for (let i = subStart + 1; i < ls.length; i++) {
+        const t = (ls[i] || '').replace(/[\r\t]/g, '').trim()
+        if (t.startsWith('.子程序 ') || t.startsWith('.程序集 ')) { subEnd = i; break }
+      }
+
+      const ordinaryLines: number[] = []
+      for (let i = subStart + 1; i < subEnd; i++) {
+        const t = (ls[i] || '').replace(/[\r\t]/g, '').trim()
+        if (t.startsWith('.')) continue
+        ordinaryLines.push(i)
+      }
+      if (ordinaryLines.length === 0) return null
+      return { anchorLine: ordinaryLines[0], ordinaryLines }
+    }
+
+    let deleteIndex = lineIndex
+    let focusLineAfter = action.targetLine
+    const anchorInfo = getSubAnchorInfoForLine(lines, lineIndex)
+    if (anchorInfo && anchorInfo.anchorLine === lineIndex) {
+      const nextOrdinary = anchorInfo.ordinaryLines.find(i => i > lineIndex)
+      if (nextOrdinary === undefined) {
+        // 子程序仅剩保底空行时，不允许再删掉它。
+        return
+      }
+      deleteIndex = nextOrdinary
+      focusLineAfter = lineIndex
+    }
+
     suppressInlineBlurCommit()
     pushUndo(currentText)
     const nl = [...lines]
-    nl.splice(lineIndex, 1)
+    nl.splice(deleteIndex, 1)
     const nt = nl.join('\n')
     applyTextChange(nt)
     flowIndentRef.current = ''
@@ -3931,7 +4043,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         focusWrapper()
         return
       }
-      const clampedLi = Math.max(0, Math.min(action.targetLine, latestLines.length - 1))
+      const clampedLi = Math.max(0, Math.min(focusLineAfter, latestLines.length - 1))
       startEditLine(clampedLi, undefined, undefined, isVirtual, true)
       setTimeout(() => {
         if (!inputRef.current) return
@@ -4642,6 +4754,117 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return true
   }, [currentText, onChange, pushUndo])
 
+  const navigateToSubprogramInternal = useCallback((subName: string, fallbackLine?: number, preferredHeaderIndex?: number) => {
+    const navSeq = ++subNavSeqRef.current
+    const normalizedName = (subName || '').trim()
+    let flashLineIndex = -1
+    let cursorLineIndex = -1
+    let subHeaderLineIndex = -1
+    let ls = currentText.split('\n')
+
+    if (normalizedName) {
+      const matches: number[] = []
+      for (let i = 0; i < ls.length; i++) {
+        const t = ls[i].replace(/[\r\t]/g, '').trim()
+        if (!t.startsWith('.子程序 ')) continue
+        const name = (splitCSV(t.slice('.子程序 '.length))[0] || '').trim()
+        if (name === normalizedName) {
+          matches.push(i)
+        }
+      }
+
+      if (matches.length > 0) {
+        if (Number.isFinite(preferredHeaderIndex) && matches.includes(preferredHeaderIndex as number)) {
+          subHeaderLineIndex = preferredHeaderIndex as number
+        } else if (Number.isFinite(fallbackLine) && (fallbackLine || 0) > 0) {
+          const target = (fallbackLine as number) - 1
+          subHeaderLineIndex = matches.reduce((best, cur) => (
+            Math.abs(cur - target) < Math.abs(best - target) ? cur : best
+          ), matches[0])
+        } else {
+          subHeaderLineIndex = matches[0]
+        }
+      }
+    }
+
+    if (subHeaderLineIndex >= 0) {
+      flashLineIndex = subHeaderLineIndex
+      let nextSubHeader = ls.length
+      for (let i = subHeaderLineIndex + 1; i < ls.length; i++) {
+        const t = ls[i].replace(/[\r\t]/g, '').trim()
+        if (t.startsWith('.子程序 ')) {
+          nextSubHeader = i
+          break
+        }
+      }
+
+      for (let i = subHeaderLineIndex + 1; i < nextSubHeader; i++) {
+        const t = ls[i].replace(/[\r\t]/g, '').trim()
+        if (t.startsWith('.')) continue
+        cursorLineIndex = i
+        break
+      }
+
+      if (cursorLineIndex < 0) {
+        const insertAt = nextSubHeader
+        const materializedLines = [...ls]
+        materializedLines.splice(insertAt, 0, '')
+        const nextText = materializedLines.join('\n')
+        pushUndo(currentText)
+        applyTextChange(nextText)
+        ls = materializedLines
+        cursorLineIndex = insertAt
+      }
+
+      if (cursorLineIndex < 0) {
+        cursorLineIndex = Math.min(subHeaderLineIndex + 1, Math.max(ls.length - 1, 0))
+      }
+    }
+
+    if (flashLineIndex < 0 && Number.isFinite(fallbackLine) && (fallbackLine || 0) > 0) {
+      flashLineIndex = Math.min((fallbackLine as number) - 1, Math.max(ls.length - 1, 0))
+    }
+    if (cursorLineIndex < 0 && flashLineIndex >= 0) cursorLineIndex = flashLineIndex
+    if (flashLineIndex < 0 || cursorLineIndex < 0) return
+
+    lastFocusedLine.current = flashLineIndex
+    scrollToLineIndex(flashLineIndex, 'auto')
+
+    const flashAfterScrollSettled = (): void => {
+      if (navSeq !== subNavSeqRef.current) return
+      // 清理上一跳残留闪烁，避免视觉上出现“闪错行”。
+      wrapperRef.current?.querySelectorAll('.highlight-flash').forEach((node) => {
+        node.classList.remove('highlight-flash')
+      })
+      const flashEl = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${flashLineIndex}"]`)
+      if (!flashEl) return
+      flashEl.classList.add('highlight-flash')
+      setTimeout(() => flashEl.classList.remove('highlight-flash'), 1500)
+    }
+
+    // 等待滚动与布局收敛后再闪烁，避免“先在下方后瞬间居中”时闪烁错位。
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        window.setTimeout(() => flashAfterScrollSettled(), 30)
+      })
+    })
+
+    const focusCursorAtLineStart = (): void => {
+      if (navSeq !== subNavSeqRef.current) return
+      startEditLine(cursorLineIndex, undefined, undefined, undefined, true)
+      window.setTimeout(() => {
+        if (navSeq !== subNavSeqRef.current) return
+        if (!inputRef.current) startEditLine(cursorLineIndex, undefined, undefined, undefined, true)
+        if (!inputRef.current) return
+        inputRef.current.focus()
+        inputRef.current.selectionStart = 0
+        inputRef.current.selectionEnd = 0
+      }, 0)
+    }
+
+    window.setTimeout(() => focusCursorAtLineStart(), 40)
+  }, [applyTextChange, currentText, pushUndo, scrollToLineIndex, startEditLine])
+
   useImperativeHandle(ref, () => ({
     insertSubroutine: () => {
       pushUndo(currentText)
@@ -4688,11 +4911,31 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         }
       }
 
-      const newSubText = '\n.子程序 ' + newName + ', , , '
       const nl = [...curLines]
-      nl.splice(insertAt, 0, newSubText)
+      // 统一为“真实空行 + 子程序声明 + 真实空普通行”，避免出现无行号虚拟占位行。
+      nl.splice(insertAt, 0, '', '.子程序 ' + newName + ', , , ', '')
       const nt = nl.join('\n')
       applyTextChange(nt)
+
+      const newSubLineIndex = insertAt + 1
+      const firstCodeLineIndex = insertAt + 2
+      lastFocusedLine.current = newSubLineIndex
+      window.setTimeout(() => {
+        scrollToLineIndex(newSubLineIndex, 'auto')
+        const el = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${newSubLineIndex}"]`)
+        if (el) {
+          el.classList.add('highlight-flash')
+          window.setTimeout(() => el.classList.remove('highlight-flash'), 1200)
+        }
+
+        startEditLine(firstCodeLineIndex, undefined, undefined, undefined, true)
+        window.setTimeout(() => {
+          if (!inputRef.current) return
+          inputRef.current.focus()
+          inputRef.current.selectionStart = 0
+          inputRef.current.selectionEnd = 0
+        }, 0)
+      }, 40)
     },
 
     insertLocalVariable: () => {
@@ -4799,43 +5042,50 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     navigateOrCreateSub: (subName: string, params: Array<{ name: string; dataType: string; isByRef: boolean }>) => {
       const curLines = currentText.split('\n')
+      const normalizedSubName = (subName || '').trim()
 
       // 查找同名子程序是否已存在
       let subLineIndex = -1
       for (let i = 0; i < curLines.length; i++) {
         const t = curLines[i].replace(/[\r\t]/g, '').trim()
         if (t.startsWith('.子程序 ')) {
-          const name = splitCSV(t.slice('.子程序 '.length))[0]
-          if (name === subName) { subLineIndex = i; break }
+          const name = (splitCSV(t.slice('.子程序 '.length))[0] || '').trim()
+          if (name === normalizedSubName) { subLineIndex = i; break }
         }
       }
 
       if (subLineIndex >= 0) {
-        // 已存在：滚动到该子程序
-        lastFocusedLine.current = subLineIndex
-        setTimeout(() => {
-          const el = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${subLineIndex}"]`)
-          el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        }, 50)
+        // 已存在子程序直接复用统一跳转逻辑，保证与项目树双击一致。
+        navigateToSubprogramInternal(normalizedSubName, subLineIndex + 1, subLineIndex)
         return
       }
 
       // 不存在：在文件末尾插入新子程序
       pushUndo(currentText)
-      const insertLines: string[] = ['\n.子程序 ' + subName + ', , , ']
+      const insertLines: string[] = ['', '.子程序 ' + subName + ', , , ']
       for (const p of params) {
         insertLines.push('    .参数 ' + p.name + ', ' + (p.dataType || '整数型') + (p.isByRef ? ', 传址' : ''))
       }
+      // 为新建子程序补一条真实空普通行，避免仅显示无行号的虚拟占位行。
+      insertLines.push('')
       const nl = [...curLines, ...insertLines]
       const nt = nl.join('\n')
       applyTextChange(nt)
 
-      // 新子程序行在 join 后的位置：curLines.length + 1（因 insertLines[0] 以 \n 开头产生空行）
+      // 新子程序行位置：前置空行后为子程序声明。
       const newSubLineIndex = curLines.length + 1
+      const firstCodeLineIndex = curLines.length + 2 + params.length
       lastFocusedLine.current = newSubLineIndex
       setTimeout(() => {
         const el = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${newSubLineIndex}"]`)
         el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        startEditLine(firstCodeLineIndex, undefined, undefined, undefined, true)
+        setTimeout(() => {
+          if (!inputRef.current) return
+          inputRef.current.focus()
+          inputRef.current.selectionStart = 0
+          inputRef.current.selectionEnd = 0
+        }, 0)
       }, 150)
     },
     navigateToLine: (line: number) => {
@@ -4860,6 +5110,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       })
       window.setTimeout(() => focusTargetLine(), 180)
     },
+    navigateToSubprogram: (subName: string, fallbackLine?: number) => {
+      navigateToSubprogramInternal(subName, fallbackLine)
+    },
     getVisibleLineForSourceLine: (line: number) => {
       if (!Number.isFinite(line) || line <= 0) return line
       return lineNumMaps.sourceLineNumMap.get(line - 1) ?? line
@@ -4883,7 +5136,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         return
       }
     },
-  }), [applyTextChange, currentText, pushUndo, selectedLines, getSelectedSourceText, getMouseRangeSelectedSourceText, isResourceTableDoc, shouldUseNativeInputPaste, lineNumMaps])
+  }), [applyTextChange, currentText, pushUndo, selectedLines, getSelectedSourceText, getMouseRangeSelectedSourceText, isResourceTableDoc, shouldUseNativeInputPaste, lineNumMaps, startEditLine, navigateToSubprogramInternal])
 
   // 查找代码行中第一个有参数的有效命令
   const findCmdWithParams = useCallback((codeLine: string): CompletionItem | null => {

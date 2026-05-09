@@ -45,7 +45,9 @@ export const FLOW_START: Record<string, string> = {
 }
 
 export const FLOW_LOOP_KW = new Set(['判断循环首', '循环判断首', '计次循环首', '变量循环首'])
-export const FLOW_LINK_COMMANDS = new Set(['如果', '如果真', '判断开始'])
+// 仅“判断”结构需要在“结束行 -> 下一起始行”之间做连通桥接（会形成上下两条横线）。
+// “如果/如果真”连续出现时不应套用该视觉效果。
+export const FLOW_LINK_COMMANDS = new Set(['判断开始', '判断'])
 export const FLOW_BRANCH_KW = new Set(['否则', '默认'])
 export const FLOW_END_KW = new Set(Object.values(FLOW_START))
 

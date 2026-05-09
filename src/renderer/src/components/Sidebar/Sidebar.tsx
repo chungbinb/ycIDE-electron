@@ -53,10 +53,13 @@ interface SidebarProps {
   onSelectControl?: (target: SelectionTarget) => void
   onPropertyChange?: (targetKind: 'form' | 'control', controlId: string | null, propName: string, value: string | number | boolean) => void
   projectTree?: TreeNode[]
-  onOpenFile?: (fileId: string, fileName: string, targetLine?: number) => void
+  onOpenFile?: (fileId: string, fileName: string, targetLine?: number, targetType?: TreeNode['type'], targetLabel?: string) => void
   activeFileId?: string | null
   projectDir?: string
+  openTabs?: Array<{ id: string; filePath?: string; language: string; value: string; savedValue?: string; formData?: DesignForm }>
   onEventNavigate?: (selection: SelectionTarget, eventName: string, eventArgs: Array<{ name: string; description: string; dataType: string; isByRef: boolean }>) => void
+  onSaveProject?: (projectDir: string) => void
+  onCloseProject?: (projectDir: string) => void
   /** 支持库加载或卸载时的回调 */
   onLibraryChange?: () => void
 }
@@ -79,6 +82,26 @@ export interface TreeNode {
   // 子节点（如子程序）可指向其所属源码文件
   fileId?: string
   fileName?: string
+  projectDir?: string
+}
+
+function resolveNodeFileKey(node: TreeNode): string {
+  const declMatch = /^(.+)::(sub|global|const|dtype|dll)::(\d+)$/.exec(node.id)
+  const ownerFile = declMatch?.[1]
+  const openFileId = node.fileId || ownerFile || node.id
+  const openFileName = node.fileName || ownerFile || node.label
+  return (openFileId || openFileName || '').replace(/^.*[\\/]/, '').toLowerCase()
+}
+
+function hasModifiedDescendant(node: TreeNode, modifiedFileKeys?: Set<string>): boolean {
+  if (!modifiedFileKeys || modifiedFileKeys.size === 0) return false
+  const isFileNode = node.type === 'module' || node.type === 'window' || node.type === 'resource'
+  if (isFileNode) {
+    const fileKey = resolveNodeFileKey(node)
+    if (fileKey && modifiedFileKeys.has(fileKey)) return true
+  }
+  if (!node.children || node.children.length === 0) return false
+  return node.children.some(child => hasModifiedDescendant(child, modifiedFileKeys))
 }
 
 function TreeItem({
@@ -88,13 +111,17 @@ function TreeItem({
   activeFileId,
   focusedItemId,
   onFocusItem,
+  modifiedFileKeys,
+  onProjectContextMenu,
 }: {
   node: TreeNode
   depth?: number
-  onOpenFile?: (fileId: string, fileName: string, targetLine?: number) => void
+  onOpenFile?: (fileId: string, fileName: string, targetLine?: number, targetType?: TreeNode['type'], targetLabel?: string) => void
   activeFileId?: string | null
   focusedItemId?: string | null
   onFocusItem?: (id: string) => void
+  modifiedFileKeys?: Set<string>
+  onProjectContextMenu?: (event: React.MouseEvent<HTMLElement>, projectDir: string, projectName: string) => void
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(node.expanded ?? false)
   const hasChildren = node.children && node.children.length > 0
@@ -102,9 +129,15 @@ function TreeItem({
   const ownerFile = declMatch?.[1]
   const lineIndex = declMatch ? Number.parseInt(declMatch[3], 10) : NaN
   const targetLine = Number.isFinite(lineIndex) ? lineIndex + 1 : undefined
+  const isFileNode = node.type === 'module' || node.type === 'window' || node.type === 'resource'
   const openFileId = node.fileId || ownerFile || node.id
-  const openFileName = node.fileName || ownerFile || node.label
+  const openFileName = node.fileName || ownerFile || (isFileNode ? node.id : node.label)
   const isActiveLeaf = !hasChildren && !!activeFileId && activeFileId === openFileId
+  const fileKey = resolveNodeFileKey(node)
+  const isModifiedFile = isFileNode && !!fileKey && !!modifiedFileKeys?.has(fileKey)
+  const isModifiedCategory = node.type === 'folder' && depth > 0 && hasModifiedDescendant(node, modifiedFileKeys)
+  const shouldShowModifiedDot = isModifiedFile || isModifiedCategory
+  const isProjectRoot = depth === 0 && node.type === 'folder' && !!node.projectDir
   const isRovingFocused = focusedItemId ? focusedItemId === node.id : depth === 0
   const childrenCount = node.children?.length || 0
   const treeItemAriaLabel = hasChildren
@@ -154,11 +187,17 @@ function TreeItem({
           '--tree-item-padding-left': `calc(${depth} * var(--tree-indent-step, 16px) + var(--tree-indent-base, 8px))`,
         })}
         onClick={() => hasChildren && setExpanded(!expanded)}
+        onContextMenu={(event) => {
+          if (!isProjectRoot || !node.projectDir) return
+          event.preventDefault()
+          event.stopPropagation()
+          onProjectContextMenu?.(event, node.projectDir, node.label)
+        }}
         onDoubleClick={() => {
-          if (node.type === 'module' && onOpenFile) {
-            onOpenFile(openFileId, openFileName, targetLine)
+          if (isFileNode && onOpenFile) {
+            onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
           } else if (!hasChildren && onOpenFile) {
-            onOpenFile(openFileId, openFileName, targetLine)
+            onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
           }
         }}
         tabIndex={isRovingFocused ? 0 : -1}
@@ -212,9 +251,9 @@ function TreeItem({
 
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
-            if (node.type === 'module' && onOpenFile) onOpenFile(openFileId, openFileName, targetLine)
+            if (isFileNode && onOpenFile) onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
             else if (hasChildren) setExpanded(!expanded)
-            else if (onOpenFile) onOpenFile(openFileId, openFileName, targetLine)
+            else if (onOpenFile) onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
           }
         }}
       >
@@ -224,6 +263,7 @@ function TreeItem({
         {!hasChildren && <span className="tree-arrow-placeholder" aria-hidden="true" />}
         <Icon preserveOriginalColors name={(node.type === 'folder' ? (expanded ? TREE_ICON_MAP['folder-expanded'] : TREE_ICON_MAP['folder']) : TREE_ICON_MAP[node.type]) || 'custom-control'} size={16} />
         <span className="tree-label">{node.label}</span>
+        {shouldShowModifiedDot && <span className="tree-item-modified-dot" title="未保存更改" aria-label="未保存更改">●</span>}
       </div>
       {hasChildren && expanded && (
         <ul>
@@ -236,6 +276,8 @@ function TreeItem({
               activeFileId={activeFileId}
               focusedItemId={focusedItemId}
               onFocusItem={onFocusItem}
+              modifiedFileKeys={modifiedFileKeys}
+              onProjectContextMenu={onProjectContextMenu}
             />
           ))}
         </ul>
@@ -1070,7 +1112,7 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
   )
 }
 
-function Sidebar({ width, onResize, placement = 'left', selection, activeTab, onTabChange, onSelectControl, onPropertyChange, projectTree, onOpenFile, activeFileId, projectDir, onEventNavigate, onLibraryChange }: SidebarProps): React.JSX.Element {
+function Sidebar({ width, onResize, placement = 'left', selection, activeTab, onTabChange, onSelectControl, onPropertyChange, projectTree, onOpenFile, activeFileId, projectDir, openTabs = [], onEventNavigate, onSaveProject, onCloseProject, onLibraryChange }: SidebarProps): React.JSX.Element {
   const SIDEBAR_MIN_WIDTH = 150
   const SIDEBAR_MAX_WIDTH = 500
   const SIDEBAR_RESIZE_STEP = 16
@@ -1213,6 +1255,22 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
     }
   })
   const [tabsContextMenu, setTabsContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [projectContextMenu, setProjectContextMenu] = useState<{ x: number; y: number; projectDir: string; projectName: string } | null>(null)
+
+  const modifiedFileKeys = useMemo(() => {
+    const keys = new Set<string>()
+    for (const tab of openTabs) {
+      if (typeof tab.savedValue !== 'string') continue
+      const persistedValue = tab.language === 'efw' && tab.formData
+        ? JSON.stringify(tab.formData, null, 2)
+        : tab.value
+      if (persistedValue === tab.savedValue) continue
+      const tabPath = tab.filePath || tab.id
+      const fileKey = (tabPath || '').replace(/^.*[\\/]/, '').toLowerCase()
+      if (fileKey) keys.add(fileKey)
+    }
+    return keys
+  }, [openTabs])
   const eventSubsCacheRef = useRef<Map<string, Set<string>>>(new Map())
   const sidebarTabRefs = useRef<Array<HTMLButtonElement | null>>([])
   const sidebarRef = useRef<HTMLElement>(null)
@@ -1286,6 +1344,22 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
     }
   }, [tabsContextMenu])
 
+  useEffect(() => {
+    if (!projectContextMenu) return
+    const close = (): void => setProjectContextMenu(null)
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('contextmenu', close)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('contextmenu', close)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [projectContextMenu])
+
   const handleTabsContextMenu = useCallback((event: React.MouseEvent<HTMLElement>) => {
     event.preventDefault()
     event.stopPropagation()
@@ -1297,6 +1371,17 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
   const toggleTabsPlacementFromMenu = useCallback(() => {
     setTabsPlacement(prev => (prev === 'top' ? 'bottom' : 'top'))
     setTabsContextMenu(null)
+  }, [])
+
+  const handleProjectContextMenu = useCallback((event: React.MouseEvent<HTMLElement>, targetProjectDir: string, targetProjectName: string) => {
+    const menuWidth = 260
+    const menuX = Math.min(event.clientX, window.innerWidth - menuWidth - 8)
+    setProjectContextMenu({
+      x: Math.max(0, menuX),
+      y: event.clientY,
+      projectDir: targetProjectDir,
+      projectName: targetProjectName,
+    })
   }, [])
 
   const tabsNode = (
@@ -1339,28 +1424,31 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
     let cancelled = false
     ;(async () => {
       const sourceFile = currentForm.sourceFile || `${currentForm.name}.eyc`
-      const filePath = projectDir + '\\' + sourceFile
-      const content = await window.api?.project?.readFile(filePath)
-      if (cancelled || !content) {
-        return
-      }
+      const sourceFileName = sourceFile.replace(/^.*[\\/]/, '')
+      const liveTab = openTabs.find(tab => {
+        if (tab.language !== 'eyc') return false
+        const tabFileName = (tab.filePath || tab.id || '').replace(/^.*[\\/]/, '')
+        return tabFileName === sourceFileName
+      })
+      const content = liveTab?.value ?? await window.api?.project?.readFile(projectDir + '\\' + sourceFile)
       const next = new Set<string>()
-      const lines = content.split(/\r?\n/)
-      for (const line of lines) {
-        const match = /^\s*\.子程序\s+(.+?)(?:\s*,|\s*$)/.exec(line)
-        if (match?.[1]) {
-          next.add(match[1].trim())
+      if (content) {
+        const lines = content.split(/\r?\n/)
+        for (const line of lines) {
+          const match = /^\s*\.子程序\s+(.+?)(?:\s*,|\s*$)/.exec(line)
+          if (match?.[1]) {
+            next.add(match[1].trim())
+          }
         }
       }
 
       if (!cancelled) {
-        const merged = new Set<string>([...(eventSubsCacheRef.current.get(currentFormKey) || []), ...next])
-        eventSubsCacheRef.current.set(currentFormKey, merged)
-        setExistingEventSubs(merged)
+        eventSubsCacheRef.current.set(currentFormKey, next)
+        setExistingEventSubs(next)
       }
     })()
     return () => { cancelled = true }
-  }, [activeTab, projectDir, currentForm?.name, currentForm?.sourceFile, currentFormKey])
+  }, [activeTab, projectDir, currentForm?.name, currentForm?.sourceFile, currentFormKey, openTabs])
 
   // 选中变化时，重置为占位项（空值）
   useEffect(() => {
@@ -1407,6 +1495,8 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
                     activeFileId={activeFileId}
                     focusedItemId={focusedProjectItemId}
                     onFocusItem={setFocusedProjectItemId}
+                    modifiedFileKeys={modifiedFileKeys}
+                    onProjectContextMenu={handleProjectContextMenu}
                   />
                 ))}
               </ul>
@@ -1486,6 +1576,41 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
             onClick={toggleTabsPlacementFromMenu}
           >
             {tabsPlacement === 'top' ? '将“支持库/项目/属性”按钮移到底部' : '将“支持库/项目/属性”按钮移到顶部'}
+          </button>
+        </div>
+      )}
+      {projectContextMenu && (
+        <div
+          className="sidebar-tabs-context-menu"
+          ref={(element) => setCssVars(element, {
+            '--sidebar-menu-x': `${projectContextMenu.x}px`,
+            '--sidebar-menu-y': `${projectContextMenu.y}px`,
+          })}
+          role="menu"
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="sidebar-tabs-context-menu-item"
+            onClick={() => {
+              onSaveProject?.(projectContextMenu.projectDir)
+              setProjectContextMenu(null)
+            }}
+          >
+            保存该项目全部文件（{projectContextMenu.projectName}）
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="sidebar-tabs-context-menu-item"
+            onClick={() => {
+              onCloseProject?.(projectContextMenu.projectDir)
+              setProjectContextMenu(null)
+            }}
+          >
+            关闭该项目（{projectContextMenu.projectName}）
           </button>
         </div>
       )}

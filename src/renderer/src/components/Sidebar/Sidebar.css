@@ -125,6 +125,15 @@
   text-overflow: ellipsis;
 }
 
+.tree-item-modified-dot {
+  margin-left: auto;
+  margin-right: 2px;
+  color: var(--warning, #f39c12);
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 /* Event selector bar */
 .sidebar-event-bar {
   padding: 4px 6px;

@@ -76,6 +76,13 @@ interface OutputPanelProps {
   onTerminalActivate?: () => Promise<void> | void
 }
 
+function setCssVars(element: HTMLElement | null, vars: Record<string, string>): void {
+  if (!element) return
+  for (const [name, value] of Object.entries(vars)) {
+    element.style.setProperty(name, value)
+  }
+}
+
 function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, highlightParamIndex, problems = [], debugPause = null, debugDisplayLine = null, isDebugPaused = false, onDebugContinue, forceTab, onProblemClick, terminalOutput = [], terminalRunning = false, terminalLastCommand = '', onTerminalSend, onTerminalInterrupt, onTerminalActivate }: OutputPanelProps): React.JSX.Element {
   const OUTPUT_MIN_HEIGHT = 100
   const OUTPUT_MAX_HEIGHT = 500
@@ -421,7 +428,6 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
             id={`output-tab-${tab.id}`}
             className={`output-tab ${activeTab === tab.id ? 'active' : ''}`}
             role="tab"
-            aria-selected={activeTab === tab.id}
             aria-controls={`output-panel-${tab.id}`}
             tabIndex={activeTab === tab.id ? 0 : -1}
             onClick={() => setActiveTab(tab.id)}
@@ -437,7 +443,12 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
   )
 
   return (
-    <div className="output-panel" style={{ height: `${height}px` }} role="region" aria-label="输出面板">
+    <div
+      className="output-panel"
+      ref={(element) => setCssVars(element, { '--output-panel-height': `${height}px` })}
+      role="region"
+      aria-label="输出面板"
+    >
       <div
         className="output-resizer"
         onMouseDown={handleMouseDown}
@@ -445,9 +456,6 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
         role="separator"
         aria-label="调整输出面板高度"
         aria-orientation="horizontal"
-        aria-valuemin={OUTPUT_MIN_HEIGHT}
-        aria-valuemax={OUTPUT_MAX_HEIGHT}
-        aria-valuenow={height}
         tabIndex={0}
       />
       {tabsPlacement === 'top' && toolbarNode}
@@ -681,7 +689,7 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
                 )}
               </div>
               {isDebugPaused && (
-                <div style={{ marginTop: 12 }}>
+                <div className="output-debug-actions">
                   <button className="output-tab active" onClick={onDebugContinue}>继续运行</button>
                 </div>
               )}
@@ -696,13 +704,17 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
       {tabsContextMenu && (
         <div
           className="output-tabs-context-menu"
-          style={{ left: tabsContextMenu.x, top: tabsContextMenu.y }}
+          ref={(element) => setCssVars(element, {
+            '--output-tabs-menu-x': `${tabsContextMenu.x}px`,
+            '--output-tabs-menu-y': `${tabsContextMenu.y}px`,
+          })}
           role="menu"
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
           <button
             type="button"
+            role="menuitem"
             className="output-tabs-context-menu-item"
             onClick={toggleTabsPlacementFromMenu}
           >

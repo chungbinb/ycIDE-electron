@@ -65,6 +65,7 @@ export function buildEditorDiagnosticsProblems(
 
   const assemblyVars = new Map<string, number>()
   const globalVars = new Map<string, number>()
+  const subroutines = new Map<string, number>()
   let localVarsByName = new Map<string, number[]>()
   let inSub = false
 
@@ -121,6 +122,14 @@ export function buildEditorDiagnosticsProblems(
         }
       }
     } else if (ln.type === 'sub') {
+      const subName = (ln.fields[0] || '').trim()
+      if (subName) {
+        if (subroutines.has(subName)) {
+          problems.push({ line: i + 1, column: 1, message: `子程序"${subName}"重复定义`, severity: 'error' })
+        } else {
+          subroutines.set(subName, i)
+        }
+      }
       checkLocalVars()
       inSub = true
     } else if (ln.type === 'assembly') {
