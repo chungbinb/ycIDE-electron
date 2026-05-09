@@ -61,6 +61,8 @@ export interface YcmdRegistryScanResult {
   errors: string[]
 }
 
+export type YcmdTargetPlatform = 'windows' | 'macos' | 'linux' | 'harmony'
+
 function getLibRootPath(): string {
   const isDev = !app.isPackaged
   if (isDev) {
@@ -214,7 +216,12 @@ export function detectYcmdImplementationLanguage(filePath: string): string {
   return 'unknown'
 }
 
-export function getYcmdCommands(customRootPath?: string): YcmdResolvedCommand[] {
+function manifestSupportsTargetPlatform(manifest: YcmdManifest, targetPlatform?: YcmdTargetPlatform): boolean {
+  if (!targetPlatform) return true
+  return !!manifest.implementations?.[targetPlatform]?.entry
+}
+
+export function getYcmdCommands(customRootPath?: string, targetPlatform?: YcmdTargetPlatform): YcmdResolvedCommand[] {
   const scanResult = scanYcmdRegistry(customRootPath)
   const commands: YcmdResolvedCommand[] = []
 
@@ -222,6 +229,7 @@ export function getYcmdCommands(customRootPath?: string): YcmdResolvedCommand[] 
     for (const item of lib.manifests) {
       if (!item.valid || !item.manifest) continue
       const manifest = item.manifest
+      if (!manifestSupportsTargetPlatform(manifest, targetPlatform)) continue
       const commandName = (manifest.displayName || manifest.commandId || '').trim()
       const commandId = (manifest.commandId || '').trim()
       if (!commandName || !commandId) continue

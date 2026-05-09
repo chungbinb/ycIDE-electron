@@ -175,6 +175,13 @@
   flex-wrap: wrap;
 }
 
+.lib-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
 .lib-state-badge {
   border: 1px solid var(--border-color);
   background: var(--bg-tertiary);
@@ -202,9 +209,30 @@
   color: var(--success);
 }
 
+.lib-state-installed {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.lib-state-update {
+  border-color: var(--warning);
+  background: var(--bg-hover);
+  color: var(--warning);
+}
+
+.lib-state-error {
+  border-color: var(--error);
+  background: var(--bg-hover);
+  color: var(--error);
+}
+
 .lib-state-downloaded::before,
 .lib-state-missing::before,
-.lib-state-loaded::before {
+.lib-state-loaded::before,
+.lib-state-installed::before,
+.lib-state-update::before,
+.lib-state-error::before {
   margin-right: 4px;
   font-size: 10px;
 }
@@ -212,6 +240,9 @@
 .lib-state-downloaded::before { content: '⬇'; }
 .lib-state-missing::before { content: '⚠'; }
 .lib-state-loaded::before { content: '✓'; }
+.lib-state-installed::before { content: '✓'; }
+.lib-state-update::before { content: '↻'; }
+.lib-state-error::before { content: '×'; }
 
 .lib-empty {
   text-align: center;

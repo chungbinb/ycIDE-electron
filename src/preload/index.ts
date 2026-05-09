@@ -126,10 +126,13 @@ const api = {
     applySelection: (selectedNames: string[]) => ipcRenderer.invoke('library:applySelection', selectedNames),
     getList: () => ipcRenderer.invoke('library:getList'),
     getStoreCards: () => ipcRenderer.invoke('library:getStoreCards'),
+    getRemoteIndex: () => ipcRenderer.invoke('library:getRemoteIndex'),
+    installFromRemote: (name: string) => ipcRenderer.invoke('library:installFromRemote', name),
+    removeInstalled: (name: string) => ipcRenderer.invoke('library:removeInstalled', name),
     getInfo: (name: string) => ipcRenderer.invoke('library:getInfo', name),
-    getAllCommands: () => ipcRenderer.invoke('library:getAllCommands'),
-    getAllDataTypes: () => ipcRenderer.invoke('library:getAllDataTypes'),
-    getWindowUnits: () => ipcRenderer.invoke('library:getWindowUnits'),
+    getAllCommands: (targetPlatform?: string) => ipcRenderer.invoke('library:getAllCommands', targetPlatform),
+    getAllDataTypes: (targetPlatform?: string) => ipcRenderer.invoke('library:getAllDataTypes', targetPlatform),
+    getWindowUnits: (targetPlatform?: string) => ipcRenderer.invoke('library:getWindowUnits', targetPlatform),
   },
   // 命令元数据（ycmd）
   ycmd: {

@@ -1047,7 +1047,7 @@ function App(): React.JSX.Element {
   // 检查设计时诊断：扫描所有 efw 标签页中的控件类型，找出依赖库未加载的
   const checkDesignProblems = useCallback(async (tabs: EditorTab[]) => {
     try {
-      const units = await window.api.library.getWindowUnits() as Array<{ name: string; englishName?: string }>
+      const units = await window.api.library.getWindowUnits(targetPlatform) as Array<{ name: string; englishName?: string }>
       const knownTypes = new Set<string>(
         units.flatMap(u => [u.name, u.englishName].filter((n): n is string => !!n))
       )
@@ -1070,13 +1070,18 @@ function App(): React.JSX.Element {
     } catch {
       // 无法获取窗口单元列表时忽略
     }
-  }, [])
+  }, [targetPlatform])
 
   // 硬件加载或卸载时重新检查
   const handleLibraryChange = useCallback(() => {
     commandCacheRef.current.clear()
     checkDesignProblems(openTabsRef.current)
   }, [checkDesignProblems])
+
+  useEffect(() => {
+    commandCacheRef.current.clear()
+    checkDesignProblems(openTabsRef.current)
+  }, [checkDesignProblems, targetPlatform])
 
   // 编译运行
   const handleCompileRun = useCallback(async () => {
@@ -1228,7 +1233,7 @@ function App(): React.JSX.Element {
           const control = formData.controls.find(c => normalize(c.name) === normalize(parsedEvent.targetName))
           const targetType = control ? control.type : '窗口'
           try {
-            const windowUnits = await window.api.library.getWindowUnits() as Array<{
+            const windowUnits = await window.api.library.getWindowUnits(targetPlatform) as Array<{
               name: string
               englishName?: string
               events?: Array<{ name: string; description?: string }>
@@ -1296,7 +1301,7 @@ function App(): React.JSX.Element {
     }
 
     // 从支持库加载全部命令并查找
-    const allCommands = await window.api.library.getAllCommands()
+    const allCommands = await window.api.library.getAllCommands(targetPlatform)
     const cmd = allCommands.find((c: CommandDetail) => c.name === name || (c.englishName || '').trim() === name)
     if (cmd) {
       const detail: CommandDetail = {
@@ -1319,7 +1324,7 @@ function App(): React.JSX.Element {
       }
     }
     setShowOutput(true)
-  }, [])
+  }, [targetPlatform])
 
   const handleCommandClear = useCallback(() => {
     setCommandDetail(null)
@@ -4646,6 +4651,7 @@ function App(): React.JSX.Element {
                   editorLineHeight={ideSettings.editorLineHeight}
                   editorFreezeSubTableHeader={ideSettings.editorFreezeSubTableHeader}
                   editorShowMinimapPreview={ideSettings.editorShowMinimapPreview}
+                  targetPlatform={targetPlatform}
                 />
               </div>
             </div>
@@ -4706,7 +4712,7 @@ function App(): React.JSX.Element {
         cursorColumn={cursorColumn}
         docType={docType}
       />
-      <LibraryDialog open={showLibrary} onClose={() => setShowLibrary(false)} />
+      <LibraryDialog open={showLibrary} onClose={() => setShowLibrary(false)} targetPlatform={targetPlatform} />
       <NewProjectDialog open={showNewProject} onClose={() => setShowNewProject(false)} onConfirm={handleNewProjectConfirm} />
       <EProjectImportDialog
         open={!!eProjectImportDialog}

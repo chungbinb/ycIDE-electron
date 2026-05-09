@@ -1715,20 +1715,40 @@ app.whenReady().then(() => {
   ipcMain.handle('library:getList', () => {
     return libraryManager.getList()
   })
-  ipcMain.handle('library:getStoreCards', () => {
-    return libraryManager.getStoreCards()
+  ipcMain.handle('library:getStoreCards', async () => {
+    const settings = readIDESettings()
+    return libraryManager.getStoreCards(settings.libraryStoreIndexUrl)
+  })
+  ipcMain.handle('library:getRemoteIndex', async () => {
+    const settings = readIDESettings()
+    return libraryManager.getRemoteIndex(settings.libraryStoreIndexUrl)
+  })
+  ipcMain.handle('library:installFromRemote', async (_event, name: string) => {
+    const settings = readIDESettings()
+    const result = await libraryManager.installFromRemote(name, settings.libraryStoreIndexUrl)
+    if (result.ok) {
+      BrowserWindow.getAllWindows().forEach(w => w.webContents.send('library:loaded'))
+    }
+    return result
+  })
+  ipcMain.handle('library:removeInstalled', (_event, name: string) => {
+    const result = libraryManager.removeInstalled(name)
+    if (result.ok) {
+      BrowserWindow.getAllWindows().forEach(w => w.webContents.send('library:loaded'))
+    }
+    return result
   })
   ipcMain.handle('library:getInfo', (_event, name: string) => {
     return libraryManager.getLibInfo(name)
   })
-  ipcMain.handle('library:getAllCommands', () => {
-    return libraryManager.getAllCommands()
+  ipcMain.handle('library:getAllCommands', (_event, targetPlatform?: string) => {
+    return libraryManager.getAllCommands(targetPlatform)
   })
-  ipcMain.handle('library:getAllDataTypes', () => {
-    return libraryManager.getAllDataTypes()
+  ipcMain.handle('library:getAllDataTypes', (_event, targetPlatform?: string) => {
+    return libraryManager.getAllDataTypes(targetPlatform)
   })
-  ipcMain.handle('library:getWindowUnits', () => {
-    return libraryManager.getAllWindowUnits()
+  ipcMain.handle('library:getWindowUnits', (_event, targetPlatform?: string) => {
+    return libraryManager.getAllWindowUnits(targetPlatform)
   })
 
   ipcMain.handle('ycmd:scan', (_event, rootPath?: string) => {
@@ -2488,6 +2508,13 @@ app.whenReady().then(() => {
   ipcMain.handle('debug:continue', () => {
     return continueDebugExecutable()
   })
+
+  const coreLibraryValidation = libraryManager.validateCoreLibraryIntegrity()
+  if (!coreLibraryValidation.ok) {
+    dialog.showErrorBox('核心支持库校验失败', coreLibraryValidation.errors.join('\n'))
+    app.quit()
+    return
+  }
 
   // 启动时自动扫描并加载上次已加载的支持库
   libraryManager.scanAndAutoLoad()

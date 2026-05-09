@@ -1,0 +1,9 @@
+{
+  "guid": "D09F2340818511D396F6AE4C17150413",
+  "description": "核心支持库，提供基础命令、窗口组件元数据与编译协议。",
+  "author": "ycIDE",
+  "qq": "641548913",
+  "email": "support@ycide.dev",
+  "homePage": "https://ycide.dev",
+  "otherInfo": "第三方支持库可在 lib/<id>/<id>.library.json 中提供 guid、description、author、qq、email、homePage、otherInfo 等标识信息。"
+}

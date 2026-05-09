@@ -3,10 +3,24 @@
  * 扫描 lib 目录中的 *.ycmd.json 清单，并补充窗口单元元数据。
  */
 import { app } from 'electron'
-import { dirname, join } from 'path'
-import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { getYcmdCommands, scanYcmdRegistry, type YcmdResolvedCommand } from './ycmd-registry'
-import { STORE_PLATFORM_ORDER, type Platform, type StoreLibraryCard } from '../shared/library-store'
+import { createHash } from 'crypto'
+import AdmZip from 'adm-zip'
+import { dirname, isAbsolute, join, normalize, resolve } from 'path'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { getYcmdCommands, scanYcmdRegistry, type YcmdResolvedCommand, type YcmdTargetPlatform } from './ycmd-registry'
+import {
+  STORE_PLATFORM_ORDER,
+  type InstalledLibraryState,
+  type LibraryInstallResult,
+  type LibraryInstallSource,
+  type LibraryInstallStateFile,
+  type LibraryPackageEntry,
+  type LibraryRemoteIndex,
+  type LibraryRemoteIndexResult,
+  type LibraryRemoveResult,
+  type Platform,
+  type StoreLibraryCard,
+} from '../shared/library-store'
 
 export interface LibraryParam {
   name: string
@@ -109,6 +123,7 @@ export interface LibraryItem {
   filePath: string
   loaded: boolean
   isCore: boolean
+  source?: LibraryInstallSource
   libName?: string
   version?: string
   cmdCount?: number
@@ -122,24 +137,100 @@ export interface LoadResult {
 }
 
 interface LibraryMetadataFile {
+  guid?: string
   description?: string
   author?: string
+  qq?: string
+  email?: string
   homePage?: string
+  otherInfo?: string
   dataTypes?: unknown
   constants?: unknown
   windowUnits?: unknown
 }
 
 interface ParsedLibraryMetadata {
+  guid: string
   description: string
   author: string
+  qq: string
+  email: string
   homePage: string
+  otherInfo: string
   dataTypes: LibraryDataType[]
   constants: LibraryConstant[]
   windowUnits: LibraryWindowUnit[]
 }
 
 const CORE_LIBRARY_NAME = '系统核心支持库'
+const CORE_LIBRARY_FILE_NAME = 'krnln'
+const CORE_LIBRARY_GUID = 'D09F2340818511D396F6AE4C17150413'
+
+const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
+  'impl/linux.cpp': '1ab71de6a48d439a685199c99f61203b736447e10568b618dcdde7214db0d3d4',
+  'impl/macos.mm': '3053240e3b75909dfddc22673d1a0f281bbcac4971d94a7fb6adefc096942029',
+  'impl/windows.cpp': '1ab71de6a48d439a685199c99f61203b736447e10568b618dcdde7214db0d3d4',
+  'krnln.library.json': '0b9deb735168f4e67da1ca8be74d937d764fafc0559d973c72b545cbf391868d',
+  'krnln.protocol.json': '95d58141151568ae3962f5f110822cd04153b9b6a003d3b768be27234a97b9d8',
+  'messageBox.ycmd.json': '1b529b2c40e8a8289fc4d937f4112a85c0b42238f77e6bb1c67b1c97b60abfcf',
+  'window-units.json': '613374ad7107c508868212654590b44189066e9f8cae53970bd2c54ba757e6b3',
+}
+
+const LIBRARY_INSTALL_STATE_VERSION = '1.0'
+
+function normalizeLibraryId(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '')
+}
+
+function normalizeRemoteIndex(raw: unknown): LibraryRemoteIndex {
+  const input = raw && typeof raw === 'object' ? raw as Partial<LibraryRemoteIndex> : {}
+  const libraries = Array.isArray(input.libraries) ? input.libraries : []
+  return {
+    schemaVersion: typeof input.schemaVersion === 'string' && input.schemaVersion.trim() ? input.schemaVersion.trim() : '1.0',
+    updatedAt: typeof input.updatedAt === 'string' ? input.updatedAt.trim() : undefined,
+    libraries: libraries
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map(item => {
+        const id = normalizeLibraryId(item.id)
+        const packageFileName = typeof item.packageFileName === 'string' ? item.packageFileName.trim() : `${id}.zip`
+        const platforms = Array.isArray(item.supportedPlatforms)
+          ? item.supportedPlatforms.filter((platform): platform is Platform => STORE_PLATFORM_ORDER.includes(platform as Platform))
+          : []
+        return {
+          id,
+          displayName: typeof item.displayName === 'string' && item.displayName.trim() ? item.displayName.trim() : id,
+          version: typeof item.version === 'string' && item.version.trim() ? item.version.trim() : '-',
+          packageFileName,
+          packageUrl: typeof item.packageUrl === 'string' ? item.packageUrl.trim() : '',
+          packageSha256: typeof item.packageSha256 === 'string' ? item.packageSha256.trim().toLowerCase() : '',
+          size: typeof item.size === 'number' && Number.isFinite(item.size) ? item.size : undefined,
+          supportedPlatforms: platforms,
+          minYcideVersion: typeof item.minYcideVersion === 'string' ? item.minYcideVersion.trim() : undefined,
+          publishedAt: typeof item.publishedAt === 'string' ? item.publishedAt.trim() : undefined,
+          summary: typeof item.summary === 'string' ? item.summary.trim() : undefined,
+        }
+      })
+      .filter(item => item.id.length > 0 && item.packageUrl.length > 0 && item.id !== CORE_LIBRARY_FILE_NAME),
+  }
+}
+
+function sha256Buffer(buffer: Buffer): string {
+  return createHash('sha256').update(buffer).digest('hex')
+}
+
+function assertSafeZipEntry(entryName: string): string {
+  const normalized = normalize(entryName.replace(/\\/g, '/')).replace(/\\/g, '/')
+  if (!normalized || normalized === '.' || isAbsolute(normalized) || normalized.startsWith('../') || normalized.includes('/../')) {
+    throw new Error(`zip 内含不安全路径: ${entryName}`)
+  }
+  return normalized
+}
+
+function normalizeTargetPlatform(value?: string): YcmdTargetPlatform | undefined {
+  if (value === 'windows' || value === 'macos' || value === 'linux' || value === 'harmony') return value
+  return undefined
+}
 
 const CORE_FLOW_COMMANDS: LibraryCommand[] = [
   {
@@ -1175,12 +1266,157 @@ const CORE_BIN_COMMANDS: LibraryCommand[] = [
 ]
 
 class LibraryManager {
-  private static readonly CORE_LIBRARY_FILE_NAME = 'krnln'
   private libraries: LibraryItem[] = []
   private metadataCache = new Map<string, ParsedLibraryMetadata | null>()
 
   private getConfigPath(): string {
     return join(app.getPath('userData'), 'library-state.json')
+  }
+
+  private getInstalledRootPath(): string {
+    return join(app.getPath('userData'), 'libraries')
+  }
+
+  private getInstallStatePath(): string {
+    return join(this.getInstalledRootPath(), 'library-install-state.json')
+  }
+
+  private readInstallState(): LibraryInstallStateFile {
+    try {
+      const filePath = this.getInstallStatePath()
+      if (!existsSync(filePath)) return { schemaVersion: LIBRARY_INSTALL_STATE_VERSION, libraries: {} }
+      const raw = JSON.parse(readFileSync(filePath, 'utf-8')) as Partial<LibraryInstallStateFile>
+      const libraries = raw && typeof raw.libraries === 'object' && raw.libraries ? raw.libraries : {}
+      return { schemaVersion: LIBRARY_INSTALL_STATE_VERSION, libraries: libraries as Record<string, InstalledLibraryState> }
+    } catch {
+      return { schemaVersion: LIBRARY_INSTALL_STATE_VERSION, libraries: {} }
+    }
+  }
+
+  private writeInstallState(state: LibraryInstallStateFile): void {
+    mkdirSync(this.getInstalledRootPath(), { recursive: true })
+    writeFileSync(this.getInstallStatePath(), JSON.stringify({ schemaVersion: LIBRARY_INSTALL_STATE_VERSION, libraries: state.libraries }, null, 2), 'utf-8')
+  }
+
+  private getInstalledLibraryRoot(name: string): string {
+    return join(this.getInstalledRootPath(), normalizeLibraryId(name))
+  }
+
+  async getRemoteIndex(indexUrl: string): Promise<LibraryRemoteIndexResult> {
+    try {
+      const response = await fetch(indexUrl, { cache: 'no-store' })
+      if (!response.ok) return { ok: false, error: `读取支持库索引失败: HTTP ${response.status}` }
+      const json = await response.json()
+      return { ok: true, index: normalizeRemoteIndex(json) }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { ok: false, error: `读取支持库索引失败: ${message}` }
+    }
+  }
+
+  async installFromRemote(name: string, indexUrl: string): Promise<LibraryInstallResult> {
+    const libraryId = normalizeLibraryId(name)
+    if (!libraryId) return { ok: false, error: '支持库标识无效' }
+    if (this.isCore(libraryId)) return { ok: false, error: '核心支持库随 ycIDE 版本发布，不支持从服务器安装' }
+    const indexResult = await this.getRemoteIndex(indexUrl)
+    if (!indexResult.ok) return indexResult
+    const entry = indexResult.index.libraries.find(item => item.id === libraryId)
+    if (!entry) return { ok: false, error: `在线索引中未找到支持库 ${libraryId}` }
+    return this.installPackage(entry)
+  }
+
+  private async installPackage(entry: LibraryPackageEntry): Promise<LibraryInstallResult> {
+    const libraryId = normalizeLibraryId(entry.id)
+    if (this.isCore(libraryId)) return { ok: false, error: '核心支持库随 ycIDE 版本发布，不支持从服务器安装' }
+    const installRoot = this.getInstalledLibraryRoot(libraryId)
+    const tempRoot = join(this.getInstalledRootPath(), `.install-${libraryId}-${Date.now()}`)
+    try {
+      const response = await fetch(entry.packageUrl, { cache: 'no-store' })
+      if (!response.ok) return { ok: false, error: `下载 ${entry.displayName || libraryId} 失败: HTTP ${response.status}` }
+      const buffer = Buffer.from(await response.arrayBuffer())
+      const actualHash = sha256Buffer(buffer)
+      if (entry.packageSha256 && actualHash !== entry.packageSha256.toLowerCase()) {
+        return { ok: false, error: `支持库包校验失败: ${actualHash}` }
+      }
+
+      mkdirSync(tempRoot, { recursive: true })
+      const zip = new AdmZip(buffer)
+      const files: string[] = []
+      for (const zipEntry of zip.getEntries()) {
+        if (zipEntry.isDirectory) continue
+        const relativePath = assertSafeZipEntry(zipEntry.entryName)
+        const outputPath = resolve(tempRoot, relativePath)
+        if (!outputPath.startsWith(resolve(tempRoot))) throw new Error(`zip 内含越界路径: ${zipEntry.entryName}`)
+        mkdirSync(dirname(outputPath), { recursive: true })
+        writeFileSync(outputPath, zipEntry.getData())
+        files.push(relativePath)
+      }
+      if (!files.some(file => file.toLowerCase().endsWith('.ycmd.json'))) {
+        throw new Error('支持库包中未找到 *.ycmd.json 清单')
+      }
+
+      rmSync(installRoot, { recursive: true, force: true })
+      mkdirSync(this.getInstalledRootPath(), { recursive: true })
+      renameSync(tempRoot, installRoot)
+
+      const state = this.readInstallState()
+      const previousLoaded = state.libraries[libraryId]?.loaded ?? this.libraries.find(lib => lib.name === libraryId)?.loaded ?? false
+      const installed: InstalledLibraryState = {
+        id: libraryId,
+        downloaded: true,
+        installed: true,
+        loaded: previousLoaded,
+        version: entry.version || '-',
+        packageSha256: actualHash,
+        sourceUrl: entry.packageUrl,
+        installedAt: new Date().toISOString(),
+        files: files.sort((a, b) => a.localeCompare(b)),
+        updateAvailable: false,
+        lastError: '',
+        disabledReason: '',
+        source: 'installed',
+      }
+      state.libraries[libraryId] = installed
+      this.writeInstallState(state)
+      this.metadataCache.clear()
+      this.scan()
+      return { ok: true, library: installed }
+    } catch (error) {
+      rmSync(tempRoot, { recursive: true, force: true })
+      const message = error instanceof Error ? error.message : String(error)
+      const state = this.readInstallState()
+      const previous = state.libraries[libraryId]
+      state.libraries[libraryId] = {
+        id: libraryId,
+        downloaded: previous?.downloaded ?? false,
+        installed: previous?.installed ?? false,
+        loaded: previous?.loaded ?? false,
+        version: previous?.version || entry.version || '-',
+        packageSha256: previous?.packageSha256 || entry.packageSha256 || '',
+        sourceUrl: entry.packageUrl,
+        installedAt: previous?.installedAt || '',
+        files: previous?.files || [],
+        updateAvailable: previous?.updateAvailable ?? false,
+        lastError: message,
+        disabledReason: previous?.disabledReason || '',
+        source: 'installed',
+      }
+      this.writeInstallState(state)
+      return { ok: false, error: message }
+    }
+  }
+
+  removeInstalled(name: string): LibraryRemoveResult {
+    const libraryId = normalizeLibraryId(name)
+    if (!libraryId) return { ok: false, error: '支持库标识无效' }
+    if (this.isCore(libraryId)) return { ok: false, error: '核心支持库不可移除' }
+    rmSync(this.getInstalledLibraryRoot(libraryId), { recursive: true, force: true })
+    const state = this.readInstallState()
+    delete state.libraries[libraryId]
+    this.writeInstallState(state)
+    this.metadataCache.clear()
+    this.scan()
+    return { ok: true }
   }
 
   private getSavedLoadedNames(): string[] | null {
@@ -1250,11 +1486,20 @@ class LibraryManager {
 
   private getMetadataFileCandidates(name: string, folderPath: string): string[] {
     return [
+      join(folderPath, `${name}.library.json`),
+      join(folderPath, `${name}.metadata.json`),
+      join(folderPath, `${name}.identity.json`),
+      join(folderPath, 'library.json'),
+      join(folderPath, 'identity.json'),
       join(folderPath, 'window-units.json'),
       join(folderPath, `${name}.window-units.json`),
-      join(folderPath, `${name}.metadata.json`),
-      join(folderPath, `${name}.library.json`),
     ]
+  }
+
+  private mergeTextField(current: string, value: unknown): string {
+    if (typeof value !== 'string') return current
+    const trimmed = value.trim()
+    return trimmed || current
   }
 
   private parseLibraryDataTypes(value: unknown): LibraryDataType[] {
@@ -1359,32 +1604,91 @@ class LibraryManager {
     }
 
     const folderPath = this.getLibraryFolder(name)
+    const parsed: ParsedLibraryMetadata = {
+      guid: '',
+      description: '',
+      author: '',
+      qq: '',
+      email: '',
+      homePage: '',
+      otherInfo: '',
+      dataTypes: [],
+      constants: [],
+      windowUnits: [],
+    }
+    let hasMetadata = false
+
     for (const candidate of this.getMetadataFileCandidates(name, folderPath)) {
       if (!existsSync(candidate)) continue
       try {
         const raw = JSON.parse(readFileSync(candidate, 'utf-8')) as LibraryMetadataFile
-        const parsed: ParsedLibraryMetadata = {
-          description: typeof raw.description === 'string' ? raw.description.trim() : '',
-          author: typeof raw.author === 'string' ? raw.author.trim() : '',
-          homePage: typeof raw.homePage === 'string' ? raw.homePage.trim() : '',
-          dataTypes: this.parseLibraryDataTypes(raw.dataTypes),
-          constants: this.parseLibraryConstants(raw.constants),
-          windowUnits: this.parseWindowUnits(raw.windowUnits, name),
-        }
-        this.metadataCache.set(name, parsed)
-        return parsed
+        hasMetadata = true
+        parsed.guid = this.mergeTextField(parsed.guid, raw.guid)
+        parsed.description = this.mergeTextField(parsed.description, raw.description)
+        parsed.author = this.mergeTextField(parsed.author, raw.author)
+        parsed.qq = this.mergeTextField(parsed.qq, raw.qq)
+        parsed.email = this.mergeTextField(parsed.email, raw.email)
+        parsed.homePage = this.mergeTextField(parsed.homePage, raw.homePage)
+        parsed.otherInfo = this.mergeTextField(parsed.otherInfo, raw.otherInfo)
+
+        const dataTypes = this.parseLibraryDataTypes(raw.dataTypes)
+        if (dataTypes.length > 0) parsed.dataTypes = dataTypes
+        const constants = this.parseLibraryConstants(raw.constants)
+        if (constants.length > 0) parsed.constants = constants
+        const windowUnits = this.parseWindowUnits(raw.windowUnits, name)
+        if (windowUnits.length > 0) parsed.windowUnits = windowUnits
       } catch {
-        this.metadataCache.set(name, null)
-        return null
+        // ignore malformed metadata file and continue with other candidates
       }
     }
 
-    this.metadataCache.set(name, null)
-    return null
+    this.metadataCache.set(name, hasMetadata ? parsed : null)
+    return hasMetadata ? parsed : null
   }
 
   isCore(name: string): boolean {
-    return name === LibraryManager.CORE_LIBRARY_FILE_NAME
+    return normalizeLibraryId(name) === CORE_LIBRARY_FILE_NAME
+  }
+
+  validateCoreLibraryIntegrity(): { ok: boolean; errors: string[] } {
+    const errors: string[] = []
+    const libRoot = this.getLibFolder()
+    const coreFolder = join(libRoot, CORE_LIBRARY_FILE_NAME)
+    if (!existsSync(coreFolder)) {
+      errors.push(`核心支持库目录不存在: ${coreFolder}`)
+      return { ok: false, errors }
+    }
+
+    const registry = scanYcmdRegistry(libRoot)
+    const core = registry.libraries.find(lib => lib.name === CORE_LIBRARY_FILE_NAME)
+    if (!core) {
+      errors.push('核心支持库清单不存在或未包含任何 *.ycmd.json 文件')
+    } else {
+      for (const manifest of core.manifests) {
+        if (manifest.valid) continue
+        const detail = manifest.errors.join('；') || '清单无效'
+        errors.push(`${manifest.filePath}: ${detail}`)
+      }
+    }
+
+    for (const [relativePath, expectedHash] of Object.entries(CORE_LIBRARY_EXPECTED_SHA256)) {
+      const filePath = join(coreFolder, relativePath)
+      if (!existsSync(filePath)) {
+        errors.push(`核心支持库文件缺失: ${relativePath}`)
+        continue
+      }
+      const actualHash = sha256Buffer(readFileSync(filePath))
+      if (actualHash !== expectedHash) {
+        errors.push(`核心支持库文件被修改: ${relativePath}`)
+      }
+    }
+
+    const metadata = this.getLibraryMetadata(CORE_LIBRARY_FILE_NAME)
+    if (!metadata || metadata.guid !== CORE_LIBRARY_GUID) {
+      errors.push('核心支持库标识文件无效或数字签名不匹配')
+    }
+
+    return { ok: errors.length === 0, errors }
   }
 
   getLibFolder(): string {
@@ -1396,27 +1700,45 @@ class LibraryManager {
   }
 
   scan(customFolder?: string): LibraryItem[] {
-    const root = customFolder || this.getLibFolder()
-    const result = scanYcmdRegistry(root)
-    const metaMap = this.getLibraryDisplayMeta(root)
+    const roots = customFolder ? [customFolder] : [this.getLibFolder(), this.getInstalledRootPath()]
     const previousLoaded = new Map(this.libraries.map(l => [l.name, l.loaded]))
     const savedLoaded = this.getSavedLoadedNames()
     const savedSet = savedLoaded ? new Set(savedLoaded) : null
+    const libraryMap = new Map<string, LibraryItem>()
 
     this.metadataCache.clear()
 
-    this.libraries = result.libraries.map(lib => ({
-      name: lib.name,
-      filePath: lib.folderPath,
-      loaded: this.isCore(lib.name)
-        ? true
-        : (savedSet
-            ? savedSet.has(lib.name)
-            : (previousLoaded.get(lib.name) ?? true)),
-      isCore: this.isCore(lib.name),
-      libName: metaMap.get(lib.name)?.libName || lib.name,
-      version: metaMap.get(lib.name)?.version || '-',
-      cmdCount: metaMap.get(lib.name)?.cmdCount ?? lib.manifests.filter(item => item.valid).length,
+    for (const root of roots) {
+      if (!existsSync(root)) continue
+      const result = scanYcmdRegistry(root)
+      const metaMap = this.getLibraryDisplayMeta(root)
+      const source: LibraryInstallSource = root === this.getInstalledRootPath() ? 'installed' : 'bundled'
+      for (const lib of result.libraries) {
+        if (source === 'installed' && this.isCore(lib.name)) continue
+        libraryMap.set(lib.name, {
+          name: lib.name,
+          filePath: lib.folderPath,
+          loaded: this.isCore(lib.name)
+            ? true
+            : (savedSet
+                ? savedSet.has(lib.name)
+                : (previousLoaded.get(lib.name) ?? true)),
+          isCore: this.isCore(lib.name),
+          source,
+          libName: metaMap.get(lib.name)?.libName || lib.name,
+          version: metaMap.get(lib.name)?.version || '-',
+          cmdCount: metaMap.get(lib.name)?.cmdCount ?? lib.manifests.filter(item => item.valid).length,
+          dtCount: 0,
+        })
+      }
+    }
+
+    this.libraries = Array.from(libraryMap.values()).sort((a, b) => {
+      if (a.isCore !== b.isCore) return a.isCore ? -1 : 1
+      return (a.libName || a.name).localeCompare(b.libName || b.name, 'zh-CN')
+    })
+    this.libraries = this.libraries.map(lib => ({
+      ...lib,
       dtCount: this.getLibraryMetadata(lib.name)?.dataTypes.length ?? 0,
     }))
 
@@ -1458,7 +1780,7 @@ class LibraryManager {
 
     const failed: Array<{ name: string; error: string }> = []
     const selected = new Set(selectedNames)
-    selected.add(LibraryManager.CORE_LIBRARY_FILE_NAME)
+    selected.add(CORE_LIBRARY_FILE_NAME)
 
     let loadedCount = 0
     let unloadedCount = 0
@@ -1502,39 +1824,99 @@ class LibraryManager {
     return this.scan()
   }
 
-  getStoreCards(): StoreLibraryCard[] {
+  private librarySupportsTargetPlatform(lib: LibraryItem, targetPlatform?: string): boolean {
+    const platform = normalizeTargetPlatform(targetPlatform)
+    if (!platform || lib.isCore) return true
+    const registry = scanYcmdRegistry(dirname(lib.filePath))
+    const scanned = registry.libraries.find(item => item.name === lib.name)
+    if (!scanned) return false
+    return scanned.manifests.some(item => item.valid && !!item.manifest?.implementations?.[platform]?.entry)
+  }
+
+  private getLoadedLibrariesForTarget(targetPlatform?: string): LibraryItem[] {
+    if (this.libraries.length === 0) this.scan()
+    return this.libraries.filter(lib => lib.loaded && this.librarySupportsTargetPlatform(lib, targetPlatform))
+  }
+
+  async getStoreCards(indexUrl?: string): Promise<StoreLibraryCard[]> {
     const libraries = this.scan()
-    const registry = scanYcmdRegistry(this.getLibFolder())
     const supportedPlatformsById = new Map<string, Platform[]>()
     const downloadedById = new Map<string, boolean>()
+    const installState = this.readInstallState()
+    const remoteIndex = indexUrl ? await this.getRemoteIndex(indexUrl) : null
+    const remoteById = new Map<string, LibraryPackageEntry>()
 
-    for (const lib of registry.libraries) {
-      const platforms = new Set<Platform>()
-      let hasValidManifest = false
-      for (const item of lib.manifests) {
-        if (!item.valid || !item.manifest) continue
-        hasValidManifest = true
-        const implementations = item.manifest.implementations
-        if (!implementations || typeof implementations !== 'object') continue
-        for (const platform of STORE_PLATFORM_ORDER) {
-          if (implementations[platform]?.entry) {
-            platforms.add(platform)
-          }
-        }
-      }
-      supportedPlatformsById.set(lib.name, STORE_PLATFORM_ORDER.filter(platform => platforms.has(platform)))
-      downloadedById.set(lib.name, hasValidManifest)
+    if (remoteIndex?.ok) {
+      for (const item of remoteIndex.index.libraries) remoteById.set(item.id, item)
     }
 
-    return libraries.map(lib => ({
+    for (const root of [this.getLibFolder(), this.getInstalledRootPath()]) {
+      if (!existsSync(root)) continue
+      const registry = scanYcmdRegistry(root)
+      for (const lib of registry.libraries) {
+        const platforms = new Set<Platform>(supportedPlatformsById.get(lib.name) || [])
+        let hasValidManifest = downloadedById.get(lib.name) || false
+        for (const item of lib.manifests) {
+          if (!item.valid || !item.manifest) continue
+          hasValidManifest = true
+          const implementations = item.manifest.implementations
+          if (!implementations || typeof implementations !== 'object') continue
+          for (const platform of STORE_PLATFORM_ORDER) {
+            if (implementations[platform]?.entry) {
+              platforms.add(platform)
+            }
+          }
+        }
+        supportedPlatformsById.set(lib.name, STORE_PLATFORM_ORDER.filter(platform => platforms.has(platform)))
+        downloadedById.set(lib.name, hasValidManifest)
+      }
+    }
+
+    const cards = libraries.map(lib => {
+      const installInfo = installState.libraries[lib.name]
+      const remoteInfo = remoteById.get(lib.name)
+      return {
       id: lib.name,
       displayName: lib.libName || lib.name,
-      version: lib.version || '-',
-      supportedPlatforms: supportedPlatformsById.get(lib.name) || [],
-      isDownloaded: downloadedById.get(lib.name) || false,
+      version: installInfo?.version || lib.version || '-',
+      supportedPlatforms: remoteInfo?.supportedPlatforms || supportedPlatformsById.get(lib.name) || [],
+      isDownloaded: installInfo?.downloaded || downloadedById.get(lib.name) || false,
+      isInstalled: installInfo?.installed || lib.source === 'installed' || lib.source === 'bundled',
       isLoaded: lib.loaded,
       isCore: lib.isCore,
-    }))
+      source: lib.source,
+      updateAvailable: !!remoteInfo && !!installInfo?.version && remoteInfo.version !== installInfo.version,
+      lastError: installInfo?.lastError || '',
+      packageFileName: remoteInfo?.packageFileName,
+      packageUrl: remoteInfo?.packageUrl,
+      packageSha256: remoteInfo?.packageSha256,
+      remoteVersion: remoteInfo?.version,
+      } satisfies StoreLibraryCard
+    })
+
+    for (const remote of remoteById.values()) {
+      if (cards.some(card => card.id === remote.id)) continue
+      const installInfo = installState.libraries[remote.id]
+      cards.push({
+        id: remote.id,
+        displayName: remote.displayName,
+        version: installInfo?.version || remote.version || '-',
+        supportedPlatforms: remote.supportedPlatforms,
+        isDownloaded: installInfo?.downloaded || false,
+        isInstalled: installInfo?.installed || false,
+        isLoaded: installInfo?.loaded || false,
+        isCore: this.isCore(remote.id),
+        source: installInfo?.source || 'installed',
+        updateAvailable: !!installInfo?.version && installInfo.version !== remote.version,
+        lastError: installInfo?.lastError || '',
+        packageFileName: remote.packageFileName,
+        packageUrl: remote.packageUrl,
+        packageSha256: remote.packageSha256,
+        remoteVersion: remote.version,
+      })
+    }
+
+    return cards
   }
 
   private mapYcmdCommand(cmd: YcmdResolvedCommand): LibraryCommand {
@@ -1551,14 +1933,16 @@ class LibraryManager {
     }
   }
 
-  getAllCommands(): LibraryCommand[] {
-    if (this.libraries.length === 0) this.scan()
-    const loadedSet = new Set(this.libraries.filter(l => l.loaded).map(l => l.name))
+  getAllCommands(targetPlatform?: string): LibraryCommand[] {
+    const platform = normalizeTargetPlatform(targetPlatform)
+    const loadedLibraries = this.getLoadedLibrariesForTarget(platform)
+    const loadedSet = new Set(loadedLibraries.map(l => l.name))
+    const loadedYcmdCommands = loadedLibraries
+      .filter(lib => !lib.isCore)
+      .flatMap(lib => getYcmdCommands(dirname(lib.filePath), platform).filter(cmd => cmd.libraryFileName === lib.name))
     const commands: LibraryCommand[] = [
-      ...(loadedSet.has(LibraryManager.CORE_LIBRARY_FILE_NAME) ? [...CORE_FLOW_COMMANDS, ...CORE_LOGIC_COMMANDS, ...CORE_DEBUG_COMMANDS, ...CORE_DISK_COMMANDS, ...CORE_BIN_COMMANDS] : []),
-      ...getYcmdCommands()
-      .filter(cmd => loadedSet.has(cmd.libraryFileName))
-      .map(cmd => this.mapYcmdCommand(cmd)),
+      ...(loadedSet.has(CORE_LIBRARY_FILE_NAME) ? [...CORE_FLOW_COMMANDS, ...CORE_LOGIC_COMMANDS, ...CORE_DEBUG_COMMANDS, ...CORE_DISK_COMMANDS, ...CORE_BIN_COMMANDS] : []),
+      ...loadedYcmdCommands.map(cmd => this.mapYcmdCommand(cmd)),
     ]
 
     const deduped = new Map<string, LibraryCommand>()
@@ -1568,40 +1952,41 @@ class LibraryManager {
     return Array.from(deduped.values())
   }
 
-  getAllDataTypes(): LibraryDataType[] {
-    if (this.libraries.length === 0) this.scan()
-    return this.libraries
-      .filter(lib => lib.loaded)
+  getAllDataTypes(targetPlatform?: string): LibraryDataType[] {
+    return this.getLoadedLibrariesForTarget(targetPlatform)
       .flatMap(lib => this.getLibraryMetadata(lib.name)?.dataTypes || [])
   }
 
   getLibInfo(name: string): LibraryInfo | null {
-    const isCoreLibrary = name === LibraryManager.CORE_LIBRARY_FILE_NAME || name === CORE_LIBRARY_NAME
+    if (this.libraries.length === 0) this.scan()
+    const isCoreLibrary = this.isCore(name) || name === CORE_LIBRARY_NAME
+    const item = this.libraries.find(lib => lib.name === name || lib.libName === name)
+    const libraryId = item?.name || name
     const commands = [
       ...(isCoreLibrary ? [...CORE_FLOW_COMMANDS, ...CORE_LOGIC_COMMANDS, ...CORE_DEBUG_COMMANDS, ...CORE_DISK_COMMANDS, ...CORE_BIN_COMMANDS] : []),
-      ...getYcmdCommands()
+      ...(item ? getYcmdCommands(dirname(item.filePath)) : [])
       .map(cmd => this.mapYcmdCommand(cmd))
-      .filter(cmd => cmd.libraryFileName === name || cmd.libraryName === name),
+      .filter(cmd => cmd.libraryFileName === libraryId || cmd.libraryName === name || cmd.libraryName === libraryId),
     ]
-    const metadata = this.getLibraryMetadata(name)
+    const metadata = this.getLibraryMetadata(libraryId)
 
     if (commands.length === 0 && !metadata) return null
 
-    const displayMeta = this.getLibraryDisplayMeta().get(name)
+    const displayMeta = item ? { libName: item.libName || item.name, version: item.version || '-', cmdCount: item.cmdCount || 0 } : this.getLibraryDisplayMeta().get(libraryId)
     return {
       name: isCoreLibrary ? CORE_LIBRARY_NAME : (displayMeta?.libName || name),
-      guid: '-',
+      guid: metadata?.guid || '-',
       version: displayMeta?.version || '-',
       description: metadata?.description || (isCoreLibrary ? '系统核心支持库内建命令与元数据。' : '由 ycmd 清单生成'),
       author: metadata?.author || '-',
       zipCode: '-',
       address: '-',
       phone: '-',
-      qq: '-',
-      email: '-',
+      qq: metadata?.qq || '-',
+      email: metadata?.email || '-',
       homePage: metadata?.homePage || '-',
-      otherInfo: '-',
-      fileName: name,
+      otherInfo: metadata?.otherInfo || '-',
+      fileName: libraryId,
       commands,
       dataTypes: metadata?.dataTypes || [],
       constants: metadata?.constants || [],
@@ -1609,10 +1994,8 @@ class LibraryManager {
     }
   }
 
-  getAllWindowUnits(): LibraryWindowUnit[] {
-    if (this.libraries.length === 0) this.scan()
-    return this.libraries
-      .filter(lib => lib.loaded)
+  getAllWindowUnits(targetPlatform?: string): LibraryWindowUnit[] {
+    return this.getLoadedLibrariesForTarget(targetPlatform)
       .flatMap(lib => this.getLibraryMetadata(lib.name)?.windowUnits || [])
   }
 

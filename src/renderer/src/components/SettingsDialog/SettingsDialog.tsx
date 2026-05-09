@@ -97,6 +97,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <span className="settings-label">标题栏菜单字体</span>
             <select
               className="settings-input"
+              title="标题栏菜单字体"
               value={draft.titlebarMenuFontFamily}
               onChange={(e) => updateDraft('titlebarMenuFontFamily', e.target.value)}
             >
@@ -109,6 +110,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <span className="settings-label">标题栏菜单字号</span>
             <select
               className="settings-input settings-input-number"
+              title="标题栏菜单字号"
               value={draft.titlebarMenuFontSize}
               onChange={(e) => handleNumberChange('titlebarMenuFontSize', e.target.value)}
             >
@@ -123,6 +125,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <input
               type="number"
               className="settings-input settings-input-number"
+              title="工具栏图标大小"
               min={12}
               max={32}
               value={draft.toolbarIconSize}
@@ -137,6 +140,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <span className="settings-label">界面字体</span>
             <select
               className="settings-input"
+              title="界面字体"
               value={draft.fontFamily}
               onChange={(e) => updateDraft('fontFamily', e.target.value)}
             >
@@ -149,6 +153,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <span className="settings-label">界面字号</span>
             <select
               className="settings-input settings-input-number"
+              title="界面字号"
               value={draft.fontSize}
               onChange={(e) => handleNumberChange('fontSize', e.target.value)}
             >
@@ -165,6 +170,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <span className="settings-label">编辑器字体</span>
             <select
               className="settings-input"
+              title="编辑器字体"
               value={draft.editorFontFamily}
               onChange={(e) => updateDraft('editorFontFamily', e.target.value)}
             >
@@ -177,6 +183,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <span className="settings-label">编辑器字号</span>
             <select
               className="settings-input settings-input-number"
+              title="编辑器字号"
               value={draft.editorFontSize}
               onChange={(e) => handleNumberChange('editorFontSize', e.target.value)}
             >
@@ -190,6 +197,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <span className="settings-label">编辑器行高</span>
             <select
               className="settings-input settings-input-number"
+              title="编辑器行高"
               value={draft.editorLineHeight}
               onChange={(e) => handleNumberChange('editorLineHeight', e.target.value)}
             >
@@ -232,6 +240,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <span className="settings-label">AI 助手字体</span>
             <select
               className="settings-input"
+              title="AI 助手字体"
               value={draft.aiFontFamily}
               onChange={(e) => updateDraft('aiFontFamily', e.target.value)}
             >
@@ -244,6 +253,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <span className="settings-label">AI 助手字号</span>
             <select
               className="settings-input settings-input-number"
+              title="AI 助手字号"
               value={draft.aiFontSize}
               onChange={(e) => handleNumberChange('aiFontSize', e.target.value)}
             >
@@ -257,6 +267,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <span className="settings-label">默认模型</span>
             <select
               className="settings-input"
+              title="默认模型"
               value={draft.aiModel}
               onChange={(e) => updateDraft('aiModel', e.target.value as IDESettings['aiModel'])}
             >
@@ -271,6 +282,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <input
               type="password"
               className="settings-input"
+              title="DeepSeek API Key"
               value={draft.aiDeepseekApiKey}
               onChange={(e) => updateDraft('aiDeepseekApiKey', e.target.value)}
               placeholder="sk-..."
@@ -283,9 +295,26 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <input
               type="password"
               className="settings-input"
+              title="GLM API Key"
               value={draft.aiGlmApiKey}
               onChange={(e) => updateDraft('aiGlmApiKey', e.target.value)}
               placeholder="glm-..."
+              autoComplete="off"
+            />
+            <span className="settings-unit" />
+          </div>
+        </div>
+        <div className="settings-group">
+          <h4 className="settings-group-title">支持库</h4>
+          <div className="settings-row">
+            <span className="settings-label">在线索引地址</span>
+            <input
+              type="url"
+              className="settings-input"
+              title="在线索引地址"
+              value={draft.libraryStoreIndexUrl}
+              onChange={(e) => updateDraft('libraryStoreIndexUrl', e.target.value)}
+              placeholder="https://ycide.dev/libraries/index.json"
               autoComplete="off"
             />
             <span className="settings-unit" />

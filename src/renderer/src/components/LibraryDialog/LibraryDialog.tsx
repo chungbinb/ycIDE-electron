@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import './LibraryDialog.css'
-import type { StoreLibraryCard } from '../../../../shared/library-store'
+import type { Platform, StoreLibraryCard } from '../../../../shared/library-store'
 
 interface LibInfoDetail {
   name: string
@@ -24,6 +24,7 @@ interface LibInfoDetail {
 interface LibraryDialogProps {
   open: boolean
   onClose: () => void
+  targetPlatform?: Platform
 }
 
 const platformLabelMap: Record<string, string> = {
@@ -32,17 +33,34 @@ const platformLabelMap: Record<string, string> = {
   linux: 'Linux',
 }
 
-function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element | null {
+function LibraryDialog({ open, onClose, targetPlatform = 'windows' }: LibraryDialogProps): React.JSX.Element | null {
   const [libs, setLibs] = useState<StoreLibraryCard[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
+  const [busyLibId, setBusyLibId] = useState('')
   const [statusText, setStatusText] = useState('')
   const [detailText, setDetailText] = useState('')
   const [selectedLibId, setSelectedLibId] = useState<string>('')
 
+  const isCompatibleWithTargetPlatform = (lib: StoreLibraryCard): boolean => {
+    if (lib.isCore) return true
+    if (!lib.supportedPlatforms || lib.supportedPlatforms.length === 0) return true
+    return lib.supportedPlatforms.includes(targetPlatform)
+  }
+
   const formatLibDetail = (lib: StoreLibraryCard, info: LibInfoDetail | null): string => {
     if (!info) {
-      return `支持库标识：\n${lib.id}\n\n未能读取该支持库详细信息。`
+      return [
+        '支持库标识：',
+        lib.id,
+        '',
+        `在线版本：${lib.remoteVersion || '-'}`,
+        `包文件：${lib.packageFileName || '-'}`,
+        `状态：${lib.isInstalled ? '已安装' : '未安装'}`,
+        lib.lastError ? `最近错误：${lib.lastError}` : '',
+        '',
+        '未能读取该支持库详细信息。',
+      ].filter(Boolean).join('\n')
     }
     return [
       '支持库标识：',
@@ -54,9 +72,6 @@ function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element
       '',
       '----- 支持库的作者信息 -----',
       `作者姓名：${info.author || '-'}`,
-      `邮政编码：${info.zipCode || '-'}`,
-      `通信地址：${info.address || '-'}`,
-      `电话号码：${info.phone || '-'}`,
       `QQ号码：${info.qq || '-'}`,
       `电子信箱：${info.email || '-'}`,
       `主页地址：${info.homePage || '-'}`,
@@ -65,27 +80,39 @@ function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element
   }
 
   const refreshList = useCallback(async (preserveStatusText = false) => {
-    const list = await window.api.library.getStoreCards()
-    setLibs(list)
-    const defaultSelected = new Set<string>(list.filter((lib: StoreLibraryCard) => lib.isLoaded).map((lib: StoreLibraryCard) => lib.id))
-    setSelected(defaultSelected)
-    if (list.length === 0) {
-      setSelectedLibId('')
-      setDetailText('')
-      return
+    try {
+      const list = await window.api.library.getStoreCards()
+      setLibs(list)
+      const defaultSelected = new Set<string>(list.filter((lib: StoreLibraryCard) => lib.isLoaded && isCompatibleWithTargetPlatform(lib)).map((lib: StoreLibraryCard) => lib.id))
+      setSelected(defaultSelected)
+      if (list.length === 0) {
+        setSelectedLibId('')
+        setDetailText('')
+        return
+      }
+      const preferId = selectedLibId && list.some((lib: StoreLibraryCard) => lib.id === selectedLibId) ? selectedLibId : list[0].id
+      const target = list.find((lib: StoreLibraryCard) => lib.id === preferId)
+      if (!target) return
+      setSelectedLibId(preferId)
+      const info = await window.api.library.getInfo(preferId) as LibInfoDetail | null
+      setDetailText(formatLibDetail(target, info))
+      if (!preserveStatusText) setStatusText('')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setStatusText(`刷新支持库列表失败：${message}`)
     }
-    const preferId = selectedLibId && list.some((lib: StoreLibraryCard) => lib.id === selectedLibId) ? selectedLibId : list[0].id
-    const target = list.find((lib: StoreLibraryCard) => lib.id === preferId)
-    if (!target) return
-    setSelectedLibId(preferId)
-    const info = await window.api.library.getInfo(preferId) as LibInfoDetail | null
-    setDetailText(formatLibDetail(target, info))
-    if (!preserveStatusText) setStatusText('')
-  }, [selectedLibId])
+  }, [selectedLibId, targetPlatform])
 
   useEffect(() => {
     if (open) refreshList()
   }, [open, refreshList])
+
+  useEffect(() => {
+    setSelected(prev => new Set([...prev].filter(id => {
+      const lib = libs.find(item => item.id === id)
+      return !!lib && isCompatibleWithTargetPlatform(lib)
+    })))
+  }, [libs, targetPlatform])
 
   const toggleOne = (name: string, checked: boolean): void => {
     setSelected(prev => {
@@ -97,7 +124,7 @@ function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element
   }
 
   const selectAll = (): void => {
-    setSelected(new Set(libs.map(lib => lib.id)))
+    setSelected(new Set(libs.filter(lib => lib.isInstalled && isCompatibleWithTargetPlatform(lib)).map(lib => lib.id)))
   }
 
   const selectNone = (): void => {
@@ -108,15 +135,74 @@ function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element
   const handleApplySelection = async (): Promise<void> => {
     setLoading(true)
     setStatusText('正在同步支持库清单...')
-    const result = await window.api.library.applySelection(Array.from(selected))
-    if (result.failed.length > 0) {
-      const failText = result.failed.map((f: { name: string; error: string }) => `${f.name}: ${f.error}`).join('；')
-      setStatusText(`已完成：加载 ${result.loadedCount} 个，卸载 ${result.unloadedCount} 个；失败 ${result.failed.length} 个（${failText}）`)
-    } else {
-      setStatusText(`已完成：加载 ${result.loadedCount} 个，卸载 ${result.unloadedCount} 个`)
+    try {
+      const selectedToApply = libs
+        .filter(lib => selected.has(lib.id) && isCompatibleWithTargetPlatform(lib))
+        .map(lib => lib.id)
+      const result = await window.api.library.applySelection(selectedToApply)
+      if (result.failed.length > 0) {
+        const failText = result.failed.map((f: { name: string; error: string }) => `${f.name}: ${f.error}`).join('；')
+        setStatusText(`已完成：加载 ${result.loadedCount} 个，卸载 ${result.unloadedCount} 个；失败 ${result.failed.length} 个（${failText}）`)
+      } else {
+        setStatusText(`已完成：加载 ${result.loadedCount} 个，卸载 ${result.unloadedCount} 个`)
+      }
+      await refreshList(true)
+    } finally {
+      setLoading(false)
     }
-    await refreshList(true)
-    setLoading(false)
+  }
+
+  const refreshOnlineList = async (): Promise<void> => {
+    setLoading(true)
+    setStatusText('正在刷新在线支持库索引...')
+    try {
+      await refreshList(true)
+      setStatusText('在线支持库索引已刷新')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleInstall = async (id: string): Promise<void> => {
+    setLoading(true)
+    setBusyLibId(id)
+    setStatusText(`正在下载并安装 ${id}...`)
+    try {
+      const result = await window.api.library.installFromRemote(id)
+      if (result.ok) {
+        setStatusText(`${id} 已安装到本地支持库目录`)
+        setSelected(prev => new Set(prev).add(id))
+      } else {
+        setStatusText(`${id} 安装失败：${result.error}`)
+      }
+      await refreshList(true)
+    } finally {
+      setBusyLibId('')
+      setLoading(false)
+    }
+  }
+
+  const handleRemoveInstalled = async (id: string): Promise<void> => {
+    setLoading(true)
+    setBusyLibId(id)
+    setStatusText(`正在移除 ${id} 的本地安装...`)
+    try {
+      const result = await window.api.library.removeInstalled(id)
+      if (result.ok) {
+        setStatusText(`${id} 的本地安装已移除`)
+        setSelected(prev => {
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
+      } else {
+        setStatusText(`${id} 移除失败：${result.error}`)
+      }
+      await refreshList(true)
+    } finally {
+      setBusyLibId('')
+      setLoading(false)
+    }
   }
 
   const showLibDetail = async (id: string): Promise<void> => {
@@ -141,6 +227,7 @@ function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element
         <div className="lib-dialog-toolbar">
           <button className="lib-btn" onClick={selectAll} disabled={loading || libs.length === 0}>全选</button>
           <button className="lib-btn" onClick={selectNone} disabled={loading || libs.length === 0}>全不选（保留核心）</button>
+          <button className="lib-btn" onClick={refreshOnlineList} disabled={loading}>刷新在线列表</button>
           <button className="lib-btn lib-btn-primary" onClick={handleApplySelection} disabled={loading || libs.length === 0}>应用选择</button>
         </div>
 
@@ -151,15 +238,19 @@ function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element
             </div>
           ) : (
             <div className="lib-card-grid">
-              {libs.map(lib => (
-                <div key={lib.id} className={`lib-card ${lib.isLoaded ? 'lib-card-loaded' : ''}`}>
+              {libs.map(lib => {
+                const targetPlatformDisabled = !isCompatibleWithTargetPlatform(lib)
+                return (
+                <div key={lib.id} className={`lib-card ${lib.isLoaded && !targetPlatformDisabled ? 'lib-card-loaded' : ''}`}>
                   <div className="lib-card-header">
                     <input
                       type="checkbox"
                       className="lib-checkbox"
-                      checked={selected.has(lib.id)}
-                      disabled={loading || lib.isCore}
+                      checked={selected.has(lib.id) && !targetPlatformDisabled}
+                      disabled={loading || lib.isCore || !lib.isInstalled || targetPlatformDisabled}
                       onChange={e => toggleOne(lib.id, e.target.checked)}
+                      aria-label={`${lib.displayName || lib.id} 加载状态`}
+                      title={targetPlatformDisabled ? `不支持当前目标平台 ${platformLabelMap[targetPlatform] || targetPlatform}` : undefined}
                     />
                     <button
                       className={`lib-link ${selectedLibId === lib.id ? 'lib-link-active' : ''}`}
@@ -182,12 +273,36 @@ function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element
                     <span className={`lib-state-badge ${lib.isDownloaded ? 'lib-state-downloaded' : 'lib-state-missing'}`}>
                       {lib.isDownloaded ? '已下载' : '未下载'}
                     </span>
+                    <span className={`lib-state-badge ${lib.isInstalled ? 'lib-state-installed' : 'lib-state-missing'}`}>
+                      {lib.isInstalled ? '已安装' : '未安装'}
+                    </span>
+                    {lib.updateAvailable ? (
+                      <span className="lib-state-badge lib-state-update">可更新</span>
+                    ) : null}
+                    {lib.lastError ? (
+                      <span className="lib-state-badge lib-state-error">失败</span>
+                    ) : null}
                     <span className={`lib-state-badge ${lib.isLoaded ? 'lib-state-loaded' : ''}`}>
                       {lib.isLoaded ? '已加载' : '未加载'}
                     </span>
+                    {targetPlatformDisabled ? (
+                      <span className="lib-state-badge lib-state-error">当前平台禁用</span>
+                    ) : null}
+                  </div>
+                  <div className="lib-card-actions">
+                    {lib.packageUrl ? (
+                      <button className="lib-btn lib-btn-sm" onClick={() => handleInstall(lib.id)} disabled={loading || busyLibId === lib.id}>
+                        {busyLibId === lib.id ? '处理中' : lib.updateAvailable ? '更新' : lib.isInstalled ? '重新下载' : '下载'}
+                      </button>
+                    ) : null}
+                    {lib.isInstalled && lib.source === 'installed' && !lib.isCore ? (
+                      <button className="lib-btn lib-btn-sm" onClick={() => handleRemoveInstalled(lib.id)} disabled={loading || busyLibId === lib.id}>
+                        移除本地
+                      </button>
+                    ) : null}
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
           )}
         </div>
@@ -198,6 +313,7 @@ function LibraryDialog({ open, onClose }: LibraryDialogProps): React.JSX.Element
           readOnly
           spellCheck={false}
           aria-label="支持库状态与详情"
+          aria-live="polite"
         />
       </div>
     </div>

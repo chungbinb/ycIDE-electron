@@ -1,4 +1,5 @@
 import type { AICustomModelConfig, AISupportedModel } from './ai'
+import { DEFAULT_LIBRARY_STORE_INDEX_URL } from './library-store'
 
 /** 系统设置 */
 
@@ -39,6 +40,8 @@ export interface IDESettings {
   aiGlmApiKey: string
   /** 自定义模型列表 */
   aiCustomModels: AICustomModelConfig[]
+  /** 支持库在线索引地址 */
+  libraryStoreIndexUrl: string
 }
 
 export const DEFAULT_IDE_SETTINGS: IDESettings = {
@@ -60,6 +63,7 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   aiDeepseekApiKey: '',
   aiGlmApiKey: '',
   aiCustomModels: [],
+  libraryStoreIndexUrl: DEFAULT_LIBRARY_STORE_INDEX_URL,
 }
 
 export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettings {
@@ -98,6 +102,7 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
     aiDeepseekApiKey: resolveSecret(raw.aiDeepseekApiKey, d.aiDeepseekApiKey),
     aiGlmApiKey: resolveSecret(raw.aiGlmApiKey, d.aiGlmApiKey),
     aiCustomModels: resolveCustomModels(raw.aiCustomModels),
+    libraryStoreIndexUrl: resolveUrl(raw.libraryStoreIndexUrl, d.libraryStoreIndexUrl),
   }
 }
 
@@ -115,6 +120,12 @@ function resolveAIModel(value: unknown, fallback: AISupportedModel): AISupported
 function resolveSecret(value: unknown, fallback: string): string {
   if (typeof value !== 'string') return fallback
   return value.trim()
+}
+
+function resolveUrl(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const trimmed = value.trim()
+  return trimmed || fallback
 }
 
 function resolveCustomModels(value: unknown): AICustomModelConfig[] {

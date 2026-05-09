@@ -121,6 +121,7 @@ interface EycTableEditorProps {
   freezeSubTableHeader?: boolean
   showMinimapPreview?: boolean
   projectDir?: string
+  targetPlatform?: string
   isClassModule?: boolean
   projectGlobalVars?: Array<{ name: string; type: string }>
   windowControlNames?: string[]
@@ -171,7 +172,7 @@ const setCssVars = (element: HTMLElement | null, vars: Record<string, string>): 
 
 const TABLE_MODE_HIDDEN_FLOW_COMMANDS = new Set(['否则', '如果结束', '默认', '判断结束', '如果真结束'])
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>() }, ref) {
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>() }, ref) {
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
@@ -1110,7 +1111,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   // 加载所有命令（用于补全），含流程关键字
   const reloadCommands = useCallback(() => {
-    window.api.library.getAllCommands().then((cmds: CompletionItem[]) => {
+    window.api.library.getAllCommands(targetPlatform).then((cmds: CompletionItem[]) => {
       const { independentItems, memberItems, libraryConstantItems } = buildCompletionCatalog(cmds)
       allCommandsRef.current = independentItems
       memberCommandsRef.current = memberItems
@@ -1118,7 +1119,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
       setCmdLoadId(n => n + 1)
     }).catch(() => {})
-  }, [])
+  }, [targetPlatform])
 
   // 初始加载 + 支持库变更时重新加载命令
   useEffect(() => {

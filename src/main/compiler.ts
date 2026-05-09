@@ -5,7 +5,6 @@ import { app, BrowserWindow } from 'electron'
 import { tmpdir } from 'os'
 import { libraryManager } from './libraryManager'
 import type { LibraryCommand as LibCommand, LibraryConstant as LibConstant, LibraryWindowUnit as LibWindowUnit } from './libraryManager'
-import { getYcmdCommands } from './ycmd-registry'
 import { generateDebugRuntimeCode } from './debug-runtime'
 
 // 编译消息类型
@@ -1412,9 +1411,9 @@ function toCLibraryConstantValue(c: LibraryConstantDef): string {
 
 // 从已加载的支持库构建命令查找表
 // 命令名 → 支持库命令信息（来源由支持库元数据决定）
-function buildCommandMap(): Map<string, LibCommand & { libraryName: string; libraryFileName: string }> {
+function buildCommandMap(targetPlatform?: TargetPlatform): Map<string, LibCommand & { libraryName: string; libraryFileName: string }> {
   const map = new Map<string, LibCommand & { libraryName: string; libraryFileName: string }>()
-  const allCommands = libraryManager.getAllCommands()
+  const allCommands = libraryManager.getAllCommands(targetPlatform)
 
   for (const cmd of allCommands) {
     if (cmd.isHidden) continue
@@ -1432,25 +1431,15 @@ interface CommandSignatureDef {
   manifestPath?: string
 }
 
-function buildCommandSignatureMap(projectDllCommands: ProjectDllCommandDef[] = []): Map<string, CommandSignatureDef> {
+function buildCommandSignatureMap(projectDllCommands: ProjectDllCommandDef[] = [], targetPlatform?: TargetPlatform): Map<string, CommandSignatureDef> {
   const map = new Map<string, CommandSignatureDef>()
 
-  for (const cmd of libraryManager.getAllCommands()) {
+  for (const cmd of libraryManager.getAllCommands(targetPlatform)) {
     if (cmd.isHidden) continue
     map.set(cmd.name, {
       name: cmd.name,
       params: (cmd.params || []).map(p => ({ optional: !!p.optional, repeatable: !!p.repeatable })),
-      source: 'fne',
-      libraryFileName: cmd.libraryFileName,
-    })
-  }
-
-  for (const cmd of getYcmdCommands()) {
-    if (map.has(cmd.name)) continue
-    map.set(cmd.name, {
-      name: cmd.name,
-      params: (cmd.params || []).map(p => ({ optional: !!p.optional, repeatable: !!(p as { repeatable?: boolean }).repeatable })),
-      source: 'ycmd',
+      source: cmd.source === 'ycmd' ? 'ycmd' : 'fne',
       libraryFileName: cmd.libraryFileName,
       manifestPath: cmd.manifestPath,
     })
@@ -1678,9 +1667,9 @@ function collectProjectSubprogramNames(project: ProjectInfo, editorFiles?: Map<s
   return new Set(collectProjectSubprogramDefs(project, editorFiles).map(sub => sub.name))
 }
 
-function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Map<string, string>): string[] {
+function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Map<string, string>, targetPlatform?: TargetPlatform): string[] {
   const errors: string[] = []
-  const commandMap = buildCommandSignatureMap(collectProjectDllCommands(project, editorFiles))
+  const commandMap = buildCommandSignatureMap(collectProjectDllCommands(project, editorFiles), targetPlatform)
   const subprogramNames = collectProjectSubprogramNames(project, editorFiles)
 
   const validateOne = (fileName: string, lineNo: number, call: { name: string; args: string[] } | null): void => {
@@ -2597,7 +2586,7 @@ function generateProjectDllWrapperCode(projectDllCommands: ProjectDllCommandDef[
 // 命令识别基于已加载的支持库，支持第三方支持库扩展
 function transpileEycContent(eycContent: string, fileName: string, projectGlobals: GlobalVarDef[] = [], projectConstants: ConstantDef[] = [], projectResources: ProjectResourceEntry[] = [], libraryConstants: LibraryConstantDef[] = [], projectSubprograms: SubprogramDef[] = [], projectDataTypes: ProjectDataTypeDef[] = [], projectDllCommands: ProjectDllCommandDef[] = [], debugBuild = false, breakpoints: Record<string, number[]> = {}, targetPlatform: TargetPlatform = 'windows'): string {
   // 从已加载的支持库构建命令查找表
-  const commandMap = buildCommandMap()
+  const commandMap = buildCommandMap(targetPlatform)
   const isClassModuleSource = /\.ecc$/i.test(fileName)
   const directCallables: DirectCallableNames = new Set(projectSubprograms.map(sub => sub.name))
   for (const dllCmd of projectDllCommands) directCallables.add(dllCmd.name)
@@ -4374,7 +4363,17 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       return result
     }
 
-    const signatureErrors = validateProjectCommandSignatures(project, editorFiles)
+    const buildMode = options.mode || 'compile'
+    const hostPlatform = getHostTargetPlatform()
+    const hostArch = getHostTargetArch()
+    const projectPlatform = normalizeTargetPlatform(project.platform)
+
+    // 运行按钮固定编译为宿主平台；编译按钮按 .epp 目标平台。
+    const targetPlatform: TargetPlatform = buildMode === 'run'
+      ? hostPlatform
+      : (projectPlatform || hostPlatform)
+
+    const signatureErrors = validateProjectCommandSignatures(project, editorFiles, targetPlatform)
     if (signatureErrors.length > 0) {
       for (const message of signatureErrors) {
         sendMessage({ type: 'error', text: message })
@@ -4385,16 +4384,6 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     }
 
     sendMessage({ type: 'info', text: `正在编译项目: ${project.projectName}` })
-
-    const buildMode = options.mode || 'compile'
-    const hostPlatform = getHostTargetPlatform()
-    const hostArch = getHostTargetArch()
-    const projectPlatform = normalizeTargetPlatform(project.platform)
-
-    // 运行按钮固定编译为宿主平台；编译按钮按 .epp 目标平台。
-    const targetPlatform: TargetPlatform = buildMode === 'run'
-      ? hostPlatform
-      : (projectPlatform || hostPlatform)
 
     // 编译按钮允许工具栏架构覆盖；运行按钮固定宿主架构。
     const targetArch: TargetArch = buildMode === 'run'
