@@ -1,9 +1,13 @@
 export type RuntimePlatform = 'windows' | 'macos' | 'linux' | 'harmony'
 
 const ACTION_ACCELERATOR_MAP: Record<string, string> = {
+  'file:newFile': 'CmdOrCtrl+N',
+  'file:openFile': 'CmdOrCtrl+O',
   'file:newProject': 'CmdOrCtrl+Shift+N',
   'file:openProject': 'CmdOrCtrl+Shift+O',
+  'file:openWorkspaceFolder': 'CmdOrCtrl+Alt+O',
   'file:save': 'CmdOrCtrl+S',
+  'file:saveAs': 'CmdOrCtrl+Alt+S',
   'file:saveAll': 'CmdOrCtrl+Shift+S',
   'file:closeFile': 'CmdOrCtrl+W',
   'file:exit': 'CmdOrCtrl+Q',

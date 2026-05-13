@@ -21,6 +21,7 @@ interface ToolbarProps {
   onDebugStepOut?: () => void
   onDebugRunToCursor?: () => void
   hasProject?: boolean
+  canCompileRun?: boolean
   isCompiling?: boolean
   isRunning?: boolean
   isDebugPaused?: boolean
@@ -51,6 +52,7 @@ function Toolbar({
   onDebugStepOut,
   onDebugRunToCursor,
   hasProject = false,
+  canCompileRun,
   isCompiling = false,
   isRunning = false,
   isDebugPaused = false,
@@ -68,7 +70,7 @@ function Toolbar({
   const mod = getPrimaryModifierLabel(runtimePlatform)
   const redoShortcut = getRedoShortcutLabel(runtimePlatform)
   const runToCursorShortcut = `${mod}+F10`
-  const canStartOrContinue = !!hasProject && !isCompiling && (!isRunning || isDebugPaused)
+  const canStartOrContinue = (canCompileRun ?? !!hasProject) && !isCompiling && (!isRunning || isDebugPaused)
   const canStop = !!isRunning
   const canStep = !!hasProject && !!isDebugPaused
   const canRunToCursor = !!hasProject && !isCompiling && !isRunning
@@ -87,10 +89,10 @@ function Toolbar({
   return (
     <div className="toolbar" role="toolbar" aria-label="工具栏">
       <div className="toolbar-group">
-        <button className="toolbar-btn" aria-label="新建" title={`新建 (${mod}+Shift+N)`} onClick={onNew}>
+        <button className="toolbar-btn" aria-label="新建文件" title={`新建文件 (${mod}+N)`} onClick={onNew}>
           <ToolbarIcon name="new-document" colorMode={iconMode} />
         </button>
-        <button className="toolbar-btn" aria-label="打开" title={`打开 (${mod}+Shift+O)`} onClick={onOpen}>
+        <button className="toolbar-btn" aria-label="打开文件" title={`打开文件 (${mod}+O)`} onClick={onOpen}>
           <ToolbarIcon name="open-folder" colorMode={iconMode} />
         </button>
         <button className="toolbar-btn" aria-label="保存" title={`保存 (${mod}+S)`} onClick={onSave}>

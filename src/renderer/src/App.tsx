@@ -86,6 +86,18 @@ const ACTIVITY_BAR_SIDE_KEY = 'ycide.activityBar.side.v1'
 const AI_PANEL_OPEN_KEY = 'ycide.aiPanel.open.v1'
 const LAST_PROJECT_EPP_KEY = 'ycide.lastProject.epp.v1'
 const MAX_RECENT_OPENED = 10
+const DEFAULT_FILE_ENCODING = 'UTF-8'
+const FILE_ENCODING_OPTIONS = [
+  'UTF-8',
+  'UTF-8 BOM',
+  'GB18030',
+  'GBK',
+  'Big5',
+  'Shift_JIS',
+  'UTF-16LE',
+  'UTF-16BE',
+  'Windows-1252',
+]
 const REQUIRED_THEME_COLOR_KEYS = [
   '--bg-primary',
   '--bg-secondary',
@@ -209,9 +221,58 @@ function inferAIEditableLanguage(filePath: string): EditorTab['language'] | null
   if (ext === 'eyc' || ext === 'egv' || ext === 'ecs' || ext === 'edt' || ext === 'ell' || ext === 'erc') return ext
   return null
 }
+function inferStandaloneTextLanguage(filePath: string): string {
+  const ext = (filePath.split('.').pop() || '').toLowerCase()
+  if (!ext) return 'plaintext'
+  const map: Record<string, string> = {
+    txt: 'plaintext',
+    md: 'markdown',
+    json: 'json',
+    js: 'javascript',
+    jsx: 'javascript',
+    ts: 'typescript',
+    tsx: 'typescript',
+    html: 'html',
+    htm: 'html',
+    css: 'css',
+    scss: 'scss',
+    less: 'less',
+    xml: 'xml',
+    yml: 'yaml',
+    yaml: 'yaml',
+    ini: 'ini',
+    toml: 'ini',
+    c: 'c',
+    h: 'cpp',
+    cpp: 'cpp',
+    cxx: 'cpp',
+    cc: 'cpp',
+    hpp: 'cpp',
+    hxx: 'cpp',
+    cs: 'csharp',
+    java: 'java',
+    kt: 'kotlin',
+    go: 'go',
+    rs: 'rust',
+    py: 'python',
+    php: 'php',
+    rb: 'ruby',
+    sh: 'shell',
+    bash: 'shell',
+    ps1: 'powershell',
+    bat: 'bat',
+    cmd: 'bat',
+    sql: 'sql',
+  }
+  return map[ext] || 'plaintext'
+}
 
 function isAIEditableFile(filePath: string): boolean {
   return inferAIEditableLanguage(filePath) !== null
+}
+
+function toFileEncodingMapKey(filePath: string): string {
+  return (filePath || '').replace(/\\/g, '/').toLowerCase()
 }
 
 /** 计算两文本之间的 diff 行信息，用于编辑器高亮 */
@@ -377,6 +438,10 @@ function isEditorTabModifiedSnapshot(tab: EditorTab): boolean {
     ? JSON.stringify(tab.formData, null, 2)
     : tab.value
   return persistedValue !== tab.savedValue
+}
+
+function normalizeProjectPathForCompare(path: string): string {
+  return (path || '').replace(/\//g, '\\').replace(/[\\]+$/, '').toLowerCase()
 }
 
 const DLL_DECL_PREFIX = '.DLL\u547D\u4EE4 '
@@ -627,6 +692,8 @@ function App(): React.JSX.Element {
     try { return localStorage.getItem(AI_PANEL_OPEN_KEY) === 'true' } catch { return false }
   })
   const [ideSettings, setIdeSettings] = useState<IDESettings>(DEFAULT_IDE_SETTINGS)
+  const libraryWindowRef = useRef<Window | null>(null)
+  const [libraryPortalRoot, setLibraryPortalRoot] = useState<HTMLElement | null>(null)
   const themeManagerWindowRef = useRef<Window | null>(null)
   const [themeManagerPortalRoot, setThemeManagerPortalRoot] = useState<HTMLElement | null>(null)
   const settingsWindowRef = useRef<Window | null>(null)
@@ -638,11 +705,13 @@ function App(): React.JSX.Element {
   const [sidebarTab, setSidebarTab] = useState<'project' | 'library' | 'property'>('project')
   const [alignAction, setAlignAction] = useState<AlignAction>(null)
   const [multiSelectCount, setMultiSelectCount] = useState(0)
+  const [fileEncodingByPath, setFileEncodingByPath] = useState<Record<string, string>>({})
 
   const [openProjectFiles, setOpenProjectFiles] = useState<EditorTab[]>()
   const [openEditorTabs, setOpenEditorTabs] = useState<EditorTab[]>([])
   const [projectTree, setProjectTree] = useState<TreeNode[]>([])
   const [currentProjectDir, setCurrentProjectDir] = useState<string>('')
+  const [isProjectWorkspace, setIsProjectWorkspace] = useState<boolean>(false)
   const [eProjectImportDialog, setEProjectImportDialog] = useState<EProjectImportDialogState | null>(null)
   const currentProjectDirRef = useRef('')
   const editorRef = useRef<EditorHandle>(null)
@@ -682,6 +751,7 @@ function App(): React.JSX.Element {
   const [breakpointsByFile, setBreakpointsByFile] = useState<Record<string, number[]>>({})
   const debugBreakAccumRef = useRef<DebugBreakAccumulator | null>(null)
   const openFileByPathRef = useRef<(filePath: string, targetLine?: number) => Promise<boolean>>(async () => false)
+    const untitledFileSeqRef = useRef(1)
   const themeNoticeKeysRef = useRef<Set<string>>(new Set())
   const [targetPlatform, setTargetPlatform] = useState<TargetPlatform>('windows')
   const [targetArch, setTargetArch] = useState<TargetArch>('x64')
@@ -1085,7 +1155,10 @@ function App(): React.JSX.Element {
 
   // 编译运行
   const handleCompileRun = useCallback(async () => {
-    if (!currentProjectDir || isCompiling) return
+    if (!isProjectWorkspace || !currentProjectDir || isCompiling) return
+    const activeTab = openTabsRef.current.find(tab => tab.id === activeFileIdRef.current) || null
+    const canRunCurrentTab = !!isProjectWorkspace && !!currentProjectDir && !!activeTab?.filePath && isFilePathInProject(activeTab.filePath, currentProjectDir)
+    if (!canRunCurrentTab || isCompiling) return
     if (debugPause) {
       await continueDebugRun()
       return
@@ -1111,11 +1184,11 @@ function App(): React.JSX.Element {
     setIsCompiling(false)
     setForceOutputTab(null)
     if (result?.success) setIsRunning(true)
-  }, [currentProjectDir, isCompiling, targetArch, fileProblems, designProblems, debugPause, continueDebugRun, breakpointsByFile])
+  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, fileProblems, designProblems, debugPause, continueDebugRun, breakpointsByFile])
 
   // 普通编译
   const handleCompile = useCallback(async () => {
-    if (!currentProjectDir || isCompiling) return
+    if (!isProjectWorkspace || !currentProjectDir || isCompiling) return
     if (fileProblems.length > 0 || designProblems.length > 0) {
       setShowOutput(true)
       setForceOutputTab('problems')
@@ -1131,7 +1204,7 @@ function App(): React.JSX.Element {
     await window.api.compiler.compile(currentProjectDir, editorFiles, targetArch)
     setIsCompiling(false)
     setForceOutputTab(null)
-  }, [currentProjectDir, isCompiling, targetArch, fileProblems, designProblems])
+  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, fileProblems, designProblems])
 
   // 停止运行
   const handleStop = useCallback(() => {
@@ -2129,6 +2202,70 @@ function App(): React.JSX.Element {
   }, [showThemeManager, pushThemeNotice])
 
   useEffect(() => {
+    if (!showLibrary) {
+      if (libraryWindowRef.current && !libraryWindowRef.current.closed) {
+        libraryWindowRef.current.close()
+      }
+      libraryWindowRef.current = null
+      setLibraryPortalRoot(null)
+      return
+    }
+
+    if (!libraryWindowRef.current || libraryWindowRef.current.closed) {
+      const popup = window.open('about:blank', 'ycIDE-library-manager', 'popup=yes,width=1080,height=820,left=140,top=90')
+      if (!popup) {
+        pushThemeNotice('library-manager-popup-blocked', '[支持库] 无法打开独立支持库管理窗口，请检查系统拦截设置。')
+        setShowLibrary(false)
+        return
+      }
+      popup.document.title = '支持库管理 - ycIDE'
+      popup.document.body.innerHTML = ''
+      popup.document.body.style.margin = '0'
+      popup.document.body.style.overflow = 'hidden'
+
+      const root = popup.document.createElement('div')
+      root.id = 'library-manager-root'
+      root.style.width = '100%'
+      root.style.height = '100%'
+      popup.document.body.appendChild(root)
+
+      popup.document.head.innerHTML = ''
+      document.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+        popup.document.head.appendChild(node.cloneNode(true))
+      })
+      popup.document.documentElement.style.cssText = document.documentElement.style.cssText
+
+      const handlePopupClosed = (): void => {
+        libraryWindowRef.current = null
+        setLibraryPortalRoot(null)
+        setShowLibrary(false)
+      }
+      popup.addEventListener('beforeunload', handlePopupClosed)
+
+      libraryWindowRef.current = popup
+      setLibraryPortalRoot(root)
+    } else {
+      const popup = libraryWindowRef.current
+      popup.document.documentElement.style.cssText = document.documentElement.style.cssText
+      popup.focus()
+      const root = popup.document.getElementById('library-manager-root') as HTMLElement | null
+      setLibraryPortalRoot(root)
+    }
+  }, [showLibrary, pushThemeNotice])
+
+  useEffect(() => {
+    const popup = libraryWindowRef.current
+    if (!popup || popup.closed) return
+    popup.document.documentElement.style.cssText = document.documentElement.style.cssText
+  }, [themeTokenValues, currentTheme])
+
+  useEffect(() => () => {
+    if (libraryWindowRef.current && !libraryWindowRef.current.closed) {
+      libraryWindowRef.current.close()
+    }
+  }, [])
+
+  useEffect(() => {
     const popup = themeManagerWindowRef.current
     if (!popup || popup.closed) return
     popup.document.documentElement.style.cssText = document.documentElement.style.cssText
@@ -2465,7 +2602,7 @@ function App(): React.JSX.Element {
   // 刷新项目树（窗口重命名后调用）
   const refreshProjectTree = useCallback(async () => {
     const dir = currentProjectDirRef.current
-    if (!dir) return
+    if (!dir || !isProjectWorkspace) return
     const dirFiles = await window.api?.file?.readDir(dir) as string[] | undefined
     if (!dirFiles) return
     const eppFile = dirFiles.find(f => f.endsWith('.epp'))
@@ -2483,7 +2620,7 @@ function App(): React.JSX.Element {
         return cloned
       })
     }
-  }, [buildProjectTreeFromEpp, joinPath])
+  }, [buildProjectTreeFromEpp, isProjectWorkspace, joinPath])
 
   // 同步 ref
   useEffect(() => {
@@ -2519,12 +2656,55 @@ function App(): React.JSX.Element {
     window.api?.window.forceClose()
   }, [handleThemeDraftCloseIntent])
 
-  const buildTabFromPath = useCallback(async (fp: string): Promise<EditorTab | null> => {
+  const rememberFileEncoding = useCallback((filePath: string, encoding?: string | null) => {
+    if (!filePath) return
+    const nextEncoding = (encoding || '').trim() || DEFAULT_FILE_ENCODING
+    const key = toFileEncodingMapKey(filePath)
+    setFileEncodingByPath(prev => {
+      if (prev[key] === nextEncoding) return prev
+      return { ...prev, [key]: nextEncoding }
+    })
+  }, [])
+
+  const readFileWithEncoding = useCallback(async (filePath: string, preferredEncoding?: string): Promise<{ content: string; encoding: string } | null> => {
+    const encoded = await window.api?.project?.readFileWithEncoding?.(filePath, preferredEncoding)
+    if (encoded && typeof encoded.content === 'string') {
+      const nextEncoding = encoded.encoding || preferredEncoding || DEFAULT_FILE_ENCODING
+      rememberFileEncoding(filePath, nextEncoding)
+      return { content: encoded.content, encoding: nextEncoding }
+    }
+    const fallback = await window.api?.project?.readFile(filePath)
+    if (typeof fallback === 'string') {
+      const nextEncoding = preferredEncoding || DEFAULT_FILE_ENCODING
+      rememberFileEncoding(filePath, nextEncoding)
+      return { content: fallback, encoding: nextEncoding }
+    }
+    return null
+  }, [rememberFileEncoding])
+
+  const readFileForExternalCheck = useCallback(async (filePath: string): Promise<string | null> => {
+    if (!filePath) return null
+    const knownEncoding = fileEncodingByPath[toFileEncodingMapKey(filePath)]
+    const encoded = await window.api?.project?.readFileWithEncoding?.(filePath, knownEncoding)
+    if (encoded && typeof encoded.content === 'string') {
+      rememberFileEncoding(filePath, encoded.encoding || knownEncoding || DEFAULT_FILE_ENCODING)
+      return encoded.content
+    }
+    return await window.api?.project?.readFile(filePath)
+  }, [fileEncodingByPath, rememberFileEncoding])
+
+  const resolveFileEncoding = useCallback((filePath: string): string | undefined => {
+    if (!filePath) return undefined
+    return fileEncodingByPath[toFileEncodingMapKey(filePath)]
+  }, [fileEncodingByPath])
+
+  const buildTabFromPath = useCallback(async (fp: string, preferredEncoding?: string): Promise<EditorTab | null> => {
     const fileName = getBaseName(fp)
     const displayName = stripFileExtension(fileName)
     const ext = fileName.split('.').pop()?.toLowerCase()
-    const content = await window.api?.project?.readFile(fp)
-    if (content === null || content === undefined) return null
+    const readResult = await readFileWithEncoding(fp, preferredEncoding)
+    if (!readResult) return null
+    const content = readResult.content
 
     if (ext === 'efw') {
       const efwData = JSON.parse(content)
@@ -2556,15 +2736,65 @@ function App(): React.JSX.Element {
       return { id: fp, label: tabLabel, language: ext === 'ecc' ? 'eyc' : ext, value: normalized, savedValue: normalized, filePath: fp }
     }
 
-    return null
-  }, [])
+    const plainLanguage = inferStandaloneTextLanguage(fp)
+    return {
+      id: fp,
+      label: fileName,
+      language: plainLanguage,
+      value: content,
+      savedValue: content,
+      filePath: fp,
+    }
+  }, [readFileWithEncoding])
+
+  const closeCurrentProject = useCallback(async (options: { confirmUnsaved?: boolean; clearLastProject?: boolean } = {}): Promise<boolean> => {
+    const { confirmUnsaved = true, clearLastProject = false } = options
+    const hasOpenedProject = !!currentProjectDirRef.current
+      || (openTabsRef.current?.length ?? 0) > 0
+      || (projectTree?.length ?? 0) > 0
+    if (!hasOpenedProject) return true
+
+    if (confirmUnsaved) {
+      const hasUnsaved = editorRef.current?.hasModifiedTabs?.() ?? false
+      if (hasUnsaved) {
+        const action = await window.api?.dialog?.confirmSaveBeforeClose('未保存文件')
+        if (action === 'cancel') return false
+        if (action === 'save') {
+          editorRef.current?.saveAll()
+        }
+      }
+    }
+
+    editorRef.current?.clearAllTabs()
+    setOpenProjectFiles([])
+    setProjectTree([])
+    setCurrentProjectDir('')
+    setIsProjectWorkspace(false)
+    setSelection(null)
+    setSidebarTab('project')
+    setBreakpointsByFile({})
+    if (clearLastProject) {
+      try { localStorage.removeItem(LAST_PROJECT_EPP_KEY) } catch {}
+    }
+    return true
+  }, [projectTree])
 
   const openProjectByEppPath = useCallback(async (eppPath: string, options: { restoreSession?: boolean } = {}) => {
     const restoreSession = options.restoreSession !== false
     const eppInfo = await window.api?.project?.parseEpp(eppPath)
     if (!eppInfo) return false
     const dir = getDirName(eppPath)
+
+    const currentDir = currentProjectDirRef.current
+    const isSwitchingProject = !!currentDir
+      && normalizeProjectPathForCompare(currentDir) !== normalizeProjectPathForCompare(dir)
+    if (isSwitchingProject) {
+      const closed = await closeCurrentProject({ confirmUnsaved: true, clearLastProject: false })
+      if (!closed) return false
+    }
+
     setCurrentProjectDir(dir)
+    setIsProjectWorkspace(true)
     const normalizedPlatform = normalizeTargetPlatform(eppInfo.platform)
     setTargetPlatform(normalizedPlatform)
     setTargetArch(prev => coerceArchByPlatform(normalizedPlatform, normalizeTargetArch(eppInfo.platform) || prev))
@@ -2572,10 +2802,9 @@ function App(): React.JSX.Element {
       const nextRoots = await buildProjectTreeFromEpp(eppInfo.projectName, eppInfo.files, dir)
       const nextRoot = nextRoots[0]
       if (nextRoot) {
-        setProjectTree(prev => {
-          const filtered = prev.filter(root => root.id !== nextRoot.id)
-          return [...filtered, nextRoot]
-        })
+        setProjectTree([nextRoot])
+      } else {
+        setProjectTree([])
       }
     }
 
@@ -2607,7 +2836,7 @@ function App(): React.JSX.Element {
       }
     }
 
-    if (restoredTabs.length > 0) setOpenProjectFiles(restoredTabs)
+    setOpenProjectFiles(restoredTabs)
     pushRecentOpened({
       type: 'project',
       path: eppPath,
@@ -2615,7 +2844,117 @@ function App(): React.JSX.Element {
     })
     try { localStorage.setItem(LAST_PROJECT_EPP_KEY, eppPath) } catch {}
     return true
-  }, [buildProjectTreeFromEpp, buildTabFromPath, getBaseName, getDirName, joinPath, pushRecentOpened])
+  }, [buildProjectTreeFromEpp, buildTabFromPath, closeCurrentProject, getBaseName, getDirName, joinPath, pushRecentOpened])
+
+  const buildFolderWorkspaceTree = useCallback(async (folderPath: string): Promise<TreeNode[]> => {
+    const maxDepth = 8
+    const maxNodes = 4000
+    let nodeCount = 0
+    const skipDirs = new Set(['.git', 'node_modules', 'dist', 'out', 'test-results'])
+
+    const walk = async (absDir: string, relDir: string, depth: number): Promise<TreeNode[]> => {
+      if (depth > maxDepth || nodeCount >= maxNodes) return []
+      const entries = await window.api?.file?.readDir(absDir) as string[] | null | undefined
+      if (!entries || entries.length === 0) return []
+
+      const dirNames: string[] = []
+      const fileNames: string[] = []
+      for (const name of entries) {
+        if (!name) continue
+        if (skipDirs.has(name.toLowerCase())) continue
+        const fullPath = joinPath(absDir, name)
+        const subEntries = await window.api?.file?.readDir(fullPath) as string[] | null | undefined
+        if (Array.isArray(subEntries)) dirNames.push(name)
+        else fileNames.push(name)
+      }
+
+      dirNames.sort((a, b) => a.localeCompare(b, 'zh-CN'))
+      fileNames.sort((a, b) => a.localeCompare(b, 'zh-CN'))
+
+      const children: TreeNode[] = []
+      for (const dirName of dirNames) {
+        if (nodeCount >= maxNodes) break
+        const childRelPath = relDir ? `${relDir}/${dirName}` : dirName
+        const childAbsPath = joinPath(absDir, dirName)
+        const subChildren = await walk(childAbsPath, childRelPath, depth + 1)
+        children.push({
+          id: `ws:dir:${childRelPath.toLowerCase()}`,
+          label: dirName,
+          type: 'folder',
+          expanded: depth < 1,
+          children: subChildren,
+        })
+        nodeCount++
+      }
+
+      for (const fileName of fileNames) {
+        if (nodeCount >= maxNodes) break
+        const relPath = relDir ? `${relDir}/${fileName}` : fileName
+        children.push({
+          id: `ws:file:${relPath.toLowerCase()}`,
+          label: fileName,
+          type: 'module',
+          fileName: relPath,
+        })
+        nodeCount++
+      }
+
+      return children
+    }
+
+    const rootChildren = await walk(folderPath, '', 0)
+    return [{
+      id: buildProjectRootId(folderPath),
+      label: getBaseName(folderPath) || folderPath,
+      type: 'folder',
+      expanded: true,
+      children: rootChildren,
+      projectDir: folderPath,
+    }]
+  }, [getBaseName, joinPath])
+
+  const openWorkspaceFolderByPath = useCallback(async (folderPath: string, options: { restoreSession?: boolean } = {}) => {
+    const restoreSession = options.restoreSession !== false
+    if (!folderPath) return false
+
+    const currentDir = currentProjectDirRef.current
+    const isSwitchingWorkspace = !!currentDir
+      && normalizeProjectPathForCompare(currentDir) !== normalizeProjectPathForCompare(folderPath)
+    if (isSwitchingWorkspace) {
+      const closed = await closeCurrentProject({ confirmUnsaved: true, clearLastProject: false })
+      if (!closed) return false
+    }
+
+    setCurrentProjectDir(folderPath)
+    setIsProjectWorkspace(false)
+    const roots = await buildFolderWorkspaceTree(folderPath)
+    setProjectTree(roots)
+
+    const session = restoreSession ? await window.api?.project?.loadOpenTabs(folderPath) : null
+    const savedPaths = restoreSession ? (session?.openTabs || []) : []
+    const restoredTabs: EditorTab[] = []
+    if (savedPaths.length > 0) {
+      for (const fp of savedPaths) {
+        const tab = await buildTabFromPath(fp)
+        if (tab) restoredTabs.push(tab)
+      }
+    }
+    if (session?.activeTabPath && restoredTabs.length > 1) {
+      const activeIndex = restoredTabs.findIndex(t => t.filePath?.toLowerCase() === session.activeTabPath?.toLowerCase())
+      if (activeIndex > 0) {
+        const [activeTab] = restoredTabs.splice(activeIndex, 1)
+        restoredTabs.unshift(activeTab)
+      }
+    }
+    setOpenProjectFiles(restoredTabs)
+
+    pushRecentOpened({
+      type: 'project',
+      path: folderPath,
+      label: getBaseName(folderPath) || folderPath,
+    })
+    return true
+  }, [buildFolderWorkspaceTree, buildTabFromPath, closeCurrentProject, getBaseName, pushRecentOpened])
 
   const runEProjectImport = useCallback(async (
     baseState: Omit<EProjectImportDialogState, 'busy' | 'error' | 'needsPassword' | 'passwordInvalid'> & Partial<Pick<EProjectImportDialogState, 'needsPassword' | 'passwordInvalid' | 'error'>>,
@@ -2740,7 +3079,12 @@ function App(): React.JSX.Element {
         const payload = JSON.parse(decodeURIComponent(encoded)) as { type: 'project' | 'file'; path: string }
         if (!payload?.path) return
         if (payload.type === 'project') {
-          await openProjectByEppPath(payload.path)
+          const lowerPath = payload.path.toLowerCase()
+          if (lowerPath.endsWith('.epp')) {
+            await openProjectByEppPath(payload.path)
+          } else {
+            await openWorkspaceFolderByPath(payload.path)
+          }
         } else {
           await openFileByPath(payload.path)
         }
@@ -2752,6 +3096,25 @@ function App(): React.JSX.Element {
 
     switch (action) {
       // 文件菜单
+      case 'file:newFile': {
+        const seq = untitledFileSeqRef.current++
+        const label = `未命名${seq}.txt`
+        const tabId = `untitled:${Date.now()}-${seq}`
+        editorRef.current?.openFile({
+          id: tabId,
+          label,
+          language: 'plaintext',
+          value: '',
+          savedValue: '',
+        })
+        break
+      }
+      case 'file:openFile': {
+        const selectedFilePath = await window.api?.file?.openDialog?.()
+        if (!selectedFilePath) return
+        await openFileByPath(selectedFilePath)
+        break
+      }
       case 'file:newProject':
         setShowNewProject(true)
         break
@@ -2778,8 +3141,21 @@ function App(): React.JSX.Element {
         await runEProjectImport(baseState)
         break
       }
+      case 'file:openWorkspaceFolder': {
+        const selection = await window.api?.project?.openWorkspaceFolder?.()
+        if (!selection || selection.status === 'canceled') return
+        if (selection.status === 'epp') {
+          await openProjectByEppPath(selection.eppPath)
+          return
+        }
+        await openWorkspaceFolderByPath(selection.folderPath)
+        break
+      }
       case 'file:save':
         editorRef.current?.save()
+        break
+      case 'file:saveAs':
+        editorRef.current?.saveAs()
         break
       case 'file:saveAll':
         editorRef.current?.saveAll()
@@ -2789,22 +3165,9 @@ function App(): React.JSX.Element {
         break
       case 'file:closeProject':
         {
-          const hasUnsaved = editorRef.current?.hasModifiedTabs?.() ?? false
-          if (hasUnsaved) {
-            const action = await window.api?.dialog?.confirmSaveBeforeClose('未保存文件')
-            if (action === 'cancel') break
-            if (action === 'save') {
-              editorRef.current?.saveAll()
-            }
-          }
+          const closed = await closeCurrentProject({ confirmUnsaved: true, clearLastProject: true })
+          if (!closed) break
         }
-        editorRef.current?.clearAllTabs()
-        setOpenProjectFiles([])
-        setProjectTree([])
-        setCurrentProjectDir('')
-        setSelection(null)
-        setSidebarTab('project')
-        try { localStorage.removeItem(LAST_PROJECT_EPP_KEY) } catch {}
         break
       case 'file:exit':
         await handleAppClose()
@@ -2840,7 +3203,7 @@ function App(): React.JSX.Element {
         setBreakpointsByFile({})
         break
       case 'debug:runToCursor':
-        if (!currentProjectDir || !(cursorSourceLine || cursorLine)) break
+        if (!isProjectWorkspace || !currentProjectDir || !(cursorSourceLine || cursorLine)) break
         {
           const fileId = activeFileIdRef.current
           if (!fileId) break
@@ -3251,7 +3614,7 @@ function App(): React.JSX.Element {
         }
         break
     }
-  }, [openProjectByEppPath, openFileByPath, extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, applyTheme, handleCompile, handleCompileRun, handleStop, handleAppClose, joinPath, projectTree, refreshProjectTree, toggleBreakpoint, cursorLine, cursorSourceLine, currentProjectDir, breakpointsByFile, targetArch, continueDebugRun, getBaseName, runEProjectImport])
+  }, [openProjectByEppPath, openWorkspaceFolderByPath, openFileByPath, extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, applyTheme, handleCompile, handleCompileRun, handleStop, handleAppClose, joinPath, projectTree, refreshProjectTree, toggleBreakpoint, cursorLine, cursorSourceLine, isProjectWorkspace, currentProjectDir, breakpointsByFile, targetArch, continueDebugRun, getBaseName, runEProjectImport])
 
   useEffect(() => {
     const handleNativeMenuAction = (action: unknown) => {
@@ -3333,6 +3696,7 @@ function App(): React.JSX.Element {
       if (!result) return
 
       setCurrentProjectDir(result.projectDir)
+      setIsProjectWorkspace(true)
       const normalizedPlatform = normalizeTargetPlatform(info.platform)
       setTargetPlatform(normalizedPlatform)
       setTargetArch(coerceArchByPlatform(normalizedPlatform, normalizeTargetArch(info.platform)))
@@ -3430,9 +3794,13 @@ function App(): React.JSX.Element {
       let action: string | null = null
 
       // 文件菜单
-      if (ctrl && shift && code === 'KeyN') action = 'file:newProject'
+      if (ctrl && !shift && code === 'KeyN') action = 'file:newFile'
+      else if (ctrl && !shift && code === 'KeyO') action = 'file:openFile'
+      else if (ctrl && shift && code === 'KeyN') action = 'file:newProject'
       else if (ctrl && shift && code === 'KeyO') action = 'file:openProject'
+      else if (ctrl && e.altKey && !shift && code === 'KeyO') action = 'file:openWorkspaceFolder'
       else if (ctrl && shift && code === 'KeyS') action = 'file:saveAll'
+      else if (ctrl && e.altKey && !shift && code === 'KeyS') action = 'file:saveAs'
       else if (ctrl && !shift && code === 'KeyS') action = 'file:save'
       else if (ctrl && !shift && code === 'KeyW') action = 'file:closeFile'
       // 编辑菜单
@@ -3460,10 +3828,18 @@ function App(): React.JSX.Element {
       else if (!ctrl && !shift && key === 'F1') action = 'help:topics'
 
       if (action) {
-        // 编辑类快捷键在原生输入框中时让浏览器处理
-        const tag = (document.activeElement as HTMLElement)?.tagName
-        if (action.startsWith('edit:') && action !== 'edit:find' && action !== 'edit:replace'
-          && (tag === 'INPUT' || tag === 'TEXTAREA')) return
+        // 编辑类快捷键在可编辑控件中时让控件自身处理（含 Monaco 文本模式）
+        const activeEl = document.activeElement as HTMLElement | null
+        const tag = activeEl?.tagName
+        const isEditableContext = !!activeEl && (
+          tag === 'INPUT'
+          || tag === 'TEXTAREA'
+          || tag === 'SELECT'
+          || activeEl.isContentEditable
+          || !!activeEl.closest('[contenteditable="true"]')
+          || !!activeEl.closest('.monaco-editor')
+        )
+        if (action.startsWith('edit:') && action !== 'edit:find' && action !== 'edit:replace' && isEditableContext) return
         // 有浏览器原生文本选中时，让浏览器处理复制/剪切/全选
         if ((action === 'edit:copy' || action === 'edit:cut' || action === 'edit:selectAll') && window.getSelection()?.toString()) return
         e.preventDefault()
@@ -3550,6 +3926,52 @@ function App(): React.JSX.Element {
     if (!activeTab) return null
     return activeTab.filePath || activeTab.label
   })()
+  const activeTabForEncoding = openTabsRef.current.find(item => item.id === activeFileId) || null
+  const activeFileEncodingLabel = (() => {
+    const filePath = activeTabForEncoding?.filePath
+    if (!filePath) return ''
+    const key = toFileEncodingMapKey(filePath)
+    return fileEncodingByPath[key] || DEFAULT_FILE_ENCODING
+  })()
+  const canCompileRunCurrentTab = (() => {
+    if (!isProjectWorkspace || !currentProjectDir) return false
+    const activeTab = openTabsRef.current.find(item => item.id === activeFileId) || null
+    if (!activeTab?.filePath) return false
+    return isFilePathInProject(activeTab.filePath, currentProjectDir)
+  })()
+  const workspaceModeLabel = (() => {
+    if (!currentProjectDir) return ''
+    const workspaceName = currentProjectDir.replace(/^.*[\\/]/, '') || currentProjectDir
+    return isProjectWorkspace
+      ? `项目模式: ${workspaceName}`
+      : `文件夹工作区: ${workspaceName}`
+  })()
+
+  const handleReopenCurrentFileWithEncoding = useCallback(async (encoding: string) => {
+    const targetEncoding = (encoding || '').trim()
+    const activeTab = openTabsRef.current.find(item => item.id === activeFileIdRef.current) || null
+    const filePath = activeTab?.filePath
+    if (!filePath || !targetEncoding) return
+
+    if (isEditorTabModifiedSnapshot(activeTab)) {
+      const action = await window.api?.dialog?.confirmSaveBeforeClose(activeTab.label || getBaseName(filePath))
+      if (action === 'cancel') return
+      if (action === 'save') {
+        editorRef.current?.save()
+      }
+    }
+
+    const reloaded = await buildTabFromPath(filePath, targetEncoding)
+    if (!reloaded) {
+      setShowOutput(true)
+      setOutputMessages(prev => [...prev, { type: 'error', text: `无法以 ${targetEncoding} 重新打开：${filePath}` }])
+      return
+    }
+
+    editorRef.current?.upsertFile(reloaded)
+    setShowOutput(true)
+    setOutputMessages(prev => [...prev, { type: 'info', text: `已使用 ${targetEncoding} 重新打开：${filePath}` }])
+  }, [buildTabFromPath, getBaseName])
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
@@ -4498,8 +4920,10 @@ function App(): React.JSX.Element {
 
   return (
     <div className={`app${isWorkspaceEmpty ? ' app-empty-workspace' : ''}`}>
-      <TitleBar onMenuAction={handleMenuAction} onWindowClose={() => { void handleAppClose() }} runtimePlatform={runtimePlatform} hasProject={!!currentProjectDir} hasOpenFile={(openProjectFiles?.length ?? 0) > 0} themes={themeList} currentTheme={currentTheme} recentOpened={recentOpened} />
+      <TitleBar onMenuAction={handleMenuAction} onWindowClose={() => { void handleAppClose() }} runtimePlatform={runtimePlatform} hasProject={!!currentProjectDir && isProjectWorkspace} hasWorkspace={!!currentProjectDir} hasOpenFile={(openProjectFiles?.length ?? 0) > 0} themes={themeList} currentTheme={currentTheme} recentOpened={recentOpened} />
       <Toolbar
+        hasProject={!!currentProjectDir && isProjectWorkspace}
+        canCompileRun={canCompileRunCurrentTab}
         runtimePlatform={runtimePlatform}
         preserveOriginalIconColors={themeIconConfig.preserveToolbarIconOriginalColors}
         hasControlSelected={multiSelectCount >= 2}
@@ -4510,7 +4934,6 @@ function App(): React.JSX.Element {
         onDebugStepInto={() => { void handleMenuAction('debug:stepInto') }}
         onDebugStepOut={() => { void handleMenuAction('debug:stepOut') }}
         onDebugRunToCursor={() => { void handleMenuAction('debug:runToCursor') }}
-        hasProject={!!currentProjectDir}
         isCompiling={isCompiling}
         isRunning={isRunning}
         isDebugPaused={!!debugPause && !debugResumePending}
@@ -4520,15 +4943,15 @@ function App(): React.JSX.Element {
           const normalizedPlatform = normalizeTargetPlatform(platform)
           setTargetPlatform(normalizedPlatform)
           setTargetArch(prev => coerceArchByPlatform(normalizedPlatform, prev))
-          if (currentProjectDir) window.api?.project?.updatePlatform(currentProjectDir, normalizedPlatform)
+          if (isProjectWorkspace && currentProjectDir) window.api?.project?.updatePlatform(currentProjectDir, normalizedPlatform)
         }}
         onArchChange={(arch: string) => {
           const normalizedArch = normalizeTargetArch(arch)
           const coercedArch = coerceArchByPlatform(targetPlatform, normalizedArch)
           setTargetArch(coercedArch)
         }}
-        onNew={() => handleMenuAction('file:newProject')}
-        onOpen={() => handleMenuAction('file:openProject')}
+        onNew={() => handleMenuAction('file:newFile')}
+        onOpen={() => handleMenuAction('file:openFile')}
         onSave={() => handleMenuAction('file:save')}
         onUndo={() => handleMenuAction('edit:undo')}
         onRedo={() => handleMenuAction('edit:redo')}
@@ -4652,6 +5075,8 @@ function App(): React.JSX.Element {
                   editorFreezeSubTableHeader={ideSettings.editorFreezeSubTableHeader}
                   editorShowMinimapPreview={ideSettings.editorShowMinimapPreview}
                   targetPlatform={targetPlatform}
+                  readFileForExternalCheck={readFileForExternalCheck}
+                  resolveFileEncoding={resolveFileEncoding}
                 />
               </div>
             </div>
@@ -4711,8 +5136,15 @@ function App(): React.JSX.Element {
         cursorLine={cursorLine}
         cursorColumn={cursorColumn}
         docType={docType}
+        workspaceModeLabel={workspaceModeLabel}
+        fileEncodingLabel={activeFileEncodingLabel}
+        encodingOptions={FILE_ENCODING_OPTIONS}
+        onReopenWithEncoding={(encoding) => { void handleReopenCurrentFileWithEncoding(encoding) }}
       />
-      <LibraryDialog open={showLibrary} onClose={() => setShowLibrary(false)} targetPlatform={targetPlatform} />
+      {showLibrary && libraryPortalRoot && createPortal(
+        <LibraryDialog open={showLibrary} onClose={() => setShowLibrary(false)} targetPlatform={targetPlatform} detachedWindow={true} />,
+        libraryPortalRoot,
+      )}
       <NewProjectDialog open={showNewProject} onClose={() => setShowNewProject(false)} onConfirm={handleNewProjectConfirm} />
       <EProjectImportDialog
         open={!!eProjectImportDialog}

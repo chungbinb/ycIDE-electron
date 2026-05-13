@@ -1,11 +1,12 @@
 import { join, dirname, basename, extname } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, copyFileSync, rmSync } from 'fs'
 import { execFile, ChildProcess } from 'child_process'
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 import { tmpdir } from 'os'
 import { libraryManager } from './libraryManager'
 import type { LibraryCommand as LibCommand, LibraryConstant as LibConstant, LibraryWindowUnit as LibWindowUnit } from './libraryManager'
 import { generateDebugRuntimeCode } from './debug-runtime'
+import { createCommandResolvers } from './compilerCommandResolvers'
 
 // 编译消息类型
 export interface CompileMessage {
@@ -146,6 +147,17 @@ interface LibraryCompileProtocol {
   eventBindings?: LibraryEventBindingSpec[]
   commandBindings?: LibraryCommandBindingSpec[]
   controlBindings?: LibraryControlBindingSpec[]
+  windowUnits?: Array<{
+    name?: string
+    englishName?: string
+    className?: string
+    style?: string
+    events?: Array<{
+      name?: string
+      channel?: EventChannel
+      code?: string
+    }>
+  }>
 }
 
 interface NormalizedEventBinding {
@@ -161,7 +173,11 @@ interface LibraryCommandBindingSpec {
   library?: string
   command: string
   commandEnglishName?: string
-  emit: string
+  emit?: string
+  expr?: string
+  exprOp?: string
+  exprBuilder?: string
+  emitBuilder?: string
 }
 
 interface NormalizedCommandBinding {
@@ -169,6 +185,10 @@ interface NormalizedCommandBinding {
   command: string
   commandEnglishName: string
   emit: string
+  expr: string
+  exprOp: string
+  exprBuilder: string
+  emitBuilder: string
 }
 
 interface LibraryControlBindingSpec {
@@ -796,30 +816,64 @@ function parseEventBindingsFromProtocol(content: string, libName: string): Norma
     return []
   }
 
-  if (!json || !Array.isArray(json.eventBindings)) return []
-
   const result: NormalizedEventBinding[] = []
-  for (const item of json.eventBindings) {
-    if (!item || typeof item !== 'object') continue
-    const channel = item.channel
-    if (!channel || !['WM_COMMAND', 'WM_NOTIFY', 'WM_HSCROLL', 'WM_VSCROLL'].includes(channel)) continue
-
-    const unit = normalizeKey(item.unit || '')
-    const event = normalizeKey(item.event || '')
-    if (!unit || !event) continue
+  const pushNormalizedEvent = (
+    libraryName: string,
+    unitText: string,
+    unitEnglishNameText: string,
+    eventText: string,
+    channel: EventChannel,
+    codeText?: string,
+  ): void => {
+    if (!['WM_COMMAND', 'WM_NOTIFY', 'WM_HSCROLL', 'WM_VSCROLL'].includes(channel)) return
+    const unit = normalizeKey(unitText)
+    const event = normalizeKey(eventText)
+    if (!unit || !event) return
 
     const normalized: NormalizedEventBinding = {
-      library: normalizeKey(item.library || libName),
+      library: normalizeKey(libraryName),
       unit,
-      unitEnglishName: normalizeKey(item.unitEnglishName || ''),
+      unitEnglishName: normalizeKey(unitEnglishNameText),
       event,
       channel,
-      code: (item.code || '').trim(),
+      code: (codeText || '').trim(),
     }
-
     // WM_COMMAND / WM_NOTIFY 需要通知码，滚动消息不需要。
-    if ((channel === 'WM_COMMAND' || channel === 'WM_NOTIFY') && !normalized.code) continue
+    if ((channel === 'WM_COMMAND' || channel === 'WM_NOTIFY') && !normalized.code) return
     result.push(normalized)
+  }
+
+  if (Array.isArray(json.eventBindings)) {
+    for (const item of json.eventBindings) {
+      if (!item || typeof item !== 'object') continue
+      const channel = item.channel
+      if (!channel) continue
+      pushNormalizedEvent(
+        item.library || libName,
+        item.unit || '',
+        item.unitEnglishName || '',
+        item.event || '',
+        channel,
+        item.code,
+      )
+    }
+  }
+
+  if (Array.isArray(json.windowUnits)) {
+    for (const unit of json.windowUnits) {
+      if (!unit || typeof unit !== 'object' || !Array.isArray(unit.events)) continue
+      for (const ev of unit.events) {
+        if (!ev || typeof ev !== 'object' || !ev.channel) continue
+        pushNormalizedEvent(
+          libName,
+          unit.name || '',
+          unit.englishName || '',
+          ev.name || '',
+          ev.channel,
+          ev.code,
+        )
+      }
+    }
   }
   return result
 }
@@ -840,12 +894,20 @@ function parseCommandBindingsFromProtocol(content: string, libName: string): Nor
     const command = normalizeKey(item.command || '')
     const commandEnglishName = normalizeKey(item.commandEnglishName || '')
     const emit = (item.emit || '').trim()
-    if ((!command && !commandEnglishName) || !emit) continue
+    const expr = (item.expr || '').trim()
+    const exprOp = normalizeKey(item.exprOp || '')
+    const exprBuilder = normalizeKey(item.exprBuilder || '')
+    const emitBuilder = normalizeKey(item.emitBuilder || '')
+    if ((!command && !commandEnglishName) || (!emit && !expr && !exprOp && !exprBuilder && !emitBuilder)) continue
     result.push({
       library: normalizeKey(item.library || libName),
       command,
       commandEnglishName,
       emit,
+      expr,
+      exprOp,
+      exprBuilder,
+      emitBuilder,
     })
   }
   return result
@@ -859,21 +921,50 @@ function parseControlBindingsFromProtocol(content: string, libName: string): Nor
     return []
   }
 
-  if (!json || !Array.isArray(json.controlBindings)) return []
-
   const result: NormalizedControlBinding[] = []
-  for (const item of json.controlBindings) {
-    if (!item || typeof item !== 'object') continue
-    const unit = normalizeKey(item.unit || '')
-    const className = (item.className || '').trim()
-    if (!unit || !className) continue
+  const pushNormalizedControl = (
+    libraryName: string,
+    unitText: string,
+    unitEnglishNameText: string,
+    classNameText?: string,
+    styleText?: string,
+  ): void => {
+    const unit = normalizeKey(unitText)
+    const className = (classNameText || '').trim()
+    if (!unit || !className) return
     result.push({
-      library: normalizeKey(item.library || libName),
+      library: normalizeKey(libraryName),
       unit,
-      unitEnglishName: normalizeKey(item.unitEnglishName || ''),
+      unitEnglishName: normalizeKey(unitEnglishNameText),
       className,
-      style: (item.style || '').trim(),
+      style: (styleText || '').trim(),
     })
+  }
+
+  if (Array.isArray(json.controlBindings)) {
+    for (const item of json.controlBindings) {
+      if (!item || typeof item !== 'object') continue
+      pushNormalizedControl(
+        item.library || libName,
+        item.unit || '',
+        item.unitEnglishName || '',
+        item.className,
+        item.style,
+      )
+    }
+  }
+
+  if (Array.isArray(json.windowUnits)) {
+    for (const unit of json.windowUnits) {
+      if (!unit || typeof unit !== 'object') continue
+      pushNormalizedControl(
+        libName,
+        unit.name || '',
+        unit.englishName || '',
+        unit.className,
+        unit.style,
+      )
+    }
   }
   return result
 }
@@ -896,6 +987,8 @@ function loadCompileProtocols(): LoadedCompileProtocols {
     })()
     const candidates = [
       join(dir, `${lib.name}.events.json`),
+      join(dir, 'window-units.json'),
+      join(dir, `${lib.name}.window-units.json`),
       join(dir, `${lib.name}.protocol.json`),
       join(dir, `${lib.name}.compile-protocol.json`),
     ]
@@ -915,11 +1008,11 @@ function loadCompileProtocols(): LoadedCompileProtocols {
             type: 'info',
             text: `已加载支持库编译协议: ${basename(p)} (事件 ${parsedEvents.length} / 命令 ${parsedCommands.length} / 控件 ${parsedControls.length})`
           })
+          break
         }
       } catch {
         sendMessage({ type: 'warning', text: `警告: 读取支持库编译协议失败: ${p}` })
       }
-      break
     }
   }
 
@@ -953,7 +1046,12 @@ function resolveEventByProtocol(
 
 function applyEmitTemplate(template: string, args: string[]): string {
   const cArgs = args.map(a => formatArgForC(a))
+  const optionalTextArgs = args.map(a => formatOptionalTextArgForC(a))
   return template
+    .replace(/\{opt(\d+)\}/g, (_m, idxText) => {
+      const idx = parseInt(idxText, 10)
+      return Number.isInteger(idx) && idx >= 0 && idx < optionalTextArgs.length ? optionalTextArgs[idx] : 'NULL'
+    })
     .replace(/\{args\}/g, cArgs.join(', '))
     .replace(/\{(\d+)\}/g, (_m, idxText) => {
       const idx = parseInt(idxText, 10)
@@ -978,9 +1076,105 @@ function resolveCommandByProtocol(
   for (const b of bindings) {
     if (b.library && b.library !== lib) continue
     const matched = (!!b.command && b.command === cmd) || (!!b.commandEnglishName && b.commandEnglishName === cmdEn)
-    if (!matched) continue
+    if (!matched || !b.emit) continue
     return applyEmitTemplate(b.emit, args)
   }
+
+  for (const b of bindings) {
+    if (b.library && b.library !== lib) continue
+    const matched = (!!b.command && b.command === cmd) || (!!b.commandEnglishName && b.commandEnglishName === cmdEn)
+    if (!matched || !b.emitBuilder) continue
+    if (b.emitBuilder === 'outputdebugtext') {
+      const parts = args.filter(arg => (arg || '').trim().length > 0)
+      const lines: string[] = []
+      lines.push('do {')
+      lines.push('#if YC_DEBUG_BUILD')
+      lines.push('    yc_debug_line_begin();')
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]
+        if (i > 0) lines.push('    yc_debug_line_part("|");')
+        lines.push(`    yc_debug_line_part(${translateExpressionToC(part)});`)
+      }
+      lines.push('    yc_debug_line_end();')
+      lines.push('#endif')
+      lines.push('} while (0);')
+      return lines.join('\n')
+    }
+    if (b.emitBuilder === 'pause') {
+      return ['do {', '#if YC_DEBUG_BUILD', '    DebugBreak();', '#endif', '} while (0);'].join('\n')
+    }
+    if (b.emitBuilder === 'check') {
+      const cond = translateExpressionToC(args[0] || '0')
+      const rawCond = ((args[0] || '').trim() || '0').replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      return [
+        'do {',
+        '#if YC_DEBUG_BUILD',
+        `    if (!(${cond})) {`,
+        '        yc_debug_line_begin();',
+        '        yc_debug_line_part(L"检查失败: ");',
+        `        yc_debug_line_part(L"${rawCond}");`,
+        '        yc_debug_line_end();',
+        '        DebugBreak();',
+        '    }',
+        '#endif',
+        '} while (0);',
+      ].join('\n')
+    }
+  }
+  return null
+}
+
+function resolveCommandExprByProtocol(
+  bindings: NormalizedCommandBinding[],
+  libraryFileName: string,
+  commandName: string,
+  commandEnglishName: string,
+  args: string[],
+  commandMap?: Map<string, ResolvedCommand>,
+  directCallables?: DirectCallableNames,
+): string | null {
+  if (bindings.length === 0) return null
+
+  const lib = normalizeKey(libraryFileName)
+  const cmd = normalizeKey(commandName)
+  const cmdEn = normalizeKey(commandEnglishName)
+  if (!cmd && !cmdEn) return null
+
+  for (const b of bindings) {
+    if (b.library && b.library !== lib) continue
+    const matched = (!!b.command && b.command === cmd) || (!!b.commandEnglishName && b.commandEnglishName === cmdEn)
+    if (!matched || !b.expr) continue
+    return applyEmitTemplate(b.expr, args)
+  }
+
+  for (const b of bindings) {
+    if (b.library && b.library !== lib) continue
+    const matched = (!!b.command && b.command === cmd) || (!!b.commandEnglishName && b.commandEnglishName === cmdEn)
+    if (!matched || !b.exprOp) continue
+    switch (b.exprOp) {
+      case 'eq': return buildComparisonExpression(args[0] || '0', args[1] || '0', '==', commandMap, directCallables)
+      case 'ne': return buildComparisonExpression(args[0] || '0', args[1] || '0', '!=', commandMap, directCallables)
+      case 'lt': return buildComparisonExpression(args[0] || '0', args[1] || '0', '<', commandMap, directCallables)
+      case 'gt': return buildComparisonExpression(args[0] || '0', args[1] || '0', '>', commandMap, directCallables)
+      case 'le': return buildComparisonExpression(args[0] || '0', args[1] || '0', '<=', commandMap, directCallables)
+      case 'ge': return buildComparisonExpression(args[0] || '0', args[1] || '0', '>=', commandMap, directCallables)
+      case 'and': return buildLogicChainExpression(args, '&&', commandMap, directCallables)
+      case 'or': return buildLogicChainExpression(args, '||', commandMap, directCallables)
+      case 'not': return `(!(${translateExpressionToC(args[0] || '0', commandMap, directCallables)}))`
+      case 'startswith': return `yc_text_starts_with(${translateExpressionToC(args[0] || '""', commandMap, directCallables)}, ${translateExpressionToC(args[1] || '""', commandMap, directCallables)})`
+      default: break
+    }
+  }
+
+  for (const b of bindings) {
+    if (b.library && b.library !== lib) continue
+    const matched = (!!b.command && b.command === cmd) || (!!b.commandEnglishName && b.commandEnglishName === cmdEn)
+    if (!matched || !b.exprBuilder) continue
+    if (b.exprBuilder === 'writefilebins') {
+      return `yc_fs_write_file_bins(${formatArgForC(args[0] || '""', commandMap, directCallables)}, std::vector<YC_BIN>{${args.slice(1).map(arg => formatArgForC(arg, commandMap, directCallables)).join(', ')}})`
+    }
+  }
+
   return null
 }
 
@@ -1671,6 +1865,7 @@ function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Ma
   const errors: string[] = []
   const commandMap = buildCommandSignatureMap(collectProjectDllCommands(project, editorFiles), targetPlatform)
   const subprogramNames = collectProjectSubprogramNames(project, editorFiles)
+  const protocols = loadCompileProtocols()
 
   const validateOne = (fileName: string, lineNo: number, call: { name: string; args: string[] } | null): void => {
     if (!call?.name) return
@@ -1690,10 +1885,31 @@ function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Ma
       return
     }
 
-    // 当前阶段先让 ycmd 命令可见并参与签名校验；平台实现注入将在下一阶段接入。
+    // ycmd 命令只在“无任何后端路径”时才报错：
+    // 1) 协议映射（window-units / protocol）
+    // 2) 内建命令代码生成器
+    // 3) 内建表达式生成器
+    // 4) 同名子程序（用户自定义）
     if (command.source === 'ycmd' && !subprogramNames.has(call.name)) {
-      const detail = command.manifestPath ? `（清单: ${command.manifestPath}）` : ''
-      errors.push(`错误: ${fileName}:${lineNo} 命令「${command.name}」来自 ycmd，当前编译后端尚未接入平台实现注入${detail}`)
+      const protocolCode = resolveCommandByProtocol(
+        protocols.commands,
+        command.libraryFileName,
+        command.name,
+        '',
+        args,
+      )
+      const protocolExpr = resolveCommandExprByProtocol(
+        protocols.commands,
+        command.libraryFileName,
+        command.name,
+        '',
+        args,
+      )
+      const hasBackendPath = !!protocolCode || !!protocolExpr || !!COMMAND_CODE_GENERATORS[command.name] || !!COMMAND_EXPR_GENERATORS[command.name]
+      if (!hasBackendPath) {
+        const detail = command.manifestPath ? `（清单: ${command.manifestPath}）` : ''
+        errors.push(`错误: ${fileName}:${lineNo} 命令「${command.name}」来自 ycmd，但当前命令尚未接入后端实现${detail}`)
+      }
     }
   }
 
@@ -1943,6 +2159,17 @@ function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedC
     if (call && call.name) {
       const resolved = commandMap.get(call.name)
       if (resolved) {
+        const protocols = loadCompileProtocols()
+        const protocolExpr = resolveCommandExprByProtocol(
+          protocols.commands,
+          resolved.libraryFileName,
+          resolved.name,
+          resolved.englishName,
+          call.args || [],
+          commandMap,
+          directCallables,
+        )
+        if (protocolExpr) return protocolExpr
         const exprGenerator = COMMAND_EXPR_GENERATORS[resolved.name]
         if (exprGenerator) return exprGenerator(call.args || [], commandMap, directCallables)
         return generateYcGenericCommandExpr(resolved, call.args || [])
@@ -2243,200 +2470,16 @@ function generateYcGenericCommandAssign(cmd: LibCommand & { libraryName: string;
   return lines.join(' ')
 }
 
-// 命令 → C代码生成器（直接按命令名索引，不按库名分组）
-// 命令属于哪个支持库由 buildCommandMap() 自动获取
-// 这里只定义命令的C代码翻译规则
-type CommandCodeGenerator = (args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames) => string
-type CommandExprGenerator = (args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames) => string
-
-function escapeCWideString(text: string): string {
-  return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-}
-
-function buildDebugTextLine(args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
-  const parts = args.filter(arg => (arg || '').trim().length > 0)
-  const lines: string[] = []
-  lines.push('do {')
-  lines.push('#if YC_DEBUG_BUILD')
-  lines.push('    yc_debug_line_begin();')
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i]
-    if (i > 0) lines.push('    yc_debug_line_part("|");')
-    lines.push(`    yc_debug_line_part(${translateExpressionToC(part, commandMap, directCallables)});`)
-  }
-  lines.push('    yc_debug_line_end();')
-  lines.push('#endif')
-  lines.push('} while (0);')
-  return lines.join('\n')
-}
-
-const COMMAND_EXPR_GENERATORS: Record<string, CommandExprGenerator> = {
-  '取本机名': (_args) => 'yc_get_local_hostname()',
-  '取主机名': (_args) => 'yc_get_local_hostname()',
-  '等于': (args, commandMap, directCallables) => buildComparisonExpression(args[0] || '0', args[1] || '0', '==', commandMap, directCallables),
-  '不等于': (args, commandMap, directCallables) => buildComparisonExpression(args[0] || '0', args[1] || '0', '!=', commandMap, directCallables),
-  '小于': (args, commandMap, directCallables) => buildComparisonExpression(args[0] || '0', args[1] || '0', '<', commandMap, directCallables),
-  '大于': (args, commandMap, directCallables) => buildComparisonExpression(args[0] || '0', args[1] || '0', '>', commandMap, directCallables),
-  '小于或等于': (args, commandMap, directCallables) => buildComparisonExpression(args[0] || '0', args[1] || '0', '<=', commandMap, directCallables),
-  '大于或等于': (args, commandMap, directCallables) => buildComparisonExpression(args[0] || '0', args[1] || '0', '>=', commandMap, directCallables),
-  '近似等于': (args, commandMap, directCallables) => `yc_text_starts_with(${translateExpressionToC(args[0] || '""', commandMap, directCallables)}, ${translateExpressionToC(args[1] || '""', commandMap, directCallables)})`,
-  '并且': (args, commandMap, directCallables) => buildLogicChainExpression(args, '&&', commandMap, directCallables),
-  '或者': (args, commandMap, directCallables) => buildLogicChainExpression(args, '||', commandMap, directCallables),
-  '取反': (args, commandMap, directCallables) => `(!(${translateExpressionToC(args[0] || '0', commandMap, directCallables)}))`,
-  '是否为调试版': () => '(YC_DEBUG_BUILD ? 1 : 0)',
-  '取磁盘总空间': (args, commandMap, directCallables) => `yc_fs_disk_total_kb(${formatOptionalTextArgForC(args[0], commandMap, directCallables)})`,
-  '取磁盘剩余空间': (args, commandMap, directCallables) => `yc_fs_disk_free_kb(${formatOptionalTextArgForC(args[0], commandMap, directCallables)})`,
-  '取磁盘卷标': (args, commandMap, directCallables) => `yc_fs_get_disk_label(${formatOptionalTextArgForC(args[0], commandMap, directCallables)})`,
-  '置磁盘卷标': (args, commandMap, directCallables) => `yc_fs_set_disk_label(${formatOptionalTextArgForC(args[0], commandMap, directCallables)}, ${formatArgForC(args[1] || '""', commandMap, directCallables)})`,
-  '改变驱动器': (args, commandMap, directCallables) => `yc_fs_change_drive(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '改变目录': (args, commandMap, directCallables) => `yc_fs_change_dir(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '取当前目录': () => 'yc_fs_get_current_dir()',
-  '创建目录': (args, commandMap, directCallables) => `yc_fs_create_dir(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '删除目录': (args, commandMap, directCallables) => `yc_fs_remove_dir_all(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '复制文件': (args, commandMap, directCallables) => `yc_fs_copy_file(${formatArgForC(args[0] || '""', commandMap, directCallables)}, ${formatArgForC(args[1] || '""', commandMap, directCallables)})`,
-  '移动文件': (args, commandMap, directCallables) => `yc_fs_move_file(${formatArgForC(args[0] || '""', commandMap, directCallables)}, ${formatArgForC(args[1] || '""', commandMap, directCallables)})`,
-  '删除文件': (args, commandMap, directCallables) => `yc_fs_delete_file(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '文件更名': (args, commandMap, directCallables) => `yc_fs_rename_path(${formatArgForC(args[0] || '""', commandMap, directCallables)}, ${formatArgForC(args[1] || '""', commandMap, directCallables)})`,
-  '文件是否存在': (args, commandMap, directCallables) => `yc_fs_file_exists(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '寻找文件': (args, commandMap, directCallables) => `yc_fs_dir(${formatOptionalTextArgForC(args[0], commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)})`,
-  '取文件尺寸': (args, commandMap, directCallables) => `yc_fs_file_len(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '取文件属性': (args, commandMap, directCallables) => `yc_fs_get_attr(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '置文件属性': (args, commandMap, directCallables) => `yc_fs_set_attr(${formatArgForC(args[0] || '""', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)})`,
-  '取临时文件名': (args, commandMap, directCallables) => `yc_fs_get_temp_file_name(${formatOptionalTextArgForC(args[0], commandMap, directCallables)})`,
-  '读入文件': (args, commandMap, directCallables) => `yc_fs_read_file_bin(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '写到文件': (args, commandMap, directCallables) => `yc_fs_write_file_bins(${formatArgForC(args[0] || '""', commandMap, directCallables)}, std::vector<YC_BIN>{${args.slice(1).map(arg => formatArgForC(arg, commandMap, directCallables)).join(', ')}})`,
-  '取字节集长度': (args, commandMap, directCallables) => `yc_bin_len(${formatArgForC(args[0] || '0', commandMap, directCallables)})`,
-  '到字节集': (args, commandMap, directCallables) => `yc_to_bin(${formatArgForC(args[0] || '0', commandMap, directCallables)})`,
-  '取字节集左边': (args, commandMap, directCallables) => `yc_bin_left(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)})`,
-  '取字节集右边': (args, commandMap, directCallables) => `yc_bin_right(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)})`,
-  '取字节集中间': (args, commandMap, directCallables) => `yc_bin_mid(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '1', commandMap, directCallables)}, ${formatArgForC(args[2] || '0', commandMap, directCallables)})`,
-  '寻找字节集': (args, commandMap, directCallables) => `yc_bin_find(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)}, ${formatArgForC(args[2] || '1', commandMap, directCallables)})`,
-  '倒找字节集': (args, commandMap, directCallables) => `yc_bin_rfind(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)}, ${formatArgForC(args[2] || '0', commandMap, directCallables)})`,
-  '字节集替换': (args, commandMap, directCallables) => `yc_bin_replace(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '1', commandMap, directCallables)}, ${formatArgForC(args[2] || '0', commandMap, directCallables)}, ${args[3] ? formatArgForC(args[3], commandMap, directCallables) : 'YC_BIN()'})`,
-  '子字节集替换': (args, commandMap, directCallables) => `yc_bin_replace_sub(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)}, ${args[2] ? formatArgForC(args[2], commandMap, directCallables) : 'YC_BIN()'}, ${formatArgForC(args[3] || '1', commandMap, directCallables)}, ${formatArgForC(args[4] || '0', commandMap, directCallables)})`,
-  '取空白字节集': (args, commandMap, directCallables) => `yc_bin_space(${formatArgForC(args[0] || '0', commandMap, directCallables)})`,
-  '取重复字节集': (args, commandMap, directCallables) => `yc_bin_repeat(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)})`,
-  '指针到字节集': (args, commandMap, directCallables) => `yc_bin_from_address((long long)(${formatArgForC(args[0] || '0', commandMap, directCallables)}), ${formatArgForC(args[1] || '0', commandMap, directCallables)})`,
-  '指针到整数': (args, commandMap, directCallables) => `yc_ptr_to_int((long long)(${formatArgForC(args[0] || '0', commandMap, directCallables)}))`,
-  '指针到小数': (args, commandMap, directCallables) => `yc_ptr_to_float((long long)(${formatArgForC(args[0] || '0', commandMap, directCallables)}))`,
-  '指针到双精度小数': (args, commandMap, directCallables) => `yc_ptr_to_double((long long)(${formatArgForC(args[0] || '0', commandMap, directCallables)}))`,
-  '取字节集内整数': (args, commandMap, directCallables) => `yc_bin_get_int(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)}, ${formatArgForC(args[2] || '0', commandMap, directCallables)})`,
-}
-
-const COMMAND_CODE_GENERATORS: Record<string, CommandCodeGenerator> = {
-  '信息框': (args, commandMap, directCallables) => {
-    const msg = formatArgForC(args[0] || '', commandMap, directCallables)
-    const flags = args[1] || '0'
-    const title = args.length > 2 ? formatArgForC(args[2], commandMap, directCallables) : 'L"提示"'
-    return `MessageBoxW(NULL, ${msg}, ${title}, ${flags});`
-  },
-  '标准输出': (args, commandMap, directCallables) => {
-    const arg = args[0] || '0'
-    return `yc_debug_output_value(${formatArgForC(arg, commandMap, directCallables)});`
-  },
-  '调试输出': (args, commandMap, directCallables) => {
-    const arg = args[0] || '0'
-    return `yc_debug_output_value(${formatArgForC(arg, commandMap, directCallables)});`
-  },
-  '输出调试文本': (args, commandMap, directCallables) => buildDebugTextLine(args, commandMap, directCallables),
-  '暂停': () => ['do {', '#if YC_DEBUG_BUILD', '    DebugBreak();', '#endif', '} while (0);'].join('\n'),
-  '检查': (args, commandMap, directCallables) => {
-    const cond = translateExpressionToC(args[0] || '0', commandMap, directCallables)
-    const rawCond = escapeCWideString((args[0] || '').trim() || '0')
-    return [
-      'do {',
-      '#if YC_DEBUG_BUILD',
-      `    if (!(${cond})) {`,
-      '        yc_debug_line_begin();',
-      '        yc_debug_line_part(L"检查失败: ");',
-      `        yc_debug_line_part(L"${rawCond}");`,
-      '        yc_debug_line_end();',
-      '        DebugBreak();',
-      '    }',
-      '#endif',
-      '} while (0);',
-    ].join('\n')
-  },
-  '是否为调试版': () => `(void)${COMMAND_EXPR_GENERATORS['是否为调试版']([])};`,
-  '取本机名': (args) => {
-    return `(void)${COMMAND_EXPR_GENERATORS['取本机名'](args)};`
-  },
-  '取主机名': (args) => {
-    return `(void)${COMMAND_EXPR_GENERATORS['取主机名'](args)};`
-  },
-  '等于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['等于'](args, commandMap, directCallables)};`,
-  '不等于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['不等于'](args, commandMap, directCallables)};`,
-  '小于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['小于'](args, commandMap, directCallables)};`,
-  '大于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['大于'](args, commandMap, directCallables)};`,
-  '小于或等于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['小于或等于'](args, commandMap, directCallables)};`,
-  '大于或等于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['大于或等于'](args, commandMap, directCallables)};`,
-  '近似等于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['近似等于'](args, commandMap, directCallables)};`,
-  '并且': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['并且'](args, commandMap, directCallables)};`,
-  '或者': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['或者'](args, commandMap, directCallables)};`,
-  '取反': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取反'](args, commandMap, directCallables)};`,
-  '取磁盘总空间': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取磁盘总空间'](args, commandMap, directCallables)};`,
-  '取磁盘剩余空间': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取磁盘剩余空间'](args, commandMap, directCallables)};`,
-  '取磁盘卷标': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取磁盘卷标'](args, commandMap, directCallables)};`,
-  '置磁盘卷标': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['置磁盘卷标'](args, commandMap, directCallables)};`,
-  '改变驱动器': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['改变驱动器'](args, commandMap, directCallables)};`,
-  '改变目录': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['改变目录'](args, commandMap, directCallables)};`,
-  '取当前目录': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取当前目录'](args, commandMap, directCallables)};`,
-  '创建目录': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['创建目录'](args, commandMap, directCallables)};`,
-  '删除目录': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['删除目录'](args, commandMap, directCallables)};`,
-  '复制文件': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['复制文件'](args, commandMap, directCallables)};`,
-  '移动文件': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['移动文件'](args, commandMap, directCallables)};`,
-  '删除文件': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['删除文件'](args, commandMap, directCallables)};`,
-  '文件更名': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['文件更名'](args, commandMap, directCallables)};`,
-  '文件是否存在': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['文件是否存在'](args, commandMap, directCallables)};`,
-  '寻找文件': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['寻找文件'](args, commandMap, directCallables)};`,
-  '取文件尺寸': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取文件尺寸'](args, commandMap, directCallables)};`,
-  '取文件属性': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取文件属性'](args, commandMap, directCallables)};`,
-  '置文件属性': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['置文件属性'](args, commandMap, directCallables)};`,
-  '取临时文件名': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取临时文件名'](args, commandMap, directCallables)};`,
-  '读入文件': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['读入文件'](args, commandMap, directCallables)};`,
-  '写到文件': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['写到文件'](args, commandMap, directCallables)};`,
-  '取字节集长度': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取字节集长度'](args, commandMap, directCallables)};`,
-  '到字节集': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['到字节集'](args, commandMap, directCallables)};`,
-  '取字节集左边': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取字节集左边'](args, commandMap, directCallables)};`,
-  '取字节集右边': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取字节集右边'](args, commandMap, directCallables)};`,
-  '取字节集中间': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取字节集中间'](args, commandMap, directCallables)};`,
-  '寻找字节集': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['寻找字节集'](args, commandMap, directCallables)};`,
-  '倒找字节集': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['倒找字节集'](args, commandMap, directCallables)};`,
-  '字节集替换': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['字节集替换'](args, commandMap, directCallables)};`,
-  '子字节集替换': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['子字节集替换'](args, commandMap, directCallables)};`,
-  '取空白字节集': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取空白字节集'](args, commandMap, directCallables)};`,
-  '取重复字节集': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取重复字节集'](args, commandMap, directCallables)};`,
-  '指针到字节集': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['指针到字节集'](args, commandMap, directCallables)};`,
-  '指针到整数': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['指针到整数'](args, commandMap, directCallables)};`,
-  '指针到小数': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['指针到小数'](args, commandMap, directCallables)};`,
-  '指针到双精度小数': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['指针到双精度小数'](args, commandMap, directCallables)};`,
-  '取字节集内整数': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取字节集内整数'](args, commandMap, directCallables)};`,
-  '置字节集内整数': (args, commandMap, directCallables) => `yc_bin_set_int(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)}, ${formatArgForC(args[2] || '0', commandMap, directCallables)}, ${formatArgForC(args[3] || '0', commandMap, directCallables)});`,
-}
-
-// 为支持库命令生成C代码
-function generateCCodeForCommand(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
-  const protocols = loadCompileProtocols()
-  const protocolCode = resolveCommandByProtocol(
-    protocols.commands,
-    cmd.libraryFileName,
-    cmd.name,
-    cmd.englishName,
-    args,
-  )
-  if (protocolCode) {
-    return protocolCode
-  }
-
-  // 查找已注册的代码生成器
-  const generator = COMMAND_CODE_GENERATORS[cmd.name]
-  if (generator) {
-    return generator(args, commandMap, directCallables)
-  }
-
-  // 通用回退：按“库名 + 命令索引”走支持库命令分发表。
-  return generateYcGenericCommandCall(cmd, args)
-}
+const {
+  COMMAND_EXPR_GENERATORS,
+  COMMAND_CODE_GENERATORS,
+  generateCCodeForCommand,
+} = createCommandResolvers({
+  resolveCommandByProtocol: (protocolBindings, libraryFileName, commandName, commandEnglishName, args) => resolveCommandByProtocol(protocolBindings as NormalizedCommandBinding[], libraryFileName, commandName, commandEnglishName, args),
+  resolveCommandExprByProtocol: (protocolBindings, libraryFileName, commandName, commandEnglishName, args, commandMap, directCallables) => resolveCommandExprByProtocol(protocolBindings as NormalizedCommandBinding[], libraryFileName, commandName, commandEnglishName, args, commandMap as Map<string, ResolvedCommand> | undefined, directCallables as DirectCallableNames | undefined),
+  loadCompileProtocols,
+  generateYcGenericCommandCall: (cmd, args) => generateYcGenericCommandCall(cmd as ResolvedCommand, args),
+})
 
 function mapProjectDllTypeToCType(type: string): string {
   const trimmed = (type || '').trim()
@@ -4607,6 +4650,53 @@ export function runExecutable(exePath: string): boolean {
   const workDir = dirname(exePath)
   const debugCmdFile = join(workDir, '.ycdbg_cmd')
 
+  const formatLaunchError = (err: NodeJS.ErrnoException): string => {
+    const parts = [err.message]
+    if (err.code) parts.push(`code=${err.code}`)
+    if (typeof err.errno === 'number') parts.push(`errno=${err.errno}`)
+    if (err.syscall) parts.push(`syscall=${err.syscall}`)
+    if (err.path) parts.push(`path=${err.path}`)
+    return parts.join(' | ')
+  }
+
+  const canFallbackToShellOpen = (err: NodeJS.ErrnoException): boolean => {
+    if (process.platform !== 'win32') return false
+
+    const code = (err.code ?? '').toUpperCase()
+    const message = err.message ?? ''
+    const errno = typeof err.errno === 'number' ? err.errno : null
+
+    if (code === 'EPERM' || code === 'EACCES' || code === 'UNKNOWN') return true
+    if (errno === -4048) return true
+    return /spawn\s+(EPERM|EACCES)/i.test(message)
+  }
+
+  const isLikelySecurityInterception = (err: NodeJS.ErrnoException): boolean => {
+    if (process.platform !== 'win32') return false
+
+    const message = err.message ?? ''
+    const code = (err.code ?? '').toUpperCase()
+    const errno = typeof err.errno === 'number' ? err.errno : null
+
+    if (code === 'EPERM' || code === 'EACCES' || code === 'UNKNOWN') return true
+    if (errno === -4048) return true
+    return /spawn\s+(EPERM|EACCES)|operation not permitted|access is denied/i.test(message)
+  }
+
+  const fallbackOpenViaShell = (): void => {
+    void shell.openPath(exePath).then((result) => {
+      if (result) {
+        sendMessage({ type: 'error', text: `启动程序失败(回退启动也失败): ${result}` })
+        return
+      }
+      sendMessage({ type: 'warning', text: '已回退为系统 Shell 启动，当前会话无法跟踪进程输出/退出状态。' })
+      sendMessage({ type: 'success', text: '程序已通过系统 Shell 启动。' })
+    }).catch((error) => {
+      const text = error instanceof Error ? error.message : String(error)
+      sendMessage({ type: 'error', text: `启动程序失败(回退启动异常): ${text}` })
+    })
+  }
+
   try {
     writeFileSync(debugCmdFile, '0', 'utf-8')
     runningDebugCmdFile = debugCmdFile
@@ -4620,6 +4710,10 @@ export function runExecutable(exePath: string): boolean {
     runningProcess = proc
     let stdoutBuffer = ''
     let stderrBuffer = ''
+
+    proc.on('spawn', () => {
+      sendMessage({ type: 'success', text: `程序已启动 (PID: ${proc.pid})` })
+    })
 
     proc.stdout?.on('data', (data: Buffer) => {
       stdoutBuffer = emitBufferedOutputChunk(data.toString('utf-8'), stdoutBuffer, 'info')
@@ -4650,10 +4744,23 @@ export function runExecutable(exePath: string): boolean {
       runningProcess = null
       runningDebugCmdFile = null
       runningDebugResumeToken = 0
-      sendMessage({ type: 'error', text: `启动程序失败: ${err.message}` })
+      const detailed = formatLaunchError(err)
+      const blockedBySecuritySoftware = isLikelySecurityInterception(err)
+      if (canFallbackToShellOpen(err)) {
+        sendMessage({ type: 'warning', text: `直接启动失败，正在尝试系统 Shell 回退启动: ${detailed}` })
+        if (blockedBySecuritySoftware) {
+          sendMessage({ type: 'warning', text: `疑似被安全软件拦截。请检查杀毒软件隔离区/日志，并将输出目录加入“受信任或排除”后重试。输出目录: ${workDir}` })
+        }
+        fallbackOpenViaShell()
+        return
+      }
+      if (blockedBySecuritySoftware) {
+        sendMessage({ type: 'warning', text: `疑似被安全软件拦截。请检查杀毒软件隔离区/日志，并将输出目录加入“受信任或排除”后重试。输出目录: ${workDir}` })
+      }
+      sendMessage({ type: 'error', text: `启动程序失败: ${detailed}` })
     })
 
-    sendMessage({ type: 'success', text: `程序已启动 (PID: ${proc.pid})` })
+    // execFile 返回即表示启动请求已发起；实际成功由 spawn 事件回报。
     return true
   } catch (e) {
     sendMessage({ type: 'error', text: `启动程序失败: ${e instanceof Error ? e.message : String(e)}` })

@@ -380,7 +380,32 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
     setTerminalBusy(false)
   }, [onTerminalInterrupt, terminalBusy])
 
+  const selectElementText = useCallback((element: HTMLElement | null): void => {
+    if (!element) return
+    const selection = window.getSelection()
+    if (!selection) return
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }, [])
+
+  const handlePanelSelectAllKeyDown = useCallback((event: React.KeyboardEvent<HTMLElement>): void => {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+    if (event.key.toLowerCase() !== 'a') return
+    event.preventDefault()
+    event.stopPropagation()
+    selectElementText(event.currentTarget)
+  }, [selectElementText])
+
   const handleTerminalKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a') {
+      event.preventDefault()
+      event.stopPropagation()
+      selectElementText(terminalRef.current)
+      return
+    }
+
     if (event.ctrlKey && !event.altKey && !event.metaKey && (event.key === 'c' || event.key === 'C')) {
       event.preventDefault()
       void handleTerminalInterrupt()
@@ -409,7 +434,7 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
       event.preventDefault()
       setTerminalInput(prev => prev + event.key)
     }
-  }, [handleTerminalInterrupt, handleTerminalRun])
+  }, [handleTerminalInterrupt, handleTerminalRun, selectElementText])
 
   const handleTerminalPaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
     const text = event.clipboardData.getData('text')
@@ -462,7 +487,7 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
 
       {/* 编译输出内容 */}
       {activeTab === 'compile' && (
-        <div id="output-panel-compile" className="output-content" ref={contentRef} role="tabpanel" aria-labelledby="output-tab-compile" tabIndex={0}>
+        <div id="output-panel-compile" className="output-content" ref={contentRef} role="tabpanel" aria-labelledby="output-tab-compile" tabIndex={0} onKeyDown={handlePanelSelectAllKeyDown}>
           <div role="log" aria-live="polite" aria-atomic="false">
           {messages.map((msg, i) => (
             <div key={i} className={`output-line ${msg.type}`}>{msg.text}</div>
@@ -473,7 +498,7 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
 
       {/* 终端内容（预留） */}
       {activeTab === 'terminal' && (
-        <div id="output-panel-terminal" className="output-content output-terminal-content" role="tabpanel" aria-labelledby="output-tab-terminal" tabIndex={0}>
+        <div id="output-panel-terminal" className="output-content output-terminal-content" role="tabpanel" aria-labelledby="output-tab-terminal" tabIndex={0} onKeyDown={handlePanelSelectAllKeyDown}>
           <div className="output-terminal-meta" role="status" aria-live="polite">
             {terminalRunning && <span>状态：运行中</span>}
             {terminalLastCommand && <span>最近命令：{terminalLastCommand}</span>}
@@ -514,7 +539,7 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
 
       {/* 提示内容（命令详情） */}
       {activeTab === 'hint' && (
-        <div id="output-panel-hint" className="output-content output-hint-content" role="tabpanel" aria-labelledby="output-tab-hint" tabIndex={0}>
+        <div id="output-panel-hint" className="output-content output-hint-content" role="tabpanel" aria-labelledby="output-tab-hint" tabIndex={0} onKeyDown={handlePanelSelectAllKeyDown}>
           {commandDetail ? (() => {
             const cd = commandDetail
             const isSourceSubroutine = cd.category === '子程序' && cd.libraryName === '当前源码'
@@ -608,7 +633,7 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
 
       {/* 问题列表 */}
       {activeTab === 'problems' && (
-        <div id="output-panel-problems" className="output-content output-problems-content" role="tabpanel" aria-labelledby="output-tab-problems" tabIndex={0}>
+        <div id="output-panel-problems" className="output-content output-problems-content" role="tabpanel" aria-labelledby="output-tab-problems" tabIndex={0} onKeyDown={handlePanelSelectAllKeyDown}>
           {problems.length === 0 ? (
             <div className="output-problem-empty">当前文件没有问题</div>
           ) : (
@@ -641,7 +666,7 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
         </div>
       )}
       {activeTab === 'debug' && (
-        <div id="output-panel-debug" className="output-content output-hint-content" role="tabpanel" aria-labelledby="output-tab-debug" tabIndex={0}>
+        <div id="output-panel-debug" className="output-content output-hint-content" role="tabpanel" aria-labelledby="output-tab-debug" tabIndex={0} onKeyDown={handlePanelSelectAllKeyDown}>
           {debugPause ? (
             <div className="cmd-detail">
               <div className="cmd-detail-call">

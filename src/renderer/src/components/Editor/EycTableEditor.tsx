@@ -1386,6 +1386,40 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return token
   }, [])
 
+  const normalizeCodeLineInput = useCallback((raw: string): string => {
+    if (!raw) return raw
+
+    let next = raw
+      .replace(/，/g, ',')
+      .replace(/。/g, '.')
+      .replace(/；/g, ';')
+      .replace(/：/g, ':')
+      .replace(/（/g, '(')
+      .replace(/）/g, ')')
+      .replace(/【/g, '[')
+      .replace(/】/g, ']')
+      .replace(/｛/g, '{')
+      .replace(/｝/g, '}')
+      .replace(/＝/g, '=')
+      .replace(/＋/g, '+')
+      .replace(/－/g, '-')
+      .replace(/＊/g, '*')
+      .replace(/／/g, '/')
+      .replace(/％/g, '%')
+      .replace(/！/g, '!')
+      .replace(/？/g, '?')
+      .replace(/[“”]/g, '"')
+      .replace(/、/g, ',')
+
+    // 中文输入法里的单引号起始（‘/’）按注释前缀处理。
+    next = next.replace(/^(\s*)[‘’]/, "$1'")
+
+    // 统一为 `'<space>注释内容`，便于后续自动排版。
+    next = next.replace(/^(\s*)'(?!\s|$)/, "$1' ")
+
+    return next
+  }, [])
+
   /** 代码行编辑结束时自动补全括号（格式化命令），返回 [主行, ...需要插入的后续行] */
   const formatCommandLine = useCallback((val: string, options?: { preferJudgeBranch?: boolean }): string[] => {
     const trimmed = val.trimStart()
@@ -3280,6 +3314,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     if (editCell.cellIndex < 0) {
+      effectiveVal = normalizeCodeLineInput(effectiveVal)
       // 流程上下文中，若文本未改动则直接退出编辑，避免仅点击/失焦触发格式化导致流程结构漂移。
       const unchanged = overrideVal === undefined && effectiveVal === codeLineEditOrigValRef.current
       const flowContext = wasFlowStartRef.current || flowIndentRef.current.length > 0
@@ -3552,7 +3587,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     const nt = nl.join('\n')
     setCurrentText(nt); prevRef.current = nt; onChange(nt); setEditCell(null)
-  }, [editCell, editVal, isClassModule, isResourceTableDoc, lines, normalizeFlowCommandName, onChange, onClassNameRename])
+  }, [editCell, editVal, isClassModule, isResourceTableDoc, lines, normalizeCodeLineInput, normalizeFlowCommandName, onChange, onClassNameRename])
 
   // 每次渲染后重置 commitGuard，允许下一次合法的 commit 调用
   useEffect(() => { commitGuardRef.current = false })
@@ -5734,7 +5769,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                         pendingInputDragRef.current = { lineIndex: blk.lineIndex, x: e.clientX, y: e.clientY, allowRowDrag: true }
                       }}
                       onChange={e => {
-                        const v = e.target.value
+                        const v = normalizeCodeLineInput(e.target.value)
                         // 命令行括号保护已移除：允许自由编辑命令名与括号外内容
                         setEditVal(v)
                         scheduleLiveUpdate(v)

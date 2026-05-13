@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, dialog, ipcMain, shell, type BrowserWindowConstructorOptions, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, Menu, dialog, ipcMain, shell, screen, type BrowserWindowConstructorOptions, type MenuItemConstructorOptions } from 'electron'
 import { join, dirname, basename, extname } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync, unlinkSync } from 'fs'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
@@ -37,7 +37,7 @@ import { scanYcmdRegistry } from './ycmd-registry'
 import { resolveIDESettings, type IDESettings } from '../shared/settings'
 import type { AIChatRequest, AIChatWithToolsRequest, AIEditRequest } from '../shared/ai'
 import { runAIChat, runAIChatStream, runAIChatWithTools, runAIEdit, runAIEditStream } from './ai-assistant'
-import type { EProjectImportRequest, OpenProjectSelectionResult } from '../shared/eprojectImport'
+import type { EProjectImportRequest, OpenProjectSelectionResult, OpenWorkspaceFolderSelectionResult } from '../shared/eprojectImport'
 import { getEProjectImportTarget, importEProjectFile } from './eproject/importService'
 
 const isDev = !app.isPackaged
@@ -69,6 +69,62 @@ const terminalOutputBuffer: string[] = []
 const terminalCommandHistory: string[] = []
 const TERMINAL_OUTPUT_LIMIT = 2000
 const TERMINAL_COMMAND_LIMIT = 500
+
+type MainWindowState = {
+  width: number
+  height: number
+  x?: number
+  y?: number
+  isMaximized?: boolean
+}
+
+function normalizeEncodingName(raw?: string): string {
+  const normalized = (raw || '').trim().toLowerCase().replace(/[_\s-]+/g, '')
+  if (!normalized) return ''
+  if (normalized === 'utf8' || normalized === 'utf') return 'UTF-8'
+  if (normalized === 'utf8bom' || normalized === 'utf8sig') return 'UTF-8 BOM'
+  if (normalized === 'gb18030') return 'GB18030'
+  if (normalized === 'gbk' || normalized === 'cp936') return 'GBK'
+  if (normalized === 'big5') return 'Big5'
+  if (normalized === 'shiftjis' || normalized === 'sjis' || normalized === 'cp932') return 'Shift_JIS'
+  if (normalized === 'utf16le') return 'UTF-16LE'
+  if (normalized === 'utf16be') return 'UTF-16BE'
+  if (normalized === 'windows1252' || normalized === 'win1252' || normalized === 'cp1252') return 'Windows-1252'
+  return 'UTF-8'
+}
+
+function encodingToCodec(encoding: string): string {
+  switch (encoding) {
+    case 'UTF-8': return 'utf8'
+    case 'UTF-8 BOM': return 'utf8'
+    case 'GB18030': return 'gb18030'
+    case 'GBK': return 'gbk'
+    case 'Big5': return 'big5'
+    case 'Shift_JIS': return 'shift_jis'
+    case 'UTF-16LE': return 'utf16le'
+    case 'UTF-16BE': return 'utf16-be'
+    case 'Windows-1252': return 'win1252'
+    default: return 'utf8'
+  }
+}
+
+function detectEncodingByBom(buffer: Buffer): string {
+  if (buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) return 'UTF-8 BOM'
+  if (buffer.length >= 2 && buffer[0] === 0xFF && buffer[1] === 0xFE) return 'UTF-16LE'
+  if (buffer.length >= 2 && buffer[0] === 0xFE && buffer[1] === 0xFF) return 'UTF-16BE'
+  return 'UTF-8'
+}
+
+function encodeTextByEncoding(content: string, encoding?: string): Buffer {
+  const normalized = normalizeEncodingName(encoding)
+  if (normalized === 'UTF-8 BOM') {
+    return Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), iconv.encode(content, 'utf8')])
+  }
+  if (normalized === 'UTF-8') {
+    return iconv.encode(content, 'utf8')
+  }
+  return iconv.encode(content, encodingToCodec(normalized || 'UTF-8'))
+}
 
 app.setName(APP_DISPLAY_NAME)
 
@@ -272,6 +328,51 @@ function getThemeConfigPath(): string {
 
 function getIDESettingsPath(): string {
   return join(app.getPath('userData'), 'ide-settings.json')
+}
+
+function getMainWindowStatePath(): string {
+  return join(app.getPath('userData'), 'main-window-state.json')
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function readMainWindowState(): MainWindowState | null {
+  const filePath = getMainWindowStatePath()
+  if (!existsSync(filePath)) return null
+  try {
+    const raw = JSON.parse(readFileSync(filePath, 'utf-8')) as Partial<MainWindowState>
+    if (!isFiniteNumber(raw.width) || !isFiniteNumber(raw.height)) return null
+
+    const width = Math.max(800, Math.round(raw.width))
+    const height = Math.max(600, Math.round(raw.height))
+    const x = isFiniteNumber(raw.x) ? Math.round(raw.x) : undefined
+    const y = isFiniteNumber(raw.y) ? Math.round(raw.y) : undefined
+
+    if (x !== undefined && y !== undefined) {
+      const displayBounds = screen.getDisplayNearestPoint({ x, y }).workArea
+      const inHorizontal = x < (displayBounds.x + displayBounds.width)
+      const inVertical = y < (displayBounds.y + displayBounds.height)
+      if (!inHorizontal || !inVertical) {
+        return { width, height, isMaximized: !!raw.isMaximized }
+      }
+    }
+
+    return {
+      width,
+      height,
+      x,
+      y,
+      isMaximized: !!raw.isMaximized,
+    }
+  } catch {
+    return null
+  }
+}
+
+function writeMainWindowState(state: MainWindowState): void {
+  writeFileSync(getMainWindowStatePath(), JSON.stringify(state, null, 2), 'utf-8')
 }
 
 function readIDESettings(): IDESettings {
@@ -708,6 +809,7 @@ function resolveThemeConfig(): ThemeResolutionResult {
 
 function createWindow(): void {
   const windowIconPath = resolveWindowIconPath()
+  const previousWindowState = readMainWindowState()
 
   const chromeOptions: Pick<BrowserWindowConstructorOptions, 'frame' | 'titleBarStyle'> = runtimePlatform === 'macos'
     ? {
@@ -720,8 +822,10 @@ function createWindow(): void {
     }
 
   const mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: previousWindowState?.width ?? 1400,
+    height: previousWindowState?.height ?? 900,
+    ...(previousWindowState?.x !== undefined ? { x: previousWindowState.x } : {}),
+    ...(previousWindowState?.y !== undefined ? { y: previousWindowState.y } : {}),
     minWidth: 800,
     minHeight: 600,
     ...chromeOptions,
@@ -739,7 +843,27 @@ function createWindow(): void {
     mainWindow.setIcon(windowIconPath)
   }
 
+  const persistMainWindowState = (): void => {
+    if (mainWindow.isDestroyed()) return
+    const bounds = mainWindow.getBounds()
+    writeMainWindowState({
+      width: Math.max(800, Math.round(bounds.width)),
+      height: Math.max(600, Math.round(bounds.height)),
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      isMaximized: mainWindow.isMaximized(),
+    })
+  }
+
+  mainWindow.on('resize', persistMainWindowState)
+  mainWindow.on('move', persistMainWindowState)
+  mainWindow.on('maximize', persistMainWindowState)
+  mainWindow.on('unmaximize', persistMainWindowState)
+
   mainWindow.on('ready-to-show', () => {
+    if (previousWindowState?.isMaximized) {
+      mainWindow.maximize()
+    }
     mainWindow.show()
   })
 
@@ -847,15 +971,19 @@ function setupNativeMenu(): void {
     {
       label: '文件',
       submenu: [
+        actionItem('新建文件', 'file:newFile', getActionAccelerator('file:newFile')),
         actionItem('新建项目', 'file:newProject', getActionAccelerator('file:newProject')),
+        actionItem('打开文件', 'file:openFile', getActionAccelerator('file:openFile')),
         actionItem('打开项目', 'file:openProject', getActionAccelerator('file:openProject')),
+        actionItem('打开文件夹工作区', 'file:openWorkspaceFolder', getActionAccelerator('file:openWorkspaceFolder')),
         { label: '最近打开', submenu: recentSubmenu },
         { type: 'separator' },
         actionItem('保存', 'file:save', getActionAccelerator('file:save')),
+        actionItem('另存为', 'file:saveAs', getActionAccelerator('file:saveAs')),
         actionItem('保存全部', 'file:saveAll', getActionAccelerator('file:saveAll')),
         { type: 'separator' },
         actionItem('关闭文件', 'file:closeFile', getActionAccelerator('file:closeFile')),
-        actionItem('关闭项目', 'file:closeProject'),
+        actionItem('关闭工作区', 'file:closeProject'),
         { type: 'separator' },
         actionItem('退出', 'file:exit', getActionAccelerator('file:exit')),
       ]
@@ -1153,6 +1281,27 @@ app.whenReady().then(() => {
     return readFileSync(filePath, 'utf-8')
   })
 
+  ipcMain.handle('project:readFileWithEncoding', (_event, filePath: string, preferredEncoding?: string) => {
+    if (!existsSync(filePath)) return null
+    try {
+      const buffer = readFileSync(filePath)
+      const hasUtf8Bom = buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF
+      const hasUtf16LeBom = buffer.length >= 2 && buffer[0] === 0xFF && buffer[1] === 0xFE
+      const hasUtf16BeBom = buffer.length >= 2 && buffer[0] === 0xFE && buffer[1] === 0xFF
+
+      const encoding = normalizeEncodingName(preferredEncoding) || detectEncodingByBom(buffer)
+      let payload = buffer
+      if (encoding === 'UTF-8 BOM' && hasUtf8Bom) payload = buffer.subarray(3)
+      if (encoding === 'UTF-16LE' && hasUtf16LeBom) payload = buffer.subarray(2)
+      if (encoding === 'UTF-16BE' && hasUtf16BeBom) payload = buffer.subarray(2)
+
+      const content = iconv.decode(payload, encodingToCodec(encoding))
+      return { content, encoding }
+    } catch {
+      return null
+    }
+  })
+
   // 解析 epp 项目文件，返回项目信息和关联文件列表
   ipcMain.handle('project:parseEpp', (_event, eppPath: string) => {
     if (!existsSync(eppPath)) return null
@@ -1242,25 +1391,70 @@ app.whenReady().then(() => {
     return { status: 'eFile', eFilePath: selectedPath, projectName: target.projectName, targetDir: target.targetDir, targetExists: target.targetExists }
   })
 
+  ipcMain.handle('project:openWorkspaceFolder', async (): Promise<OpenWorkspaceFolderSelectionResult> => {
+    const win = BrowserWindow.getFocusedWindow()
+    if (!win) return { status: 'canceled' }
+    const result = await dialog.showOpenDialog(win, {
+      title: '打开文件夹工作区',
+      properties: ['openDirectory'],
+    })
+    if (result.canceled || result.filePaths.length === 0) return { status: 'canceled' }
+
+    const folderPath = result.filePaths[0]
+    try {
+      const entries = readdirSync(folderPath)
+      const eppFileName = entries.find(name => extname(name).toLowerCase() === '.epp')
+      if (eppFileName) {
+        return { status: 'epp', eppPath: join(folderPath, eppFileName) }
+      }
+    } catch {
+      // ignore read errors and fallback to folder workspace
+    }
+    return { status: 'folder', folderPath }
+  })
+
   ipcMain.handle('project:importEFile', (_event, request: EProjectImportRequest) => {
     return importEProjectFile(request)
   })
 
   // 保存文件内容
-  ipcMain.handle('file:save', (_event, filePath: string, content: string) => {
-    writeFileSync(filePath, content, 'utf-8')
+  ipcMain.handle('file:openDialog', async (): Promise<string | null> => {
+    const win = BrowserWindow.getFocusedWindow()
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, {
+      title: '打开文件',
+      properties: ['openFile'],
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
+
+  ipcMain.handle('file:saveDialog', async (_event, defaultPath?: string): Promise<string | null> => {
+    const win = BrowserWindow.getFocusedWindow()
+    if (!win) return null
+    const result = await dialog.showSaveDialog(win, {
+      title: '另存为',
+      defaultPath: typeof defaultPath === 'string' && defaultPath.trim() ? defaultPath.trim() : undefined,
+    })
+    if (result.canceled || !result.filePath) return null
+    return result.filePath
+  })
+
+  ipcMain.handle('file:save', (_event, filePath: string, content: string, encoding?: string) => {
+    const output = encodeTextByEncoding(content, encoding)
+    writeFileSync(filePath, output)
     return true
   })
 
   // 读取目录内容
   ipcMain.handle('file:readDir', (_event, dirPath: string) => {
-    if (!existsSync(dirPath)) return []
+    if (!existsSync(dirPath)) return null
     try {
       const stat = statSync(dirPath)
-      if (!stat.isDirectory()) return []
+      if (!stat.isDirectory()) return null
       return readdirSync(dirPath)
     } catch {
-      return []
+      return null
     }
   })
 

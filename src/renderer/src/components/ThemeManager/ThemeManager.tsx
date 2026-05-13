@@ -63,6 +63,17 @@ interface ThemeManagerProps {
 
 const BUILTIN_THEME_IDS = ['默认深色', '默认浅色']
 
+function ThemePreviewChip({ color }: { color: string }): React.JSX.Element {
+  const chipRef = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!chipRef.current) return
+    chipRef.current.style.backgroundColor = color || '#000000'
+  }, [color])
+
+  return <span ref={chipRef} className="theme-manager-preview-chip" aria-hidden />
+}
+
 function ThemeManager({
   open,
   detachedWindow = false,
@@ -148,6 +159,27 @@ function ThemeManager({
     const ownerDocument = dialogRef.current?.ownerDocument || document
     ownerDocument.addEventListener('mousedown', handlePointerDown, true)
     return () => ownerDocument.removeEventListener('mousedown', handlePointerDown, true)
+  }, [themeContextMenu])
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    if (dialogPosition && !detachedWindow) {
+      dialog.style.left = `${dialogPosition.left}px`
+      dialog.style.top = `${dialogPosition.top}px`
+      dialog.style.position = 'fixed'
+      return
+    }
+    dialog.style.removeProperty('left')
+    dialog.style.removeProperty('top')
+    dialog.style.removeProperty('position')
+  }, [dialogPosition, detachedWindow])
+
+  useEffect(() => {
+    const menu = themeContextMenuRef.current
+    if (!menu || !themeContextMenu) return
+    menu.style.left = `${themeContextMenu.left}px`
+    menu.style.top = `${themeContextMenu.top}px`
   }, [themeContextMenu])
 
   useEffect(() => {
@@ -465,7 +497,6 @@ function ThemeManager({
         ref={dialogRef}
         className={`theme-manager-dialog${detachedWindow ? ' detached' : ''}`}
         onMouseDown={(event) => event.stopPropagation()}
-        style={dialogPosition && !detachedWindow ? { left: `${dialogPosition.left}px`, top: `${dialogPosition.top}px`, position: 'fixed' } : undefined}
       >
         <header className="theme-manager-header" onMouseDown={handleHeaderMouseDown}>
           <h2 className="theme-manager-title">主题管理器</h2>
@@ -503,6 +534,8 @@ function ThemeManager({
                             cancelRenameEditor()
                           }
                         }}
+                        title="主题名称"
+                        aria-label="主题名称"
                         autoFocus
                       />
                       <span className="theme-manager-list-tags">
@@ -541,7 +574,6 @@ function ThemeManager({
               <div
                 ref={themeContextMenuRef}
                 className="theme-manager-context-menu"
-                style={{ left: `${themeContextMenu.left}px`, top: `${themeContextMenu.top}px` }}
                 onMouseDown={(event) => event.stopPropagation()}
               >
                 <button
@@ -715,13 +747,13 @@ function ThemeManager({
                       </div>
                       <div className="theme-manager-flow-row">
                         <span>主色</span>
-                        <input type="color" value={activeFlowLineMainColor} onChange={(event) => onFlowLineMainColorChange?.(event.target.value)} />
+                        <input type="color" value={activeFlowLineMainColor} title="流程线主色" aria-label="流程线主色" onChange={(event) => onFlowLineMainColorChange?.(event.target.value)} />
                         <span>色相步进</span>
-                        <input type="number" value={flowLineConfig.multi.depthHueStep} onChange={(event) => onFlowLineDepthStepChange?.('depthHueStep', Number(event.target.value))} disabled={flowLineConfig.mode !== 'multi'} />
+                        <input type="number" value={flowLineConfig.multi.depthHueStep} title="流程线色相步进" aria-label="流程线色相步进" onChange={(event) => onFlowLineDepthStepChange?.('depthHueStep', Number(event.target.value))} disabled={flowLineConfig.mode !== 'multi'} />
                         <span>饱和度步进</span>
-                        <input type="number" value={flowLineConfig.multi.depthSaturationStep} onChange={(event) => onFlowLineDepthStepChange?.('depthSaturationStep', Number(event.target.value))} disabled={flowLineConfig.mode !== 'multi'} />
+                        <input type="number" value={flowLineConfig.multi.depthSaturationStep} title="流程线饱和度步进" aria-label="流程线饱和度步进" onChange={(event) => onFlowLineDepthStepChange?.('depthSaturationStep', Number(event.target.value))} disabled={flowLineConfig.mode !== 'multi'} />
                         <span>亮度步进</span>
-                        <input type="number" value={flowLineConfig.multi.depthLightnessStep} onChange={(event) => onFlowLineDepthStepChange?.('depthLightnessStep', Number(event.target.value))} disabled={flowLineConfig.mode !== 'multi'} />
+                        <input type="number" value={flowLineConfig.multi.depthLightnessStep} title="流程线亮度步进" aria-label="流程线亮度步进" onChange={(event) => onFlowLineDepthStepChange?.('depthLightnessStep', Number(event.target.value))} disabled={flowLineConfig.mode !== 'multi'} />
                       </div>
                     </div>
                   )}
@@ -743,7 +775,7 @@ function ThemeManager({
                           className={`theme-manager-token-row${group.id === 'base' && TOOLBAR_ICON_TOKEN_KEYS.has(item.tokenKey) && preserveToolbarIconOriginalColors ? ' theme-manager-token-row-disabled' : ''}`}
                         >
                           <span className="theme-manager-token-label">{item.label}</span>
-                          <span className="theme-manager-preview-chip" style={{ backgroundColor: tokenValues[item.tokenKey] || '#000000' }} aria-hidden />
+                          <ThemePreviewChip color={tokenValues[item.tokenKey] || '#000000'} />
                           <input
                             type="color"
                             value={tokenValues[item.tokenKey] || '#000000'}

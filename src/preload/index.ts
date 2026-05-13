@@ -3,7 +3,7 @@ import { normalizeRuntimePlatform } from '../shared/platform'
 import { THEME_CONFIG_VERSION } from '../shared/theme'
 import type { IDESettings } from '../shared/settings'
 import type { AIChatRequest, AIChatResult, AIChatWithToolsRequest, AIChatWithToolsResult, AIEditRequest, AIEditResult } from '../shared/ai'
-import type { EProjectImportRequest, EProjectImportResult, OpenProjectSelectionResult } from '../shared/eprojectImport'
+import type { EProjectImportRequest, EProjectImportResult, OpenProjectSelectionResult, OpenWorkspaceFolderSelectionResult } from '../shared/eprojectImport'
 import type {
   SaveAsCustomThemeRequest,
   SaveAsCustomThemeResult,
@@ -46,8 +46,10 @@ const api = {
   },
   // 文件操作
   file: {
+    openDialog: () => ipcRenderer.invoke('file:openDialog') as Promise<string | null>,
+    saveDialog: (defaultPath?: string) => ipcRenderer.invoke('file:saveDialog', defaultPath) as Promise<string | null>,
     open: (path: string) => ipcRenderer.invoke('file:open', path),
-    save: (path: string, content: string) => ipcRenderer.invoke('file:save', path, content),
+    save: (path: string, content: string, encoding?: string) => ipcRenderer.invoke('file:save', path, content, encoding),
     readDir: (path: string) => ipcRenderer.invoke('file:readDir', path)
   },
   // 项目管理
@@ -57,6 +59,8 @@ const api = {
     create: (info: { name: string; path: string; type: string; platform: string }) =>
       ipcRenderer.invoke('project:create', info) as Promise<{ projectDir: string; eppPath: string }>,
     readFile: (filePath: string) => ipcRenderer.invoke('project:readFile', filePath) as Promise<string | null>,
+    readFileWithEncoding: (filePath: string, preferredEncoding?: string) =>
+      ipcRenderer.invoke('project:readFileWithEncoding', filePath, preferredEncoding) as Promise<{ content: string; encoding: string } | null>,
     parseEpp: (eppPath: string) => ipcRenderer.invoke('project:parseEpp', eppPath) as Promise<{
       projectName: string; outputType: string; platform: string;
       files: Array<{ type: string; fileName: string; flag: number }>;
@@ -66,6 +70,7 @@ const api = {
     saveOpenTabs: (projectDir: string, session: { openTabs: string[]; activeTabPath?: string }) => ipcRenderer.invoke('project:saveOpenTabs', projectDir, session),
     loadOpenTabs: (projectDir: string) => ipcRenderer.invoke('project:loadOpenTabs', projectDir) as Promise<{ openTabs: string[]; activeTabPath?: string }>,
     openEpp: () => ipcRenderer.invoke('project:openEpp') as Promise<OpenProjectSelectionResult>,
+    openWorkspaceFolder: () => ipcRenderer.invoke('project:openWorkspaceFolder') as Promise<OpenWorkspaceFolderSelectionResult>,
     importEFile: (request: EProjectImportRequest) => ipcRenderer.invoke('project:importEFile', request) as Promise<EProjectImportResult>,
     addFile: (projectDir: string, fileName: string, fileType: string, content: string) =>
       ipcRenderer.invoke('project:addFile', projectDir, fileName, fileType, content) as Promise<string>,

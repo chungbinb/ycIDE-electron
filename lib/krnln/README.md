@@ -7,9 +7,8 @@
 ## 目录约定
 
 - `*.ycmd.json`：命令契约与元数据清单。
-- `window-units.json`：窗口组件、属性、事件等 IDE 元数据。
+- `window-units.json`：窗口组件、属性、事件等 IDE 元数据，并承载编译协议（控件类名、样式、事件消息映射）。
 - `<库名>.library.json`：支持库标识信息，供支持库管理窗口显示作者、签名、主页等信息。
-- `*.protocol.json`：编译协议，描述控件类名、样式与事件映射。
 - `impl/windows.cpp`：Windows 平台实现。
 - `impl/linux.cpp`：Linux 平台实现。
 - `impl/macos.mm`：macOS 平台实现（Objective-C++）。
@@ -21,4 +20,5 @@
 - 编译器/主进程会扫描 `lib/<库名>/**/*.ycmd.json` 并校验实现文件是否存在。
 - `window-units.json` 由 IDE 读取，用于工具箱、属性面板、事件栏。
 - `<库名>.library.json` 由 IDE 读取，用于展示支持库标识。第三方支持库可提供 `guid`、`description`、`author`、`qq`、`email`、`homePage`、`otherInfo` 字段。
-- `*.protocol.json` 由编译器读取，用于把组件事件映射到平台消息。
+- 编译器优先从 `window-units.json` 读取事件与控件映射；若第三方库仍提供 `*.protocol.json`，会自动回退兼容。
+- 在 `window-units.json` 中，映射信息应与组件绑定：控件类名/样式放在组件项的 `className/style`，事件消息映射放在该组件 `events[*].channel/code`，不再使用顶层 `controlBindings/eventBindings`。

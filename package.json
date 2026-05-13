@@ -25,10 +25,14 @@
     "test:ui:keyboard": "npm run build && playwright test tests/ui/keyboard-navigation.spec.js",
     "test:theme:gate": "node scripts/theme/run-theme-gate.mjs",
     "test:theme:full": "node scripts/theme/run-theme-full.mjs",
+    "krnln:mapping:generate": "node scripts/krnln/generate-command-mapping.mjs",
+    "krnln:mapping:check": "node scripts/krnln/generate-command-mapping.mjs",
     "libraries:package": "node scripts/package-libraries.mjs",
     "package:win": "electron-vite build && electron-builder --win",
+    "package:win:signed": "node scripts/security/package-win-signed.mjs",
     "package:mac": "electron-vite build && electron-builder --mac",
-    "package:linux": "electron-vite build && electron-builder --linux"
+    "package:linux": "electron-vite build && electron-builder --linux",
+    "security:av:report": "node scripts/security/collect-antivirus-report.mjs"
   },
   "build": {
     "appId": "com.ycide.app",

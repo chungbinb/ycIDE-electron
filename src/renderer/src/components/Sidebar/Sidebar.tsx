@@ -36,6 +36,43 @@ const TREE_TYPE_LABEL: Record<TreeNode['type'], string> = {
   resource: '资源',
 }
 
+const FILE_ICON_BY_EXT: Record<string, string> = {
+  c: 'class',
+  cc: 'class',
+  cpp: 'class',
+  cxx: 'class',
+  h: 'field',
+  hh: 'field',
+  hpp: 'field',
+  hxx: 'field',
+  ts: 'method',
+  js: 'method',
+  json: 'property',
+  xml: 'property',
+  yml: 'property',
+  yaml: 'property',
+  md: 'edit',
+  txt: 'edit',
+}
+
+function getWorkspaceFileIconName(node: TreeNode): string {
+  const fileName = (node.fileName || node.label || '').toLowerCase()
+  const ext = fileName.includes('.') ? fileName.split('.').pop() || '' : ''
+  if (ext && FILE_ICON_BY_EXT[ext]) return FILE_ICON_BY_EXT[ext]
+  return 'module'
+}
+
+function getTreeNodeIconName(node: TreeNode, expanded: boolean): string {
+  if (node.type === 'folder') {
+    return expanded ? TREE_ICON_MAP['folder-expanded'] : TREE_ICON_MAP.folder
+  }
+  // 普通文件夹工作区文件：按扩展名给占位语言图标。
+  if (node.id.startsWith('ws:file:')) {
+    return getWorkspaceFileIconName(node)
+  }
+  return TREE_ICON_MAP[node.type] || 'custom-control'
+}
+
 const setCssVars = (element: HTMLElement | null, vars: Record<string, string>): void => {
   if (!element) return
   for (const [name, value] of Object.entries(vars)) {
@@ -196,7 +233,7 @@ function TreeItem({
         onDoubleClick={() => {
           if (isFileNode && onOpenFile) {
             onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
-          } else if (!hasChildren && onOpenFile) {
+          } else if (!hasChildren && node.type !== 'folder' && onOpenFile) {
             onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
           }
         }}
@@ -253,7 +290,7 @@ function TreeItem({
             e.preventDefault()
             if (isFileNode && onOpenFile) onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
             else if (hasChildren) setExpanded(!expanded)
-            else if (onOpenFile) onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
+            else if (node.type !== 'folder' && onOpenFile) onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
           }
         }}
       >
@@ -261,7 +298,7 @@ function TreeItem({
           <span className={`tree-arrow ${expanded ? 'expanded' : ''}`} aria-hidden="true">▶</span>
         )}
         {!hasChildren && <span className="tree-arrow-placeholder" aria-hidden="true" />}
-        <Icon preserveOriginalColors name={(node.type === 'folder' ? (expanded ? TREE_ICON_MAP['folder-expanded'] : TREE_ICON_MAP['folder']) : TREE_ICON_MAP[node.type]) || 'custom-control'} size={16} />
+        <Icon preserveOriginalColors name={getTreeNodeIconName(node, expanded)} size={16} />
         <span className="tree-label">{node.label}</span>
         {shouldShowModifiedDot && <span className="tree-item-modified-dot" title="未保存更改" aria-label="未保存更改">●</span>}
       </div>

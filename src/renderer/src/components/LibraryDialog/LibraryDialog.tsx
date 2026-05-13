@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import './LibraryDialog.css'
 import type { Platform, StoreLibraryCard } from '../../../../shared/library-store'
 
@@ -25,6 +25,7 @@ interface LibraryDialogProps {
   open: boolean
   onClose: () => void
   targetPlatform?: Platform
+  detachedWindow?: boolean
 }
 
 const platformLabelMap: Record<string, string> = {
@@ -33,7 +34,7 @@ const platformLabelMap: Record<string, string> = {
   linux: 'Linux',
 }
 
-function LibraryDialog({ open, onClose, targetPlatform = 'windows' }: LibraryDialogProps): React.JSX.Element | null {
+function LibraryDialog({ open, onClose, targetPlatform = 'windows', detachedWindow = false }: LibraryDialogProps): React.JSX.Element | null {
   const [libs, setLibs] = useState<StoreLibraryCard[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
@@ -41,6 +42,27 @@ function LibraryDialog({ open, onClose, targetPlatform = 'windows' }: LibraryDia
   const [statusText, setStatusText] = useState('')
   const [detailText, setDetailText] = useState('')
   const [selectedLibId, setSelectedLibId] = useState<string>('')
+  const headerRef = useRef<HTMLDivElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    const header = headerRef.current
+    const closeButton = closeButtonRef.current
+    if (!header || !closeButton) return
+
+    if (detachedWindow) {
+      header.style.setProperty('-webkit-app-region', 'drag')
+      closeButton.style.setProperty('-webkit-app-region', 'no-drag')
+      return () => {
+        header.style.removeProperty('-webkit-app-region')
+        closeButton.style.removeProperty('-webkit-app-region')
+      }
+    }
+
+    header.style.removeProperty('-webkit-app-region')
+    closeButton.style.removeProperty('-webkit-app-region')
+    return undefined
+  }, [detachedWindow])
 
   const isCompatibleWithTargetPlatform = (lib: StoreLibraryCard): boolean => {
     if (lib.isCore) return true
@@ -217,11 +239,17 @@ function LibraryDialog({ open, onClose, targetPlatform = 'windows' }: LibraryDia
   if (!open) return null
 
   return (
-    <div className="lib-dialog-overlay" onClick={onClose}>
-      <div className="lib-dialog" onClick={e => e.stopPropagation()}>
-        <div className="lib-dialog-header">
-          <span className="lib-dialog-title">支持库管理</span>
-          <button className="lib-dialog-close" onClick={onClose}>×</button>
+    <div className={`lib-dialog-overlay${detachedWindow ? ' detached' : ''}`} onClick={detachedWindow ? undefined : onClose}>
+      <div
+        className={`lib-dialog${detachedWindow ? ' detached' : ''}`}
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="library-dialog-title"
+      >
+        <div ref={headerRef} className="lib-dialog-header">
+          <h2 id="library-dialog-title" className="lib-dialog-title">支持库管理</h2>
+          <button ref={closeButtonRef} className="lib-dialog-close" onClick={onClose} aria-label="关闭支持库管理窗口" title="关闭">×</button>
         </div>
 
         <div className="lib-dialog-toolbar">
@@ -270,9 +298,11 @@ function LibraryDialog({ open, onClose, targetPlatform = 'windows' }: LibraryDia
                     ))}
                   </div>
                   <div className="lib-card-states">
-                    <span className={`lib-state-badge ${lib.isDownloaded ? 'lib-state-downloaded' : 'lib-state-missing'}`}>
-                      {lib.isDownloaded ? '已下载' : '未下载'}
-                    </span>
+                    {!lib.isCore ? (
+                      <span className={`lib-state-badge ${lib.isDownloaded ? 'lib-state-downloaded' : 'lib-state-missing'}`}>
+                        {lib.isDownloaded ? '已下载' : '未下载'}
+                      </span>
+                    ) : null}
                     <span className={`lib-state-badge ${lib.isInstalled ? 'lib-state-installed' : 'lib-state-missing'}`}>
                       {lib.isInstalled ? '已安装' : '未安装'}
                     </span>

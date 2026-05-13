@@ -26,8 +26,9 @@ interface RecentOpenedItem {
 
 const BUILTIN_THEME_IDS = ['默认深色', '默认浅色']
 
-function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasOpenFile: boolean, themes: string[], currentTheme: string, recentOpened: RecentOpenedItem[]): MenuDef[] {
+function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasWorkspace: boolean, hasOpenFile: boolean, themes: string[], currentTheme: string, recentOpened: RecentOpenedItem[]): MenuDef[] {
   const np = !hasProject
+  const nw = !hasWorkspace
   const nf = !hasOpenFile
   const mod = getPrimaryModifierLabel(runtimePlatform)
   const redoShortcut = getRedoShortcutLabel(runtimePlatform)
@@ -62,16 +63,20 @@ function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasOp
     : [{ label: '(空)', disabled: true }]
   return [
     { label: '文件(F)', items: [
+      { label: '新建文件(F)', shortcut: `${mod}+N`, action: 'file:newFile' },
       { label: '新建项目(N)', shortcut: `${mod}+Shift+N`, action: 'file:newProject' },
       { label: '', divider: true },
+      { label: '打开文件(O)', shortcut: `${mod}+O`, action: 'file:openFile' },
       { label: '打开项目(P)', shortcut: `${mod}+Shift+O`, action: 'file:openProject' },
+      { label: '打开文件夹工作区(F)', shortcut: `${mod}+Alt+O`, action: 'file:openWorkspaceFolder' },
       { label: '最近打开', submenu: recentSubmenu },
       { label: '', divider: true },
       { label: '保存(S)', shortcut: `${mod}+S`, action: 'file:save', disabled: nf },
+      { label: '另存为(A)', shortcut: `${mod}+Alt+S`, action: 'file:saveAs', disabled: nf },
       { label: '保存全部(L)', shortcut: `${mod}+Shift+S`, action: 'file:saveAll', disabled: nf },
       { label: '', divider: true },
       { label: '关闭文件(C)', shortcut: `${mod}+W`, action: 'file:closeFile', disabled: nf },
-      { label: '关闭项目', action: 'file:closeProject', disabled: np },
+      { label: '关闭工作区', action: 'file:closeProject', disabled: nw },
       { label: '', divider: true },
       { label: '退出(X)', shortcut: quitShortcut, action: 'file:exit' },
     ]},
@@ -146,14 +151,15 @@ interface TitleBarProps {
   onWindowClose?: () => void
   runtimePlatform?: RuntimePlatform
   hasProject?: boolean
+  hasWorkspace?: boolean
   hasOpenFile?: boolean
   themes?: string[]
   currentTheme?: string
   recentOpened?: RecentOpenedItem[]
 }
 
-function TitleBar({ onMenuAction, onWindowClose, runtimePlatform = 'windows', hasProject = false, hasOpenFile = false, themes = [], currentTheme = '', recentOpened = [] }: TitleBarProps): React.JSX.Element {
-  const menus = buildMenus(runtimePlatform, hasProject, hasOpenFile, themes, currentTheme, recentOpened)
+function TitleBar({ onMenuAction, onWindowClose, runtimePlatform = 'windows', hasProject = false, hasWorkspace = false, hasOpenFile = false, themes = [], currentTheme = '', recentOpened = [] }: TitleBarProps): React.JSX.Element {
+  const menus = buildMenus(runtimePlatform, hasProject, hasWorkspace, hasOpenFile, themes, currentTheme, recentOpened)
   const isMacOS = isMacOSPlatform(runtimePlatform)
   const [openMenu, setOpenMenu] = useState<number | null>(null)
   const menuBarRef = useRef<HTMLDivElement>(null)
