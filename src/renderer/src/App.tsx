@@ -747,7 +747,7 @@ function App(): React.JSX.Element {
   const [docType, setDocType] = useState('')
   const [isCompiling, setIsCompiling] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
-  const [forceOutputTab, setForceOutputTab] = useState<'compile' | 'problems' | 'debug' | null>(null)
+  const [forceOutputTab, setForceOutputTab] = useState<'compile' | 'hint' | 'problems' | 'debug' | null>(null)
   const [breakpointsByFile, setBreakpointsByFile] = useState<Record<string, number[]>>({})
   const debugBreakAccumRef = useRef<DebugBreakAccumulator | null>(null)
   const openFileByPathRef = useRef<(filePath: string, targetLine?: number) => Promise<boolean>>(async () => false)
@@ -1401,6 +1401,24 @@ function App(): React.JSX.Element {
 
   const handleCommandClear = useCallback(() => {
     setCommandDetail(null)
+  }, [])
+
+  const handleLibraryHint = useCallback((hint: { title: string; lines: string[] }) => {
+    setHighlightParamIndex(undefined)
+    setCommandDetail({
+      name: hint.title,
+      englishName: '',
+      description: hint.lines.join('\n'),
+      returnType: '',
+      category: '',
+      libraryName: '',
+      customTitle: hint.title,
+      customLines: hint.lines,
+      params: [],
+    })
+    setShowOutput(true)
+    setForceOutputTab('hint')
+    window.setTimeout(() => setForceOutputTab(null), 100)
   }, [])
 
   const pushThemeNotice = useCallback((key: string, text: string, type: OutputMessage['type'] = 'warning', once = true) => {
@@ -3794,9 +3812,10 @@ function App(): React.JSX.Element {
       let action: string | null = null
 
       // 文件菜单
-      if (ctrl && !shift && code === 'KeyN') action = 'file:newFile'
+      if (ctrl && !e.altKey && !shift && code === 'KeyN') action = 'insert:sub'
+      else if (ctrl && e.altKey && !shift && code === 'KeyN') action = 'file:newFile'
       else if (ctrl && !shift && code === 'KeyO') action = 'file:openFile'
-      else if (ctrl && shift && code === 'KeyN') action = 'file:newProject'
+      else if (ctrl && e.altKey && shift && code === 'KeyN') action = 'file:newProject'
       else if (ctrl && shift && code === 'KeyO') action = 'file:openProject'
       else if (ctrl && e.altKey && !shift && code === 'KeyO') action = 'file:openWorkspaceFolder'
       else if (ctrl && shift && code === 'KeyS') action = 'file:saveAll'
@@ -5043,7 +5062,7 @@ function App(): React.JSX.Element {
           <div className="app-workspace">
             <div className={`app-side${activityBarSide === 'right' ? ' app-side-right' : ''}`}>
               {!sidebarCollapsed && (
-                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} openTabs={openEditorTabs} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onSaveProject={handleSaveSingleProject} onCloseProject={(projectDir) => { void handleCloseSingleProject(projectDir) }} onLibraryChange={handleLibraryChange} />
+                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} openTabs={openEditorTabs} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onSaveProject={handleSaveSingleProject} onCloseProject={(projectDir) => { void handleCloseSingleProject(projectDir) }} onLibraryChange={handleLibraryChange} onLibraryHint={handleLibraryHint} />
               )}
               <div className="app-main">
                 <Editor

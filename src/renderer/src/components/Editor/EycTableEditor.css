@@ -1847,3 +1847,62 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
 .highlight-flash > td {
   animation: problem-flash 0.5s ease 3 !important;
 }
+
+.eyc-editor-context-menu {
+  position: fixed;
+  left: var(--eyc-context-menu-left, 0px);
+  top: var(--eyc-context-menu-top, 0px);
+  z-index: 80;
+  min-width: 148px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border-color, #3c3c3c);
+  background: var(--menu-bg, var(--bg-secondary, #252526));
+  box-shadow: 0 8px 20px var(--menu-shadow, rgba(0, 0, 0, 0.45));
+}
+
+.eyc-editor-context-menu-item {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--menu-text, var(--text-primary, #d4d4d4));
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 13px;
+  line-height: 1.2;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 260px;
+}
+
+.eyc-editor-context-menu-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.eyc-editor-context-menu-item-shortcut {
+  flex: 0 0 auto;
+  color: var(--menu-text-secondary, color-mix(in srgb, var(--menu-text, var(--text-primary, #d4d4d4)) 70%, transparent));
+  text-align: right;
+  white-space: nowrap;
+}
+
+.eyc-editor-context-menu-item:hover:not(:disabled) {
+  background: var(--menu-hover, color-mix(in srgb, var(--accent, #4f8cff) 24%, transparent));
+}
+
+.eyc-editor-context-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.eyc-editor-context-menu-sep {
+  height: 1px;
+  margin: 2px 4px;
+  background: var(--menu-divider, color-mix(in srgb, var(--border-color, #3c3c3c) 72%, transparent));
+}

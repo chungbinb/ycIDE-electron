@@ -38,6 +38,7 @@ export interface LibraryCommand {
   description: string
   returnType: string
   category: string
+  supportedPlatforms?: string[]
   params: LibraryParam[]
   isHidden: boolean
   isMember: boolean
@@ -1018,6 +1019,7 @@ class LibraryManager {
   private mapYcmdCommand(cmd: YcmdResolvedCommand): LibraryCommand {
     return {
       ...cmd,
+      supportedPlatforms: Array.isArray(cmd.supportedPlatforms) ? [...cmd.supportedPlatforms] : [],
       params: (cmd.params || []).map(p => ({
         name: p.name,
         type: p.type,

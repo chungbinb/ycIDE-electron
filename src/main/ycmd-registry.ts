@@ -11,6 +11,8 @@ export interface YcmdCommandEntry {
   commandId: string
   displayName?: string
   summary?: string
+  category?: string
+  supportedPlatforms?: string[]
   params?: Array<{ name: string; type: string; optional?: boolean }>
   returnType?: string
   implementations?: {
@@ -64,6 +66,7 @@ export interface YcmdResolvedCommand {
   description: string
   returnType: string
   category: string
+  supportedPlatforms: string[]
   params: Array<{ name: string; type: string; optional: boolean; isVariable: boolean; isArray: boolean; description: string }>
   isHidden: boolean
   isMember: boolean
@@ -88,6 +91,74 @@ export interface YcmdRegistryScanResult {
 }
 
 export type YcmdTargetPlatform = 'windows' | 'macos' | 'linux' | 'harmony'
+
+const CORE_LIBRARY_FILE_NAME = 'krnln'
+
+function inferCoreCommandCategory(commandId: string, displayName: string): string {
+  const id = commandId.toLowerCase()
+  const name = displayName.trim()
+
+  const inIdList = (items: string[]): boolean => items.some(item => id === `krnln.${item}`)
+
+  if (inIdList([
+    'ife', 'if', 'switch', 'while', 'counter', 'for', 'continue', 'break', 'return', 'end',
+    'else', 'default', 'endife', 'endif', 'endswitch', 'wend', 'dowhile', 'loop', 'counterloop', 'next',
+  ])) return '流程控制'
+
+  if (inIdList([
+    'add', 'sub', 'mul', 'div', 'mod', 'abs', 'round', 'pow', 'sqr', 'sin', 'cos', 'tan', 'atn',
+    'idiv', 'neg', 'sgn', 'int', 'fix', 'log', 'exp', 'iscalcok', 'randomize', 'rnd',
+  ])) return '算术运算'
+
+  if (inIdList([
+    'equal', 'notequal', 'less', 'greater', 'lessorequal', 'greaterorequal', 'like', 'and', 'or', 'not',
+  ])) return '逻辑比较'
+
+  if (inIdList(['outputdebugtext', 'stop', 'assert', 'isdebugver'])) return '调试操作'
+
+  if (inIdList([
+    'getdisktotalspace', 'getdiskfreespace', 'getdisklabel', 'setdisklabel', 'chdrive', 'chdir', 'curdir',
+    'mkdir', 'rmdir', 'filecopy', 'filemove', 'kill', 'name', 'isfileexist', 'dir', 'filelen', 'getattr',
+    'setattr', 'gettempfilename', 'filedatetime', 'readfile', 'writefile', 'open', 'openmemfile', 'close',
+  ])) return '磁盘操作'
+
+  if (inIdList([
+    'binlen', 'tobin', 'binleft', 'binright', 'binmid', 'inbin', 'inbinrev', 'rpbin', 'rpsubbin', 'spacebin',
+    'bin', 'pbin', 'p2int', 'p2float', 'p2double', 'getintinsidebin', 'setintinsidebin', 'splitbin', 'getbinelement',
+  ])) return '字节集操作'
+
+  if (inIdList(['bnot', 'band', 'bor', 'bxor', 'shl', 'shr', 'makelong', 'makeword'])) return '位运算'
+
+  if (inIdList(['set', 'store'])) return '变量操作'
+
+  if (inIdList([
+    'redim', 'getaryelementcount', 'ubound', 'copyary', 'addelement', 'inselement', 'removeelement', 'removeall',
+    'sortary', 'zeroary',
+  ])) return '数组操作'
+
+  if (inIdList(['getcmdline', 'getrunpath', 'getrunfilename', 'getenv', 'putenv'])) return '环境存取'
+
+  if (inIdList([
+    'len', 'left', 'right', 'mid', 'chr', 'asc', 'instr', 'instrrev', 'ucase', 'lcase', 'qjcase', 'bjcase',
+    'str', 'ltrim', 'rtrim', 'trim', 'trimall', 'replacetext', 'rpsubtext', 'space', 'string', 'strcomp',
+    'split', 'pstr', 'strtoutf8', 'utf8tostr', 'strtoutf16', 'utf16tostr',
+  ])) return '文本操作'
+
+  if (inIdList([
+    'totime', 'timechg', 'timediff', 'getdaysofspecmonth', 'timetotext', 'timepart', 'year', 'month', 'day',
+    'weekday', 'hour', 'minute', 'second', 'getspectime', 'now', 'setsystime', 'getdatepart', 'gettimepart',
+  ])) return '时间操作'
+
+  if (inIdList([
+    'val', 'unum', 'numtormb', 'numtotext', 'gethextext', 'getocttext', 'tobyte', 'toshort', 'toint', 'tolong',
+    'tofloat', 'hex', 'binary', 'reverseintbytes',
+  ])) return '转换函数'
+
+  if (name.endsWith('结束')) return '流程控制'
+  if (name.includes('循环')) return '流程控制'
+  if (name.includes('随机') || name.includes('求')) return '算术运算'
+  return '其他'
+}
 
 function getLibRootPath(): string {
   const isDev = !app.isPackaged
@@ -282,6 +353,36 @@ function commandSupportsTargetPlatform(
   return !!implementations?.[targetPlatform]?.entry
 }
 
+function normalizePlatformName(name: string): YcmdTargetPlatform | null {
+  const lower = name.trim().toLowerCase()
+  if (!lower) return null
+  if (lower === 'windows' || lower === 'win') return 'windows'
+  if (lower === 'linux') return 'linux'
+  if (lower === 'macos' || lower === 'mac' || lower === 'unix') return 'macos'
+  if (lower === 'harmony') return 'harmony'
+  return null
+}
+
+function extractSupportedPlatforms(
+  command: YcmdCommandEntry,
+  manifest: YcmdManifest,
+): YcmdTargetPlatform[] {
+  const fromField = Array.isArray(command.supportedPlatforms)
+    ? command.supportedPlatforms
+        .map(normalizePlatformName)
+        .filter((item): item is YcmdTargetPlatform => !!item)
+    : []
+  if (fromField.length > 0) return Array.from(new Set(fromField))
+
+  const implementations = command.implementations || manifest.implementations
+  const platforms: YcmdTargetPlatform[] = []
+  if (implementations?.windows?.entry) platforms.push('windows')
+  if (implementations?.linux?.entry) platforms.push('linux')
+  if (implementations?.macos?.entry) platforms.push('macos')
+  if (implementations?.harmony?.entry) platforms.push('harmony')
+  return platforms
+}
+
 function mapCommandParams(params?: Array<{ name: string; type: string; optional?: boolean }>): Array<{ name: string; type: string; optional: boolean; isVariable: boolean; isArray: boolean; description: string }> {
   return (params || []).map(p => ({
     name: (p.name || '').trim() || '参数',
@@ -302,20 +403,30 @@ export function getYcmdCommands(customRootPath?: string, targetPlatform?: YcmdTa
       if (!item.valid || !item.manifest) continue
       const manifest = item.manifest
       if (Array.isArray(manifest.commands) && manifest.commands.length > 0) {
+        let currentSection = ''
         for (const command of manifest.commands) {
           if (!command || typeof command !== 'object') continue
-          if (isCommandSectionMarker(command)) continue
+          if (isCommandSectionMarker(command)) {
+            currentSection = command.__section.trim()
+            continue
+          }
           if (!commandSupportsTargetPlatform(command, manifest, targetPlatform)) continue
           const commandName = (command.displayName || command.commandId || '').trim()
           const commandId = (command.commandId || '').trim()
           if (!commandName || !commandId) continue
+
+          const inferredCategory = lib.name === CORE_LIBRARY_FILE_NAME
+            ? inferCoreCommandCategory(commandId, commandName)
+            : '其他'
+          const category = currentSection || (command.category || '').trim() || inferredCategory
 
           commands.push({
             name: commandName,
             englishName: commandId,
             description: (command.summary || '').trim(),
             returnType: (command.returnType || manifest.returnType || '').trim() || '整数型',
-            category: 'ycmd',
+            category,
+            supportedPlatforms: extractSupportedPlatforms(command, manifest),
             params: mapCommandParams(command.params),
             isHidden: false,
             isMember: false,
@@ -335,12 +446,17 @@ export function getYcmdCommands(customRootPath?: string, targetPlatform?: YcmdTa
       const commandId = (manifest.commandId || '').trim()
       if (!commandName || !commandId) continue
 
+      const inferredCategory = lib.name === CORE_LIBRARY_FILE_NAME
+        ? inferCoreCommandCategory(commandId, commandName)
+        : '其他'
+
       commands.push({
         name: commandName,
         englishName: commandId,
         description: (manifest.summary || '').trim(),
         returnType: (manifest.returnType || '').trim() || '整数型',
-        category: 'ycmd',
+        category: inferredCategory,
+        supportedPlatforms: [],
         params: mapCommandParams(manifest.params),
         isHidden: false,
         isMember: false,

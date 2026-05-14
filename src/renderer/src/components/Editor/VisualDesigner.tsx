@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import Icon, { UNIT_ICON_MAP } from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './VisualDesigner.css'
@@ -98,9 +98,39 @@ const HANDLES: HandleDir[] = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']
 // 网格吸附
 const GRID = 4
 const ALIGN_SNAP_TOLERANCE = 6
+const FORM_TITLEBAR_HEIGHT = 32
+const FORM_MIN_WIDTH = 180
+const FORM_MIN_HEIGHT = 80
+const MIN_ZOOM = 0.25
+const MAX_ZOOM = 10
+const ZOOM_STEP = 0.1
+const RULER_SIZE = 24
+const WORKSPACE_MARGIN = 640
 
 function snap(v: number): number {
   return Math.round(v / GRID) * GRID
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function computeWorkspaceSpan(contentSize: number, viewportSize: number): number {
+  return Math.max(contentSize + WORKSPACE_MARGIN * 2, viewportSize + WORKSPACE_MARGIN * 2)
+}
+
+function computeNiceIntegerStep(raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 1) return 1
+  const magnitude = 10 ** Math.floor(Math.log10(raw))
+  const normalized = raw / magnitude
+  if (normalized <= 1) return magnitude
+  if (normalized <= 2) return 2 * magnitude
+  if (normalized <= 5) return 5 * magnitude
+  return 10 * magnitude
+}
+
+function isPointWithinRect(x: number, y: number, rect: DOMRect): boolean {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
 }
 
 function setCssVars(element: HTMLElement | null, vars: Record<string, string>): void {
@@ -248,8 +278,20 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const [toolboxPos, setToolboxPos] = useState({ x: 80, y: 40 })
   const [toolboxSize, setToolboxSize] = useState({ w: 160, h: 400 })
   const [alignGuides, setAlignGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] })
+  const [zoom, setZoom] = useState(1)
+  const [isSpacePressed, setIsSpacePressed] = useState(false)
+  const [isPanningView, setIsPanningView] = useState(false)
   const formVisualColors = resolveFormVisualColors(form)
+  const canvasRegionRef = useRef<HTMLDivElement>(null)
+  const canvasAreaRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
+  const zoomRef = useRef(zoom)
+  const isSpacePressedRef = useRef(false)
+  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null)
+  const initializedCenterRef = useRef(false)
+  const viewStateHydratedRef = useRef(false)
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
+  const [scrollPos, setScrollPos] = useState({ left: 0, top: 0 })
   const [drawRect, setDrawRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const dragRef = useRef<{
     mode: 'move' | 'resize' | 'create'
@@ -273,6 +315,339 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const selectedControl = selectedId && selectedId !== '__form__'
     ? form.controls.find(c => c.id === selectedId) || null
     : null
+  const visualFormWidth = Math.max(form.width, FORM_MIN_WIDTH)
+  const visualFormHeight = Math.max(form.height, FORM_MIN_HEIGHT)
+  const viewStateStorageKey = useMemo(() => {
+    const rawId = (form.sourceFile || form.name || 'untitled-form').trim()
+    const safeId = rawId.replace(/[^\w.-]+/g, '_').toLowerCase()
+    return `ycide.visual-designer.view-state.${safeId}`
+  }, [form.name, form.sourceFile])
+  const scaledFormWidth = visualFormWidth * zoom
+  const scaledFormHeight = (visualFormHeight + FORM_TITLEBAR_HEIGHT) * zoom
+  const workspaceWidth = computeWorkspaceSpan(scaledFormWidth, viewportSize.width)
+  const workspaceHeight = computeWorkspaceSpan(scaledFormHeight, viewportSize.height)
+  const formOffsetLeft = (workspaceWidth - scaledFormWidth) / 2
+  const formOffsetTop = (workspaceHeight - scaledFormHeight) / 2
+  const rulerMinorStep = useMemo(() => computeNiceIntegerStep(12 / Math.max(zoom, 0.01)), [zoom])
+  const rulerMidStep = rulerMinorStep * 5
+  const rulerMajorStep = rulerMinorStep * 10
+
+  const rulerTicksX = useMemo(() => {
+    if (viewportSize.width <= 0) return [] as Array<{ id: string; pos: number; level: 'minor' | 'mid' | 'major'; label: string }>
+    const startUnit = (scrollPos.left - formOffsetLeft) / zoom
+    const endUnit = (scrollPos.left + viewportSize.width - formOffsetLeft) / zoom
+    const first = Math.floor(startUnit / rulerMinorStep) * rulerMinorStep - rulerMinorStep
+    const last = Math.ceil(endUnit / rulerMinorStep) * rulerMinorStep + rulerMinorStep
+    const ticks: Array<{ id: string; pos: number; level: 'minor' | 'mid' | 'major'; label: string }> = []
+    for (let unit = first; unit <= last; unit += rulerMinorStep) {
+      const pos = formOffsetLeft + unit * zoom - scrollPos.left
+      if (pos < -32 || pos > viewportSize.width + 32) continue
+      const level: 'minor' | 'mid' | 'major' = unit % rulerMajorStep === 0 ? 'major' : (unit % rulerMidStep === 0 ? 'mid' : 'minor')
+      ticks.push({ id: `x-${unit}`, pos, level, label: level === 'major' ? String(unit) : '' })
+    }
+    return ticks
+  }, [formOffsetLeft, rulerMajorStep, rulerMidStep, rulerMinorStep, scrollPos.left, viewportSize.width, zoom])
+
+  const rulerTicksY = useMemo(() => {
+    if (viewportSize.height <= 0) return [] as Array<{ id: string; pos: number; level: 'minor' | 'mid' | 'major'; label: string }>
+    const startUnit = (scrollPos.top - formOffsetTop) / zoom
+    const endUnit = (scrollPos.top + viewportSize.height - formOffsetTop) / zoom
+    const first = Math.floor(startUnit / rulerMinorStep) * rulerMinorStep - rulerMinorStep
+    const last = Math.ceil(endUnit / rulerMinorStep) * rulerMinorStep + rulerMinorStep
+    const ticks: Array<{ id: string; pos: number; level: 'minor' | 'mid' | 'major'; label: string }> = []
+    for (let unit = first; unit <= last; unit += rulerMinorStep) {
+      const pos = formOffsetTop + unit * zoom - scrollPos.top
+      if (pos < -32 || pos > viewportSize.height + 32) continue
+      const level: 'minor' | 'mid' | 'major' = unit % rulerMajorStep === 0 ? 'major' : (unit % rulerMidStep === 0 ? 'mid' : 'minor')
+      ticks.push({ id: `y-${unit}`, pos, level, label: level === 'major' ? String(unit) : '' })
+    }
+    return ticks
+  }, [formOffsetTop, rulerMajorStep, rulerMidStep, rulerMinorStep, scrollPos.top, viewportSize.height, zoom])
+
+  useEffect(() => {
+    zoomRef.current = zoom
+  }, [zoom])
+
+  useEffect(() => {
+    isSpacePressedRef.current = isSpacePressed
+  }, [isSpacePressed])
+
+  useEffect(() => {
+    initializedCenterRef.current = false
+    viewStateHydratedRef.current = false
+    pendingScrollRef.current = null
+
+    let restoredZoom = 1
+    let restoredScroll: { left: number; top: number } | null = null
+
+    try {
+      const raw = localStorage.getItem(viewStateStorageKey)
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          zoom?: number
+          scrollLeft?: number
+          scrollTop?: number
+        }
+        if (typeof parsed.zoom === 'number' && Number.isFinite(parsed.zoom)) {
+          restoredZoom = clamp(parsed.zoom, MIN_ZOOM, MAX_ZOOM)
+        }
+        if (
+          typeof parsed.scrollLeft === 'number'
+          && Number.isFinite(parsed.scrollLeft)
+          && typeof parsed.scrollTop === 'number'
+          && Number.isFinite(parsed.scrollTop)
+        ) {
+          restoredScroll = {
+            left: Math.max(0, parsed.scrollLeft),
+            top: Math.max(0, parsed.scrollTop),
+          }
+        }
+      }
+    } catch {
+      // Ignore corrupt local view-state payloads.
+    }
+
+    pendingScrollRef.current = restoredScroll
+    setZoom(restoredZoom)
+    setScrollPos({ left: 0, top: 0 })
+  }, [viewStateStorageKey])
+
+  useEffect(() => {
+    const isTypingTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false
+      const tag = target.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+      return target.isContentEditable
+    }
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.code !== 'Space') return
+      if (isTypingTarget(event.target)) return
+      event.preventDefault()
+      event.stopPropagation()
+      setIsSpacePressed(true)
+    }
+
+    const onKeyUp = (event: KeyboardEvent): void => {
+      if (event.code !== 'Space') return
+      if (!isTypingTarget(event.target)) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+      setIsSpacePressed(false)
+    }
+
+    const onWindowBlur = (): void => {
+      setIsSpacePressed(false)
+      setIsPanningView(false)
+    }
+
+    window.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('keyup', onKeyUp, true)
+    window.addEventListener('blur', onWindowBlur)
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('keyup', onKeyUp, true)
+      window.removeEventListener('blur', onWindowBlur)
+    }
+  }, [])
+
+  useEffect(() => {
+    const host = canvasAreaRef.current
+    if (!host) return
+
+    const updateSize = (): void => {
+      setViewportSize({ width: host.clientWidth, height: host.clientHeight })
+    }
+
+    updateSize()
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateSize)
+      return () => window.removeEventListener('resize', updateSize)
+    }
+
+    const observer = new ResizeObserver(() => updateSize())
+    observer.observe(host)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    const host = canvasAreaRef.current
+    if (!host) return
+    if (viewportSize.width <= 0 || viewportSize.height <= 0) return
+
+    const maxLeft = Math.max(0, workspaceWidth - host.clientWidth)
+    const maxTop = Math.max(0, workspaceHeight - host.clientHeight)
+
+    if (pendingScrollRef.current) {
+      const nextLeft = clamp(pendingScrollRef.current.left, 0, maxLeft)
+      const nextTop = clamp(pendingScrollRef.current.top, 0, maxTop)
+      host.scrollLeft = nextLeft
+      host.scrollTop = nextTop
+      setScrollPos({ left: nextLeft, top: nextTop })
+      pendingScrollRef.current = null
+      initializedCenterRef.current = true
+      viewStateHydratedRef.current = true
+      return
+    }
+
+    if (!initializedCenterRef.current) {
+      const centerLeft = (workspaceWidth - host.clientWidth) / 2
+      const centerTop = (workspaceHeight - host.clientHeight) / 2
+      host.scrollLeft = centerLeft
+      host.scrollTop = centerTop
+      setScrollPos({ left: centerLeft, top: centerTop })
+      initializedCenterRef.current = true
+      viewStateHydratedRef.current = true
+    }
+  }, [workspaceWidth, workspaceHeight, viewportSize.width, viewportSize.height])
+
+  useEffect(() => {
+    if (!viewStateHydratedRef.current) return
+    try {
+      localStorage.setItem(viewStateStorageKey, JSON.stringify({
+        zoom,
+        scrollLeft: scrollPos.left,
+        scrollTop: scrollPos.top,
+      }))
+    } catch {
+      // Ignore storage quota/security failures.
+    }
+  }, [scrollPos.left, scrollPos.top, viewStateStorageKey, zoom])
+
+  const getCanvasPoint = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
+    const canvas = canvasRef.current
+    if (!canvas) return { x: 0, y: 0 }
+    const rect = canvas.getBoundingClientRect()
+    const currentZoom = zoomRef.current || 1
+    return {
+      x: (clientX - rect.left) / currentZoom,
+      y: (clientY - rect.top) / currentZoom,
+    }
+  }, [])
+
+  const zoomTo = useCallback((nextZoom: number, anchorClientPoint?: { x: number; y: number }) => {
+    const host = canvasAreaRef.current
+    const currentZoom = zoomRef.current || 1
+    const targetZoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM)
+    if (!host || Math.abs(targetZoom - currentZoom) < 1e-6) return
+
+    const rect = host.getBoundingClientRect()
+    const hasAnchor = !!anchorClientPoint && isPointWithinRect(anchorClientPoint.x, anchorClientPoint.y, rect)
+    const anchorX = hasAnchor ? anchorClientPoint!.x : rect.left + rect.width / 2
+    const anchorY = hasAnchor ? anchorClientPoint!.y : rect.top + rect.height / 2
+    const viewportX = anchorX - rect.left
+    const viewportY = anchorY - rect.top
+
+    const oldScaledW = visualFormWidth * currentZoom
+    const oldScaledH = (visualFormHeight + FORM_TITLEBAR_HEIGHT) * currentZoom
+    const oldWorkspaceW = computeWorkspaceSpan(oldScaledW, host.clientWidth)
+    const oldWorkspaceH = computeWorkspaceSpan(oldScaledH, host.clientHeight)
+    const oldOffsetX = (oldWorkspaceW - oldScaledW) / 2
+    const oldOffsetY = (oldWorkspaceH - oldScaledH) / 2
+
+    const worldX = host.scrollLeft + viewportX
+    const worldY = host.scrollTop + viewportY
+    const formX = (worldX - oldOffsetX) / currentZoom
+    const formY = (worldY - oldOffsetY) / currentZoom
+
+    const newScaledW = visualFormWidth * targetZoom
+    const newScaledH = (visualFormHeight + FORM_TITLEBAR_HEIGHT) * targetZoom
+    const newWorkspaceW = computeWorkspaceSpan(newScaledW, host.clientWidth)
+    const newWorkspaceH = computeWorkspaceSpan(newScaledH, host.clientHeight)
+    const newOffsetX = (newWorkspaceW - newScaledW) / 2
+    const newOffsetY = (newWorkspaceH - newScaledH) / 2
+    const newWorldX = newOffsetX + formX * targetZoom
+    const newWorldY = newOffsetY + formY * targetZoom
+
+    pendingScrollRef.current = {
+      left: newWorldX - viewportX,
+      top: newWorldY - viewportY,
+    }
+
+    setZoom(targetZoom)
+  }, [visualFormWidth, visualFormHeight])
+
+  const stepZoom = useCallback((direction: 1 | -1, anchorClientPoint?: { x: number; y: number }) => {
+    const currentZoom = zoomRef.current || 1
+    zoomTo(currentZoom + direction * ZOOM_STEP, anchorClientPoint)
+  }, [zoomTo])
+
+  const handleCanvasScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const host = e.currentTarget
+    setScrollPos({ left: host.scrollLeft, top: host.scrollTop })
+  }, [])
+
+  const handleCanvasPanMouseDownCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    canvasRegionRef.current?.focus({ preventScroll: true })
+    const active = document.activeElement
+    if (active instanceof HTMLElement && active !== canvasRegionRef.current && active.tagName === 'BUTTON') {
+      active.blur()
+    }
+
+    if (e.button !== 0) return
+    if (!isSpacePressedRef.current) return
+    const host = canvasAreaRef.current
+    if (!host) return
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    const startX = e.clientX
+    const startY = e.clientY
+    const startLeft = host.scrollLeft
+    const startTop = host.scrollTop
+    setIsPanningView(true)
+
+    const handleMouseMove = (ev: MouseEvent): void => {
+      const dx = ev.clientX - startX
+      const dy = ev.clientY - startY
+      host.scrollLeft = startLeft - dx
+      host.scrollTop = startTop - dy
+      setScrollPos({ left: host.scrollLeft, top: host.scrollTop })
+    }
+
+    const handleMouseUp = (): void => {
+      setIsPanningView(false)
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [])
+
+  const handleCanvasAreaWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    const isZoomGesture = e.ctrlKey || e.metaKey
+    if (!isZoomGesture) return
+    e.preventDefault()
+    const direction = Math.sign(-e.deltaY)
+    if (direction > 0) stepZoom(1, { x: e.clientX, y: e.clientY })
+    else if (direction < 0) stepZoom(-1, { x: e.clientX, y: e.clientY })
+  }, [stepZoom])
+
+  const handleCanvasAreaKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.code === 'Space') {
+      e.preventDefault()
+      return
+    }
+    if (e.key === '+' || e.key === '=') {
+      e.preventDefault()
+      stepZoom(1)
+      return
+    }
+    if (e.key === '-' || e.key === '_') {
+      e.preventDefault()
+      stepZoom(-1)
+      return
+    }
+    if (e.key === '0') {
+      e.preventDefault()
+      setZoom(1)
+    }
+  }, [stepZoom])
 
   // 同步 lastSelectedId
   useEffect(() => {
@@ -414,12 +789,13 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   // 画布鼠标按下 — 开始创建控件或选中窗口
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return
-    const canvas = canvasRef.current!
-    const rect = canvas.getBoundingClientRect()
-    const bx = canvas.clientLeft
-    const by = canvas.clientTop
-    const startX = e.clientX - rect.left - bx
-    const startY = e.clientY - rect.top - by
+    if (isSpacePressedRef.current) {
+      e.preventDefault()
+      return
+    }
+    const start = getCanvasPoint(e.clientX, e.clientY)
+    const startX = start.x
+    const startY = start.y
 
     if (activeTool) {
       // 拖拽绘制控件：按住鼠标拖动定义大小
@@ -427,8 +803,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       setDrawRect({ x: snap(startX), y: snap(startY), w: 0, h: 0 })
 
       const handleMouseMove = (ev: MouseEvent): void => {
-        const mx = ev.clientX - rect.left - bx
-        const my = ev.clientY - rect.top - by
+        const p = getCanvasPoint(ev.clientX, ev.clientY)
+        const mx = p.x
+        const my = p.y
         const x1 = Math.min(startX, mx)
         const y1 = Math.min(startY, my)
         const x2 = Math.max(startX, mx)
@@ -439,8 +816,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       const handleMouseUp = (ev: MouseEvent): void => {
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
-        const mx = ev.clientX - rect.left - bx
-        const my = ev.clientY - rect.top - by
+        const p = getCanvasPoint(ev.clientX, ev.clientY)
+        const mx = p.x
+        const my = p.y
         const x1 = Math.min(startX, mx)
         const y1 = Math.min(startY, my)
         const drawW = snap(Math.abs(mx - startX))
@@ -461,7 +839,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       setSelectedId('__form__')
       setSelectedIds(new Set())
     }
-  }, [activeTool, addControl])
+  }, [activeTool, addControl, getCanvasPoint])
 
   // 窗口标题栏点击 — 选中窗口
   const handleFormTitleClick = useCallback((e: React.MouseEvent) => {
@@ -480,11 +858,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const origH = form.height
 
     const handleMouseMove = (ev: MouseEvent): void => {
-      const dx = ev.clientX - startX
-      const dy = ev.clientY - startY
+      const currentZoom = zoomRef.current || 1
+      const dx = (ev.clientX - startX) / currentZoom
+      const dy = (ev.clientY - startY) / currentZoom
       let w = origW, h = origH
-      if (handle.includes('e')) w = Math.max(80, origW + dx)
-      if (handle.includes('s')) h = Math.max(60, origH + dy)
+      if (handle.includes('e')) w = Math.max(FORM_MIN_WIDTH, origW + dx)
+      if (handle.includes('s')) h = Math.max(FORM_MIN_HEIGHT, origH + dy)
       onChangeRef.current({ ...formRef.current, width: snap(w), height: snap(h) })
     }
 
@@ -551,11 +930,6 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       setSelectedId(ctrl.id)
     }
 
-    const canvas = canvasRef.current!
-    const rect = canvas.getBoundingClientRect()
-    const bx = canvas.clientLeft
-    const by = canvas.clientTop
-
     if (isInMultiSelect && selectedIds.size >= 2) {
       // 多选拖拽：记录所有选中控件的初始位置
       const origPositions = new Map<string, { left: number; top: number }>()
@@ -571,12 +945,14 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       const groupWidth = maxRight - minLeft
       const groupHeight = maxBottom - minTop
       const refs = buildReferenceLines(form.controls, selectedIds, form.width, form.height)
-      const startX = e.clientX - rect.left - bx
-      const startY = e.clientY - rect.top - by
+      const start = getCanvasPoint(e.clientX, e.clientY)
+      const startX = start.x
+      const startY = start.y
 
       const handleMouseMove = (ev: MouseEvent): void => {
-        const mx = ev.clientX - rect.left - bx
-        const my = ev.clientY - rect.top - by
+        const p = getCanvasPoint(ev.clientX, ev.clientY)
+        const mx = p.x
+        const my = p.y
         let dx = snap(mx - startX)
         let dy = snap(my - startY)
 
@@ -626,8 +1002,8 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       dragRef.current = {
         mode: 'move',
         controlId: ctrl.id,
-        startX: e.clientX - rect.left - bx,
-        startY: e.clientY - rect.top - by,
+        startX: getCanvasPoint(e.clientX, e.clientY).x,
+        startY: getCanvasPoint(e.clientX, e.clientY).y,
         origLeft: ctrl.left,
         origTop: ctrl.top,
         origWidth: ctrl.width,
@@ -637,8 +1013,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       const handleMouseMove = (ev: MouseEvent): void => {
         const d = dragRef.current
         if (!d) return
-        const mx = ev.clientX - rect.left - bx
-        const my = ev.clientY - rect.top - by
+        const p = getCanvasPoint(ev.clientX, ev.clientY)
+        const mx = p.x
+        const my = p.y
         const dx = snap(mx - d.startX)
         const dy = snap(my - d.startY)
 
@@ -675,23 +1052,20 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
     }
-  }, [updateControl, selectedIds, selectedId, form.controls, form.width, form.height])
+  }, [updateControl, selectedIds, selectedId, form.controls, form.width, form.height, getCanvasPoint])
 
   // 句柄鼠标按下 — 开始缩放
   const handleResizeMouseDown = useCallback((e: React.MouseEvent, ctrl: DesignControl, handle: HandleDir) => {
     e.stopPropagation()
     if (e.button !== 0) return
 
-    const canvas = canvasRef.current!
-    const rect = canvas.getBoundingClientRect()
-    const bx = canvas.clientLeft
-    const by = canvas.clientTop
+    const start = getCanvasPoint(e.clientX, e.clientY)
     dragRef.current = {
       mode: 'resize',
       controlId: ctrl.id,
       handle,
-      startX: e.clientX - rect.left - bx,
-      startY: e.clientY - rect.top - by,
+      startX: start.x,
+      startY: start.y,
       origLeft: ctrl.left,
       origTop: ctrl.top,
       origWidth: ctrl.width,
@@ -701,8 +1075,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const handleMouseMove = (ev: MouseEvent): void => {
       const d = dragRef.current
       if (!d || !d.handle) return
-      const mx = ev.clientX - rect.left - bx
-      const my = ev.clientY - rect.top - by
+      const p = getCanvasPoint(ev.clientX, ev.clientY)
+      const mx = p.x
+      const my = p.y
       const dx = mx - d.startX
       const dy = my - d.startY
 
@@ -737,7 +1112,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     document.body.style.cursor = cursorMap[handle]
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-  }, [updateControl])
+  }, [updateControl, getCanvasPoint])
 
   // 渲染单个控件的预览外观
   const renderControlPreview = (ctrl: DesignControl): React.JSX.Element => {
@@ -942,7 +1317,64 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   return (
     <div className="vd">
       {/* 画布区域 */}
-      <div className="vd-canvas-area">
+      <div
+        className="vd-canvas-area"
+        ref={canvasRegionRef}
+        onKeyDown={handleCanvasAreaKeyDown}
+        tabIndex={0}
+        role="region"
+        aria-label="可视化设计器画布。按住Ctrl键后滚轮可按鼠标焦点缩放；按住空格并左键拖拽可平移画布；按加号和减号缩放，按0重置比例。"
+      >
+        <div className="vd-ruler-corner" aria-hidden="true" />
+        <div className="vd-ruler vd-ruler-top" aria-hidden="true">
+          {rulerTicksX.map(tick => (
+            <div
+              key={tick.id}
+              className={`vd-ruler-tick vd-ruler-tick-x ${tick.level}`}
+              ref={(element) => setCssVars(element, { '--vd-ruler-tick-pos': `${tick.pos}px` })}
+            >
+              {tick.level === 'major' && <span className="vd-ruler-label">{tick.label}</span>}
+            </div>
+          ))}
+        </div>
+        <div className="vd-ruler vd-ruler-left" aria-hidden="true">
+          {rulerTicksY.map(tick => (
+            <div
+              key={tick.id}
+              className={`vd-ruler-tick vd-ruler-tick-y ${tick.level}`}
+              ref={(element) => setCssVars(element, { '--vd-ruler-tick-pos': `${tick.pos}px` })}
+            >
+              {tick.level === 'major' && <span className="vd-ruler-label">{tick.label}</span>}
+            </div>
+          ))}
+        </div>
+
+        <div
+          className={`vd-canvas-scroll ${isSpacePressed ? 'vd-canvas-scroll-pan-ready' : ''} ${isPanningView ? 'vd-canvas-scroll-pan-active' : ''}`}
+          ref={canvasAreaRef}
+          onScroll={handleCanvasScroll}
+          onWheel={handleCanvasAreaWheel}
+          onMouseDownCapture={handleCanvasPanMouseDownCapture}
+        >
+          <div
+            className="vd-canvas-workspace"
+            ref={(element) => setCssVars(element, {
+              '--vd-workspace-width': `${workspaceWidth}px`,
+              '--vd-workspace-height': `${workspaceHeight}px`,
+            })}
+          >
+        <div className="vd-zoom-indicator" aria-live="polite">{Math.round(zoom * 100)}%</div>
+
+        <div
+          className="vd-form-zoom-shell"
+          ref={(element) => setCssVars(element, {
+            '--vd-zoom': `${zoom}`,
+            '--vd-shell-width': `${visualFormWidth * zoom}px`,
+            '--vd-shell-height': `${(visualFormHeight + FORM_TITLEBAR_HEIGHT) * zoom}px`,
+            '--vd-shell-left': `${formOffsetLeft}px`,
+            '--vd-shell-top': `${formOffsetTop}px`,
+          })}
+        >
 
         {/* 窗口外壳 */}
         <div
@@ -971,8 +1403,8 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             ref={(element) => {
               canvasRef.current = element
               setCssVars(element, {
-                '--vd-form-width': `${form.width}px`,
-                '--vd-form-height': `${form.height}px`,
+                '--vd-form-width': `${visualFormWidth}px`,
+                '--vd-form-height': `${visualFormHeight}px`,
               })
             }}
             onMouseDown={handleCanvasMouseDown}
@@ -1060,6 +1492,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               <div className="vd-handle vd-form-handle-se" onMouseDown={(e) => handleFormResizeMouseDown(e, 'se')} />
             </>
           )}
+        </div>
+        </div>
+          </div>
         </div>
       </div>
 

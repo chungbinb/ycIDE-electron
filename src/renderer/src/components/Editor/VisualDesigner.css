@@ -200,25 +200,174 @@
 /* 画布区域 */
 .vd-canvas-area {
   flex: 1;
-  overflow: auto;
-  display: flex;
-  justify-content: flex-start;
-  padding: 24px;
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg-primary);
+}
+
+.vd-canvas-area:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.vd-ruler-corner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 24px;
+  height: 24px;
+  border-right: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  z-index: 4;
+}
+
+.vd-ruler {
+  position: absolute;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  z-index: 3;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.vd-ruler-top {
+  left: 24px;
+  right: 0;
+  top: 0;
+  height: 24px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.vd-ruler-left {
+  left: 0;
+  top: 24px;
+  bottom: 0;
+  width: 24px;
+  border-right: 1px solid var(--border-color);
+}
+
+.vd-ruler-tick {
+  position: absolute;
+}
+
+.vd-ruler-tick-x {
+  left: var(--vd-ruler-tick-pos, 0px);
+  bottom: 0;
+  height: 6px;
+  width: 1px;
+  background: color-mix(in srgb, var(--text-primary) 28%, transparent);
+}
+
+.vd-ruler-tick-y {
+  top: var(--vd-ruler-tick-pos, 0px);
+  right: 0;
+  width: 6px;
+  height: 1px;
+  background: color-mix(in srgb, var(--text-primary) 28%, transparent);
+}
+
+.vd-ruler-tick.major {
+  background: color-mix(in srgb, var(--text-primary) 48%, transparent);
+}
+
+.vd-ruler-tick-x.mid {
+  height: 10px;
+}
+
+.vd-ruler-tick-x.major {
+  height: 14px;
+}
+
+.vd-ruler-tick-y.mid {
+  width: 10px;
+}
+
+.vd-ruler-tick-y.major {
+  width: 14px;
+}
+
+.vd-ruler-label {
+  position: absolute;
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1;
+}
+
+.vd-ruler-tick-x .vd-ruler-label {
+  left: 3px;
+  top: 1px;
+}
+
+.vd-ruler-tick-y .vd-ruler-label {
+  left: 2px;
+  top: 2px;
+  transform: rotate(-90deg);
+  transform-origin: left top;
+}
+
+.vd-canvas-scroll {
+  position: absolute;
+  left: 24px;
+  top: 24px;
+  right: 0;
+  bottom: 0;
+  overflow: scroll;
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--text-primary) 8%, transparent) 1px, transparent 1px),
     linear-gradient(color-mix(in srgb, var(--text-primary) 8%, transparent) 1px, transparent 1px);
   background-size: 16px 16px;
+}
+
+.vd-canvas-scroll.vd-canvas-scroll-pan-ready {
+  cursor: grab;
+}
+
+.vd-canvas-scroll.vd-canvas-scroll-pan-active {
+  cursor: grabbing;
+}
+
+.vd-canvas-workspace {
   position: relative;
-  min-height: 0;
-  min-width: 0;
+  width: var(--vd-workspace-width, 0px);
+  height: var(--vd-workspace-height, 0px);
+}
+
+.vd-zoom-indicator {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 5;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+  pointer-events: none;
+}
+
+.vd-form-zoom-shell {
+  position: absolute;
+  left: var(--vd-shell-left, 0px);
+  top: var(--vd-shell-top, 0px);
+  width: var(--vd-shell-width, auto);
+  height: var(--vd-shell-height, auto);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
 }
 
 /* 窗口外壳 */
 .vd-form-wrapper {
   display: flex;
   flex-direction: column;
+  transform: scale(var(--vd-zoom, 1));
+  transform-origin: top left;
   box-shadow: 0 2px 12px rgba(15, 23, 42, 0.2), 0 0 0 1px var(--vd-form-border, #9ca3af);
-  align-self: flex-start;
   position: relative;
   border-radius: 8px;
   overflow: visible;

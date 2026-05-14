@@ -63,8 +63,8 @@ function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasWo
     : [{ label: '(空)', disabled: true }]
   return [
     { label: '文件(F)', items: [
-      { label: '新建文件(F)', shortcut: `${mod}+N`, action: 'file:newFile' },
-      { label: '新建项目(N)', shortcut: `${mod}+Shift+N`, action: 'file:newProject' },
+      { label: '新建文件(F)', shortcut: `${mod}+Alt+N`, action: 'file:newFile' },
+      { label: '新建项目(N)', shortcut: `${mod}+Alt+Shift+N`, action: 'file:newProject' },
       { label: '', divider: true },
       { label: '打开文件(O)', shortcut: `${mod}+O`, action: 'file:openFile' },
       { label: '打开项目(P)', shortcut: `${mod}+Shift+O`, action: 'file:openProject' },
@@ -110,7 +110,7 @@ function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasWo
       { label: '', divider: true },
       { label: '类模块(L)', action: 'insert:classModule', disabled: np },
       { label: '程序集(M)', action: 'insert:module', disabled: np },
-      { label: '子程序(S)', action: 'insert:sub', disabled: np },
+      { label: '子程序(S)', shortcut: `${mod}+N`, action: 'insert:sub', disabled: np },
       { label: '', divider: true },
       { label: '窗口(W)', action: 'insert:window', disabled: np },
       { label: '资源(R)', action: 'insert:resource', disabled: np },

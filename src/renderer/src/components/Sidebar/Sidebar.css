@@ -258,8 +258,15 @@
 /* Panel & empty state */
 .sidebar-panel {
   height: 100%;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
   padding: var(--spacing-sm) 0;
+}
+
+.library-tree-wrap {
+  flex: 1;
+  min-height: 120px;
+  overflow: auto;
 }
 
 .sidebar-empty {

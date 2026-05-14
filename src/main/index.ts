@@ -1026,7 +1026,7 @@ function setupNativeMenu(): void {
         { type: 'separator' },
         actionItem('类模块', 'insert:classModule'),
         actionItem('程序集', 'insert:module'),
-        actionItem('子程序', 'insert:sub'),
+        actionItem('子程序', 'insert:sub', getActionAccelerator('insert:sub')),
         { type: 'separator' },
         actionItem('窗口', 'insert:window'),
         actionItem('资源', 'insert:resource'),

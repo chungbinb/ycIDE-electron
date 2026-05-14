@@ -353,6 +353,9 @@ const ROUTED_DECL_DEFAULTS: Record<RoutedDeclLanguage, { label: string; language
 
 type TabBarPosition = 'top' | 'bottom'
 type EycEditorMode = 'table' | 'text'
+type PendingSubNavigation =
+  | { kind: 'create-or-open'; subName: string; params: Array<{ name: string; dataType: string; isByRef: boolean }> }
+  | { kind: 'navigate'; subName: string; fallbackLine?: number }
 const EDITOR_TAB_BAR_POS_KEY = 'ycide.editor.tabbar.position'
 
 function isEycSourceLanguage(language?: string): boolean {
@@ -431,7 +434,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const [eycDiffEditedLines, setEycDiffEditedLines] = useState<Set<number>>(new Set())
   const [eycDiffDeletedAfterLines, setEycDiffDeletedAfterLines] = useState<Set<number>>(new Set())
   const [windowUnits, setWindowUnits] = useState<LibWindowUnit[]>([])
-  const pendingNavigateRef = useRef<{ subName: string; params: Array<{ name: string; dataType: string; isByRef: boolean }> } | null>(null)
+  const pendingNavigateRef = useRef<PendingSubNavigation | null>(null)
   const tabsRef = useRef<EditorTab[]>([])
   const activeTabIdRef = useRef<string | null>(null)
   const monacoThemeId = currentTheme === '默认浅色' ? 'ycide-light' : 'ycide-dark'
@@ -716,7 +719,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       const filtered = prev.filter(t => !isFileInProjectDir(t.filePath, projectDir))
       onOpenTabsChange?.(filtered)
       setEycFallbackTabs(prevFallback => {
-        const next: Record<string, boolean> = {}
+        const next: Record<string, true> = {}
         for (const [tabId, enabled] of Object.entries(prevFallback)) {
           const tab = filtered.find(item => item.id === tabId)
           if (!tab || !enabled) continue
@@ -1034,7 +1037,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       if (existingTab.id === activeTabId) {
         eycEditorRef.current?.navigateOrCreateSub(subName, params)
       } else {
-        pendingNavigateRef.current = { subName, params }
+        pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
         setActiveTabId(existingTab.id)
       }
     } else {
@@ -1049,7 +1052,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         onOpenTabsChange?.(merged)
         return merged
       })
-      pendingNavigateRef.current = { subName, params }
+      pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
       setActiveTabId(eycPath)
     }
   }, [tabs, activeTabId, buildEventSubName, onOpenTabsChange])
@@ -1385,14 +1388,34 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       eycEditorRef.current?.navigateToLine(line)
     },
     navigateToSubprogram: (subName: string, fallbackLine?: number) => {
-      eycEditorRef.current?.navigateToSubprogram(subName, fallbackLine)
+      const active = tabs.find(t => t.id === activeTabId)
+      const activeIsSource = !!active && isEycSourceLanguage(active.language)
+      const activeMode: EycEditorMode = active ? (eycEditorModeTabs[active.id] || 'table') : 'table'
+      const fallbackTextMode = !!(active && eycFallbackTabs[active.id])
+      const useTextMode = activeMode === 'text' || fallbackTextMode
+
+      if (activeIsSource && !useTextMode && eycEditorRef.current) {
+        eycEditorRef.current.navigateToSubprogram(subName, fallbackLine)
+        return
+      }
+
+      pendingNavigateRef.current = { kind: 'navigate', subName, fallbackLine }
+
+      if (active && activeIsSource && activeMode === 'text' && !fallbackTextMode) {
+        setEycEditorModeTabs(prev => {
+          if (!prev[active.id]) return prev
+          const next = { ...prev }
+          delete next[active.id]
+          return next
+        })
+      }
     },
     getVisibleLineForSourceLine: (line: number) => {
       return eycEditorRef.current?.getVisibleLineForSourceLine(line) ?? line
     },
     updateFormProperty,
     navigateToEventSub,
-  }), [saveCurrentFile, saveTabAs, saveAllFiles, saveProjectFiles, closeActiveFile, closeProjectTabs, clearAllTabs, tabs, activeTabId, onOpenTabsChange, syncSidebarByLanguage, updateFormProperty, navigateToEventSub, appendDiffDecorations, clearDiffDecorations, setEycDiffHighlightLines])
+  }), [saveCurrentFile, saveTabAs, saveAllFiles, saveProjectFiles, closeActiveFile, closeProjectTabs, clearAllTabs, tabs, activeTabId, onOpenTabsChange, syncSidebarByLanguage, updateFormProperty, navigateToEventSub, appendDiffDecorations, clearDiffDecorations, setEycDiffHighlightLines, eycEditorModeTabs, eycFallbackTabs])
 
   // 接收外部打开的项目文件
   useEffect(() => {
@@ -1869,7 +1892,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         syncProjectTreeAfterEventSubChange()
       } else {
         onSidebarTab?.('project')
-        pendingNavigateRef.current = { subName, params }
+        pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
         setActiveTabId(existingTab.id)
       }
     } else {
@@ -1886,7 +1909,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         return merged
       })
       onSidebarTab?.('project')
-      pendingNavigateRef.current = { subName, params }
+      pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
       setActiveTabId(eycPath)
     }
   }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, onSidebarTab, syncProjectTreeAfterEventSubChange])
@@ -1915,7 +1938,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         eycEditorRef.current?.navigateOrCreateSub(subName, params)
         syncProjectTreeAfterEventSubChange()
       } else {
-        pendingNavigateRef.current = { subName, params }
+        pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
         setActiveTabId(existingTab.id)
       }
     } else {
@@ -1930,7 +1953,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         onOpenTabsChange?.(merged)
         return merged
       })
-      pendingNavigateRef.current = { subName, params }
+      pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
       setActiveTabId(eycPath)
     }
   }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, syncProjectTreeAfterEventSubChange])
@@ -1940,18 +1963,50 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     if (!pendingNavigateRef.current) return
     const activeT = tabs.find(t => t.id === activeTabId)
     if (!activeT || activeT.language !== 'eyc') return
+
+    const tabMode: EycEditorMode = eycEditorModeTabs[activeT.id] || 'table'
+    const fallbackTextMode = !!eycFallbackTabs[activeT.id]
+    const useTextMode = tabMode === 'text' || fallbackTextMode
+
+    // 手动文本模式下先切回表格，再执行跳转，避免先在文本态产生视觉定位。
+    if (useTextMode) {
+      if (!fallbackTextMode) {
+        setEycEditorModeTabs(prev => {
+          if (!prev[activeT.id]) return prev
+          const next = { ...prev }
+          delete next[activeT.id]
+          return next
+        })
+      }
+      return
+    }
+
+    if (!eycEditorRef.current) return
     const pending = pendingNavigateRef.current
     pendingNavigateRef.current = null
     setTimeout(() => {
-      eycEditorRef.current?.navigateOrCreateSub(pending.subName, pending.params)
-      syncProjectTreeAfterEventSubChange()
+      if (!eycEditorRef.current) return
+      if (pending.kind === 'create-or-open') {
+        eycEditorRef.current.navigateOrCreateSub(pending.subName, pending.params)
+        syncProjectTreeAfterEventSubChange()
+        return
+      }
+      eycEditorRef.current.navigateToSubprogram(pending.subName, pending.fallbackLine)
     }, 100)
-  }, [activeTabId, tabs, syncProjectTreeAfterEventSubChange])
+  }, [activeTabId, tabs, eycEditorModeTabs, eycFallbackTabs, syncProjectTreeAfterEventSubChange])
 
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0] || null
   const activeTabEycMode: EycEditorMode = activeTab ? (eycEditorModeTabs[activeTab.id] || 'table') : 'table'
   const activeTabFallbackTextMode = !!(activeTab && eycFallbackTabs[activeTab.id])
-  const activeTabUseTextMode = activeTabEycMode === 'text' || activeTabFallbackTextMode
+  const activeTabForceTableForPendingNavigation = !!(
+    activeTab
+    && isEycSourceLanguage(activeTab.language)
+    && pendingNavigateRef.current
+    && activeTabEycMode === 'text'
+    && !activeTabFallbackTextMode
+  )
+  const activeTabUseTextMode = (activeTabEycMode === 'text' || activeTabFallbackTextMode)
+    && !activeTabForceTableForPendingNavigation
   const activeTabTextModeValue = useMemo(() => {
     if (!activeTab || !isEycSourceLanguage(activeTab.language)) return ''
     return eycToYiFormat(activeTab.value)

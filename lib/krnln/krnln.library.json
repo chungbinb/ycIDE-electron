@@ -1,6 +1,6 @@
 {
   "guid": "D09F2340818511D396F6AE4C17150413",
-  "description": "核心支持库，提供基础命令、窗口组件元数据与编译协议。",
+  "description": "系统核心支持库，命令说明与分类由帮助说明文件对齐生成。",
   "author": "ycIDE",
   "qq": "641548913",
   "email": "support@ycide.dev",

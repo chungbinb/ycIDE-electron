@@ -272,11 +272,50 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   // ===== 行选择状态 =====
   const [selectedLines, setSelectedLines] = useState<Set<number>>(new Set())
+  const [editorContextMenu, setEditorContextMenu] = useState<{ x: number; y: number; lineIndex: number | null } | null>(null)
+  const [contextMenuCanPaste, setContextMenuCanPaste] = useState(false)
   const dragAnchor = useRef<number | null>(null)  // 拖选起点行号
   const isDragging = useRef(false)
   const dragStartPos = useRef<{ x: number; y: number } | null>(null)
   const wasDragSelect = useRef(false)
   const pendingInputDragRef = useRef<{ lineIndex: number; x: number; y: number; allowRowDrag: boolean } | null>(null)
+
+  useEffect(() => {
+    if (!editorContextMenu) return
+    const close = (): void => setEditorContextMenu(null)
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') close()
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('contextmenu', close)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('contextmenu', close)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [editorContextMenu])
+
+  useEffect(() => {
+    if (!editorContextMenu) {
+      setContextMenuCanPaste(false)
+      return
+    }
+    let cancelled = false
+    setContextMenuCanPaste(false)
+    void navigator.clipboard.readText()
+      .then((text) => {
+        if (cancelled) return
+        setContextMenuCanPaste((text || '').length > 0)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setContextMenuCanPaste(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [editorContextMenu])
 
   // ===== 撤销/重做栈 =====
   const undoStack = useRef<string[]>([])
@@ -4790,6 +4829,298 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return true
   }, [currentText, onChange, pushUndo])
 
+  const handleWrapperContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const host = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-line-index]')
+    const lineRaw = host?.dataset.lineIndex
+    const lineIndex = lineRaw == null ? NaN : Number.parseInt(lineRaw, 10)
+    if (Number.isFinite(lineIndex) && lineIndex >= 0) {
+      if (!selectedLines.has(lineIndex)) {
+        setSelectedLines(new Set([lineIndex]))
+      }
+      dragAnchor.current = lineIndex
+      lastFocusedLine.current = lineIndex
+    }
+    focusWrapper()
+    const menuScale = Math.max(eycScale, 0.01)
+    setEditorContextMenu({
+      // 编辑器根节点使用 zoom 缩放；菜单坐标需做反向缩放补偿，保证贴合鼠标点。
+      x: Math.round(e.clientX / menuScale),
+      y: Math.round(e.clientY / menuScale),
+      lineIndex: Number.isFinite(lineIndex) && lineIndex >= 0 ? lineIndex : null,
+    })
+  }, [eycScale, focusWrapper, selectedLines])
+
+  const copySelectionToClipboard = useCallback((): boolean => {
+    if (selectedLines.size > 0) {
+      void navigator.clipboard.writeText(getSelectedSourceText())
+      return true
+    }
+    const selectedText = getMouseRangeSelectedSourceText()
+    if (!selectedText) return false
+    void navigator.clipboard.writeText(selectedText)
+    return true
+  }, [getMouseRangeSelectedSourceText, getSelectedSourceText, selectedLines])
+
+  const resolveContextLineIndex = useCallback((): number => {
+    if (editorContextMenu?.lineIndex !== null && editorContextMenu?.lineIndex !== undefined) {
+      return editorContextMenu.lineIndex
+    }
+    if (selectedLines.size > 0) {
+      return Math.min(...selectedLines)
+    }
+    return Math.max(lastFocusedLine.current, 0)
+  }, [editorContextMenu?.lineIndex, selectedLines])
+
+  const applyLineCommentState = useCallback((mode: 'block' | 'unblock') => {
+    const ls = prevRef.current.split('\n')
+    const targetLines = selectedLines.size > 0
+      ? [...selectedLines].sort((a, b) => a - b)
+      : [resolveContextLineIndex()]
+
+    let changed = false
+    for (const idx of targetLines) {
+      if (idx < 0 || idx >= ls.length) continue
+      const line = ls[idx] || ''
+      const indent = line.match(/^\s*/)?.[0] || ''
+      const body = line.slice(indent.length)
+
+      if (mode === 'block') {
+        if (!body || body.startsWith("'")) continue
+        ls[idx] = `${indent}' ${body}`
+        changed = true
+        continue
+      }
+
+      if (body.startsWith("' ")) {
+        ls[idx] = indent + body.slice(2)
+        changed = true
+      } else if (body.startsWith("'")) {
+        ls[idx] = indent + body.slice(1)
+        changed = true
+      }
+    }
+
+    if (!changed) {
+      setEditorContextMenu(null)
+      return
+    }
+    const nextText = ls.join('\n')
+    pushUndo(prevRef.current)
+    setCurrentText(nextText)
+    prevRef.current = nextText
+    onChange(nextText)
+    setEditorContextMenu(null)
+  }, [onChange, pushUndo, resolveContextLineIndex, selectedLines])
+
+  const pasteFromClipboardAtContext = useCallback(() => {
+    if (shouldUseNativeInputPaste(editCellRef.current)) return
+    void navigator.clipboard.readText().then(clipText => {
+      if (!clipText) return
+      const latestText = prevRef.current
+      const cursorLine = editCellRef.current?.lineIndex
+        ?? editorContextMenu?.lineIndex
+        ?? lastFocusedLine.current
+      const pasteResult = buildMultiLinePasteResult({
+        currentText: latestText,
+        clipText,
+        cursorLine,
+        sanitizePastedText: sanitizePastedTextForCurrent,
+        extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
+        extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+      })
+      if (!pasteResult) return
+      if (pasteResult.routedDeclarations.length > 0) {
+        onRouteDeclarationPaste?.(pasteResult.routedDeclarations)
+      }
+      pushUndo(latestText)
+      const nt = pasteResult.nextText
+      setCurrentText(nt)
+      prevRef.current = nt
+      onChange(nt)
+      const newSel = new Set<number>()
+      for (let i = 0; i < pasteResult.pastedLineCount; i++) newSel.add(pasteResult.insertAt + i)
+      setSelectedLines(newSel)
+      lastFocusedLine.current = pasteResult.insertAt + pasteResult.pastedLineCount - 1
+    })
+  }, [editorContextMenu?.lineIndex, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted, onChange, onRouteDeclarationPaste, pushUndo, sanitizePastedTextForCurrent, shouldUseNativeInputPaste])
+
+  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
+    if (action === 'newSubprogram') {
+      setEditorContextMenu(null)
+      ref && typeof ref !== 'function' && ref.current?.insertSubroutine?.()
+      return
+    }
+    if (action === 'undo') {
+      if (undoStack.current.length > 0) {
+        const prev = undoStack.current.pop()!
+        redoStack.current.push(prevRef.current)
+        setCurrentText(prev)
+        prevRef.current = prev
+        onChange(prev)
+      }
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'redo') {
+      if (redoStack.current.length > 0) {
+        const next = redoStack.current.pop()!
+        undoStack.current.push(prevRef.current)
+        setCurrentText(next)
+        prevRef.current = next
+        onChange(next)
+      }
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'copy') {
+      copySelectionToClipboard()
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'cut') {
+      if (selectedLines.size > 0) {
+        void navigator.clipboard.writeText(getSelectedSourceText())
+        deleteLineSelection(selectedLines)
+      }
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'paste') {
+      pasteFromClipboardAtContext()
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'delete') {
+      if (selectedLines.size > 0) {
+        deleteLineSelection(selectedLines)
+      } else {
+        const line = resolveContextLineIndex()
+        deleteLineSelection(new Set([line]))
+      }
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'insertLine') {
+      const line = resolveContextLineIndex()
+      const latestLines = prevRef.current.split('\n')
+      const insertAt = Math.min(Math.max(line + 1, 0), latestLines.length)
+      latestLines.splice(insertAt, 0, '')
+      const nextText = latestLines.join('\n')
+      pushUndo(prevRef.current)
+      setCurrentText(nextText)
+      prevRef.current = nextText
+      onChange(nextText)
+      lastFocusedLine.current = insertAt
+      setEditorContextMenu(null)
+      window.setTimeout(() => startEditLine(insertAt, undefined, undefined, undefined, true), 0)
+      return
+    }
+    if (action === 'compileLine') {
+      // 触发与快捷键一致的按键事件；如上层已绑定 Shift+Enter，将自动复用。
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }))
+      window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', shiftKey: true, bubbles: true }))
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'block') {
+      applyLineCommentState('block')
+      return
+    }
+    if (action === 'unblock') {
+      applyLineCommentState('unblock')
+      return
+    }
+    const ls = prevRef.current.split('\n')
+    const all = new Set<number>()
+    for (let i = 0; i < ls.length; i++) all.add(i)
+    setSelectedLines(all)
+    dragAnchor.current = 0
+    setEditorContextMenu(null)
+  }, [applyLineCommentState, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine])
+
+  const canUndoContextAction = undoStack.current.length > 0
+  const canRedoContextAction = redoStack.current.length > 0
+  const hasLineSelection = selectedLines.size > 0
+  const hasCopySelection = hasLineSelection || (getMouseRangeSelectedSourceText() || '').length > 0
+  const canCutContextAction = hasLineSelection
+
+  useEffect(() => {
+    if (!editorContextMenu) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.isComposing) return
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      const key = (event.key || '').toLowerCase()
+      if (key === 'n') {
+        event.preventDefault()
+        applyEditorContextAction('newSubprogram')
+        return
+      }
+      if (key === 'u') {
+        if (!canUndoContextAction) return
+        event.preventDefault()
+        applyEditorContextAction('undo')
+        return
+      }
+      if (key === 'y') {
+        if (!canRedoContextAction) return
+        event.preventDefault()
+        applyEditorContextAction('redo')
+        return
+      }
+      if (key === 'c') {
+        if (!hasCopySelection) return
+        event.preventDefault()
+        applyEditorContextAction('copy')
+        return
+      }
+      if (key === 't') {
+        if (!canCutContextAction) return
+        event.preventDefault()
+        applyEditorContextAction('cut')
+        return
+      }
+      if (key === 'p') {
+        if (!contextMenuCanPaste) return
+        event.preventDefault()
+        applyEditorContextAction('paste')
+        return
+      }
+      if (key === 'f') {
+        event.preventDefault()
+        applyEditorContextAction('selectAll')
+        return
+      }
+      if (key === 'e') {
+        event.preventDefault()
+        applyEditorContextAction('delete')
+        return
+      }
+      if (key === 'i') {
+        event.preventDefault()
+        applyEditorContextAction('insertLine')
+        return
+      }
+      if (key === 'k') {
+        event.preventDefault()
+        applyEditorContextAction('compileLine')
+        return
+      }
+      if (key === 'g') {
+        event.preventDefault()
+        applyEditorContextAction('block')
+        return
+      }
+      if (key === 'b') {
+        event.preventDefault()
+        applyEditorContextAction('unblock')
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [applyEditorContextAction, canCutContextAction, canRedoContextAction, canUndoContextAction, contextMenuCanPaste, editorContextMenu, hasCopySelection])
+
   const navigateToSubprogramInternal = useCallback((subName: string, fallbackLine?: number, preferredHeaderIndex?: number) => {
     const navSeq = ++subNavSeqRef.current
     const normalizedName = (subName || '').trim()
@@ -4863,19 +5194,42 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (cursorLineIndex < 0 && flashLineIndex >= 0) cursorLineIndex = flashLineIndex
     if (flashLineIndex < 0 || cursorLineIndex < 0) return
 
+    const shouldFlashOnSubTable = subHeaderLineIndex >= 0
     lastFocusedLine.current = flashLineIndex
     scrollToLineIndex(flashLineIndex, 'auto')
 
-    const flashAfterScrollSettled = (): void => {
+    const flashAfterScrollSettled = (attempt = 0): void => {
       if (navSeq !== subNavSeqRef.current) return
+      const wrapper = wrapperRef.current
+      if (!wrapper) return
+
+      // 子程序跳转仅允许闪烁在表格数据行；在“文本裁切过渡帧”中未就绪时短暂重试。
+      const tableFlashEl = wrapper.querySelector<HTMLElement>(`tr.eyc-data-row[data-line-index="${flashLineIndex}"]`)
+      const flashEl = shouldFlashOnSubTable
+        ? tableFlashEl
+        : (tableFlashEl ?? wrapper.querySelector<HTMLElement>(`[data-line-index="${flashLineIndex}"]`))
+
+      if (!flashEl) {
+        if (shouldFlashOnSubTable && attempt < 24) {
+          window.setTimeout(() => flashAfterScrollSettled(attempt + 1), 34)
+          return
+        }
+        // 目标行未稳定出现时宁可不闪，也不命中过渡态错误节点。
+        window.setTimeout(() => focusCursorAtLineStart(), 90)
+        return
+      }
+
       // 清理上一跳残留闪烁，避免视觉上出现“闪错行”。
-      wrapperRef.current?.querySelectorAll('.highlight-flash').forEach((node) => {
+      wrapper.querySelectorAll('.highlight-flash').forEach((node) => {
         node.classList.remove('highlight-flash')
       })
-      const flashEl = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${flashLineIndex}"]`)
-      if (!flashEl) return
       flashEl.classList.add('highlight-flash')
-      setTimeout(() => flashEl.classList.remove('highlight-flash'), 1500)
+      setTimeout(() => {
+        if (navSeq !== subNavSeqRef.current) return
+        flashEl.classList.remove('highlight-flash')
+      }, 1500)
+      // 先建立视觉定位，再进入输入编辑态，避免渲染重排把闪烁误投到光标行。
+      window.setTimeout(() => focusCursorAtLineStart(), 90)
     }
 
     // 等待滚动与布局收敛后再闪烁，避免“先在下方后瞬间居中”时闪烁错位。
@@ -4898,7 +5252,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }, 0)
     }
 
-    window.setTimeout(() => focusCursorAtLineStart(), 40)
+    // 聚焦编辑动作由 flashAfterScrollSettled 触发，确保闪烁先落在目标表格行。
   }, [applyTextChange, currentText, pushUndo, scrollToLineIndex, startEditLine])
 
   useImperativeHandle(ref, () => ({
@@ -4919,6 +5273,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       let num = 1
       while (existingNames.has('子程序' + num)) num++
       const newName = '子程序' + num
+
+      // 收集已有局部变量名，生成不重复的默认名称：局_变量N
+      const existingLocalVarNames = new Set<string>()
+      for (const ln of curLines) {
+        const t = ln.replace(/[\r\t]/g, '').trim()
+        if (!t.startsWith('.局部变量 ')) continue
+        const localName = (splitCSV(t.slice('.局部变量 '.length))[0] || '').trim()
+        if (localName) existingLocalVarNames.add(localName)
+      }
+      let localNum = 1
+      while (existingLocalVarNames.has('局_变量' + localNum)) localNum++
+      const newLocalVarName = '局_变量' + localNum
 
       let insertAt: number
 
@@ -4948,22 +5314,15 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
 
       const nl = [...curLines]
-      // 统一为“真实空行 + 子程序声明 + 真实空普通行”，避免出现无行号虚拟占位行。
-      nl.splice(insertAt, 0, '', '.子程序 ' + newName + ', , , ', '')
+      // 统一为“真实空行 + 子程序声明 + 默认局部变量 + 真实空普通行”。
+      nl.splice(insertAt, 0, '', '.子程序 ' + newName + ', , , ', '.局部变量 ' + newLocalVarName + ', 整数型', '')
       const nt = nl.join('\n')
       applyTextChange(nt)
 
       const newSubLineIndex = insertAt + 1
-      const firstCodeLineIndex = insertAt + 2
+      const firstCodeLineIndex = insertAt + 3
       lastFocusedLine.current = newSubLineIndex
-      window.setTimeout(() => {
-        scrollToLineIndex(newSubLineIndex, 'auto')
-        const el = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${newSubLineIndex}"]`)
-        if (el) {
-          el.classList.add('highlight-flash')
-          window.setTimeout(() => el.classList.remove('highlight-flash'), 1200)
-        }
-
+      const focusFirstCodeLine = (): void => {
         startEditLine(firstCodeLineIndex, undefined, undefined, undefined, true)
         window.setTimeout(() => {
           if (!inputRef.current) return
@@ -4971,7 +5330,38 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           inputRef.current.selectionStart = 0
           inputRef.current.selectionEnd = 0
         }, 0)
-      }, 40)
+      }
+
+      const flashNewSubAfterTableReady = (attempt = 0): void => {
+        const wrapper = wrapperRef.current
+        if (!wrapper) return
+        // 仅允许闪烁在表格数据行，避免文本过渡态节点误命中。
+        const tableFlashEl = wrapper.querySelector<HTMLElement>(`tr.eyc-data-row[data-line-index="${newSubLineIndex}"]`)
+        if (!tableFlashEl) {
+          if (attempt < 24) {
+            window.setTimeout(() => flashNewSubAfterTableReady(attempt + 1), 34)
+            return
+          }
+          window.setTimeout(() => focusFirstCodeLine(), 90)
+          return
+        }
+
+        wrapper.querySelectorAll('.highlight-flash').forEach((node) => {
+          node.classList.remove('highlight-flash')
+        })
+        tableFlashEl.classList.add('highlight-flash')
+        window.setTimeout(() => {
+          tableFlashEl.classList.remove('highlight-flash')
+        }, 1200)
+        window.setTimeout(() => focusFirstCodeLine(), 90)
+      }
+
+      scrollToLineIndex(newSubLineIndex, 'auto')
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          window.setTimeout(() => flashNewSubAfterTableReady(), 30)
+        })
+      })
     },
 
     insertLocalVariable: () => {
@@ -5098,10 +5488,25 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
       // 不存在：在文件末尾插入新子程序
       pushUndo(currentText)
+      const existingLocalVarNames = new Set<string>()
+      for (const ln of curLines) {
+        const t = ln.replace(/[\r\t]/g, '').trim()
+        if (!t.startsWith('.局部变量 ')) continue
+        const localName = (splitCSV(t.slice('.局部变量 '.length))[0] || '').trim()
+        if (localName) existingLocalVarNames.add(localName)
+      }
+      for (const p of params) {
+        if (p.name) existingLocalVarNames.add(p.name.trim())
+      }
+      let localNum = 1
+      while (existingLocalVarNames.has('局_变量' + localNum)) localNum++
+      const newLocalVarName = '局_变量' + localNum
+
       const insertLines: string[] = ['', '.子程序 ' + subName + ', , , ']
       for (const p of params) {
         insertLines.push('    .参数 ' + p.name + ', ' + (p.dataType || '整数型') + (p.isByRef ? ', 传址' : ''))
       }
+      insertLines.push('.局部变量 ' + newLocalVarName + ', 整数型')
       // 为新建子程序补一条真实空普通行，避免仅显示无行号的虚拟占位行。
       insertLines.push('')
       const nl = [...curLines, ...insertLines]
@@ -5110,7 +5515,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
       // 新子程序行位置：前置空行后为子程序声明。
       const newSubLineIndex = curLines.length + 1
-      const firstCodeLineIndex = curLines.length + 2 + params.length
+      const firstCodeLineIndex = curLines.length + 3 + params.length
       lastFocusedLine.current = newSubLineIndex
       setTimeout(() => {
         const el = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${newSubLineIndex}"]`)
@@ -5436,6 +5841,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         className="eyc-table-wrapper"
         ref={wrapperRef}
         onMouseDown={handleWrapperMouseDown}
+        onContextMenu={handleWrapperContextMenu}
         onCopy={handleWrapperCopy}
         onPaste={handleWrapperPaste}
         tabIndex={0}
@@ -6251,6 +6657,70 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               </div>
             )
           })()}
+        </div>
+      )}
+      {editorContextMenu && (
+        <div
+          className="eyc-editor-context-menu"
+          ref={(element) => setCssVars(element, {
+            '--eyc-context-menu-left': `${editorContextMenu.x}px`,
+            '--eyc-context-menu-top': `${editorContextMenu.y}px`,
+          })}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newSubprogram')}>
+            <span className="eyc-editor-context-menu-item-label">N.新子程序</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
+          </button>
+          <div className="eyc-editor-context-menu-sep" />
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('undo')} disabled={!canUndoContextAction}>
+            <span className="eyc-editor-context-menu-item-label">U.撤销</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+Z</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('redo')} disabled={!canRedoContextAction}>
+            <span className="eyc-editor-context-menu-item-label">Y.重做</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+Y</span>
+          </button>
+          <div className="eyc-editor-context-menu-sep" />
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('copy')} disabled={!hasCopySelection}>
+            <span className="eyc-editor-context-menu-item-label">C.复制</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+C</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('cut')} disabled={!canCutContextAction}>
+            <span className="eyc-editor-context-menu-item-label">T.剪切</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+X</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('paste')} disabled={!contextMenuCanPaste}>
+            <span className="eyc-editor-context-menu-item-label">P.粘贴</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+V</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('selectAll')}>
+            <span className="eyc-editor-context-menu-item-label">F.全选</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+A</span>
+          </button>
+          <div className="eyc-editor-context-menu-sep" />
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('delete')}>
+            <span className="eyc-editor-context-menu-item-label">E.删除行</span>
+            <span className="eyc-editor-context-menu-item-shortcut">F10</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('insertLine')}>
+            <span className="eyc-editor-context-menu-item-label">I.插入新行</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ins</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('compileLine')}>
+            <span className="eyc-editor-context-menu-item-label">K.编译当前行</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Shift+Enter</span>
+          </button>
+          <div className="eyc-editor-context-menu-sep" />
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('block')}>
+            <span className="eyc-editor-context-menu-item-label">G.屏蔽</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+K</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('unblock')}>
+            <span className="eyc-editor-context-menu-item-label">B.解除屏蔽</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+M</span>
+          </button>
         </div>
       )}
       {debugHover && (

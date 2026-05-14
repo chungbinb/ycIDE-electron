@@ -17,6 +17,8 @@ export interface CommandDetail {
   assemblyName?: string
   isEventSubroutine?: boolean
   eventDescription?: string
+  customTitle?: string
+  customLines?: string[]
   params: Array<{
     name: string
     type: string
@@ -542,6 +544,16 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
         <div id="output-panel-hint" className="output-content output-hint-content" role="tabpanel" aria-labelledby="output-tab-hint" tabIndex={0} onKeyDown={handlePanelSelectAllKeyDown}>
           {commandDetail ? (() => {
             const cd = commandDetail
+            if (Array.isArray(cd.customLines) && cd.customLines.length > 0) {
+              return (
+                <div className="cmd-detail">
+                  <div className="cmd-detail-call">{cd.customTitle || cd.name}</div>
+                  {cd.customLines.map((line, index) => (
+                    <div key={`custom-hint-${index}`} className="cmd-detail-desc">{line}</div>
+                  ))}
+                </div>
+              )
+            }
             const isSourceSubroutine = cd.category === '子程序' && cd.libraryName === '当前源码'
             if (isSourceSubroutine) {
               if (cd.isEventSubroutine && cd.eventDescription) {

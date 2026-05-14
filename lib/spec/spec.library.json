@@ -1,0 +1,9 @@
+{
+  "guid": "31F7E8F2457A4F53BFD48DB5DD7E67BF",
+  "description": "系统特殊功能支持库（开发期由外部 spec 源码离线导入）。",
+  "author": "ycIDE",
+  "qq": "-",
+  "email": "-",
+  "homePage": "https://ycide.dev",
+  "otherInfo": "运行时仅读取本目录清单，不依赖外部源码目录。"
+}
