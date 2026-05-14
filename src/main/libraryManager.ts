@@ -197,8 +197,10 @@ const DEFAULT_PROTOCOL_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [
   { name: '顶边', englishName: 'top', description: '控件顶边位置。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
   { name: '宽度', englishName: 'width', description: '控件宽度。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
   { name: '高度', englishName: 'height', description: '控件高度。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '标记', englishName: 'tag', description: '控件标记文本。', type: 0, typeName: '文本型', isReadOnly: false, pickOptions: [] },
   { name: '可视', englishName: 'visible', description: '是否可见。', type: 0, typeName: '逻辑型', isReadOnly: false, pickOptions: [] },
-  { name: '禁止', englishName: 'disabled', description: '是否禁用。', type: 0, typeName: '逻辑型', isReadOnly: false, pickOptions: [] },
+  { name: '禁止', englishName: 'disable', description: '是否禁用。', type: 0, typeName: '逻辑型', isReadOnly: false, pickOptions: [] },
+  { name: '鼠标指针', englishName: 'MousePointer', description: '鼠标指针类型。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
 ]
 
 const LIBRARY_INSTALL_STATE_VERSION = '1.0'

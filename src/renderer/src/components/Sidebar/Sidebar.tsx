@@ -1500,7 +1500,10 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
                 <tr className="prop-row"><th className="prop-name" scope="row">顶边</th><td className="prop-value">0</td></tr>
                 <tr className="prop-row"><th className="prop-name" scope="row">宽度</th><td className="prop-value"><EditableIntCell value={f.width} ariaLabel="宽度" onChange={v => onPropertyChange?.('form', null, '宽度', v)} /></td></tr>
                 <tr className="prop-row"><th className="prop-name" scope="row">高度</th><td className="prop-value"><EditableIntCell value={f.height} ariaLabel="高度" onChange={v => onPropertyChange?.('form', null, '高度', v)} /></td></tr>
-                <tr className="prop-row"><th className="prop-name" scope="row">可视</th><td className="prop-value">真</td></tr>
+                <tr className="prop-row"><th className="prop-name" scope="row">标记</th><td className="prop-value"><EditableTextCell value={String(f.properties?.['标记'] ?? '')} ariaLabel="标记" onChange={v => onPropertyChange?.('form', null, '标记', v)} /></td></tr>
+                <tr className="prop-row"><th className="prop-name" scope="row">可视</th><td className="prop-value"><EditableBoolCell value={Boolean(f.properties?.['可视'] ?? true)} ariaLabel="可视" onChange={v => onPropertyChange?.('form', null, '可视', v)} /></td></tr>
+                <tr className="prop-row"><th className="prop-name" scope="row">禁止</th><td className="prop-value"><EditableBoolCell value={Boolean(f.properties?.['禁止'] ?? false)} ariaLabel="禁止" onChange={v => onPropertyChange?.('form', null, '禁止', v)} /></td></tr>
+                <tr className="prop-row"><th className="prop-name" scope="row">鼠标指针</th><td className="prop-value"><EditableIntCell value={Number(f.properties?.['鼠标指针'] ?? 0)} ariaLabel="鼠标指针" onChange={v => onPropertyChange?.('form', null, '鼠标指针', v)} /></td></tr>
               </>
             )}
           </tbody>
@@ -1554,8 +1557,10 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
               <tr className="prop-row"><th className="prop-name" scope="row">顶边</th><td className="prop-value"><EditableIntCell value={control.top} ariaLabel="顶边" onChange={v => onPropertyChange?.('control', control.id, '顶边', v)} /></td></tr>
               <tr className="prop-row"><th className="prop-name" scope="row">宽度</th><td className="prop-value"><EditableIntCell value={control.width} ariaLabel="宽度" onChange={v => onPropertyChange?.('control', control.id, '宽度', v)} /></td></tr>
               <tr className="prop-row"><th className="prop-name" scope="row">高度</th><td className="prop-value"><EditableIntCell value={control.height} ariaLabel="高度" onChange={v => onPropertyChange?.('control', control.id, '高度', v)} /></td></tr>
+              <tr className="prop-row"><th className="prop-name" scope="row">标记</th><td className="prop-value"><EditableTextCell value={String(control.properties['标记'] ?? '')} ariaLabel="标记" onChange={v => onPropertyChange?.('control', control.id, '标记', v)} /></td></tr>
               <tr className="prop-row"><th className="prop-name" scope="row">可视</th><td className="prop-value"><EditableBoolCell value={control.visible} ariaLabel="可视" onChange={v => onPropertyChange?.('control', control.id, '可视', v)} /></td></tr>
               <tr className="prop-row"><th className="prop-name" scope="row">禁止</th><td className="prop-value"><EditableBoolCell value={!control.enabled} ariaLabel="禁止" onChange={v => onPropertyChange?.('control', control.id, '禁止', v)} /></td></tr>
+              <tr className="prop-row"><th className="prop-name" scope="row">鼠标指针</th><td className="prop-value"><EditableIntCell value={Number(control.properties['鼠标指针'] ?? 0)} ariaLabel="鼠标指针" onChange={v => onPropertyChange?.('control', control.id, '鼠标指针', v)} /></td></tr>
             </>
           )}
         </tbody>

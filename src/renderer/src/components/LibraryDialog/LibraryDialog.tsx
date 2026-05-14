@@ -236,6 +236,12 @@ function LibraryDialog({ open, onClose, targetPlatform = 'windows', detachedWind
     setStatusText('')
   }
 
+  const handleCardKeyDown = (event: React.KeyboardEvent<HTMLDivElement>, id: string): void => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    void showLibDetail(id)
+  }
+
   if (!open) return null
 
   return (
@@ -269,7 +275,15 @@ function LibraryDialog({ open, onClose, targetPlatform = 'windows', detachedWind
               {libs.map(lib => {
                 const targetPlatformDisabled = !isCompatibleWithTargetPlatform(lib)
                 return (
-                <div key={lib.id} className={`lib-card ${lib.isLoaded && !targetPlatformDisabled ? 'lib-card-loaded' : ''}`}>
+                <div
+                  key={lib.id}
+                  className={`lib-card ${lib.isLoaded && !targetPlatformDisabled ? 'lib-card-loaded' : ''} ${selectedLibId === lib.id ? 'lib-card-selected' : ''}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`查看支持库 ${lib.displayName || lib.id} 说明`}
+                  onClick={() => { void showLibDetail(lib.id) }}
+                  onKeyDown={(event) => handleCardKeyDown(event, lib.id)}
+                >
                   <div className="lib-card-header">
                     <input
                       type="checkbox"
@@ -283,7 +297,10 @@ function LibraryDialog({ open, onClose, targetPlatform = 'windows', detachedWind
                     <button
                       className={`lib-link ${selectedLibId === lib.id ? 'lib-link-active' : ''}`}
                       disabled={loading}
-                      onClick={() => showLibDetail(lib.id)}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        void showLibDetail(lib.id)
+                      }}
                     >
                       {lib.displayName || lib.id}{lib.isCore ? ' (核心)' : ''}
                     </button>
@@ -321,12 +338,26 @@ function LibraryDialog({ open, onClose, targetPlatform = 'windows', detachedWind
                   </div>
                   <div className="lib-card-actions">
                     {lib.packageUrl ? (
-                      <button className="lib-btn lib-btn-sm" onClick={() => handleInstall(lib.id)} disabled={loading || busyLibId === lib.id}>
+                      <button
+                        className="lib-btn lib-btn-sm"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          void handleInstall(lib.id)
+                        }}
+                        disabled={loading || busyLibId === lib.id}
+                      >
                         {busyLibId === lib.id ? '处理中' : lib.updateAvailable ? '更新' : lib.isInstalled ? '重新下载' : '下载'}
                       </button>
                     ) : null}
                     {lib.isInstalled && lib.source === 'installed' && !lib.isCore ? (
-                      <button className="lib-btn lib-btn-sm" onClick={() => handleRemoveInstalled(lib.id)} disabled={loading || busyLibId === lib.id}>
+                      <button
+                        className="lib-btn lib-btn-sm"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          void handleRemoveInstalled(lib.id)
+                        }}
+                        disabled={loading || busyLibId === lib.id}
+                      >
                         移除本地
                       </button>
                     ) : null}
@@ -337,13 +368,16 @@ function LibraryDialog({ open, onClose, targetPlatform = 'windows', detachedWind
           )}
         </div>
 
+        <div className="lib-dialog-status-line" role="status" aria-live="polite">
+          {statusText}
+        </div>
+
         <textarea
           className="lib-dialog-status"
-          value={statusText || detailText}
+          value={detailText}
           readOnly
           spellCheck={false}
-          aria-label="支持库状态与详情"
-          aria-live="polite"
+          aria-label="所选支持库详情"
         />
       </div>
     </div>
