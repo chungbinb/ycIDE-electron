@@ -1,8 +1,27 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import type { DesignControl, DesignForm, SelectionTarget, LibWindowUnit, LibUnitProperty, LibUnitEvent } from '../Editor/VisualDesigner'
-import Icon, { UNIT_ICON_MAP } from '../Icon/Icon'
+import Icon, { resolveUnitIconName } from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './Sidebar.css'
+
+const MOUSE_POINTER_PICK_OPTIONS = [
+  '0.默认型',
+  '1.标准箭头型',
+  '2.十字型',
+  '3.文本编辑型',
+  '4.沙漏型',
+  '5.箭头问号型',
+  '6.箭头及沙漏型',
+  '7.禁止符型',
+  '8.四向箭头型',
+  '9.北向箭头型',
+  '10.北<->南箭头型',
+  '11.东<->西箭头型',
+  '12.西北<->东南箭头型',
+  '13.东北<->西南箭头型',
+  '14.手型',
+  '15.自定义型',
+]
 
 type SidebarTab = 'project' | 'library' | 'property'
 type SidebarTabsPlacement = 'top' | 'bottom'
@@ -415,6 +434,7 @@ function buildCommandHint(
       type: string
       description?: string
       optional?: boolean
+      repeatable?: boolean
       isVariable?: boolean
       isArray?: boolean
     }>
@@ -429,6 +449,7 @@ function buildCommandHint(
         let text = ''
         if (param.optional) text += '［'
         text += `${param.type}${param.isArray ? '数组' : ''} ${param.name}`
+        if (param.repeatable) text += '...'
         if (param.optional) text += '］'
         return text
       }).join('，')
@@ -443,7 +464,7 @@ function buildCommandHint(
   commandParams.forEach((param, index) => {
     const englishType = TYPE_ENGLISH_MAP[param.type]
     const typeLabel = englishType ? `${param.type}（${englishType}）` : param.type
-    lines.push(`参数<${index + 1}>的名称为“${param.name}”，类型为“${typeLabel}”。${param.description || ''}`.trim())
+    lines.push(`参数<${index + 1}>的名称为“${param.name}”，类型为“${typeLabel}”${param.repeatable ? '，可重复追加' : ''}。${param.description || ''}`.trim())
   })
 
   lines.push('')
@@ -776,7 +797,7 @@ function LibraryPanel({ onHint }: { onHint?: (hint: LibraryHintInfo) => void }):
                               const unitItemId = getLibraryItemId('dt-unit', lib.name, unit.name)
                               const isUnitFocused = focusedLibraryItemId ? focusedLibraryItemId === unitItemId : visibleLibraryItemIds[0] === unitItemId
                               const hasUnitChildren = unit.properties.length > 0 || unit.events.length > 0
-                              const unitIcon = UNIT_ICON_MAP[unit.name] || 'custom-control'
+                              const unitIcon = resolveUnitIconName(unit.name, unit.iconFileName, unit.libraryName)
 
                               return (
                                 <li key={unit.name} className="tree-node">
@@ -1503,7 +1524,7 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
                 <tr className="prop-row"><th className="prop-name" scope="row">标记</th><td className="prop-value"><EditableTextCell value={String(f.properties?.['标记'] ?? '')} ariaLabel="标记" onChange={v => onPropertyChange?.('form', null, '标记', v)} /></td></tr>
                 <tr className="prop-row"><th className="prop-name" scope="row">可视</th><td className="prop-value"><EditableBoolCell value={Boolean(f.properties?.['可视'] ?? true)} ariaLabel="可视" onChange={v => onPropertyChange?.('form', null, '可视', v)} /></td></tr>
                 <tr className="prop-row"><th className="prop-name" scope="row">禁止</th><td className="prop-value"><EditableBoolCell value={Boolean(f.properties?.['禁止'] ?? false)} ariaLabel="禁止" onChange={v => onPropertyChange?.('form', null, '禁止', v)} /></td></tr>
-                <tr className="prop-row"><th className="prop-name" scope="row">鼠标指针</th><td className="prop-value"><EditableIntCell value={Number(f.properties?.['鼠标指针'] ?? 0)} ariaLabel="鼠标指针" onChange={v => onPropertyChange?.('form', null, '鼠标指针', v)} /></td></tr>
+                <tr className="prop-row"><th className="prop-name" scope="row">鼠标指针</th><td className="prop-value"><EditablePickCell value={Number(f.properties?.['鼠标指针'] ?? 0)} options={MOUSE_POINTER_PICK_OPTIONS} ariaLabel="鼠标指针" onChange={v => onPropertyChange?.('form', null, '鼠标指针', v)} /></td></tr>
               </>
             )}
           </tbody>
@@ -1560,7 +1581,7 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
               <tr className="prop-row"><th className="prop-name" scope="row">标记</th><td className="prop-value"><EditableTextCell value={String(control.properties['标记'] ?? '')} ariaLabel="标记" onChange={v => onPropertyChange?.('control', control.id, '标记', v)} /></td></tr>
               <tr className="prop-row"><th className="prop-name" scope="row">可视</th><td className="prop-value"><EditableBoolCell value={control.visible} ariaLabel="可视" onChange={v => onPropertyChange?.('control', control.id, '可视', v)} /></td></tr>
               <tr className="prop-row"><th className="prop-name" scope="row">禁止</th><td className="prop-value"><EditableBoolCell value={!control.enabled} ariaLabel="禁止" onChange={v => onPropertyChange?.('control', control.id, '禁止', v)} /></td></tr>
-              <tr className="prop-row"><th className="prop-name" scope="row">鼠标指针</th><td className="prop-value"><EditableIntCell value={Number(control.properties['鼠标指针'] ?? 0)} ariaLabel="鼠标指针" onChange={v => onPropertyChange?.('control', control.id, '鼠标指针', v)} /></td></tr>
+              <tr className="prop-row"><th className="prop-name" scope="row">鼠标指针</th><td className="prop-value"><EditablePickCell value={Number(control.properties['鼠标指针'] ?? 0)} options={MOUSE_POINTER_PICK_OPTIONS} ariaLabel="鼠标指针" onChange={v => onPropertyChange?.('control', control.id, '鼠标指针', v)} /></td></tr>
             </>
           )}
         </tbody>

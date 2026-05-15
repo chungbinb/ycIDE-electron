@@ -13,7 +13,7 @@ export interface YcmdCommandEntry {
   summary?: string
   category?: string
   supportedPlatforms?: string[]
-  params?: Array<{ name: string; type: string; optional?: boolean }>
+  params?: Array<{ name: string; type: string; optional?: boolean; repeatable?: boolean }>
   returnType?: string
   implementations?: {
     windows?: YcmdPlatformImplementation
@@ -36,7 +36,7 @@ export interface YcmdManifest {
   displayName?: string
   summary?: string
   library?: string
-  params?: Array<{ name: string; type: string; optional?: boolean }>
+  params?: Array<{ name: string; type: string; optional?: boolean; repeatable?: boolean }>
   returnType?: string
   commands?: Array<YcmdCommandEntry | YcmdCommandSectionMarker>
   implementations?: {
@@ -67,7 +67,7 @@ export interface YcmdResolvedCommand {
   returnType: string
   category: string
   supportedPlatforms: string[]
-  params: Array<{ name: string; type: string; optional: boolean; isVariable: boolean; isArray: boolean; description: string }>
+  params: Array<{ name: string; type: string; optional: boolean; repeatable?: boolean; isVariable: boolean; isArray: boolean; description: string }>
   isHidden: boolean
   isMember: boolean
   ownerTypeName: string
@@ -383,11 +383,12 @@ function extractSupportedPlatforms(
   return platforms
 }
 
-function mapCommandParams(params?: Array<{ name: string; type: string; optional?: boolean }>): Array<{ name: string; type: string; optional: boolean; isVariable: boolean; isArray: boolean; description: string }> {
+function mapCommandParams(params?: Array<{ name: string; type: string; optional?: boolean; repeatable?: boolean }>): Array<{ name: string; type: string; optional: boolean; repeatable?: boolean; isVariable: boolean; isArray: boolean; description: string }> {
   return (params || []).map(p => ({
     name: (p.name || '').trim() || '参数',
     type: (p.type || '').trim() || '整数型',
     optional: !!p.optional,
+    repeatable: !!p.repeatable,
     isVariable: false,
     isArray: false,
     description: '',

@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import './Toolbar.css'
 import Icon from '../Icon/Icon'
 import '../Icon/Icon.css'
@@ -8,6 +9,40 @@ import type { IconColorMode } from '../Icon/Icon'
 
 function ToolbarIcon({ name, colorMode }: { name: string; colorMode?: IconColorMode }): React.JSX.Element {
   return <Icon name={name} className="toolbar-icon-sized" colorMode={colorMode} />
+}
+
+interface ToolbarButtonProps extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> {
+  onAction?: () => void
+}
+
+function ToolbarButton({ onAction, onMouseDown, disabled, children, ...rest }: ToolbarButtonProps): React.JSX.Element {
+  const skipNextMouseClickRef = useRef(false)
+
+  return (
+    <button
+      {...rest}
+      disabled={disabled}
+      onMouseDown={(event) => {
+        onMouseDown?.(event)
+        if (event.defaultPrevented || disabled || event.button !== 0 || !onAction) return
+        // Mouse-down executes immediately so first click is not eaten by focus/context cleanup.
+        skipNextMouseClickRef.current = true
+        event.preventDefault()
+        onAction()
+      }}
+      onClick={(event) => {
+        if (!onAction || disabled) return
+        if (skipNextMouseClickRef.current && event.detail > 0) {
+          skipNextMouseClickRef.current = false
+          return
+        }
+        skipNextMouseClickRef.current = false
+        onAction()
+      }}
+    >
+      {children}
+    </button>
+  )
 }
 
 interface ToolbarProps {
@@ -89,26 +124,26 @@ function Toolbar({
   return (
     <div className="toolbar" role="toolbar" aria-label="工具栏">
       <div className="toolbar-group">
-        <button className="toolbar-btn" aria-label="新建文件" title={`新建文件 (${mod}+N)`} onClick={onNew}>
+        <ToolbarButton className="toolbar-btn" aria-label="新建文件" title={`新建文件 (${mod}+N)`} onAction={onNew}>
           <ToolbarIcon name="new-document" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="打开文件" title={`打开文件 (${mod}+O)`} onClick={onOpen}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="打开文件" title={`打开文件 (${mod}+O)`} onAction={onOpen}>
           <ToolbarIcon name="open-folder" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="保存" title={`保存 (${mod}+S)`} onClick={onSave}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="保存" title={`保存 (${mod}+S)`} onAction={onSave}>
           <ToolbarIcon name="save" colorMode={iconMode} />
-        </button>
+        </ToolbarButton>
       </div>
 
       <div className="toolbar-separator" aria-hidden="true" />
 
       <div className="toolbar-group">
-        <button className="toolbar-btn" aria-label="撤销" title={`撤销 (${mod}+Z)`} onClick={onUndo}>
+        <ToolbarButton className="toolbar-btn" aria-label="撤销" title={`撤销 (${mod}+Z)`} onAction={onUndo}>
           <ToolbarIcon name="undo" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="重做" title={`重做 (${redoShortcut})`} onClick={onRedo}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="重做" title={`重做 (${redoShortcut})`} onAction={onRedo}>
           <ToolbarIcon name="redo" colorMode={iconMode} />
-        </button>
+        </ToolbarButton>
       </div>
 
       <div className="toolbar-separator" aria-hidden="true" />
@@ -146,73 +181,73 @@ function Toolbar({
       </div>
 
       <div className="toolbar-group">
-        <button
+        <ToolbarButton
           className="toolbar-btn toolbar-btn-run"
           aria-label={isDebugPaused ? '继续运行' : '编译运行'}
           title={isDebugPaused ? '继续运行 (F5)' : '编译运行 (F5)'}
-          onClick={onCompileRun}
+          onAction={onCompileRun}
           disabled={!canStartOrContinue}
         >
           <ToolbarIcon name="run" colorMode={runIconMode} />
-        </button>
-        <button
+        </ToolbarButton>
+        <ToolbarButton
           className="toolbar-btn toolbar-btn-stop"
           aria-label="停止"
           title="停止 (Shift+F5)"
-          onClick={onStop}
+          onAction={onStop}
           disabled={!canStop}
         >
           <ToolbarIcon name="stop" colorMode={stopIconMode} />
-        </button>
+        </ToolbarButton>
       </div>
 
       <div className="toolbar-separator" aria-hidden="true" />
 
       <div className="toolbar-group">
-        <button className="toolbar-btn" aria-label="逐过程" title="逐过程 (F10)" disabled={!canStep} onClick={onDebugStepOver}>
+        <ToolbarButton className="toolbar-btn" aria-label="逐过程" title="逐过程 (F10)" disabled={!canStep} onAction={onDebugStepOver}>
           <ToolbarIcon name="step-over" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="逐语句" title="逐语句 (F11)" disabled={!canStep} onClick={onDebugStepInto}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="逐语句" title="逐语句 (F11)" disabled={!canStep} onAction={onDebugStepInto}>
           <ToolbarIcon name="step-into" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="跳出" title="跳出 (Shift+F11)" disabled={!canStep} onClick={onDebugStepOut}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="跳出" title="跳出 (Shift+F11)" disabled={!canStep} onAction={onDebugStepOut}>
           <ToolbarIcon name="step-out" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="运行到光标处" title={`运行到光标处 (${runToCursorShortcut})`} disabled={!canRunToCursor} onClick={onDebugRunToCursor}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="运行到光标处" title={`运行到光标处 (${runToCursorShortcut})`} disabled={!canRunToCursor} onAction={onDebugRunToCursor}>
           <ToolbarIcon name="run-to-cursor" colorMode={iconMode} />
-        </button>
+        </ToolbarButton>
       </div>
 
       <div className="toolbar-separator" aria-hidden="true" />
 
       <div className="toolbar-group">
-        <button className="toolbar-btn" aria-label="左对齐" title="左对齐" disabled={!hasControlSelected} onClick={() => onAlign?.('align-left')}>
+        <ToolbarButton className="toolbar-btn" aria-label="左对齐" title="左对齐" disabled={!hasControlSelected} onAction={() => onAlign?.('align-left')}>
           <ToolbarIcon name="align-left" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="右对齐" title="右对齐" disabled={!hasControlSelected} onClick={() => onAlign?.('align-right')}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="右对齐" title="右对齐" disabled={!hasControlSelected} onAction={() => onAlign?.('align-right')}>
           <ToolbarIcon name="align-right" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="顶端对齐" title="顶端对齐" disabled={!hasControlSelected} onClick={() => onAlign?.('align-top')}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="顶端对齐" title="顶端对齐" disabled={!hasControlSelected} onAction={() => onAlign?.('align-top')}>
           <ToolbarIcon name="align-top" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="底端对齐" title="底端对齐" disabled={!hasControlSelected} onClick={() => onAlign?.('align-bottom')}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="底端对齐" title="底端对齐" disabled={!hasControlSelected} onAction={() => onAlign?.('align-bottom')}>
           <ToolbarIcon name="align-bottom" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="水平居中" title="水平居中" disabled={!hasControlSelected} onClick={() => onAlign?.('center-h')}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="水平居中" title="水平居中" disabled={!hasControlSelected} onAction={() => onAlign?.('center-h')}>
           <ToolbarIcon name="center-h" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="垂直居中" title="垂直居中" disabled={!hasControlSelected} onClick={() => onAlign?.('center-v')}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="垂直居中" title="垂直居中" disabled={!hasControlSelected} onAction={() => onAlign?.('center-v')}>
           <ToolbarIcon name="center-v" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="相同宽度" title="相同宽度" disabled={!hasControlSelected} onClick={() => onAlign?.('same-width')}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="相同宽度" title="相同宽度" disabled={!hasControlSelected} onAction={() => onAlign?.('same-width')}>
           <ToolbarIcon name="same-width" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="相同高度" title="相同高度" disabled={!hasControlSelected} onClick={() => onAlign?.('same-height')}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="相同高度" title="相同高度" disabled={!hasControlSelected} onAction={() => onAlign?.('same-height')}>
           <ToolbarIcon name="same-height" colorMode={iconMode} />
-        </button>
-        <button className="toolbar-btn" aria-label="相同大小" title="相同大小" disabled={!hasControlSelected} onClick={() => onAlign?.('same-size')}>
+        </ToolbarButton>
+        <ToolbarButton className="toolbar-btn" aria-label="相同大小" title="相同大小" disabled={!hasControlSelected} onAction={() => onAlign?.('same-size')}>
           <ToolbarIcon name="same-size" colorMode={iconMode} />
-        </button>
+        </ToolbarButton>
       </div>
     </div>
   )

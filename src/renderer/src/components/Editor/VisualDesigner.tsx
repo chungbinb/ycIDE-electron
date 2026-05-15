@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import Icon, { UNIT_ICON_MAP } from '../Icon/Icon'
+import Icon, { resolveUnitIconName } from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './VisualDesigner.css'
 
@@ -29,6 +29,7 @@ export interface LibWindowUnit {
   englishName: string
   description: string
   libraryName: string
+  iconFileName?: string
   properties: LibUnitProperty[]
   events: LibUnitEvent[]
 }
@@ -106,6 +107,12 @@ const MAX_ZOOM = 10
 const ZOOM_STEP = 0.1
 const RULER_SIZE = 24
 const WORKSPACE_MARGIN = 640
+const TOOLBOX_DOCK_LIST_MIN_WIDTH = 130
+const TOOLBOX_ICON_MIN_WIDTH = 86
+const TOOLBOX_DOCK_MAX_WIDTH = 420
+const TOOLBOX_FLOAT_LIST_MIN_WIDTH = 130
+const TOOLBOX_FLOAT_MIN_HEIGHT = 220
+const TOOLBOX_STATE_STORAGE_KEY = 'ycide.visual-designer.toolbox-state.v1'
 
 function snap(v: number): number {
   return Math.round(v / GRID) * GRID
@@ -138,6 +145,19 @@ function setCssVars(element: HTMLElement | null, vars: Record<string, string>): 
   for (const [name, value] of Object.entries(vars)) {
     element.style.setProperty(name, value)
   }
+}
+
+function getToolboxMinWidth(viewMode: 'icon' | 'list'): number {
+  return viewMode === 'icon' ? TOOLBOX_ICON_MIN_WIDTH : TOOLBOX_DOCK_LIST_MIN_WIDTH
+}
+
+function computeToolboxVisualScale(width: number, viewMode: 'icon' | 'list'): number {
+  const base = viewMode === 'icon' ? 130 : 160
+  return clamp(width / base, 0.82, 1.4)
+}
+
+function computeToolboxListColumns(width: number): number {
+  return clamp(Math.floor(width / 130), 2, 6)
 }
 
 type AxisSnapResult = { pos: number; guide: number } | null
@@ -273,7 +293,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeTool, setActiveTool] = useState<string | null>(null)
   const [toolboxFloat, setToolboxFloat] = useState(false)
+  const [toolboxDockSide, setToolboxDockSide] = useState<'left' | 'right'>('right')
+  const [toolboxDockWidth, setToolboxDockWidth] = useState(160)
   const [toolboxViewMode, setToolboxViewMode] = useState<'icon' | 'list'>('list')
+  const [toolboxListMultiColumn, setToolboxListMultiColumn] = useState(false)
   const [toolboxSearch, setToolboxSearch] = useState('')
   const [toolboxPos, setToolboxPos] = useState({ x: 80, y: 40 })
   const [toolboxSize, setToolboxSize] = useState({ w: 160, h: 400 })
@@ -282,6 +305,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const [isSpacePressed, setIsSpacePressed] = useState(false)
   const [isPanningView, setIsPanningView] = useState(false)
   const formVisualColors = resolveFormVisualColors(form)
+  const designerRootRef = useRef<HTMLDivElement>(null)
   const canvasRegionRef = useRef<HTMLDivElement>(null)
   const canvasAreaRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
@@ -290,6 +314,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const pendingScrollRef = useRef<{ left: number; top: number } | null>(null)
   const initializedCenterRef = useRef(false)
   const viewStateHydratedRef = useRef(false)
+  const [toolboxStateReady, setToolboxStateReady] = useState(false)
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
   const [scrollPos, setScrollPos] = useState({ left: 0, top: 0 })
   const [drawRect, setDrawRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
@@ -897,6 +922,131 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     onFormDoubleClick?.(form, defaultEvent)
   }, [windowUnits, onFormDoubleClick, form])
 
+  useEffect(() => {
+    const minW = getToolboxMinWidth(toolboxViewMode)
+    if (!toolboxFloat && toolboxDockWidth < minW) {
+      setToolboxDockWidth(minW)
+    }
+    if (toolboxFloat && toolboxSize.w < minW) {
+      setToolboxSize(prev => ({ ...prev, w: minW }))
+    }
+  }, [toolboxDockWidth, toolboxFloat, toolboxSize.w, toolboxViewMode])
+
+  const clampFloatingToolboxRect = useCallback((x: number, y: number, w: number, h: number) => {
+    const hostRect = designerRootRef.current?.getBoundingClientRect()
+    if (!hostRect) return { x, y, w, h }
+
+    const minWidth = getToolboxMinWidth(toolboxViewMode)
+    const maxWidth = Math.max(minWidth, Math.floor(hostRect.width))
+    const maxHeight = Math.max(TOOLBOX_FLOAT_MIN_HEIGHT, Math.floor(hostRect.height))
+    const nextW = clamp(Math.round(w), minWidth, maxWidth)
+    const nextH = clamp(Math.round(h), TOOLBOX_FLOAT_MIN_HEIGHT, maxHeight)
+
+    const minX = hostRect.left
+    const maxX = Math.max(minX, hostRect.right - nextW)
+    const minY = hostRect.top
+    const maxY = Math.max(minY, hostRect.bottom - nextH)
+
+    return {
+      x: clamp(Math.round(x), minX, maxX),
+      y: clamp(Math.round(y), minY, maxY),
+      w: nextW,
+      h: nextH,
+    }
+  }, [toolboxViewMode])
+
+  const toggleToolboxFloat = useCallback(() => {
+    if (toolboxFloat) {
+      setToolboxFloat(false)
+      return
+    }
+    const hostRect = designerRootRef.current?.getBoundingClientRect()
+    const desiredX = hostRect
+      ? (toolboxDockSide === 'right' ? hostRect.right - toolboxSize.w - 8 : hostRect.left + 8)
+      : toolboxPos.x
+    const desiredY = hostRect ? hostRect.top + 40 : toolboxPos.y
+    const next = clampFloatingToolboxRect(desiredX, desiredY, toolboxSize.w, toolboxSize.h)
+    setToolboxPos({ x: next.x, y: next.y })
+    setToolboxSize({ w: next.w, h: next.h })
+    setToolboxFloat(true)
+  }, [clampFloatingToolboxRect, toolboxDockSide, toolboxFloat, toolboxPos.x, toolboxPos.y, toolboxSize.h, toolboxSize.w])
+
+  const handleDockResizeStart = useCallback((e: React.MouseEvent) => {
+    if (toolboxFloat) return
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startW = toolboxDockWidth
+    const side = toolboxDockSide
+    const minW = getToolboxMinWidth(toolboxViewMode)
+
+    const handleMouseMove = (ev: MouseEvent): void => {
+      const dx = ev.clientX - startX
+      const raw = side === 'right' ? startW - dx : startW + dx
+      setToolboxDockWidth(clamp(Math.round(raw), minW, TOOLBOX_DOCK_MAX_WIDTH))
+    }
+
+    const handleMouseUp = (): void => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+    }
+
+    document.body.style.cursor = 'ew-resize'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [toolboxDockSide, toolboxDockWidth, toolboxFloat, toolboxViewMode])
+
+  const handleFloatResizeStart = useCallback((e: React.MouseEvent) => {
+    if (!toolboxFloat) return
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startY = e.clientY
+    const startW = toolboxSize.w
+    const startH = toolboxSize.h
+    const startPos = toolboxPos
+
+    const handleMouseMove = (ev: MouseEvent): void => {
+      const dx = ev.clientX - startX
+      const dy = ev.clientY - startY
+      const next = clampFloatingToolboxRect(startPos.x, startPos.y, startW + dx, startH + dy)
+      setToolboxPos({ x: next.x, y: next.y })
+      setToolboxSize({ w: next.w, h: next.h })
+    }
+
+    const handleMouseUp = (): void => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+    }
+
+    document.body.style.cursor = 'nwse-resize'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [clampFloatingToolboxRect, toolboxFloat, toolboxPos, toolboxSize.h, toolboxSize.w])
+
+  useEffect(() => {
+    if (!toolboxFloat) return
+
+    const clampNow = (): void => {
+      const next = clampFloatingToolboxRect(toolboxPos.x, toolboxPos.y, toolboxSize.w, toolboxSize.h)
+      if (next.x !== toolboxPos.x || next.y !== toolboxPos.y) {
+        setToolboxPos({ x: next.x, y: next.y })
+      }
+      if (next.w !== toolboxSize.w || next.h !== toolboxSize.h) {
+        setToolboxSize({ w: next.w, h: next.h })
+      }
+    }
+
+    clampNow()
+
+    if (typeof ResizeObserver === 'undefined' || !designerRootRef.current) return
+    const observer = new ResizeObserver(() => clampNow())
+    observer.observe(designerRootRef.current)
+    return () => observer.disconnect()
+  }, [clampFloatingToolboxRect, toolboxFloat, toolboxPos.x, toolboxPos.y, toolboxSize.h, toolboxSize.w])
+
   // 控件鼠标按下 — 开始移动（支持 Shift 多选）
   const handleControlMouseDown = useCallback((e: React.MouseEvent, ctrl: DesignControl) => {
     e.stopPropagation()
@@ -1117,6 +1267,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   // 渲染单个控件的预览外观
   const renderControlPreview = (ctrl: DesignControl): React.JSX.Element => {
     const controlColors = resolveControlVisualColors(ctrl)
+    const unitInfo = windowUnits.find(u => u.name === ctrl.type)
 
     switch (ctrl.type) {
       case '按钮':
@@ -1135,7 +1286,16 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       case '编辑框':
       case '超级编辑框':
         return (
-          <div className="vd-preview vd-preview-input">{ctrl.text}</div>
+          <div
+            className="vd-preview vd-preview-input"
+            ref={(element) => setCssVars(element, {
+              '--vd-preview-bg': readColorProperty(ctrl.properties, ['背景颜色', '背景色', '背景']) || '#ffffff',
+              '--vd-preview-border': controlColors.border,
+              '--vd-preview-text': controlColors.text,
+            })}
+          >
+            {ctrl.text}
+          </div>
         )
       case '标签':
         return (
@@ -1212,7 +1372,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       case '图片组':
         return (
           <div className="vd-preview vd-preview-compact">
-            {UNIT_ICON_MAP[ctrl.type] ? <Icon name={UNIT_ICON_MAP[ctrl.type]} size={12} /> : '?'}
+            <Icon name={resolveUnitIconName(ctrl.type, unitInfo?.iconFileName, unitInfo?.libraryName)} size={12} />
           </div>
         )
       default:
@@ -1227,11 +1387,16 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const handleToolboxDragStart = useCallback((e: React.MouseEvent) => {
     if (!toolboxFloat) return
     e.preventDefault()
-    const startX = e.clientX - toolboxPos.x
-    const startY = e.clientY - toolboxPos.y
+    e.stopPropagation()
+    const startMouseX = e.clientX
+    const startMouseY = e.clientY
+    const startPos = toolboxPos
 
     const handleMouseMove = (ev: MouseEvent): void => {
-      setToolboxPos({ x: ev.clientX - startX, y: ev.clientY - startY })
+      const rawX = startPos.x + (ev.clientX - startMouseX)
+      const rawY = startPos.y + (ev.clientY - startMouseY)
+      const next = clampFloatingToolboxRect(rawX, rawY, toolboxSize.w, toolboxSize.h)
+      setToolboxPos({ x: next.x, y: next.y })
     }
     const handleMouseUp = (): void => {
       document.removeEventListener('mousemove', handleMouseMove)
@@ -1239,7 +1404,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     }
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-  }, [toolboxFloat, toolboxPos])
+  }, [clampFloatingToolboxRect, toolboxFloat, toolboxPos, toolboxSize.h, toolboxSize.w])
 
   // 过滤工具箱项（使用支持库的窗口组件）
   const toolboxItems = windowUnits.length > 0
@@ -1248,33 +1413,136 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const filteredTools = toolboxSearch
     ? toolboxItems.filter(u => u.name.includes(toolboxSearch) || u.englishName.toLowerCase().includes(toolboxSearch.toLowerCase()))
     : toolboxItems
+  const isListMultiColumn = toolboxViewMode === 'list' && toolboxListMultiColumn
+
+  useEffect(() => {
+    setToolboxStateReady(false)
+    try {
+      const raw = localStorage.getItem(TOOLBOX_STATE_STORAGE_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          float?: boolean
+          dockSide?: string
+          dockWidth?: number
+          viewMode?: string
+          listMultiColumn?: boolean
+          posX?: number
+          posY?: number
+          sizeW?: number
+          sizeH?: number
+        }
+        const parsedViewMode: 'icon' | 'list' = parsed.viewMode === 'icon' ? 'icon' : 'list'
+        const minW = getToolboxMinWidth(parsedViewMode)
+
+        if (typeof parsed.float === 'boolean') setToolboxFloat(parsed.float)
+        if (parsed.dockSide === 'left' || parsed.dockSide === 'right') {
+          setToolboxDockSide(parsed.dockSide)
+        }
+        if (typeof parsed.dockWidth === 'number' && Number.isFinite(parsed.dockWidth)) {
+          setToolboxDockWidth(clamp(Math.round(parsed.dockWidth), minW, TOOLBOX_DOCK_MAX_WIDTH))
+        }
+        setToolboxViewMode(parsedViewMode)
+        if (typeof parsed.listMultiColumn === 'boolean') {
+          setToolboxListMultiColumn(parsed.listMultiColumn)
+        }
+
+        if (
+          typeof parsed.posX === 'number' && Number.isFinite(parsed.posX)
+          && typeof parsed.posY === 'number' && Number.isFinite(parsed.posY)
+        ) {
+          setToolboxPos({ x: Math.round(parsed.posX), y: Math.round(parsed.posY) })
+        }
+        if (
+          typeof parsed.sizeW === 'number' && Number.isFinite(parsed.sizeW)
+          && typeof parsed.sizeH === 'number' && Number.isFinite(parsed.sizeH)
+        ) {
+          setToolboxSize({
+            w: Math.max(minW, Math.round(parsed.sizeW)),
+            h: Math.max(TOOLBOX_FLOAT_MIN_HEIGHT, Math.round(parsed.sizeH)),
+          })
+        }
+      }
+    } catch {
+      // Ignore invalid toolbox state payload.
+    }
+    setToolboxStateReady(true)
+  }, [])
+
+  useEffect(() => {
+    if (!toolboxStateReady) return
+    try {
+      localStorage.setItem(TOOLBOX_STATE_STORAGE_KEY, JSON.stringify({
+        float: toolboxFloat,
+        dockSide: toolboxDockSide,
+        dockWidth: toolboxDockWidth,
+        viewMode: toolboxViewMode,
+        listMultiColumn: toolboxListMultiColumn,
+        posX: toolboxPos.x,
+        posY: toolboxPos.y,
+        sizeW: toolboxSize.w,
+        sizeH: toolboxSize.h,
+      }))
+    } catch {
+      // Ignore storage quota/security failures.
+    }
+  }, [toolboxDockSide, toolboxDockWidth, toolboxFloat, toolboxListMultiColumn, toolboxPos.x, toolboxPos.y, toolboxSize.h, toolboxSize.w, toolboxStateReady, toolboxViewMode])
 
   // 工具箱渲染
   const renderToolbox = (): React.JSX.Element => (
     <div
-      className={`vd-toolbox ${toolboxFloat ? 'vd-toolbox-float' : ''} ${toolboxViewMode === 'icon' ? 'vd-toolbox-icon-mode' : ''}`}
+      className={`vd-toolbox ${toolboxFloat ? 'vd-toolbox-float' : `vd-toolbox-docked vd-toolbox-docked-${toolboxDockSide}`} ${toolboxViewMode === 'icon' ? 'vd-toolbox-icon-mode' : ''}`}
       ref={(element) => {
-        if (!toolboxFloat) return
+        if (!element) return
+        const widthForScale = toolboxFloat ? toolboxSize.w : toolboxDockWidth
+        const visualScale = computeToolboxVisualScale(widthForScale, toolboxViewMode)
+        const tileSize = Math.max(30, Math.round(34 * visualScale))
+        const listColumns = computeToolboxListColumns(widthForScale)
+        if (!toolboxFloat) {
+          setCssVars(element, {
+            '--vd-toolbox-dock-width': `${toolboxDockWidth}px`,
+            '--vd-toolbox-scale': `${visualScale}`,
+            '--vd-toolbox-tile-size': `${tileSize}px`,
+            '--vd-toolbox-list-columns': `${listColumns}`,
+          })
+          return
+        }
         setCssVars(element, {
           '--vd-toolbox-left': `${toolboxPos.x}px`,
           '--vd-toolbox-top': `${toolboxPos.y}px`,
           '--vd-toolbox-width': `${toolboxSize.w}px`,
           '--vd-toolbox-height': `${toolboxSize.h}px`,
+          '--vd-toolbox-scale': `${visualScale}`,
+          '--vd-toolbox-tile-size': `${tileSize}px`,
+          '--vd-toolbox-list-columns': `${listColumns}`,
         })
       }}
     >
       <div className="vd-toolbox-header" onMouseDown={handleToolboxDragStart}>
         <span className="vd-toolbox-title">控件工具箱</span>
         <div className="vd-toolbox-actions">
+          {!toolboxFloat && (
+            <button
+              className="vd-toolbox-btn"
+              title={toolboxDockSide === 'right' ? '停靠到左侧' : '停靠到右侧'}
+              onClick={() => setToolboxDockSide(prev => prev === 'right' ? 'left' : 'right')}
+            >{toolboxDockSide === 'right' ? '⇤' : '⇥'}</button>
+          )}
           <button
             className="vd-toolbox-btn"
             title={toolboxViewMode === 'list' ? '图标视图' : '列表视图'}
             onClick={() => setToolboxViewMode(toolboxViewMode === 'list' ? 'icon' : 'list')}
           >{toolboxViewMode === 'list' ? '▦' : '☰'}</button>
+          {toolboxViewMode === 'list' && (
+            <button
+              className="vd-toolbox-btn"
+              title={toolboxListMultiColumn ? '切换为列表单列' : '切换为列表多列'}
+              onClick={() => setToolboxListMultiColumn(prev => !prev)}
+            >{toolboxListMultiColumn ? '◫' : '☷'}</button>
+          )}
           <button
             className="vd-toolbox-btn"
             title={toolboxFloat ? '固定' : '浮动'}
-            onClick={() => setToolboxFloat(!toolboxFloat)}
+            onClick={toggleToolboxFloat}
           >{toolboxFloat ? '📌' : '🔓'}</button>
         </div>
       </div>
@@ -1287,7 +1555,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           className="vd-toolbox-search-input"
         />
       </div>
-      <div className="vd-toolbox-list">
+      <div className={`vd-toolbox-list ${isListMultiColumn ? 'vd-toolbox-list-multi' : ''}`}>
         <button
           className={`vd-tool-item ${activeTool === null ? 'active' : ''}`}
           onClick={() => setActiveTool(null)}
@@ -1303,7 +1571,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             onClick={() => setActiveTool(activeTool === unit.name ? null : unit.name)}
             title={`${unit.name} (${unit.libraryName})`}
           >
-            <span className="vd-tool-icon">{UNIT_ICON_MAP[unit.name] ? <Icon name={UNIT_ICON_MAP[unit.name]} size={16} /> : unit.name.charAt(0)}</span>
+            <span className="vd-tool-icon"><Icon name={resolveUnitIconName(unit.name, unit.iconFileName, unit.libraryName)} size={16} /></span>
             {toolboxViewMode === 'list' && <span className="vd-tool-label">{unit.name}</span>}
           </button>
         ))}
@@ -1311,11 +1579,25 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           <div className="vd-toolbox-empty">请先加载支持库</div>
         )}
       </div>
+      {!toolboxFloat && (
+        <div
+          className={`vd-toolbox-resizer vd-toolbox-resizer-docked vd-toolbox-resizer-${toolboxDockSide}`}
+          onMouseDown={handleDockResizeStart}
+          title="拖拽调整工具箱宽度"
+        />
+      )}
+      {toolboxFloat && (
+        <div
+          className="vd-toolbox-resizer vd-toolbox-resizer-float"
+          onMouseDown={handleFloatResizeStart}
+          title="拖拽调整工具箱大小"
+        />
+      )}
     </div>
   )
 
   return (
-    <div className="vd">
+    <div className="vd" ref={designerRootRef}>
       {/* 画布区域 */}
       <div
         className="vd-canvas-area"

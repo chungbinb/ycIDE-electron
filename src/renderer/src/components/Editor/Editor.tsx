@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo, useImperativeHandle,
 import MonacoEditor, { OnMount, OnChange, type Monaco } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import EycTableEditor, { type EycTableEditorHandle, type FileProblem } from './EycTableEditor'
+import { useEditorDiagnosticsProblems } from './editorDiagnostics'
 import VisualDesigner, { type DesignForm, type DesignControl, type SelectionTarget, type LibWindowUnit, type LibUnitEvent, type AlignAction } from './VisualDesigner'
 import { eycToInternalFormat, eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
 import { parseLines } from './eycBlocks'
@@ -325,6 +326,8 @@ function resolveEycTabLabel(filePath: string, content: string): string {
   const fileName = filePath.split(/[\\/]/).pop() || filePath
   return stripFileExtension(fileName)
 }
+
+const MONACO_DIAGNOSTICS_OWNER = 'ycide-eyc-diagnostics'
 
 interface ProjectDllParam {
   name: string
@@ -2045,6 +2048,49 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const activeWindowControlNames = useMemo(() => {
     return activeWindowControls.map(c => c.name)
   }, [activeWindowControls])
+
+  const textModeValidCommandNames = useMemo(() => new Set<string>(), [])
+  const textModeAllKnownVarNames = useMemo(() => new Set<string>(), [])
+  const textModeReservedNameSet = useMemo(() => new Set<string>(), [])
+  const textModeDiagnosticsProblems = useEditorDiagnosticsProblems({
+    text: activeTabTextModeValue,
+    hasCommandCatalog: false,
+    validCommandNames: textModeValidCommandNames,
+    allKnownVarNames: textModeAllKnownVarNames,
+    reservedNameSet: textModeReservedNameSet,
+  })
+
+  useEffect(() => {
+    const monaco = monacoRef.current
+    const ed = editorRef.current
+    if (!monaco || !ed) return
+    const model = ed.getModel()
+    if (!model) return
+
+    const isSourceTextMode = !!activeTab && isEycSourceLanguage(activeTab.language) && activeTabUseTextMode
+    if (!isSourceTextMode) {
+      monaco.editor.setModelMarkers(model, MONACO_DIAGNOSTICS_OWNER, [])
+      return
+    }
+
+    const markers: editor.IMarkerData[] = textModeDiagnosticsProblems.map(problem => {
+      const startLineNumber = Math.max(1, Math.floor(problem.line || 1))
+      const startColumn = Math.max(1, Math.floor(problem.column || 1))
+      return {
+        startLineNumber,
+        startColumn,
+        endLineNumber: startLineNumber,
+        endColumn: startColumn + 1,
+        message: problem.message,
+        severity: problem.severity === 'error'
+          ? monaco.MarkerSeverity.Error
+          : monaco.MarkerSeverity.Warning,
+      }
+    })
+
+    monaco.editor.setModelMarkers(model, MONACO_DIAGNOSTICS_OWNER, markers)
+    onProblemsChange?.(textModeDiagnosticsProblems as FileProblem[])
+  }, [activeTab, activeTabUseTextMode, onProblemsChange, textModeDiagnosticsProblems])
 
   const handleEditorMount: OnMount = useCallback((editorInstance, monaco) => {
     editorRef.current = editorInstance

@@ -1073,9 +1073,18 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   cursor: text;
 }
 .eyc-param-expand-secondary {
+  --eyc-param-expand-indent: 20px;
   position: relative;
-  padding-left: 20px;
+  padding-left: var(--eyc-param-expand-indent);
+  padding-top: 6px;
 }
+.eyc-param-expand-secondary-depth-0 { --eyc-param-expand-indent: 20px; }
+.eyc-param-expand-secondary-depth-1 { --eyc-param-expand-indent: 34px; }
+.eyc-param-expand-secondary-depth-2 { --eyc-param-expand-indent: 48px; }
+.eyc-param-expand-secondary-depth-3 { --eyc-param-expand-indent: 62px; }
+.eyc-param-expand-secondary-depth-4 { --eyc-param-expand-indent: 76px; }
+.eyc-param-expand-secondary-depth-5 { --eyc-param-expand-indent: 90px; }
+.eyc-param-expand-secondary-depth-6 { --eyc-param-expand-indent: 104px; }
 .eyc-param-expand-row-secondary {
   margin-left: 2px;
 }
@@ -1083,9 +1092,9 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   bottom: 50%;
 }
 .eyc-param-expand-arrow-secondary {
-  left: calc(var(--vline-offset, -8px) + 22px - 5px);
-  top: -6px;
-  transform: none;
+  left: calc(var(--eyc-param-expand-indent, 20px) + var(--vline-offset, -8px) + 2px);
+  top: 0;
+  transform: translateX(-50%);
 }
 /* 从※左边延伸到垂直虚线位置的水平虚线 */
 .eyc-param-expand-row::before {
@@ -1106,6 +1115,10 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   bottom: 1px;
   width: 1px;
   background-image: repeating-linear-gradient(to bottom, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 8px);
+}
+/* 有下级子树时，当前层竖线在本行横线处收口，避免从 L 形变成 ├ */
+.eyc-param-expand-row-parent::after {
+  bottom: 50%;
 }
 /* 最后一行（或唯一一行）垂直线只到中间 */
 .eyc-param-expand-row:last-child::after {
@@ -1337,6 +1350,12 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
 .eyc-line-selected .eyc-code-line,
 .eyc-line-selected .eyc-code-line:hover {
   background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+}
+
+.eyc-code-line.eyc-code-line-error .eyc-code-spans {
+  text-decoration: wavy underline var(--error, #f44747);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
 }
 
 .eyc-code-spans {

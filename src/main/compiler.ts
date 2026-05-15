@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSy
 import { execFile, ChildProcess } from 'child_process'
 import { app, BrowserWindow, shell } from 'electron'
 import { tmpdir } from 'os'
+import { createHash } from 'crypto'
 import { libraryManager } from './libraryManager'
 import type { LibraryCommand as LibCommand, LibraryConstant as LibConstant, LibraryWindowUnit as LibWindowUnit } from './libraryManager'
 import { generateDebugRuntimeCode } from './debug-runtime'
@@ -213,7 +214,38 @@ interface LoadedCompileProtocols {
   controls: NormalizedControlBinding[]
 }
 
+interface TranspileCacheEntry {
+  fingerprint: string
+  cFileName: string
+}
+
+interface TranspileCacheFile {
+  version: number
+  entries: Record<string, TranspileCacheEntry>
+}
+
+const TRANSPILE_CACHE_VERSION = 1
+
+interface BuildArtifactCacheFile {
+  version: number
+  fingerprint: string
+  outputBinary: string
+}
+
+const BUILD_ARTIFACT_CACHE_VERSION = 1
+
+interface ProjectCompileMetadata {
+  globals: GlobalVarDef[]
+  constants: ConstantDef[]
+  resources: ProjectResourceEntry[]
+  subprograms: SubprogramDef[]
+  dataTypes: ProjectDataTypeDef[]
+  dllCommands: ProjectDllCommandDef[]
+}
+
 let compileProtocolCache: LoadedCompileProtocols | null = null
+let compileProtocolCacheSignature = ''
+let projectCompileMetadataCache: { fingerprint: string; metadata: ProjectCompileMetadata } | null = null
 let activeProjectCustomTypeNames: Set<string> = new Set()
 
 // 正在运行的进程
@@ -970,13 +1002,48 @@ function parseControlBindingsFromProtocol(content: string, libName: string): Nor
 }
 
 function loadCompileProtocols(): LoadedCompileProtocols {
-  if (compileProtocolCache) return compileProtocolCache
+  const libs = libraryManager.getList().filter(l => l.loaded)
+  const signatureParts: string[] = []
+  for (const lib of libs) {
+    const dir = (() => {
+      try {
+        return statSync(lib.filePath).isDirectory() ? lib.filePath : dirname(lib.filePath)
+      } catch {
+        return dirname(lib.filePath)
+      }
+    })()
+    const candidates = [
+      join(dir, `${lib.name}.events.json`),
+      join(dir, 'window-units.json'),
+      join(dir, `${lib.name}.window-units.json`),
+      join(dir, `${lib.name}.protocol.json`),
+      join(dir, `${lib.name}.compile-protocol.json`),
+    ]
+    let matchedPath = ''
+    let matchedMtime = 0
+    let matchedSize = 0
+    for (const candidate of candidates) {
+      if (!existsSync(candidate)) continue
+      matchedPath = candidate
+      try {
+        const st = statSync(candidate)
+        matchedMtime = st.mtimeMs
+        matchedSize = st.size
+      } catch {
+        matchedMtime = 0
+        matchedSize = 0
+      }
+      break
+    }
+    signatureParts.push(`${lib.name}|${matchedPath}|${matchedMtime}|${matchedSize}`)
+  }
+  const signature = signatureParts.sort().join('||')
+
+  if (compileProtocolCache && compileProtocolCacheSignature === signature) return compileProtocolCache
 
   const events: NormalizedEventBinding[] = []
   const commands: NormalizedCommandBinding[] = []
   const controls: NormalizedControlBinding[] = []
-  const libs = libraryManager.getList().filter(l => l.loaded)
-
   for (const lib of libs) {
     const dir = (() => {
       try {
@@ -1017,6 +1084,7 @@ function loadCompileProtocols(): LoadedCompileProtocols {
   }
 
   compileProtocolCache = { events, commands, controls }
+  compileProtocolCacheSignature = signature
   return compileProtocolCache
 }
 
@@ -1085,6 +1153,7 @@ function resolveCommandByProtocol(
     const matched = (!!b.command && b.command === cmd) || (!!b.commandEnglishName && b.commandEnglishName === cmdEn)
     if (!matched || !b.emitBuilder) continue
     if (b.emitBuilder === 'outputdebugtext') {
+      const fallbackCommandMap = buildCommandMap()
       const parts = args.filter(arg => (arg || '').trim().length > 0)
       const lines: string[] = []
       lines.push('do {')
@@ -1093,7 +1162,7 @@ function resolveCommandByProtocol(
       for (let i = 0; i < parts.length; i++) {
         const part = parts[i]
         if (i > 0) lines.push('    yc_debug_line_part("|");')
-        lines.push(`    yc_debug_line_part(${translateExpressionToC(part)});`)
+        lines.push(`    yc_debug_line_part(${translateExpressionToC(part, fallbackCommandMap)});`)
       }
       lines.push('    yc_debug_line_end();')
       lines.push('#endif')
@@ -1260,7 +1329,7 @@ function mapTypeToCType(type: string): string {
   if (trimmed.includes('指针') || trimmed.includes('ptr') || trimmed.includes('PTR')) return 'intptr_t'
   const map: Record<string, string> = {
     '整数型': 'int', '长整数型': 'long long', '小数型': 'float',
-    '双精度小数型': 'double', '文本型': 'wchar_t*', '逻辑型': 'int', '字节集': 'YC_BIN',
+    '双精度小数型': 'double', '文本型': 'wchar_t*', '逻辑型': 'int', '字节集': 'YC_BIN', '大整数型': 'YC_BIG', '大数': 'YC_BIG',
     '字节型': 'unsigned char', '短整数型': 'short',
   }
   return map[trimmed] || 'int'
@@ -1272,6 +1341,7 @@ function getTypeDefaultInitializer(type: string): string {
   const cType = mapTypeToCType(trimmed)
   if (cType === 'wchar_t*') return 'NULL'
   if (cType === 'YC_BIN') return 'YC_BIN()'
+  if (cType === 'YC_BIG') return 'YC_BIG()'
   if (cType === 'float') return '0.0f'
   if (cType === 'double') return '0.0'
   return '0'
@@ -1619,6 +1689,7 @@ function buildCommandMap(targetPlatform?: TargetPlatform): Map<string, LibComman
 
 interface CommandSignatureDef {
   name: string
+  englishName: string
   params: Array<{ optional: boolean; repeatable?: boolean }>
   source: 'fne' | 'ycmd' | 'projectDll'
   libraryFileName: string
@@ -1632,6 +1703,7 @@ function buildCommandSignatureMap(projectDllCommands: ProjectDllCommandDef[] = [
     if (cmd.isHidden) continue
     map.set(cmd.name, {
       name: cmd.name,
+      englishName: cmd.englishName || '',
       params: (cmd.params || []).map(p => ({ optional: !!p.optional, repeatable: !!p.repeatable })),
       source: cmd.source === 'ycmd' ? 'ycmd' : 'fne',
       libraryFileName: cmd.libraryFileName,
@@ -1642,6 +1714,7 @@ function buildCommandSignatureMap(projectDllCommands: ProjectDllCommandDef[] = [
   for (const dllCmd of projectDllCommands) {
     map.set(dllCmd.name, {
       name: dllCmd.name,
+      englishName: '',
       params: dllCmd.params.map(param => ({ optional: !!param.optional })),
       source: 'projectDll',
       libraryFileName: dllCmd.dllFileName,
@@ -1861,6 +1934,60 @@ function collectProjectSubprogramNames(project: ProjectInfo, editorFiles?: Map<s
   return new Set(collectProjectSubprogramDefs(project, editorFiles).map(sub => sub.name))
 }
 
+function buildProjectCompileMetadataFingerprint(project: ProjectInfo, editorFiles?: Map<string, string>): string {
+  const relevant = project.files.filter(f =>
+    f.type === 'EYC'
+    || f.type === 'EGV'
+    || f.type === 'ECS'
+    || f.type === 'EDT'
+    || f.type === 'ELL'
+    || f.type === 'ERC'
+    || /\.(eyc|ecc|egv|ecs|edt|ell|erc)$/i.test(f.fileName),
+  )
+
+  const fileStamps = relevant
+    .map((f) => {
+      const inMemory = editorFiles?.get(f.fileName)
+      if (inMemory !== undefined) {
+        const memHash = createHash('sha1').update(inMemory).digest('hex')
+        return `${f.fileName}|mem|${memHash}`
+      }
+      const sourcePath = join(project.projectDir, f.fileName)
+      try {
+        const st = statSync(sourcePath)
+        return `${f.fileName}|disk|${st.size}|${Math.round(st.mtimeMs)}`
+      } catch {
+        return `${f.fileName}|missing`
+      }
+    })
+    .sort()
+
+  return createHash('sha1').update(JSON.stringify({
+    projectDir: project.projectDir,
+    projectName: project.projectName,
+    outputType: project.outputType,
+    fileStamps,
+  })).digest('hex')
+}
+
+function resolveProjectCompileMetadata(project: ProjectInfo, editorFiles?: Map<string, string>): ProjectCompileMetadata {
+  const fingerprint = buildProjectCompileMetadataFingerprint(project, editorFiles)
+  if (projectCompileMetadataCache && projectCompileMetadataCache.fingerprint === fingerprint) {
+    return projectCompileMetadataCache.metadata
+  }
+
+  const metadata: ProjectCompileMetadata = {
+    globals: collectProjectGlobalVars(project, editorFiles),
+    constants: collectProjectConstants(project, editorFiles),
+    resources: collectProjectResourceEntries(project, editorFiles),
+    subprograms: collectProjectSubprogramDefs(project, editorFiles),
+    dataTypes: collectProjectDataTypes(project, editorFiles),
+    dllCommands: collectProjectDllCommands(project, editorFiles),
+  }
+  projectCompileMetadataCache = { fingerprint, metadata }
+  return metadata
+}
+
 function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Map<string, string>, targetPlatform?: TargetPlatform): string[] {
   const errors: string[] = []
   const commandMap = buildCommandSignatureMap(collectProjectDllCommands(project, editorFiles), targetPlatform)
@@ -1895,14 +2022,14 @@ function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Ma
         protocols.commands,
         command.libraryFileName,
         command.name,
-        '',
+        command.englishName,
         args,
       )
       const protocolExpr = resolveCommandExprByProtocol(
         protocols.commands,
         command.libraryFileName,
         command.name,
-        '',
+        command.englishName,
         args,
       )
       const hasBackendPath = !!protocolCode || !!protocolExpr || !!COMMAND_CODE_GENERATORS[command.name] || !!COMMAND_EXPR_GENERATORS[command.name]
@@ -1970,6 +2097,7 @@ function convertFullWidthOps(expr: string): string {
     .replace(/－/g, '-')
     .replace(/×/g, '*')
     .replace(/÷/g, '/')
+    .replace(/％/g, '%')
 }
 
 function replaceConstantRefs(expr: string): string {
@@ -2006,6 +2134,41 @@ function isTextExpression(expr: string): boolean {
     || /^yc_fs_get_disk_label\(/.test(trimmed)
     || /^yc_fs_get_temp_file_name\(/.test(trimmed)
     || /^yc_fs_dir\(/.test(trimmed)
+}
+
+function isTextLiteralExpression(expr: string): boolean {
+  return /^L"(?:[^"\\]|\\.)*"$/.test((expr || '').trim())
+}
+
+function isBigExpression(expr: string): boolean {
+  const trimmed = expr.trim()
+  return /^YC_BIG\(/.test(trimmed)
+}
+
+type VariableTypeResolver = (name: string) => string | undefined
+
+function getExprSimpleIdentifierType(expr: string, variableTypeResolver?: VariableTypeResolver): string {
+  if (!variableTypeResolver) return ''
+  const trimmed = (expr || '').trim()
+  if (!trimmed) return ''
+  const identMatch = trimmed.match(/^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*$/)
+  if (!identMatch) return ''
+  const baseName = trimmed.split('.')[0] || ''
+  return (variableTypeResolver(baseName) || '').trim()
+}
+
+function isTextRawOperand(expr: string, variableTypeResolver?: VariableTypeResolver): boolean {
+  const dataType = getExprSimpleIdentifierType(expr, variableTypeResolver)
+  return dataType === '文本型'
+}
+
+function isBigRawOperand(expr: string, variableTypeResolver?: VariableTypeResolver): boolean {
+  const dataType = getExprSimpleIdentifierType(expr, variableTypeResolver)
+  return dataType === '大整数型' || dataType === '大数'
+}
+
+function normalizeBuiltinCallName(name: string): string {
+  return (name || '').trim().toLowerCase()
 }
 
 function findTopLevelComparison(expr: string): { left: string; operator: string; right: string } | null {
@@ -2085,7 +2248,7 @@ function findTopLevelAdditive(expr: string): { left: string; operator: string; r
     let j = i - 1
     while (j >= 0 && /\s/.test(expr[j])) j--
     const prev = j >= 0 ? expr[j] : ''
-    if (!prev || /[+\-*/(<>=!&|,]/.test(prev)) continue
+    if (!prev || /[+\-*/%(<>=!&|,]/.test(prev)) continue
 
     return {
       left: expr.slice(0, i).trim(),
@@ -2122,7 +2285,7 @@ function findTopLevelMultiplicative(expr: string): { left: string; operator: str
       continue
     }
     if (depth !== 0) continue
-    if (ch !== '*' && ch !== '/') continue
+    if (ch !== '*' && ch !== '/' && ch !== '%') continue
 
     return {
       left: expr.slice(0, i).trim(),
@@ -2134,7 +2297,13 @@ function findTopLevelMultiplicative(expr: string): { left: string; operator: str
   return null
 }
 
-function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
+function translateExpressionToC(
+  expr: string,
+  commandMap?: Map<string, ResolvedCommand>,
+  directCallables?: DirectCallableNames,
+  variableTypeResolver?: VariableTypeResolver,
+  preferBigIntLiteral = false,
+): string {
   const trimmed = (expr || '').trim()
   if (!trimmed) return '0'
 
@@ -2152,11 +2321,52 @@ function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedC
 
   if (trimmed === '真') return '1'
   if (trimmed === '假') return '0'
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return trimmed
+  if (/^-?\d+$/.test(trimmed)) {
+    try {
+      const value = BigInt(trimmed)
+      const max = BigInt('9223372036854775807')
+      const min = BigInt('-9223372036854775808')
+      if (value > max || value < min) {
+        if (preferBigIntLiteral) {
+          return `YC_BIG(L"${trimmed}")`
+        }
+        if (value > max) return '9223372036854775807LL'
+        return '-9223372036854775807LL - 1'
+      }
+      return `${trimmed}LL`
+    } catch {
+      return '0'
+    }
+  }
+  if (/^-?\d+\.\d+$/.test(trimmed)) return trimmed
 
   if (commandMap) {
     const call = parseCommandCall(trimmed)
     if (call && call.name) {
+      const builtinName = normalizeBuiltinCallName(call.name)
+      if (builtinName === '到文本') {
+        const src = translateExpressionToC(
+          call.args?.[0] || '0',
+          commandMap,
+          directCallables,
+          variableTypeResolver,
+          preferBigIntLiteral,
+        )
+        return `yc_value_to_text(${src})`
+      }
+      if (builtinName === '到数值') {
+        const src = translateExpressionToC(
+          call.args?.[0] || '0',
+          commandMap,
+          directCallables,
+          variableTypeResolver,
+          preferBigIntLiteral,
+        )
+        if (preferBigIntLiteral) {
+          return `yc_value_to_big(${src})`
+        }
+      }
+
       const resolved = commandMap.get(call.name)
       if (resolved) {
         const protocols = loadCompileProtocols()
@@ -2175,7 +2385,7 @@ function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedC
         return generateYcGenericCommandExpr(resolved, call.args || [])
       }
       if (directCallables?.has(call.name)) {
-        return `${call.name}(${(call.args || []).map(arg => translateExpressionToC(arg, commandMap, directCallables)).join(', ')})`
+        return `${call.name}(${(call.args || []).map(arg => translateExpressionToC(arg, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)).join(', ')})`
       }
     }
   }
@@ -2187,12 +2397,27 @@ function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedC
 
   const comparison = findTopLevelComparison(translated)
   if (comparison && comparison.left && comparison.right) {
-    const left = translateExpressionToC(comparison.left, commandMap, directCallables)
-    const right = translateExpressionToC(comparison.right, commandMap, directCallables)
+    const left = translateExpressionToC(comparison.left, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    const right = translateExpressionToC(comparison.right, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
     const normalizedOperator = comparison.operator === '=' ? '==' : comparison.operator
+    const leftIsBig = isBigExpression(left) || isBigRawOperand(comparison.left, variableTypeResolver)
+    const rightIsBig = isBigExpression(right) || isBigRawOperand(comparison.right, variableTypeResolver)
 
-    if ((normalizedOperator === '==' || normalizedOperator === '!=') && (isTextExpression(left) || isTextExpression(right))) {
+    if (
+      (normalizedOperator === '==' || normalizedOperator === '!=')
+      && !(leftIsBig || rightIsBig)
+      && (
+        isTextExpression(left)
+        || isTextExpression(right)
+        || isTextRawOperand(comparison.left, variableTypeResolver)
+        || isTextRawOperand(comparison.right, variableTypeResolver)
+      )
+    ) {
       return `(yc_text_compare(${left}, ${right}) ${normalizedOperator} 0)`
+    }
+
+    if (leftIsBig || rightIsBig) {
+      return `(yc_value_to_big(${left}) ${normalizedOperator} yc_value_to_big(${right}))`
     }
 
     return `(${left} ${normalizedOperator} ${right})`
@@ -2200,9 +2425,20 @@ function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedC
 
   const additive = findTopLevelAdditive(translated)
   if (additive && additive.left && additive.right) {
-    const left = translateExpressionToC(additive.left, commandMap, directCallables)
-    const right = translateExpressionToC(additive.right, commandMap, directCallables)
-    if (additive.operator === '+' && (isTextExpression(left) || isTextExpression(right))) {
+    const left = translateExpressionToC(additive.left, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    const right = translateExpressionToC(additive.right, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    const leftIsBig = isBigExpression(left) || isBigRawOperand(additive.left, variableTypeResolver)
+    const rightIsBig = isBigExpression(right) || isBigRawOperand(additive.right, variableTypeResolver)
+    if (
+      additive.operator === '+'
+      && !(leftIsBig || rightIsBig)
+      && (
+        isTextExpression(left)
+        || isTextExpression(right)
+        || isTextRawOperand(additive.left, variableTypeResolver)
+        || isTextRawOperand(additive.right, variableTypeResolver)
+      )
+    ) {
       return `yc_text_concat(${left}, ${right})`
     }
     return `(${left} ${additive.operator} ${right})`
@@ -2210,8 +2446,16 @@ function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedC
 
   const multiplicative = findTopLevelMultiplicative(translated)
   if (multiplicative && multiplicative.left && multiplicative.right) {
-    const left = translateExpressionToC(multiplicative.left, commandMap, directCallables)
-    const right = translateExpressionToC(multiplicative.right, commandMap, directCallables)
+    const left = translateExpressionToC(multiplicative.left, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    const right = translateExpressionToC(multiplicative.right, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    const leftIsBig = isBigExpression(left) || isBigRawOperand(multiplicative.left, variableTypeResolver)
+    const rightIsBig = isBigExpression(right) || isBigRawOperand(multiplicative.right, variableTypeResolver)
+    if (leftIsBig || rightIsBig) {
+      if (multiplicative.operator === '%') {
+        return `yc_big_mod(yc_value_to_big(${left}), yc_value_to_big(${right}))`
+      }
+      return `(yc_value_to_big(${left}) ${multiplicative.operator} yc_value_to_big(${right}))`
+    }
     return `(${left} ${multiplicative.operator} ${right})`
   }
 
@@ -2343,7 +2587,7 @@ function generateYcGenericCommandExpr(cmd: ResolvedCommand, args: string[]): str
   if (n > 0) {
     lines.push(`YC_MDATA_INF __yc_args[${n}] = {};`)
     for (let i = 0; i < n; i++) {
-      const p = cmd.params[i]
+      const p = resolveYcCommandParamSpec(cmd.params, i)
       const mapped = mapParamTypeToYcDataType(p?.type || '')
       const valueExpr = formatArgForYcCommand(args[i], mapped.field)
       lines.push(`__yc_args[${i}].m_dtDataType = ${mapped.dtConst};`)
@@ -2434,7 +2678,7 @@ function generateYcGenericCommandCall(cmd: LibCommand & { libraryName: string; l
   if (n > 0) {
     lines.push(`YC_MDATA_INF __yc_args[${n}] = {};`)
     for (let i = 0; i < n; i++) {
-      const p = cmd.params[i]
+      const p = resolveYcCommandParamSpec(cmd.params, i)
       const mapped = mapParamTypeToYcDataType(p?.type || '')
       const valueExpr = formatArgForYcCommand(args[i], mapped.field)
       lines.push(`__yc_args[${i}].m_dtDataType = ${mapped.dtConst};`)
@@ -2455,7 +2699,7 @@ function generateYcGenericCommandAssign(cmd: LibCommand & { libraryName: string;
   if (n > 0) {
     lines.push(`YC_MDATA_INF __yc_args[${n}] = {};`)
     for (let i = 0; i < n; i++) {
-      const p = cmd.params[i]
+      const p = resolveYcCommandParamSpec(cmd.params, i)
       const mapped = mapParamTypeToYcDataType(p?.type || '')
       const valueExpr = formatArgForYcCommand(args[i], mapped.field)
       lines.push(`__yc_args[${i}].m_dtDataType = ${mapped.dtConst};`)
@@ -2468,6 +2712,18 @@ function generateYcGenericCommandAssign(cmd: LibCommand & { libraryName: string;
   lines.push(`${leftExpr} = ${retMapped.expr};`)
   lines.push('}')
   return lines.join(' ')
+}
+
+function resolveYcCommandParamSpec(
+  params: Array<{ type?: string; repeatable?: boolean }> | undefined,
+  index: number,
+): { type?: string; repeatable?: boolean } | undefined {
+  if (!Array.isArray(params) || params.length === 0) return undefined
+  if (index >= 0 && index < params.length) return params[index]
+
+  const tail = params[params.length - 1]
+  if (tail?.repeatable) return tail
+  return undefined
 }
 
 const {
@@ -2639,6 +2895,206 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '#include <windows.h>\n#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <direct.h>\n#include <wchar.h>\n#include <wctype.h>\n#include <string.h>\n#include <filesystem>\n#include <vector>\n#include <string>\n#include <algorithm>\n#include <fstream>\n\n'
   result += 'namespace ycfs = std::filesystem;\n\n'
   result += 'typedef std::vector<unsigned char> YC_BIN;\n\n'
+  result += 'struct YC_BIG {\n'
+  result += '    bool neg;\n'
+  result += '    std::string digits;\n'
+  result += '    YC_BIG(): neg(false), digits("0") {}\n'
+  result += '    YC_BIG(long long v): neg(false), digits("0") {\n'
+  result += '        unsigned long long mag = 0;\n'
+  result += '        if (v < 0) {\n'
+  result += '            neg = true;\n'
+  result += '            mag = (unsigned long long)(-(v + 1)) + 1ULL;\n'
+  result += '        } else {\n'
+  result += '            mag = (unsigned long long)v;\n'
+  result += '        }\n'
+  result += '        digits.clear();\n'
+  result += '        do {\n'
+  result += '            digits.push_back((char)(\'0\' + (mag % 10ULL)));\n'
+  result += '            mag /= 10ULL;\n'
+  result += '        } while (mag > 0ULL);\n'
+  result += '        std::reverse(digits.begin(), digits.end());\n'
+  result += '        if (digits == "0") neg = false;\n'
+  result += '    }\n'
+  result += '    YC_BIG(int v): YC_BIG((long long)v) {}\n'
+  result += '    YC_BIG(short v): YC_BIG((long long)v) {}\n'
+  result += '    YC_BIG(unsigned char v): YC_BIG((long long)v) {}\n'
+  result += '    YC_BIG(const wchar_t* s): neg(false), digits("0") {\n'
+  result += '        if (!s) return;\n'
+  result += '        while (*s && iswspace(*s)) ++s;\n'
+  result += '        if (*s == L\'-\') { neg = true; ++s; }\n'
+  result += '        else if (*s == L\'+\') { ++s; }\n'
+  result += '        std::string out;\n'
+  result += '        while (*s) {\n'
+  result += '            if (*s >= L\'0\' && *s <= L\'9\') out.push_back((char)(*s));\n'
+  result += '            else if (!iswspace(*s)) break;\n'
+  result += '            ++s;\n'
+  result += '        }\n'
+  result += '        size_t first = 0;\n'
+  result += '        while (first + 1 < out.size() && out[first] == \'0\') ++first;\n'
+  result += '        if (!out.empty()) out = out.substr(first);\n'
+  result += '        if (out.empty()) { digits = "0"; neg = false; }\n'
+  result += '        else { digits = out; if (digits == "0") neg = false; }\n'
+  result += '    }\n'
+  result += '    YC_BIG(wchar_t* s): YC_BIG((const wchar_t*)s) {}\n'
+  result += '};\n\n'
+  result += 'static std::string yc_big_trim_abs(const std::string& in) {\n'
+  result += '    if (in.empty()) return "0";\n'
+  result += '    size_t i = 0;\n'
+  result += '    while (i + 1 < in.size() && in[i] == \'0\') ++i;\n'
+  result += '    return in.substr(i);\n'
+  result += '}\n\n'
+  result += 'static int yc_big_cmp_abs(const std::string& a, const std::string& b) {\n'
+  result += '    std::string aa = yc_big_trim_abs(a);\n'
+  result += '    std::string bb = yc_big_trim_abs(b);\n'
+  result += '    if (aa.size() != bb.size()) return aa.size() < bb.size() ? -1 : 1;\n'
+  result += '    if (aa == bb) return 0;\n'
+  result += '    return aa < bb ? -1 : 1;\n'
+  result += '}\n\n'
+  result += 'static std::string yc_big_add_abs(const std::string& a, const std::string& b) {\n'
+  result += '    std::string aa = yc_big_trim_abs(a);\n'
+  result += '    std::string bb = yc_big_trim_abs(b);\n'
+  result += '    int i = (int)aa.size() - 1;\n'
+  result += '    int j = (int)bb.size() - 1;\n'
+  result += '    int carry = 0;\n'
+  result += '    std::string out;\n'
+  result += '    while (i >= 0 || j >= 0 || carry) {\n'
+  result += '        int da = i >= 0 ? (aa[(size_t)i] - \'0\') : 0;\n'
+  result += '        int db = j >= 0 ? (bb[(size_t)j] - \'0\') : 0;\n'
+  result += '        int sum = da + db + carry;\n'
+  result += '        out.push_back((char)(\'0\' + (sum % 10)));\n'
+  result += '        carry = sum / 10;\n'
+  result += '        --i; --j;\n'
+  result += '    }\n'
+  result += '    std::reverse(out.begin(), out.end());\n'
+  result += '    return yc_big_trim_abs(out);\n'
+  result += '}\n\n'
+  result += 'static std::string yc_big_sub_abs(const std::string& a, const std::string& b) {\n'
+  result += '    // 要求 |a| >= |b|\n'
+  result += '    std::string aa = yc_big_trim_abs(a);\n'
+  result += '    std::string bb = yc_big_trim_abs(b);\n'
+  result += '    int i = (int)aa.size() - 1;\n'
+  result += '    int j = (int)bb.size() - 1;\n'
+  result += '    int borrow = 0;\n'
+  result += '    std::string out;\n'
+  result += '    while (i >= 0) {\n'
+  result += '        int da = (aa[(size_t)i] - \'0\') - borrow;\n'
+  result += '        int db = j >= 0 ? (bb[(size_t)j] - \'0\') : 0;\n'
+  result += '        if (da < db) { da += 10; borrow = 1; } else { borrow = 0; }\n'
+  result += '        out.push_back((char)(\'0\' + (da - db)));\n'
+  result += '        --i; --j;\n'
+  result += '    }\n'
+  result += '    while (out.size() > 1 && out.back() == \'0\') out.pop_back();\n'
+  result += '    std::reverse(out.begin(), out.end());\n'
+  result += '    return yc_big_trim_abs(out);\n'
+  result += '}\n\n'
+  result += 'static std::string yc_big_mul_abs(const std::string& a, const std::string& b) {\n'
+  result += '    std::string aa = yc_big_trim_abs(a);\n'
+  result += '    std::string bb = yc_big_trim_abs(b);\n'
+  result += '    if (aa == "0" || bb == "0") return "0";\n'
+  result += '    std::vector<int> tmp(aa.size() + bb.size(), 0);\n'
+  result += '    for (int i = (int)aa.size() - 1; i >= 0; --i) {\n'
+  result += '        for (int j = (int)bb.size() - 1; j >= 0; --j) {\n'
+  result += '            int p = (aa[(size_t)i] - \'0\') * (bb[(size_t)j] - \'0\');\n'
+  result += '            int idx = i + j + 1;\n'
+  result += '            int sum = tmp[(size_t)idx] + p;\n'
+  result += '            tmp[(size_t)idx] = sum % 10;\n'
+  result += '            tmp[(size_t)(idx - 1)] += sum / 10;\n'
+  result += '        }\n'
+  result += '    }\n'
+  result += '    std::string out;\n'
+  result += '    size_t i = 0;\n'
+  result += '    while (i + 1 < tmp.size() && tmp[i] == 0) ++i;\n'
+  result += '    for (; i < tmp.size(); ++i) out.push_back((char)(\'0\' + tmp[i]));\n'
+  result += '    return yc_big_trim_abs(out);\n'
+  result += '}\n\n'
+  result += 'static void yc_big_runtime_div_zero(const char* op) {\n'
+  result += '    fprintf(stderr, "! 大整数型运算错误|除数不能为0|%s\\n", op ? op : "/");\n'
+  result += '    fflush(stderr);\n'
+  result += '    if (IsDebuggerPresent()) DebugBreak();\n'
+  result += '}\n\n'
+  result += 'static std::string yc_big_div_abs(const std::string& a, const std::string& b) {\n'
+  result += '    std::string aa = yc_big_trim_abs(a);\n'
+  result += '    std::string bb = yc_big_trim_abs(b);\n'
+  result += '    if (bb == "0") { yc_big_runtime_div_zero("/"); return "0"; }\n'
+  result += '    if (yc_big_cmp_abs(aa, bb) < 0) return "0";\n'
+  result += '    std::string cur = "0";\n'
+  result += '    std::string quo;\n'
+  result += '    for (size_t i = 0; i < aa.size(); ++i) {\n'
+  result += '        if (cur == "0") cur = std::string(1, aa[i]);\n'
+  result += '        else cur.push_back(aa[i]);\n'
+  result += '        cur = yc_big_trim_abs(cur);\n'
+  result += '        int q = 0;\n'
+  result += '        while (yc_big_cmp_abs(cur, bb) >= 0) {\n'
+  result += '            cur = yc_big_sub_abs(cur, bb);\n'
+  result += '            ++q;\n'
+  result += '        }\n'
+  result += '        quo.push_back((char)(\'0\' + q));\n'
+  result += '    }\n'
+  result += '    return yc_big_trim_abs(quo);\n'
+  result += '}\n\n'
+  result += 'static std::string yc_big_mod_abs(const std::string& a, const std::string& b) {\n'
+  result += '    std::string aa = yc_big_trim_abs(a);\n'
+  result += '    std::string bb = yc_big_trim_abs(b);\n'
+  result += '    if (bb == "0") { yc_big_runtime_div_zero("%"); return "0"; }\n'
+  result += '    if (yc_big_cmp_abs(aa, bb) < 0) return aa;\n'
+  result += '    std::string cur = "0";\n'
+  result += '    for (size_t i = 0; i < aa.size(); ++i) {\n'
+  result += '        if (cur == "0") cur = std::string(1, aa[i]);\n'
+  result += '        else cur.push_back(aa[i]);\n'
+  result += '        cur = yc_big_trim_abs(cur);\n'
+  result += '        while (yc_big_cmp_abs(cur, bb) >= 0) {\n'
+  result += '            cur = yc_big_sub_abs(cur, bb);\n'
+  result += '        }\n'
+  result += '    }\n'
+  result += '    return yc_big_trim_abs(cur);\n'
+  result += '}\n\n'
+  result += 'static YC_BIG yc_big_normalized(bool neg, const std::string& digits) {\n'
+  result += '    YC_BIG out;\n'
+  result += '    out.digits = yc_big_trim_abs(digits);\n'
+  result += '    out.neg = (out.digits != "0") ? neg : false;\n'
+  result += '    return out;\n'
+  result += '}\n\n'
+  result += 'static YC_BIG operator-(const YC_BIG& v) {\n'
+  result += '    return yc_big_normalized(!v.neg, v.digits);\n'
+  result += '}\n\n'
+  result += 'static YC_BIG operator+(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    if (a.neg == b.neg) return yc_big_normalized(a.neg, yc_big_add_abs(a.digits, b.digits));\n'
+  result += '    int cmp = yc_big_cmp_abs(a.digits, b.digits);\n'
+  result += '    if (cmp == 0) return YC_BIG();\n'
+  result += '    if (cmp > 0) return yc_big_normalized(a.neg, yc_big_sub_abs(a.digits, b.digits));\n'
+  result += '    return yc_big_normalized(b.neg, yc_big_sub_abs(b.digits, a.digits));\n'
+  result += '}\n\n'
+  result += 'static YC_BIG operator-(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    return a + (-b);\n'
+  result += '}\n\n'
+  result += 'static YC_BIG operator*(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    bool neg = (a.neg != b.neg);\n'
+  result += '    return yc_big_normalized(neg, yc_big_mul_abs(a.digits, b.digits));\n'
+  result += '}\n\n'
+  result += 'static YC_BIG operator/(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    bool neg = (a.neg != b.neg);\n'
+  result += '    return yc_big_normalized(neg, yc_big_div_abs(a.digits, b.digits));\n'
+  result += '}\n\n'
+  result += 'static YC_BIG yc_big_mod(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    bool neg = a.neg;\n'
+  result += '    return yc_big_normalized(neg, yc_big_mod_abs(a.digits, b.digits));\n'
+  result += '}\n\n'
+  result += 'static YC_BIG operator%(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    return yc_big_mod(a, b);\n'
+  result += '}\n\n'
+  result += 'static bool operator==(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    return a.neg == b.neg && yc_big_trim_abs(a.digits) == yc_big_trim_abs(b.digits);\n'
+  result += '}\n\n'
+  result += 'static bool operator!=(const YC_BIG& a, const YC_BIG& b) { return !(a == b); }\n\n'
+  result += 'static bool operator<(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    if (a.neg != b.neg) return a.neg;\n'
+  result += '    int cmp = yc_big_cmp_abs(a.digits, b.digits);\n'
+  result += '    return a.neg ? (cmp > 0) : (cmp < 0);\n'
+  result += '}\n\n'
+  result += 'static bool operator>(const YC_BIG& a, const YC_BIG& b) { return b < a; }\n\n'
+  result += 'static bool operator<=(const YC_BIG& a, const YC_BIG& b) { return !(b < a); }\n\n'
+  result += 'static bool operator>=(const YC_BIG& a, const YC_BIG& b) { return !(a < b); }\n\n'
+
   result += `#define YC_DEBUG_BUILD ${debugBuild ? 1 : 0}\n\n`
   result += '#define YC_SDT_BYTE 0x80000101u\n'
   result += '#define YC_SDT_SHORT 0x80000201u\n'
@@ -2727,6 +3183,10 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'static void yc_debug_output_value(const YC_BIN& value) {\n'
   result += '    printf("<字节集 %zu>\\n", value.size());\n'
   result += '}\n'
+  result += 'static void yc_debug_output_value(const YC_BIG& value) {\n'
+  result += '    if (value.neg && value.digits != "0") printf("-");\n'
+  result += '    printf("%s\\n", value.digits.c_str());\n'
+  result += '}\n'
   result += 'static void yc_debug_output_value(float v) {\n'
   result += '    printf("%.6g\\n", v);\n'
   result += '}\n'
@@ -2766,6 +3226,12 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    printf("<字节集 %zu>", value.size());\n'
   result += '#endif\n'
   result += '}\n'
+  result += 'static void yc_debug_line_part(const YC_BIG& value) {\n'
+  result += '#if YC_DEBUG_BUILD\n'
+  result += '    if (value.neg && value.digits != "0") printf("-");\n'
+  result += '    printf("%s", value.digits.c_str());\n'
+  result += '#endif\n'
+  result += '}\n'
   result += 'static void yc_debug_line_part(float v) {\n'
   result += '#if YC_DEBUG_BUILD\n'
   result += '    printf("%.6g", v);\n'
@@ -2801,6 +3267,10 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '}\n'
   result += 'static void yc_runtime_note_part(double v) {\n'
   result += '    printf("%.12g", v);\n'
+  result += '}\n'
+  result += 'static void yc_runtime_note_part(const YC_BIG& value) {\n'
+  result += '    if (value.neg && value.digits != "0") printf("-");\n'
+  result += '    printf("%s", value.digits.c_str());\n'
   result += '}\n'
   result += 'template <typename T> static void yc_runtime_note_part(T v) {\n'
   result += '    printf("%lld", (long long)(v));\n'
@@ -2912,6 +3382,43 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    memcpy(out + leftLen, rhs, sizeof(wchar_t) * (rightLen + 1));\n'
   result += '    return out;\n'
   result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(long long value) {\n'
+  result += '    wchar_t buf[64];\n'
+  result += '    swprintf(buf, 64, L"%lld", value);\n'
+  result += '    return yc_wcsdup_text(buf);\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(int value) {\n'
+  result += '    return yc_value_to_text((long long)value);\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(double value) {\n'
+  result += '    wchar_t buf[128];\n'
+  result += '    swprintf(buf, 128, L"%.15g", value);\n'
+  result += '    return yc_wcsdup_text(buf);\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(float value) {\n'
+  result += '    return yc_value_to_text((double)value);\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(const wchar_t* value) {\n'
+  result += '    return yc_wcsdup_text(value ? value : L"");\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(wchar_t* value) {\n'
+  result += '    return yc_value_to_text((const wchar_t*)value);\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(const YC_BIG& value) {\n'
+  result += '    std::wstring out;\n'
+  result += '    if (value.neg && value.digits != "0") out.push_back(L\'-\');\n'
+  result += '    for (char c : value.digits) out.push_back((wchar_t)c);\n'
+  result += '    return yc_wcsdup_text(out.c_str());\n'
+  result += '}\n\n'
+  result += 'static YC_BIG yc_value_to_big(const YC_BIG& value) { return value; }\n\n'
+  result += 'static YC_BIG yc_value_to_big(long long value) { return YC_BIG(value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(int value) { return YC_BIG((long long)value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(short value) { return YC_BIG((long long)value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(unsigned char value) { return YC_BIG((long long)value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(double value) { return YC_BIG((long long)value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(float value) { return YC_BIG((long long)value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(const wchar_t* value) { return YC_BIG(value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(wchar_t* value) { return YC_BIG((const wchar_t*)value); }\n\n'
   result += 'static size_t yc_bin_clamp_count(int count) {\n'
   result += '    return count <= 0 ? 0u : (size_t)count;\n'
   result += '}\n\n'
@@ -3383,6 +3890,15 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     visibleDebugVars.push({ name, type })
   }
 
+  const resolveVisibleVarType = (name: string): string | undefined => {
+    const target = (name || '').trim()
+    if (!target) return undefined
+    for (let i = visibleDebugVars.length - 1; i >= 0; i--) {
+      if (visibleDebugVars[i].name === target) return visibleDebugVars[i].type
+    }
+    return undefined
+  }
+
   const emitDebugVarSnapshot = (displayName: string, typeName: string, expr: string, depth = 0) => {
     const trimmedType = (typeName || '').trim()
     if (depth < 1) {
@@ -3624,7 +4140,26 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
           continue
         }
 
-        const right = formatArgForC(rightRaw, commandMap, directCallables)
+        const leftSimpleVarType = (() => {
+          if (!/^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*$/.test(left)) return ''
+          for (let i = visibleDebugVars.length - 1; i >= 0; i--) {
+            if (visibleDebugVars[i].name === left) return (visibleDebugVars[i].type || '').trim()
+          }
+          return ''
+        })()
+
+        const right = translateExpressionToC(
+          rightRaw,
+          commandMap,
+          directCallables,
+          resolveVisibleVarType,
+          leftSimpleVarType === '大整数型' || leftSimpleVarType === '大数',
+        )
+
+        if (leftSimpleVarType === '文本型' && (!isTextExpression(right) || isTextLiteralExpression(right))) {
+          emitSubLine(`${left} = yc_value_to_text(${right});`)
+          continue
+        }
 
         if (propMatch) {
           const ctrlName = propMatch[1]
@@ -3686,22 +4221,105 @@ function generateMainC(
 ): string[] {
   const mainCPath = join(tempDir, 'main.cpp')
   const additionalCFiles: string[] = []
+  const transpileCachePath = join(tempDir, '.transpile-cache.json')
+  const metadataStartTime = Date.now()
+  sendMessage({ type: 'info', text: '正在分析项目元数据...' })
+
+  const cacheFile = (() => {
+    try {
+      if (!existsSync(transpileCachePath)) return null
+      const raw = JSON.parse(readFileSync(transpileCachePath, 'utf-8')) as Partial<TranspileCacheFile>
+      if (!raw || raw.version !== TRANSPILE_CACHE_VERSION || !raw.entries || typeof raw.entries !== 'object') return null
+      return raw as TranspileCacheFile
+    } catch {
+      return null
+    }
+  })()
+  const previousTranspileEntries = cacheFile?.entries || {}
+  const nextTranspileEntries: Record<string, TranspileCacheEntry> = {}
 
   let mainCode = '/* 由 ycIDE 自动生成 */\n'
   mainCode += `/* 项目名称: ${project.projectName} */\n\n`
   mainCode += '#include <windows.h>\n#include <commctrl.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n#include <io.h>\n#include <fcntl.h>\n\n'
 
   const isWindowsApp = project.outputType === 'WindowsApp'
-  const projectGlobals = collectProjectGlobalVars(project, editorFiles)
-  const projectConstants = collectProjectConstants(project, editorFiles)
-  const projectResources = collectProjectResourceEntries(project, editorFiles)
-  const projectSubprograms = collectProjectSubprogramDefs(project, editorFiles)
-  const projectDataTypes = collectProjectDataTypes(project, editorFiles)
-  const projectDllCommands = collectProjectDllCommands(project, editorFiles)
+  const projectMeta = resolveProjectCompileMetadata(project, editorFiles)
+  const projectGlobals = projectMeta.globals
+  const projectConstants = projectMeta.constants
+  const projectResources = projectMeta.resources
+  const projectSubprograms = projectMeta.subprograms
+  const projectDataTypes = projectMeta.dataTypes
+  const projectDllCommands = projectMeta.dllCommands
   activeProjectCustomTypeNames = new Set(projectDataTypes.map(dt => dt.name))
   const librariesForBuild = linkedLibraries || libraryManager.getLoadedLibraryFiles()
   const usedLibraryNames = new Set(librariesForBuild.map(l => l.name))
   const libraryConstants = collectLibraryConstants(usedLibraryNames)
+  sendMessage({ type: 'info', text: `项目元数据分析完成 (${Date.now() - metadataStartTime} 毫秒)` })
+
+  const transpileContextDigest = createHash('sha1').update(JSON.stringify({
+    debugBuild,
+    targetPlatform,
+    outputType: project.outputType,
+    globals: projectGlobals,
+    constants: projectConstants,
+    resources: projectResources,
+    subprograms: projectSubprograms,
+    dataTypes: projectDataTypes,
+    dllCommands: projectDllCommands,
+    libraryConstants,
+  })).digest('hex')
+
+  const getBreakpointDigest = (fileName: string): string => {
+    const points = breakpoints[fileName] || []
+    if (points.length === 0) return ''
+    const sorted = Array.from(new Set(points)).sort((a, b) => a - b)
+    return sorted.join(',')
+  }
+
+  const transpileProjectFile = (
+    fileName: string,
+    content: string,
+    constantsForFile: LibraryConstantDef[],
+  ): void => {
+    const cFileName = fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
+    const cFilePath = join(tempDir, cFileName)
+    const fingerprint = createHash('sha1').update([
+      String(TRANSPILE_CACHE_VERSION),
+      fileName,
+      transpileContextDigest,
+      getBreakpointDigest(fileName),
+      JSON.stringify(constantsForFile),
+      content,
+    ].join('\n---\n')).digest('hex')
+
+    const previous = previousTranspileEntries[fileName]
+    if (previous && previous.fingerprint === fingerprint && existsSync(cFilePath)) {
+      additionalCFiles.push(cFilePath)
+      nextTranspileEntries[fileName] = { fingerprint, cFileName }
+      sendMessage({ type: 'info', text: `复用已转换文件: ${cFileName}` })
+      return
+    }
+
+    sendMessage({ type: 'info', text: `正在转换源文件: ${fileName}` })
+    const cCode = transpileEycContent(
+      content,
+      fileName,
+      projectGlobals,
+      projectConstants,
+      projectResources,
+      constantsForFile,
+      projectSubprograms,
+      projectDataTypes,
+      projectDllCommands,
+      debugBuild,
+      breakpoints,
+      targetPlatform,
+    )
+    writeFileSync(cFilePath, cCode, 'utf-8')
+    additionalCFiles.push(cFilePath)
+    nextTranspileEntries[fileName] = { fingerprint, cFileName }
+    sendMessage({ type: 'info', text: `已生成: ${cFileName}` })
+  }
 
   mainCode += '#define YC_SDT_BYTE 0x80000101u\n'
   mainCode += '#define YC_SDT_SHORT 0x80000201u\n'
@@ -3895,13 +4513,7 @@ function generateMainC(
       const content = editorContent || (existsSync(eycPath) ? readFileSync(eycPath, 'utf-8') : '')
       if (!content) continue
 
-      sendMessage({ type: 'info', text: `正在转换源文件: ${f.fileName}` })
-      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, projectResources, libraryConstants, projectSubprograms, projectDataTypes, projectDllCommands, debugBuild, breakpoints, targetPlatform)
-      const cFileName = f.fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
-      const cFilePath = join(tempDir, cFileName)
-      writeFileSync(cFilePath, cCode, 'utf-8')
-      additionalCFiles.push(cFilePath)
-      sendMessage({ type: 'info', text: `已生成: ${cFileName}` })
+      transpileProjectFile(f.fileName, content, libraryConstants)
     }
 
     const allUnits = libraryManager.getAllWindowUnits()
@@ -3930,7 +4542,14 @@ function generateMainC(
       const visFlag = ctrl.visible ? ' | WS_VISIBLE' : ''
       const disFlag = ctrl.disabled ? ' | WS_DISABLED' : ''
       const style = `${baseStyle}${visFlag}${disFlag}`
-      const text = ctrl.text || ctrl.name
+      const isEditLike =
+        className === 'EDIT'
+        || ctrl.type === '编辑框'
+        || ctrl.type === '超级编辑框'
+        || ctrl.type === '文本框'
+        || ctrl.type === 'Edit'
+        || ctrl.type === 'TextBox'
+      const text = isEditLike ? (ctrl.text || '') : (ctrl.text || ctrl.name)
       mainCode += `    hCtrl = CreateWindowExW(0, L"${className}", L"${text}",\n`
       mainCode += `        ${style},\n`
       mainCode += `        ${ctrl.x}, ${ctrl.y}, ${ctrl.width}, ${ctrl.height},\n`
@@ -4334,12 +4953,7 @@ function generateMainC(
       const content = editorContent || (existsSync(eycPath) ? readFileSync(eycPath, 'utf-8') : '')
       if (!content) continue
 
-      sendMessage({ type: 'info', text: `正在转换源文件: ${f.fileName}` })
-      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, projectResources, [], projectSubprograms, projectDataTypes, projectDllCommands, debugBuild, breakpoints, targetPlatform)
-      const cFileName = f.fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
-      const cFilePath = join(tempDir, cFileName)
-      writeFileSync(cFilePath, cCode, 'utf-8')
-      additionalCFiles.push(cFilePath)
+      transpileProjectFile(f.fileName, content, [])
     }
 
     mainCode += '/* 控制台程序入口点 */\n'
@@ -4374,6 +4988,16 @@ function generateMainC(
     mainCode += '}\n'
   }
 
+  try {
+    const cachePayload: TranspileCacheFile = {
+      version: TRANSPILE_CACHE_VERSION,
+      entries: nextTranspileEntries,
+    }
+    writeFileSync(transpileCachePath, JSON.stringify(cachePayload), 'utf-8')
+  } catch {
+    // 缓存写入失败不影响本次编译。
+  }
+
   writeFileSync(mainCPath, mainCode, 'utf-8')
   return additionalCFiles
 }
@@ -4385,7 +5009,6 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
   }
 
   const startTime = Date.now()
-  compileProtocolCache = null
   activeProjectCustomTypeNames = new Set()
 
   try {
@@ -4481,6 +5104,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     const outputFileName = getBinaryFileName(outputName, project.outputType, targetPlatform)
     const outputBinary = join(outputDir, outputFileName)
     const mainC = join(tempDir, 'main.cpp')
+    const buildCachePath = join(tempDir, '.build-artifact-cache.json')
 
     const args: string[] = [
       '-o', outputBinary,
@@ -4540,6 +5164,66 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       }
     }
 
+    const collectFileStamp = (filePath: string): string => {
+      try {
+        const st = statSync(filePath)
+        return `${filePath}|${st.size}|${Math.round(st.mtimeMs)}`
+      } catch {
+        return `${filePath}|missing`
+      }
+    }
+
+    const resourceEntries = collectProjectResourceEntries(project, editorFiles)
+    const resourceStamps = resourceEntries
+      .map(entry => collectFileStamp(join(project.projectDir, entry.fileName)))
+      .sort()
+    const sourceStamps = [mainC, ...additionalCFiles].map(collectFileStamp).sort()
+    const staticLibStamps = libsToLink
+      .map(lib => libraryManager.findStaticLib(lib.name, targetArch))
+      .filter((x): x is string => !!x)
+      .map(collectFileStamp)
+      .sort()
+
+    const buildFingerprint = createHash('sha1').update(JSON.stringify({
+      mode: buildMode,
+      debug: !!options.debug,
+      targetPlatform,
+      targetArch,
+      targetTriple,
+      outputType: project.outputType,
+      outputName: outputFileName,
+      sourceStamps,
+      staticLibStamps,
+      resourceStamps,
+    })).digest('hex')
+
+    const previousBuildCache = (() => {
+      try {
+        if (!existsSync(buildCachePath)) return null
+        const raw = JSON.parse(readFileSync(buildCachePath, 'utf-8')) as Partial<BuildArtifactCacheFile>
+        if (!raw || raw.version !== BUILD_ARTIFACT_CACHE_VERSION) return null
+        if (typeof raw.fingerprint !== 'string' || typeof raw.outputBinary !== 'string') return null
+        return raw as BuildArtifactCacheFile
+      } catch {
+        return null
+      }
+    })()
+
+    if (
+      previousBuildCache
+      && previousBuildCache.fingerprint === buildFingerprint
+      && previousBuildCache.outputBinary === outputBinary
+      && existsSync(outputBinary)
+    ) {
+      sendMessage({ type: 'info', text: '未检测到编译输入变化，跳过编译与链接，直接复用上次产物。' })
+      result.success = true
+      result.outputFile = outputBinary
+      result.elapsedMs = Date.now() - startTime
+      sendMessage({ type: 'success', text: `编译成功 (${result.elapsedMs} 毫秒)` })
+      sendMessage({ type: 'info', text: `输出文件: ${outputBinary}` })
+      return result
+    }
+
     args.push('-target', targetTriple)
 
     // 源文件/执行字符集均使用 UTF-8，确保中文字符串字面量不被 MSVC 模式按 GBK 解析
@@ -4547,10 +5231,16 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
     // 调试/优化选项
     if (options.debug) {
-      args.push('-g')
+      args.push('-g', '-O0')
+      sendMessage({ type: 'info', text: '优化级别: O0 (调试优先)' })
+    } else if (buildMode === 'run') {
+      // 运行按钮优先响应速度，避免每次测试都走 O2 的慢编译路径。
+      args.push('-O0', '-fno-ident')
+      sendMessage({ type: 'info', text: '优化级别: O0 (快速运行)' })
     } else {
       args.push('-O2', '-fno-ident', '-ffunction-sections', '-fdata-sections')
       args.push('-Wl,--gc-sections')
+      sendMessage({ type: 'info', text: '优化级别: O2 (发布编译)' })
     }
 
     sendMessage({ type: 'info', text: '正在编译...' })
@@ -4614,6 +5304,17 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       result.errorCount++
       result.elapsedMs = Date.now() - startTime
       return result
+    }
+
+    try {
+      const cachePayload: BuildArtifactCacheFile = {
+        version: BUILD_ARTIFACT_CACHE_VERSION,
+        fingerprint: buildFingerprint,
+        outputBinary,
+      }
+      writeFileSync(buildCachePath, JSON.stringify(cachePayload), 'utf-8')
+    } catch {
+      // 缓存写入失败不影响本次编译。
     }
 
     result.success = true

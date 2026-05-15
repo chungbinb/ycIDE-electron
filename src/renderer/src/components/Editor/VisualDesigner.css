@@ -16,8 +16,29 @@
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  min-width: 130px;
   min-height: 0;
   overflow: hidden;
+  position: relative;
+  --vd-toolbox-scale: 1;
+  --vd-toolbox-tile-size: 34px;
+  --vd-toolbox-list-columns: 2;
+}
+
+.vd-toolbox.vd-toolbox-docked {
+  width: var(--vd-toolbox-dock-width, 160px);
+}
+
+.vd-toolbox.vd-toolbox-docked-right {
+  order: 2;
+  border-left: 1px solid var(--border-color);
+  border-right: none;
+}
+
+.vd-toolbox.vd-toolbox-docked-left {
+  order: 0;
+  border-left: none;
+  border-right: 1px solid var(--border-color);
 }
 
 /* 浮动工具箱：使用 fixed 定位，不被父容器裁剪 */
@@ -26,20 +47,17 @@
   left: var(--vd-toolbox-left, 0px);
   top: var(--vd-toolbox-top, 0px);
   width: var(--vd-toolbox-width, 130px);
-  height: var(--vd-toolbox-height, auto);
+  height: var(--vd-toolbox-height, 400px);
   z-index: 1000;
   border: 1px solid var(--border-color);
   border-radius: 4px;
   box-shadow: 0 4px 16px var(--menu-shadow);
-  border-right: 1px solid var(--border-color);
-  height: auto;
-  resize: both;
   overflow: hidden;
 }
 
 /* 图标模式下宽度更窄 */
 .vd-toolbox.vd-toolbox-icon-mode {
-  width: 130px;
+  min-width: 86px;
 }
 .vd-toolbox.vd-toolbox-icon-mode.vd-toolbox-float {
   min-width: 86px;
@@ -48,7 +66,7 @@
 .vd-toolbox-header {
   display: flex;
   align-items: center;
-  padding: 4px 6px;
+  padding: calc(4px * var(--vd-toolbox-scale)) calc(6px * var(--vd-toolbox-scale));
   border-bottom: 1px solid var(--border-color);
   cursor: default;
   gap: 4px;
@@ -60,7 +78,7 @@
 
 .vd-toolbox-title {
   flex: 1;
-  font-size: 10px;
+  font-size: calc(10px * var(--vd-toolbox-scale));
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -77,12 +95,12 @@
 }
 
 .vd-toolbox-btn {
-  width: 18px;
-  height: 18px;
+  width: calc(18px * var(--vd-toolbox-scale));
+  height: calc(18px * var(--vd-toolbox-scale));
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: calc(10px * var(--vd-toolbox-scale));
   border: none;
   background: none;
   color: var(--text-secondary);
@@ -97,7 +115,7 @@
 
 /* 搜索框 */
 .vd-toolbox-search {
-  padding: 4px;
+  padding: calc(4px * var(--vd-toolbox-scale));
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
@@ -108,8 +126,8 @@
 .vd-toolbox-search-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 2px 6px;
-  font-size: 11px;
+  padding: calc(2px * var(--vd-toolbox-scale)) calc(6px * var(--vd-toolbox-scale));
+  font-size: calc(11px * var(--vd-toolbox-scale));
   border: 1px solid var(--border-color);
   border-radius: 3px;
   background: var(--bg-primary);
@@ -127,40 +145,57 @@
   overflow-x: hidden;
 }
 
+.vd-toolbox-list.vd-toolbox-list-multi {
+  display: grid;
+  grid-template-columns: repeat(var(--vd-toolbox-list-columns, 2), minmax(0, 1fr));
+  align-content: flex-start;
+  gap: calc(4px * var(--vd-toolbox-scale));
+  padding: calc(4px * var(--vd-toolbox-scale));
+}
+
+.vd-toolbox-list.vd-toolbox-list-multi .vd-tool-item {
+  width: 100%;
+  min-width: 0;
+}
+
+.vd-toolbox-list.vd-toolbox-list-multi .vd-toolbox-empty {
+  grid-column: 1 / -1;
+}
+
 .vd-toolbox-icon-mode .vd-toolbox-list {
   display: flex;
   flex-wrap: wrap;
   align-content: flex-start;
   align-items: flex-start;
-  gap: 4px;
-  padding: 4px;
+  gap: calc(4px * var(--vd-toolbox-scale));
+  padding: calc(4px * var(--vd-toolbox-scale));
 }
 
 .vd-tool-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
+  gap: calc(6px * var(--vd-toolbox-scale));
+  padding: calc(4px * var(--vd-toolbox-scale)) calc(6px * var(--vd-toolbox-scale));
   border: none;
   background: none;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 11px;
+  font-size: calc(11px * var(--vd-toolbox-scale));
   width: 100%;
   text-align: left;
   border-left: 2px solid transparent;
 }
 .vd-toolbox-icon-mode .vd-tool-item {
   justify-content: center;
-  padding: 6px 0;
+  padding: calc(6px * var(--vd-toolbox-scale)) 0;
   flex-direction: column;
   gap: 0;
-  width: 34px;
-  min-width: 34px;
-  flex: 0 0 34px;
+  width: var(--vd-toolbox-tile-size);
+  min-width: var(--vd-toolbox-tile-size);
+  flex: 0 0 var(--vd-toolbox-tile-size);
   border-left: none;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: calc(4px * var(--vd-toolbox-scale));
 }
 .vd-tool-item:hover {
   background: var(--bg-hover);
@@ -178,16 +213,13 @@
 }
 
 .vd-tool-icon {
-  font-size: 14px;
+  font-size: calc(14px * var(--vd-toolbox-scale));
   line-height: 1;
-  width: 22px;
-  height: 22px;
+  width: calc(22px * var(--vd-toolbox-scale));
+  height: calc(22px * var(--vd-toolbox-scale));
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  background: var(--bg-tertiary);
   flex-shrink: 0;
 }
 
@@ -200,10 +232,41 @@
 /* 画布区域 */
 .vd-canvas-area {
   flex: 1;
+  order: 1;
   position: relative;
   min-height: 0;
   min-width: 0;
   background: var(--bg-primary);
+}
+
+.vd-toolbox-resizer {
+  position: absolute;
+  z-index: 3;
+}
+
+.vd-toolbox-resizer-docked {
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.vd-toolbox-resizer-right {
+  left: -3px;
+}
+
+.vd-toolbox-resizer-left {
+  right: -3px;
+}
+
+.vd-toolbox-resizer-float {
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(135deg, transparent 0 50%, color-mix(in srgb, var(--text-secondary) 45%, transparent) 50% 60%, transparent 60% 100%);
 }
 
 .vd-canvas-area:focus-visible {
@@ -520,10 +583,10 @@
 }
 
 .vd-preview-input {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
+  background: var(--vd-preview-bg, #ffffff);
+  border: 1px solid var(--vd-preview-border, var(--border-color));
   padding: 2px 4px;
-  color: var(--text-primary);
+  color: var(--vd-preview-text, var(--text-primary));
 }
 
 .vd-preview-label {

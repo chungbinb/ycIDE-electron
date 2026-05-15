@@ -22,6 +22,7 @@ function mapCompletionCommand(c: RawCompletionCommand): CompletionItem {
       type: p.type,
       description: p.description || '',
       optional: !!p.optional,
+      repeatable: !!p.repeatable,
       isVariable: !!p.isVariable,
       isArray: !!p.isArray,
     })),

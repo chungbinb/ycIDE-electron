@@ -163,6 +163,14 @@ interface EditState {
   paramIdx?: number   // 展开参数编辑：第几个参数 (0-based)
 }
 
+interface ExprExpandItem {
+  name: string
+  value: string
+  commandName?: string
+  commandParamIndex?: number
+  children?: ExprExpandItem[]
+}
+
 const setCssVars = (element: HTMLElement | null, vars: Record<string, string>): void => {
   if (!element) return
   for (const [name, value] of Object.entries(vars)) {
@@ -5592,6 +5600,134 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return null
   }, [validCommandNames])
 
+  const findCommandCallWithParams = useCallback((expr: string): { cmd: CompletionItem; args: string[] } | null => {
+    const normalized = (expr || '').trim()
+    if (!normalized) return null
+    const head = /^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.。．]*)\s*[(（]/.exec(normalized)
+    if (!head) return null
+    const cmdName = (head[1] || '').trim()
+    if (!cmdName) return null
+    const cmd = allCommandsRef.current.find(c => c.name === cmdName) || dllCompletionItemsRef.current.find(c => c.name === cmdName)
+    if (!cmd || cmd.params.length === 0) return null
+    const args = parseCallArgs(normalized)
+    return { cmd, args }
+  }, [])
+
+  const findTopLevelAdditiveParts = useCallback((expr: string): { left: string; right: string } | null => {
+    const normalized = (expr || '').trim()
+    if (!normalized) return null
+    let depth = 0
+    let inStr = false
+    let strEnd = ''
+    for (let i = normalized.length - 1; i >= 0; i--) {
+      const ch = normalized[i]
+      if (inStr) {
+        if (ch === strEnd) inStr = false
+        continue
+      }
+      if (ch === '"' || ch === '\u201d') {
+        inStr = true
+        strEnd = ch === '\u201d' ? '\u201c' : '"'
+        continue
+      }
+      if (ch === ')' || ch === '）') { depth++; continue }
+      if (ch === '(' || ch === '（') { depth--; continue }
+      if (depth !== 0) continue
+      if (ch !== '+' && ch !== '＋') continue
+
+      let j = i - 1
+      while (j >= 0 && /\s/.test(normalized[j])) j--
+      const prev = j >= 0 ? normalized[j] : ''
+      if (!prev || /[+\-*/%(<>=!&|,，]/.test(prev)) continue
+
+      const left = normalized.slice(0, i).trim()
+      const right = normalized.slice(i + 1).trim()
+      if (!left || !right) continue
+      return { left, right }
+    }
+    return null
+  }, [])
+
+  const buildExprExpandItems = useCallback((expr: string, depth = 0): ExprExpandItem[] => {
+    if (depth > 6) return []
+    const normalized = (expr || '').trim()
+    if (!normalized) return []
+
+    const additive = findTopLevelAdditiveParts(normalized)
+    if (additive) {
+      const leftChildren = buildExprExpandItems(additive.left, depth + 1)
+      const rightChildren = buildExprExpandItems(additive.right, depth + 1)
+      return [
+        {
+          name: '被加数或文本或字节集',
+          value: additive.left,
+          children: leftChildren.length > 0 ? leftChildren : undefined,
+        },
+        {
+          name: '加数或文本或字节集',
+          value: additive.right,
+          children: rightChildren.length > 0 ? rightChildren : undefined,
+        },
+      ]
+    }
+
+    const call = findCommandCallWithParams(normalized)
+    if (!call) return []
+    return call.cmd.params.map((p, pi) => {
+      const argVal = call.args[pi] !== undefined ? call.args[pi] : ''
+      const childItems = buildExprExpandItems(argVal, depth + 1)
+      return {
+        name: p.name,
+        value: argVal,
+        commandName: call.cmd.name,
+        commandParamIndex: pi,
+        children: childItems.length > 0 ? childItems : undefined,
+      }
+    })
+  }, [findCommandCallWithParams, findTopLevelAdditiveParts])
+
+  const renderExprExpandItems = useCallback((items: ExprExpandItem[], lineIndex: number, depth = 0, keyPrefix = 'root', baseFlowDepth = 0): React.ReactNode => {
+    if (!items || items.length === 0) return null
+    const depthClass = `eyc-param-expand-secondary-depth-${Math.min(Math.max(depth, 0), 6)}`
+    const levelColors = resolveFlowLineColors(flowLineModeConfig, Math.max(0, baseFlowDepth + depth + 1))
+    return (
+      <div
+        className={`eyc-param-expand-secondary ${depthClass}`}
+        ref={(element) => setCssVars(element, {
+          '--flow-inner-link-color': levelColors.innerLink,
+          '--flow-arrow-color': levelColors.arrow,
+        })}
+      >
+        <span className="eyc-param-expand-arrow eyc-param-expand-arrow-secondary" />
+        {items.map((item, idx) => {
+          const itemKey = `${keyPrefix}-${depth}-${idx}`
+          const clickable = !!item.commandName
+          const hasChildren = !!(item.children && item.children.length > 0)
+          return (
+            <Fragment key={itemKey}>
+              <div
+                className={`eyc-param-expand-row eyc-param-expand-row-secondary${clickable ? ' eyc-param-expand-row-clickable' : ''}${hasChildren ? ' eyc-param-expand-row-parent' : ''}`}
+                onClick={clickable ? (e) => {
+                  e.stopPropagation()
+                  const ownerAssembly = findOwnerAssemblyName(lineIndex)
+                  const cmdName = item.commandName || ''
+                  const hintName = userSubNamesRef.current.has(cmdName) ? `__SUB__:${cmdName}:${ownerAssembly}` : cmdName
+                  onCommandClick?.(hintName, item.commandParamIndex)
+                } : undefined}
+              >
+                <span className="eyc-param-expand-mark">※</span>
+                <span className="eyc-param-expand-name">{item.name}</span>
+                <span className="eyc-param-expand-colon">：</span>
+                <span className={`eyc-param-expand-val${isQuotedTextLiteral(item.value) ? ' eTxtcolor' : ''}`}>{item.value || '\u00A0'}</span>
+              </div>
+              {item.children && renderExprExpandItems(item.children, lineIndex, depth + 1, itemKey, baseFlowDepth)}
+            </Fragment>
+          )
+        })}
+      </div>
+    )
+  }, [findOwnerAssemblyName, flowLineModeConfig, onCommandClick])
+
   // 查找代码行中第一个命令名（不要求有参数）
   const findFirstCommandName = useCallback((codeLine: string): string | null => {
     if (!codeLine) return null
@@ -6121,6 +6257,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           const sourceLine = blk.isVirtual ? 0 : (blk.lineIndex + 1)
           const hasBreakpoint = sourceLine > 0 && breakpointLineSet.has(sourceLine)
           const isDebugLine = !!debugSourceLine && sourceLine === debugSourceLine
+          const isDiagnosticErrorLine = lineMarkerTypeMap.get(blk.lineIndex) === 'error'
           return (
             <Fragment key={bi}>
             <div
@@ -6144,7 +6281,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 </div>
               </div>
               <div
-                className={`eyc-code-line${editCell && editCell.lineIndex === blk.lineIndex && editCell.isVirtual === blk.isVirtual && editCell.paramIdx === undefined ? ' eyc-code-line-editing' : ''}`}
+                className={`eyc-code-line${isDiagnosticErrorLine ? ' eyc-code-line-error' : ''}${editCell && editCell.lineIndex === blk.lineIndex && editCell.isVirtual === blk.isVirtual && editCell.paramIdx === undefined ? ' eyc-code-line-editing' : ''}`}
                 onClick={(e) => handleCodeLineClick(e, {
                   lineIndex: blk.lineIndex,
                   codeLineRaw,
@@ -6261,9 +6398,22 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                       className="eyc-param-expand-arrow"
                       ref={(element) => setCssVars(element, { '--eyc-param-expand-arrow-left': arrowLeftStyle })}
                     />
-                    <div className="eyc-param-expand-inner">
+                    <div
+                      className="eyc-param-expand-inner"
+                      ref={(element) => {
+                        const baseFlowDepth = Math.max(0, Math.floor(leadingSpaces / 4))
+                        const levelColors = resolveFlowLineColors(flowLineModeConfig, baseFlowDepth)
+                        setCssVars(element, {
+                          '--flow-inner-link-color': levelColors.innerLink,
+                          '--flow-arrow-color': levelColors.arrow,
+                        })
+                      }}
+                    >
                       {lineCmd.params.map((p, pi) => {
                         const isEditingParam = editCell && editCell.lineIndex === blk.lineIndex && editCell.paramIdx === pi
+                        const argVal = argVals[pi] !== undefined ? argVals[pi] : ''
+                        const nestedItems = buildExprExpandItems(argVal)
+                        const hasNestedExpand = !isEditingParam && nestedItems.length > 0
                         const startParamEdit = (e: React.MouseEvent) => {
                           e.stopPropagation()
                           // 点击参数行时提示该参数的信息
@@ -6279,32 +6429,35 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           setTimeout(() => paramInputRef.current?.focus(), 0)
                         }
                         return (
-                          <div key={pi} className={`eyc-param-expand-row${isEditingParam ? '' : ' eyc-param-expand-row-clickable'}`} onClick={isEditingParam ? undefined : startParamEdit}>
-                            <span className="eyc-param-expand-mark">※</span>
-                            <span className="eyc-param-expand-name">{p.name}</span>
-                            <span className="eyc-param-expand-colon">：</span>
-                            {isEditingParam ? (
-                              <input
-                                ref={paramInputRef}
-                                className="eyc-param-val-input"
-                                aria-label={`编辑参数 ${p.name}`}
-                                value={editVal}
-                                onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
-                                onBlur={() => {
-                                  if (shouldSuppressBlurCommit()) return
-                                  commit()
-                                }}
-                                onKeyDown={e => {
-                                  if (handleParamInputCtrlKey(e)) return
-                                  if (e.key === 'Enter') { e.preventDefault(); commit() }
-                                  else if (e.key === 'Escape') setEditCell(null)
-                                }}
-                                spellCheck={false}
-                              />
-                            ) : (
-                              <span className="eyc-param-expand-val">{argVals[pi] !== undefined ? argVals[pi] : '\u00A0'}</span>
-                            )}
-                          </div>
+                          <Fragment key={pi}>
+                            <div className={`eyc-param-expand-row${isEditingParam ? '' : ' eyc-param-expand-row-clickable'}${hasNestedExpand ? ' eyc-param-expand-row-parent' : ''}`} onClick={isEditingParam ? undefined : startParamEdit}>
+                              <span className="eyc-param-expand-mark">※</span>
+                              <span className="eyc-param-expand-name">{p.name}</span>
+                              <span className="eyc-param-expand-colon">：</span>
+                              {isEditingParam ? (
+                                <input
+                                  ref={paramInputRef}
+                                  className="eyc-param-val-input"
+                                  aria-label={`编辑参数 ${p.name}`}
+                                  value={editVal}
+                                  onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
+                                  onBlur={() => {
+                                    if (shouldSuppressBlurCommit()) return
+                                    commit()
+                                  }}
+                                  onKeyDown={e => {
+                                    if (handleParamInputCtrlKey(e)) return
+                                    if (e.key === 'Enter') { e.preventDefault(); commit() }
+                                    else if (e.key === 'Escape') setEditCell(null)
+                                  }}
+                                  spellCheck={false}
+                                />
+                              ) : (
+                                <span className={`eyc-param-expand-val${isQuotedTextLiteral(argVal) ? ' eTxtcolor' : ''}`}>{argVal || '\u00A0'}</span>
+                              )}
+                            </div>
+                            {hasNestedExpand && renderExprExpandItems(nestedItems, blk.lineIndex, 0, `line-${blk.lineIndex}-p-${pi}`, Math.max(0, Math.floor(leadingSpaces / 4)))}
+                          </Fragment>
                         )
                       })}
                     </div>
@@ -6622,6 +6775,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                   s += p.type
                   if (p.isArray) s += '数组'
                   s += ' ' + p.name
+                  if (p.repeatable) s += '...'
                   if (p.optional) s += '］'
                   return s
                 }).join('，')
@@ -6647,7 +6801,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                     {ci.params.map((p, pi) => (
                       <div key={pi} className="eyc-ac-detail-param">
                         <span className="eyc-ac-detail-param-head">
-                          参数&lt;{pi + 1}&gt;的名称为"{p.name}"，类型为"{p.type}{p.isArray ? '(数组)' : ''}{p.isVariable ? '(参考)' : ''}"{p.optional ? '，可以被省略' : ''}。
+                          参数&lt;{pi + 1}&gt;的名称为"{p.name}"，类型为"{p.type}{p.isArray ? '(数组)' : ''}{p.isVariable ? '(参考)' : ''}"{p.optional ? '，可以被省略' : ''}{p.repeatable ? '，可重复追加' : ''}。
                         </span>
                         {p.description && <span className="eyc-ac-detail-param-desc">{p.description}</span>}
                       </div>

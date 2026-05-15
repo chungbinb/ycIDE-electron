@@ -94,6 +94,7 @@ export interface LibraryWindowUnit {
   description: string
   className: string
   style: string
+  iconFileName?: string
   properties: LibraryWindowUnitProperty[]
   events: LibraryWindowUnitEvent[]
   libraryName: string
@@ -164,6 +165,12 @@ interface LibraryProtocolEventBinding {
   event: string
 }
 
+interface LibraryUnitIconIndexItem {
+  eName: string
+  cName: string
+  iCons: string
+}
+
 interface ParsedLibraryMetadata {
   guid: string
   description: string
@@ -202,6 +209,70 @@ const DEFAULT_PROTOCOL_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [
   { name: '禁止', englishName: 'disable', description: '是否禁用。', type: 0, typeName: '逻辑型', isReadOnly: false, pickOptions: [] },
   { name: '鼠标指针', englishName: 'MousePointer', description: '鼠标指针类型。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
 ]
+
+const FIXED_COMMON_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [
+  { name: '标题', englishName: 'text', description: '控件显示文本。', type: 0, typeName: '文本型', isReadOnly: false, pickOptions: [] },
+  { name: '左边', englishName: 'left', description: '控件左边位置。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '顶边', englishName: 'top', description: '控件顶边位置。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '宽度', englishName: 'width', description: '控件宽度。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '高度', englishName: 'height', description: '控件高度。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '标记', englishName: 'tag', description: '控件标记文本。', type: 0, typeName: '文本型', isReadOnly: false, pickOptions: [] },
+  { name: '可视', englishName: 'visible', description: '是否可见。', type: 0, typeName: '逻辑型', isReadOnly: false, pickOptions: [] },
+  { name: '禁止', englishName: 'disable', description: '是否禁用。', type: 0, typeName: '逻辑型', isReadOnly: false, pickOptions: [] },
+  {
+    name: '鼠标指针',
+    englishName: 'MousePointer',
+    description: '鼠标指针类型。',
+    type: 0,
+    typeName: '选择整数',
+    isReadOnly: false,
+    pickOptions: [
+      '0.默认型',
+      '1.标准箭头型',
+      '2.十字型',
+      '3.文本编辑型',
+      '4.沙漏型',
+      '5.箭头问号型',
+      '6.箭头及沙漏型',
+      '7.禁止符型',
+      '8.四向箭头型',
+      '9.北向箭头型',
+      '10.北<->南箭头型',
+      '11.东<->西箭头型',
+      '12.西北<->东南箭头型',
+      '13.东北<->西南箭头型',
+      '14.手型',
+      '15.自定义型',
+    ],
+  },
+]
+
+function mergeWithFixedCommonProperties(properties: LibraryWindowUnitProperty[]): LibraryWindowUnitProperty[] {
+  const byName = new Map(properties.map(item => [item.name, item]))
+  const fixedNames = new Set(FIXED_COMMON_UNIT_PROPERTIES.map(item => item.name))
+
+  const merged: LibraryWindowUnitProperty[] = FIXED_COMMON_UNIT_PROPERTIES.map(item => {
+    const fromUnit = byName.get(item.name)
+    const source = fromUnit || item
+    const pickOptions = source.pickOptions && source.pickOptions.length > 0
+      ? [...source.pickOptions]
+      : [...item.pickOptions]
+    return {
+      ...source,
+      pickOptions,
+    }
+  })
+
+  for (const item of properties) {
+    if (fixedNames.has(item.name)) continue
+    merged.push({
+      ...item,
+      pickOptions: [...(item.pickOptions || [])],
+    })
+  }
+
+  return merged
+}
 
 const LIBRARY_INSTALL_STATE_VERSION = '1.0'
 
@@ -501,6 +572,15 @@ class LibraryManager {
     ]
   }
 
+  private getIconIndexCandidates(name: string, folderPath: string): string[] {
+    return [
+      join(folderPath, 'icon', 'icon.json'),
+      join(folderPath, 'icons', 'icon.json'),
+      join(folderPath, `${name}.icon.json`),
+      join(folderPath, 'icon.json'),
+    ]
+  }
+
   private mergeTextField(current: string, value: unknown): string {
     if (typeof value !== 'string') return current
     const trimmed = value.trim()
@@ -596,7 +676,10 @@ class LibraryManager {
         description: typeof item.description === 'string' ? item.description.trim() : '',
         className: typeof item.className === 'string' ? item.className.trim() : '',
         style: typeof item.style === 'string' ? item.style.trim() : '',
-        properties: this.parseWindowUnitProperties(item.properties),
+        iconFileName: typeof item.iconFileName === 'string'
+          ? item.iconFileName.trim()
+          : (typeof item.icon === 'string' ? item.icon.trim() : ''),
+        properties: mergeWithFixedCommonProperties(this.parseWindowUnitProperties(item.properties)),
         events: this.parseWindowUnitEvents(item.events),
         libraryName,
       }))
@@ -650,13 +733,59 @@ class LibraryManager {
       description: `${control.unit}控件。`,
       className: control.className,
       style: control.style,
-      properties: DEFAULT_PROTOCOL_UNIT_PROPERTIES.map(item => ({
-        ...item,
-        pickOptions: [...item.pickOptions],
-      })),
+      iconFileName: '',
+      properties: mergeWithFixedCommonProperties(DEFAULT_PROTOCOL_UNIT_PROPERTIES),
       events: eventMap.get(control.unit) ?? [],
       libraryName,
     }))
+  }
+
+  private parseUnitIconIndex(value: unknown): LibraryUnitIconIndexItem[] {
+    if (!Array.isArray(value)) return []
+    return value
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map(item => ({
+        eName: typeof item.eName === 'string' ? item.eName.trim() : '',
+        cName: typeof item.cName === 'string' ? item.cName.trim() : '',
+        iCons: typeof item.iCons === 'string' ? item.iCons.trim() : '',
+      }))
+      .filter(item => item.iCons.length > 0 && (item.cName.length > 0 || item.eName.length > 0))
+  }
+
+  private readWindowUnitIconIndex(name: string, folderPath: string): LibraryUnitIconIndexItem[] {
+    for (const candidate of this.getIconIndexCandidates(name, folderPath)) {
+      if (!existsSync(candidate)) continue
+      try {
+        const raw = JSON.parse(readFileSync(candidate, 'utf-8'))
+        const parsed = this.parseUnitIconIndex(raw)
+        if (parsed.length > 0) return parsed
+      } catch {
+        // ignore malformed icon index and continue with other candidates
+      }
+    }
+    return []
+  }
+
+  private applyWindowUnitIconIndex(windowUnits: LibraryWindowUnit[], iconIndex: LibraryUnitIconIndexItem[]): LibraryWindowUnit[] {
+    if (windowUnits.length === 0 || iconIndex.length === 0) return windowUnits
+
+    const byCnName = new Map<string, string>()
+    const byEnName = new Map<string, string>()
+    for (const item of iconIndex) {
+      if (item.cName) byCnName.set(item.cName, item.iCons)
+      if (item.eName) byEnName.set(item.eName.toLowerCase(), item.iCons)
+    }
+
+    return windowUnits.map(unit => {
+      const fromCn = byCnName.get(unit.name)
+      const fromEn = unit.englishName ? byEnName.get(unit.englishName.toLowerCase()) : undefined
+      const iconFileName = unit.iconFileName || fromCn || fromEn || ''
+      if (!iconFileName) return unit
+      return {
+        ...unit,
+        iconFileName,
+      }
+    })
   }
 
   private mergeWindowUnits(primary: LibraryWindowUnit[], fallback: LibraryWindowUnit[]): LibraryWindowUnit[] {
@@ -681,8 +810,9 @@ class LibraryManager {
         ...existing,
         className: existing.className || unit.className,
         style: existing.style || unit.style,
+        iconFileName: existing.iconFileName || unit.iconFileName,
         events: mergedEvents,
-        properties: mergedProperties,
+        properties: mergeWithFixedCommonProperties(mergedProperties),
       })
     }
 
@@ -735,6 +865,11 @@ class LibraryManager {
       } catch {
         // ignore malformed metadata file and continue with other candidates
       }
+    }
+
+    if (parsed.windowUnits.length > 0) {
+      const iconIndex = this.readWindowUnitIconIndex(name, folderPath)
+      parsed.windowUnits = this.applyWindowUnitIconIndex(parsed.windowUnits, iconIndex)
     }
 
     this.metadataCache.set(name, hasMetadata ? parsed : null)
@@ -1027,6 +1162,7 @@ class LibraryManager {
         type: p.type,
         description: p.description,
         optional: !!p.optional,
+        repeatable: !!p.repeatable,
         isVariable: !!p.isVariable,
         isArray: !!p.isArray,
       })),

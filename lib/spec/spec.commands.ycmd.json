@@ -19,7 +19,13 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "代码数据",
+          "type": "通用型",
+          "optional": false
+        }
+      ]
     },
     {
       "commandId": "spec.GetVarAddress",
@@ -30,7 +36,13 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "欲获取其地址的变量",
+          "type": "通用型",
+          "optional": false
+        }
+      ]
     },
     {
       "commandId": "spec.GetSubAddress",
@@ -41,7 +53,13 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "欲获取其地址的子程序",
+          "type": "子程序指针",
+          "optional": false
+        }
+      ]
     },
     {
       "commandId": "spec.GetVarDataAddr",
@@ -52,7 +70,13 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "变量",
+          "type": "通用型",
+          "optional": false
+        }
+      ]
     },
     {
       "commandId": "spec.Trace",
@@ -63,7 +87,14 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "欲输出值",
+          "type": "通用型",
+          "optional": true,
+          "repeatable": true
+        }
+      ]
     },
     {
       "commandId": "spec.Verify",
@@ -74,7 +105,14 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "欲检查值",
+          "type": "通用型",
+          "optional": true,
+          "repeatable": true
+        }
+      ]
     },
     {
       "commandId": "spec.CallFunction",
@@ -85,7 +123,29 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "子程序指针或子程序地址",
+          "type": "通用型",
+          "optional": false
+        },
+        {
+          "name": "保留参数",
+          "type": "通用型",
+          "optional": true
+        },
+        {
+          "name": "返回值",
+          "type": "通用型",
+          "optional": true
+        },
+        {
+          "name": "参数",
+          "type": "通用型",
+          "optional": true,
+          "repeatable": true
+        }
+      ]
     },
     {
       "commandId": "spec.Delay",
@@ -96,7 +156,13 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "等待时间",
+          "type": "整数型",
+          "optional": false
+        }
+      ]
     },
     {
       "commandId": "spec.DelayCallFunction",
@@ -107,7 +173,34 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "推迟时间",
+          "type": "整数型",
+          "optional": false
+        },
+        {
+          "name": "子程序指针或子程序地址",
+          "type": "通用型",
+          "optional": false
+        },
+        {
+          "name": "保留参数",
+          "type": "通用型",
+          "optional": true
+        },
+        {
+          "name": "返回值",
+          "type": "通用型",
+          "optional": true
+        },
+        {
+          "name": "参数",
+          "type": "通用型",
+          "optional": true,
+          "repeatable": true
+        }
+      ]
     },
     {
       "commandId": "spec.AllocMem",
@@ -118,7 +211,18 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "欲申请的内存字节数",
+          "type": "整数型",
+          "optional": false
+        },
+        {
+          "name": "是否清零",
+          "type": "逻辑型",
+          "optional": true
+        }
+      ]
     },
     {
       "commandId": "spec.FreeMem",
@@ -129,7 +233,13 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "欲释放的内存地址",
+          "type": "整数型",
+          "optional": false
+        }
+      ]
     },
     {
       "commandId": "spec.ESysFunction",
@@ -140,7 +250,23 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "功能号",
+          "type": "整数型",
+          "optional": false
+        },
+        {
+          "name": "参数一",
+          "type": "整数型",
+          "optional": true
+        },
+        {
+          "name": "参数二",
+          "type": "整数型",
+          "optional": true
+        }
+      ]
     },
     {
       "commandId": "spec.GetText",
@@ -151,7 +277,19 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "原始文本",
+          "type": "通用型",
+          "optional": false
+        },
+        {
+          "name": "参数",
+          "type": "通用型",
+          "optional": true,
+          "repeatable": true
+        }
+      ]
     },
     {
       "commandId": "spec.GetText_Set",
@@ -162,7 +300,28 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "半角双引号替换符",
+          "type": "文本型",
+          "optional": true
+        },
+        {
+          "name": "全角左引号替换符",
+          "type": "文本型",
+          "optional": true
+        },
+        {
+          "name": "全角右引号替换符",
+          "type": "文本型",
+          "optional": true
+        },
+        {
+          "name": "文本替换符前缀",
+          "type": "文本型",
+          "optional": true
+        }
+      ]
     },
     {
       "commandId": "spec.GetText_Get",
@@ -173,7 +332,28 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "半角双引号替换符",
+          "type": "文本型",
+          "optional": true
+        },
+        {
+          "name": "全角左引号替换符",
+          "type": "文本型",
+          "optional": true
+        },
+        {
+          "name": "全角右引号替换符",
+          "type": "文本型",
+          "optional": true
+        },
+        {
+          "name": "文本替换符前缀",
+          "type": "文本型",
+          "optional": true
+        }
+      ]
     },
     {
       "commandId": "spec.DelayCallFunction_precisely",
@@ -184,7 +364,34 @@
       "supportedPlatforms": [
         "windows"
       ],
-      "params": []
+      "params": [
+        {
+          "name": "推迟时间",
+          "type": "整数型",
+          "optional": false
+        },
+        {
+          "name": "子程序指针或子程序地址",
+          "type": "通用型",
+          "optional": false
+        },
+        {
+          "name": "保留参数",
+          "type": "通用型",
+          "optional": true
+        },
+        {
+          "name": "返回值",
+          "type": "通用型",
+          "optional": true
+        },
+        {
+          "name": "参数",
+          "type": "通用型",
+          "optional": true,
+          "repeatable": true
+        }
+      ]
     }
   ]
 }

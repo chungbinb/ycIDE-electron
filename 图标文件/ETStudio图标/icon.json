@@ -1,0 +1,372 @@
+[
+  {
+    "eName": "checkbox",
+    "cName": "选择框",
+    "iCons": "Checkbox_16x.png"
+  },
+    {
+    "eName": "checkbox",
+    "cName": "选择框EX",
+    "iCons": "Checkbox_16x.png"
+  },
+  {
+    "eName": "button",
+    "cName": "按钮",
+    "iCons": "Button_16x.png"
+  },
+  {
+    "eName": "button",
+    "cName": "按钮EX",
+    "iCons": "Button_16x.png"
+  },
+    {
+    "eName": "button",
+    "cName": "超级按钮EX",
+    "iCons": "Button_16x.png"
+  },
+  {
+    "eName": "chklistbox",
+    "cName": "选择列表框",
+    "iCons": "CheckboxList_16x.png"
+  },
+  {
+    "eName": "colorpicker",
+    "cName": "颜色选择器",
+    "iCons": "ColorDialog_16x.png"
+  },
+    {
+    "eName": "colorpicker",
+    "cName": "选色板EX",
+    "iCons": "ColorDialog_16x.png"
+  },
+  {
+    "eName": "comboBox",
+    "cName": "组合框",
+    "iCons": "ComboBox_16x.png"
+  },
+    {
+    "eName": "comboBox",
+    "cName": "组合框EX",
+    "iCons": "ComboBox_16x.png"
+  },
+  {
+    "eName": "listbox",
+    "cName": "列表框",
+    "iCons": "ListBox_16x.png"
+  },
+    {
+    "eName": "listbox",
+    "cName": "列表框EX",
+    "iCons": "ListBox_16x.png"
+  },
+  {
+    "eName": "RadioBox",
+    "cName": "单选框",
+    "iCons": "RadioButton_16x.png"
+  },
+    {
+    "eName": "RadioBox",
+    "cName": "单选框EX",
+    "iCons": "RadioButton_16x.png"
+  },
+  {
+    "eName": "PicBox",
+    "cName": "图片框",
+    "iCons": "Image_16x.png"
+  },
+    {
+    "eName": "PicBox",
+    "cName": "图片框EX",
+    "iCons": "Image_16x.png"
+  },
+  {
+    "eName": "HScrollBar",
+    "cName": "横向滚动条",
+    "iCons": "HorizontalScrollBarControl_16x.png"
+  },
+    {
+    "eName": "HScrollBar",
+    "cName": "滚动条EX",
+    "iCons": "HorizontalScrollBarControl_16x.png"
+  },
+  {
+    "eName": "VScrollBar",
+    "cName": "纵向滚动条",
+    "iCons": "VerticalScrollBarControl_16x.png"
+  },
+  {
+    "eName": "DatePicker",
+    "cName": "日期框",
+    "iCons": "DatePicker_16x.png"
+  },
+    {
+    "eName": "DatePicker",
+    "cName": "日历框EX",
+    "iCons": "DatePicker_16x.png"
+  },
+  {
+    "eName": "PicBtn",
+    "cName": "图形按钮",
+    "iCons": "ImageButton_16x.png"
+  },
+    {
+    "eName": "PicBtn",
+    "cName": "图片按钮EX",
+    "iCons": "ImageButton_16x.png"
+  },
+  {
+    "eName": "ProcessBar",
+    "cName": "进度条",
+    "iCons": "ProgressBar_16x.png"
+  },
+    {
+    "eName": "ProcessBar",
+    "cName": "进度条EX",
+    "iCons": "ProgressBar_16x.png"
+  },
+  {
+    "eName": "HyperLinker",
+    "cName": "超级链接框",
+    "iCons": "LinkButton_16x.png"
+  },
+  {
+    "eName": "Grid",
+    "cName": "表格",
+    "iCons": "Table_16x.png"
+  },
+  {
+    "eName": "printer",
+    "cName": "打印机",
+    "iCons": "PrintDialog_16x.png"
+  },
+  {
+    "eName": "SerialPort",
+    "cName": "端口",
+    "iCons": "SerialPort_16x.png"
+  },
+  {
+    "eName": "Timer",
+    "cName": "时钟",
+    "iCons": "Timer_16x.png"
+  },
+  {
+    "eName": "Tab",
+    "cName": "选择夹",
+    "iCons": "Tab_16x.png"
+  },
+    {
+    "eName": "Tab",
+    "cName": "选择夹EX",
+    "iCons": "Tab_16x.png"
+  },
+      {
+    "eName": "Tab",
+    "cName": "选择框EX",
+    "iCons": "Tab_16x.png"
+  },
+  {
+    "eName": "EditBox",
+    "cName": "编辑框",
+    "iCons": "TextBox_16x.png"
+  },
+    {
+    "eName": "EditBox",
+    "cName": "编辑框EX",
+    "iCons": "TextBox_16x.png"
+  },
+  {
+    "eName": "ShapeBox",
+    "cName": "外形框",
+    "iCons": "Panel_16x.png"
+  },
+  {
+    "eName": "DrawPanel",
+    "cName": "画板",
+    "iCons": "PaintBrush_16x.png"
+  },
+    {
+    "eName": "DrawPanel",
+    "cName": "画板EX",
+    "iCons": "PaintBrush_16x.png"
+  },
+  {
+    "eName": "GroupBox",
+    "cName": "分组框",
+    "iCons": "GroupBox_16x.png"
+  },
+    {
+    "eName": "GroupBox",
+    "cName": "分组框EX",
+    "iCons": "GroupBox_16x.png"
+  },
+  {
+    "eName": "Label",
+    "cName": "标签",
+    "iCons": "Label_16x.png"
+  },
+    {
+    "eName": "Label",
+    "cName": "标签EX",
+    "iCons": "Label_16x.png"
+  },
+  {
+    "eName": "MonthCalendar",
+    "cName": "月历",
+    "iCons": "MonthCalendar_16x.png"
+  },
+  {
+    "eName": "AnimateBox",
+    "cName": "影像框",
+    "iCons": "Media_16x.png"
+  },
+  {
+    "eName": "ODBCDB",
+    "cName": "外部数据库",
+    "iCons": "BindingSource_16x.png"
+  },
+  {
+    "eName": "ODBCProvider",
+    "cName": "外部数据提供者",
+    "iCons": "BindingNavigator_16x.png"
+  },
+  {
+    "eName": "NProvider",
+    "cName": "通用提供者",
+    "iCons": "Relationship_16x.png"
+  },
+  {
+    "eName": "DBProvider",
+    "cName": "数据库提供者",
+    "iCons": "TableAdapter_16x.png"
+  },
+  {
+    "eName": "DBProvider",
+    "cName": "数据源",
+    "iCons": "DatabaseGroup_16x.png"
+  },
+  {
+    "eName": "WindowsMediaPlayer",
+    "cName": "播放器",
+    "iCons": "VideoCamera_16x.png"
+  },
+  {
+    "eName": "WindowsMediaPlayer",
+    "cName": "指针",
+    "iCons": "Cursor_16x.png"
+  },
+  {
+    "eName": "UDP",
+    "cName": "数据报",
+    "iCons": "Diagram_16x.png"
+  },
+  {
+    "eName": "Spin",
+    "cName": "调节器",
+    "iCons": "SpinButton_16x.png"
+  },
+  {
+    "eName": "CommonDlg",
+    "cName": "通用对话框",
+    "iCons": "OpenfileDialog_16x.png"
+  },
+  {
+    "eName": "DirBox",
+    "cName": "目录框",
+    "iCons": "FolderBrowserDialogControl_16x.png"
+  },
+  {
+    "eName": "FileBox",
+    "cName": "文件框",
+    "iCons": "ProjectFilterFile_16x.png"
+  },
+  {
+    "eName": "DriverBox",
+    "cName": "驱动器框",
+    "iCons": "Driver_16x.png"
+  },
+  {
+    "eName": "SliderBar",
+    "cName": "滑块条",
+    "iCons": "Slider_16x.png"
+  },
+  {
+    "eName": "Client",
+    "cName": "客户",
+    "iCons": "ClientStatistcs_16x.png"
+  },
+  {
+    "eName": "Server",
+    "cName": "服务器",
+    "iCons": "ServerReport_16x.png"
+  },
+  {
+    "eName": "IPEditBox",
+    "cName": "IP编辑框",
+    "iCons": "MaskedTextbox_16x.png"
+  },
+  {
+    "eName": "RichEdit",
+    "cName": "超级编辑框",
+    "iCons": "RichTextBox_16x.png"
+  },
+  {
+    "eName": "TreeBox",
+    "cName": "树型框",
+    "iCons": "TreeView_16x.png"
+  },
+  {
+    "eName": "ToolBar",
+    "cName": "工具条",
+    "iCons": "ToolBar_16x.png"
+  },
+    {
+    "eName": "ToolBar",
+    "cName": "工具条EX",
+    "iCons": "ToolBar_16x.png"
+  },
+  {
+    "eName": "StatusBar",
+    "cName": "状态条",
+    "iCons": "StatusStrip_16x.png"
+  },
+    {
+    "eName": "StatusBar",
+    "cName": "分页导航EX",
+    "iCons": "StatusStrip_16x.png"
+  },
+  {
+    "eName": "CodeStyleEdit",
+    "cName": "代码编辑框",
+    "iCons": "TextArea_16x.png"
+  },
+  {
+    "eName": "ListView",
+    "cName": "超级列表框",
+    "iCons": "ListView_16x.png"
+  },
+    {
+    "eName": "ListView",
+    "cName": "超级列表框EX",
+    "iCons": "ListView_16x.png"
+  },
+      {
+    "eName": "ListView",
+    "cName": "高级表格EX",
+    "iCons": "ListView_16x.png"
+  },
+  {
+    "eName": "HtmlViewer",
+    "cName": "超文本浏览框",
+    "iCons": "Web_16x.png"
+  },
+    {
+    "eName": "HtmlViewer",
+    "cName": "浏览框EX",
+    "iCons": "Web_16x.png"
+  },
+  {
+    "eName": "SupperMenu",
+    "cName": "超级菜单",
+    "iCons": "MenuItem_16x.png"
+  }
+]

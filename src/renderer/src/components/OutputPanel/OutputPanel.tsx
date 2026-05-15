@@ -24,6 +24,7 @@ export interface CommandDetail {
     type: string
     description: string
     optional: boolean
+    repeatable?: boolean
     isVariable: boolean
     isArray: boolean
   }>
@@ -603,6 +604,7 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
                   s += p.type
                   if (p.isArray) s += '数组'
                   s += ' ' + p.name
+                  if (p.repeatable) s += '...'
                   if (p.optional) s += '］'
                   return s
                 }).join('，')
@@ -628,7 +630,7 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
                     {cd.params.map((p, i) => (
                       <div key={i} className={`cmd-detail-param${highlightParamIndex === i ? ' cmd-detail-param-highlight' : ''}`}>
                         <span className="cmd-detail-param-head">
-                          参数&lt;{i + 1}&gt;的名称为"{p.name}"，类型为"{p.type}{p.isArray ? '(数组)' : ''}{p.isVariable ? '(参考)' : ''}"{p.optional ? '，可以被省略' : ''}。
+                          参数&lt;{i + 1}&gt;的名称为"{p.name}"，类型为"{p.type}{p.isArray ? '(数组)' : ''}{p.isVariable ? '(参考)' : ''}"{p.optional ? '，可以被省略' : ''}{p.repeatable ? '，可重复追加' : ''}。
                         </span>
                         {p.description && <span className="cmd-detail-param-desc">{p.description}</span>}
                       </div>
