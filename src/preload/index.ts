@@ -56,8 +56,13 @@ const api = {
   project: {
     getDefaultPath: () => ipcRenderer.invoke('project:getDefaultPath') as Promise<string>,
     selectDirectory: () => ipcRenderer.invoke('project:selectDirectory') as Promise<string | null>,
-    create: (info: { name: string; path: string; type: string; platform: string }) =>
-      ipcRenderer.invoke('project:create', info) as Promise<{ projectDir: string; eppPath: string }>,
+    checkCreateTarget: (info: { name: string; path: string }) =>
+      ipcRenderer.invoke('project:checkCreateTarget', info) as Promise<{ projectDir: string; exists: boolean }>,
+    create: (info: { name: string; path: string; type: string; platform: string; overwrite?: boolean }) =>
+      ipcRenderer.invoke('project:create', info) as Promise<
+        | { status: 'created'; projectDir: string; eppPath: string }
+        | { status: 'exists'; projectDir: string }
+      >,
     readFile: (filePath: string) => ipcRenderer.invoke('project:readFile', filePath) as Promise<string | null>,
     readFileWithEncoding: (filePath: string, preferredEncoding?: string) =>
       ipcRenderer.invoke('project:readFileWithEncoding', filePath, preferredEncoding) as Promise<{ content: string; encoding: string } | null>,
@@ -207,6 +212,8 @@ const api = {
   dialog: {
     confirmSaveBeforeClose: (fileLabel: string) =>
       ipcRenderer.invoke('dialog:confirmSaveBeforeClose', fileLabel) as Promise<'save' | 'discard' | 'cancel'>,
+    confirmProjectOverwrite: (projectDir: string) =>
+      ipcRenderer.invoke('dialog:confirmProjectOverwrite', projectDir) as Promise<'overwrite' | 'cancel'>,
     confirmUnsavedThemeDraftClose: (intent: 'close-button' | 'overlay' | 'escape' | 'app-exit') =>
       ipcRenderer.invoke('dialog:confirmUnsavedThemeDraftClose', intent) as Promise<'save' | 'discard' | 'continue'>,
   },

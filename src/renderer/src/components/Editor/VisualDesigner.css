@@ -294,6 +294,7 @@
   pointer-events: none;
   -webkit-user-select: none;
   user-select: none;
+  overflow: hidden;
 }
 
 .vd-ruler-top {
@@ -314,6 +315,48 @@
 
 .vd-ruler-tick {
   position: absolute;
+  z-index: 2;
+}
+
+.vd-ruler-selection {
+  position: absolute;
+  z-index: 1;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.vd-ruler-selection-x {
+  left: var(--vd-ruler-selection-start, 0px);
+  top: 0;
+  width: var(--vd-ruler-selection-size, 0px);
+  height: 100%;
+}
+
+.vd-ruler-selection-y {
+  left: 0;
+  top: var(--vd-ruler-selection-start, 0px);
+  width: 100%;
+  height: var(--vd-ruler-selection-size, 0px);
+}
+
+.vd-ruler-cursor {
+  position: absolute;
+  z-index: 3;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-secondary) 45%, transparent);
+}
+
+.vd-ruler-cursor-x {
+  left: var(--vd-ruler-cursor-pos, 0px);
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.vd-ruler-cursor-y {
+  left: 0;
+  right: 0;
+  top: var(--vd-ruler-cursor-pos, 0px);
+  height: 1px;
 }
 
 .vd-ruler-tick-x {
@@ -552,6 +595,19 @@
   background: var(--text-accent);
 }
 
+.vd-marquee-selection {
+  position: absolute;
+  left: var(--vd-marquee-left, 0px);
+  top: var(--vd-marquee-top, 0px);
+  width: var(--vd-marquee-width, 0px);
+  height: var(--vd-marquee-height, 0px);
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  pointer-events: none;
+  z-index: 9500;
+}
+
 /* 控件容器 */
 .vd-control {
   position: absolute;
@@ -726,21 +782,9 @@
   outline-offset: 1px;
 }
 
-/* 控件名标注（设计时显示） */
-.vd-control-name {
-  position: absolute;
-  left: 0;
-  bottom: -14px;
-  font-size: 9px;
-  color: var(--accent);
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-.vd-control:hover .vd-control-name,
-.vd-control-selected .vd-control-name {
-  opacity: 1;
+.vd-control-hovered {
+  outline: 1px solid color-mix(in srgb, var(--accent) 82%, var(--text-primary));
+  outline-offset: 1px;
 }
 
 /* 缩放句柄 */

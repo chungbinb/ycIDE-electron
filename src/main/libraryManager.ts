@@ -6,7 +6,7 @@ import { app } from 'electron'
 import { createHash } from 'crypto'
 import AdmZip from 'adm-zip'
 import { dirname, isAbsolute, join, normalize, resolve } from 'path'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { getYcmdCommands, scanYcmdRegistry, type YcmdResolvedCommand, type YcmdTargetPlatform } from './ycmd-registry'
 import {
   STORE_PLATFORM_ORDER,
@@ -44,6 +44,7 @@ export interface LibraryCommand {
   isMember: boolean
   ownerTypeName: string
   commandIndex: number
+  nativeSymbol?: string
   libraryName: string
   libraryFileName: string
   source: 'ycmd' | 'core'
@@ -326,7 +327,7 @@ function assertSafeZipEntry(entryName: string): string {
 }
 
 function normalizeTargetPlatform(value?: string): YcmdTargetPlatform | undefined {
-  if (value === 'windows' || value === 'macos' || value === 'linux' || value === 'harmony') return value
+  if (value === 'windows' || value === 'macos' || value === 'linux' || value === 'android' || value === 'ios' || value === 'harmony') return value
   return undefined
 }
 
@@ -1231,8 +1232,62 @@ class LibraryManager {
     return null
   }
 
-  getLoadedLibraryFiles(): Array<{ name: string; libraryPath: string; libName: string }> {
-    return []
+  getLoadedLibraryFiles(targetPlatform?: string): Array<{ name: string; libraryPath: string; libName: string }> {
+    const platform = normalizeTargetPlatform(targetPlatform)
+    if (this.libraries.length === 0) this.scan()
+
+    const result: Array<{ name: string; libraryPath: string; libName: string }> = []
+    const seen = new Set<string>()
+
+    for (const lib of this.getLoadedLibrariesForTarget(platform)) {
+      const registry = scanYcmdRegistry(dirname(lib.filePath))
+      const scanned = registry.libraries.find(item => item.name === lib.name)
+      if (!scanned) continue
+
+      for (const item of scanned.manifests) {
+        if (!item.valid || !item.manifest) continue
+        const entries: string[] = []
+        const pickEntry = (implementations: typeof item.manifest.implementations | undefined): string | undefined => {
+          if (platform) return implementations?.[platform]?.entry
+          return implementations?.windows?.entry
+            || implementations?.linux?.entry
+            || implementations?.macos?.entry
+            || implementations?.android?.entry
+            || implementations?.ios?.entry
+            || implementations?.harmony?.entry
+        }
+
+        const manifestEntry = pickEntry(item.manifest.implementations)
+        if (manifestEntry) entries.push(manifestEntry)
+
+        if (Array.isArray(item.manifest.commands)) {
+          for (const command of item.manifest.commands) {
+            if (!command || typeof command !== 'object' || '__section' in command) continue
+            const commandEntry = pickEntry(command.implementations || item.manifest.implementations)
+            if (commandEntry) entries.push(commandEntry)
+          }
+        }
+
+        for (const entry of entries) {
+          const implementationPath = resolve(dirname(item.filePath), entry)
+          if (seen.has(implementationPath)) continue
+          try {
+            if (!existsSync(implementationPath) || !statSync(implementationPath).isFile()) continue
+          } catch {
+            continue
+          }
+
+          seen.add(implementationPath)
+          result.push({
+            name: lib.name,
+            libraryPath: implementationPath,
+            libName: lib.libName || lib.name,
+          })
+        }
+      }
+    }
+
+    return result
   }
 }
 

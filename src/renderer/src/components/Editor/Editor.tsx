@@ -481,6 +481,37 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     return tab.savedValue
   }
 
+  const normalizeExternalDiskContentForCompare = (tab: EditorTab, diskContent: string): string => {
+    if (tab.language !== 'efw') return diskContent
+    try {
+      const data = JSON.parse(diskContent)
+      const formData: DesignForm = {
+        name: data.name || data.formName || getFileNameFromPath(tab.filePath || tab.label).replace(/\.efw$/i, ''),
+        title: data.title || '',
+        width: data.width || 592,
+        height: data.height || 384,
+        sourceFile: data.sourceFile,
+        properties: data.properties || undefined,
+        controls: (Array.isArray(data.controls) ? data.controls : []).map((c: any) => ({
+          id: c.id,
+          type: c.type,
+          name: c.name,
+          left: c.x ?? c.left ?? 0,
+          top: c.y ?? c.top ?? 0,
+          width: c.width ?? 100,
+          height: c.height ?? 30,
+          text: c.properties?.['标题'] ?? c.properties?.['内容'] ?? c.properties?.['文本'] ?? c.text ?? c.name ?? '',
+          visible: c.visible ?? true,
+          enabled: c.enabled ?? true,
+          properties: c.properties || {},
+        })),
+      }
+      return JSON.stringify(formData, null, 2)
+    } catch {
+      return diskContent
+    }
+  }
+
   const syncSidebarByLanguage = useCallback((language?: string) => {
     if (!language) return
     if (language === 'efw') onSidebarTab?.('property')
@@ -1482,7 +1513,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       if (disposed || diskContent == null) return
 
       const savedDiskContent = getTabSavedDiskContent(latestTab)
-      if (diskContent !== savedDiskContent) {
+      const comparableDiskContent = normalizeExternalDiskContentForCompare(latestTab, diskContent)
+      if (comparableDiskContent !== savedDiskContent) {
         setExternalChangePrompt(prev => {
           if (prev && prev.tabId === latestTab.id && prev.externalContent === diskContent) return prev
           return {

@@ -411,7 +411,9 @@ function formatPlatformLabel(platform: string): string {
   if (key === 'windows') return 'Windows'
   if (key === 'linux') return 'Linux'
   if (key === 'macos') return 'macOS'
-  if (key === 'harmony') return 'Harmony'
+  if (key === 'android') return 'Android'
+  if (key === 'ios') return 'iOS'
+  if (key === 'harmony') return 'HarmonyOS'
   return platform
 }
 

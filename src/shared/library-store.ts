@@ -1,4 +1,4 @@
-export type Platform = 'windows' | 'macos' | 'linux'
+export type Platform = 'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'harmony'
 
 export type LibraryInstallSource = 'bundled' | 'installed' | 'manual'
 
@@ -77,4 +77,4 @@ export interface StoreLibraryCard {
   remoteVersion?: string
 }
 
-export const STORE_PLATFORM_ORDER: Platform[] = ['windows', 'macos', 'linux']
+export const STORE_PLATFORM_ORDER: Platform[] = ['windows', 'macos', 'linux', 'android', 'ios', 'harmony']

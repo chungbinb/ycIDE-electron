@@ -3,8 +3,10 @@ export interface ResolvedCommandLike {
   englishName: string
   returnType: string
   commandIndex: number
+  nativeSymbol?: string
   libraryName: string
   libraryFileName: string
+  source?: 'ycmd' | 'core'
   params: Array<{ type: string }>
 }
 
@@ -39,7 +41,7 @@ export interface CommandResolverDeps {
     directCallables?: DirectCallableNames,
   ) => string | null
   loadCompileProtocols: () => { commands: NormalizedCommandBindingLike[] }
-  generateYcGenericCommandCall: (cmd: ResolvedCommandLike, args: string[]) => string
+  generateYcGenericCommandCall: (cmd: ResolvedCommandLike, args: string[], commandMap?: CommandMap, directCallables?: DirectCallableNames) => string
 }
 
 export function createCommandResolvers(deps: CommandResolverDeps): {
@@ -54,6 +56,10 @@ export function createCommandResolvers(deps: CommandResolverDeps): {
   }
 
   const generateCCodeForCommand = (cmd: ResolvedCommandLike, args: string[], commandMap?: CommandMap, directCallables?: DirectCallableNames): string => {
+    if (cmd.source === 'ycmd') {
+      return deps.generateYcGenericCommandCall(cmd, args, commandMap, directCallables)
+    }
+
     const protocols = deps.loadCompileProtocols()
     const protocolCode = deps.resolveCommandByProtocol(
       protocols.commands,
@@ -84,7 +90,7 @@ export function createCommandResolvers(deps: CommandResolverDeps): {
       return generator(args, commandMap, directCallables)
     }
 
-    return deps.generateYcGenericCommandCall(cmd, args)
+    return deps.generateYcGenericCommandCall(cmd, args, commandMap, directCallables)
   }
 
   return {

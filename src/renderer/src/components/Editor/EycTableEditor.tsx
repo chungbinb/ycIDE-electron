@@ -1364,9 +1364,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setTimeout(() => {
       if (inputRef.current) {
         const newPos = before.length + prefix.length + item.name.length + caretExtra
-        inputRef.current.selectionStart = newPos
-        inputRef.current.selectionEnd = newPos
-        inputRef.current.focus()
+        try {
+          inputRef.current.focus({ preventScroll: true })
+        } catch {
+          inputRef.current.focus()
+        }
+        inputRef.current.setSelectionRange(newPos, newPos)
       }
     }, 0)
   }, [editVal, editCell])
@@ -1999,6 +2002,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return !(kw && TABLE_MODE_HIDDEN_FLOW_COMMANDS.has(kw))
     })
   }, [blocks])
+
+  const visibleCodeLineIndexes = useMemo(() => {
+    const indexes = new Set<number>()
+    for (const blk of visibleBlocks) {
+      if (blk.kind === 'codeline') indexes.add(blk.lineIndex)
+    }
+    return indexes
+  }, [visibleBlocks])
 
   const displayFlowLines = useMemo(() => {
     const map = new Map<number, FlowSegment[]>()
@@ -4005,64 +4016,80 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setEditVal(value)
   }, [])
 
-  const focusCodeInputAt = useCallback((position = 0) => {
-    setTimeout(() => {
-      if (!inputRef.current) return
-      inputRef.current.focus()
-      inputRef.current.selectionStart = position
-      inputRef.current.selectionEnd = position
-    }, 0)
-  }, [])
-
   const beginCodeLineEditByTargetLine = useCallback((lineIndex: number, sourceLines: string[]) => {
     const targetLine = sourceLines[lineIndex] || ''
     beginCodeLineEdit(lineIndex, targetLine)
   }, [beginCodeLineEdit])
 
+  const focusInlineInputAt = useCallback((position: number | 'end') => {
+    const focusAt = (attempt = 0): void => {
+      const input = inputRef.current
+      if (!input) {
+        if (attempt < 8) window.setTimeout(() => focusAt(attempt + 1), 16)
+        return
+      }
+      try {
+        input.focus({ preventScroll: true })
+      } catch {
+        input.focus()
+      }
+      const pos = position === 'end' ? input.value.length : Math.min(position, input.value.length)
+      input.setSelectionRange(pos, pos)
+      if (document.activeElement !== input && attempt < 8) {
+        window.setTimeout(() => focusAt(attempt + 1), 16)
+      }
+    }
+    window.setTimeout(() => focusAt(), 0)
+  }, [])
+
+  const focusCodeInputAt = useCallback((position = 0) => {
+    focusInlineInputAt(position)
+  }, [focusInlineInputAt])
+
+  const resolveVisibleCodeLineTarget = useCallback((targetLine: number, direction: -1 | 1, lineCount: number): number | null => {
+    if (targetLine < 0 || targetLine >= lineCount) return null
+    if (visibleCodeLineIndexes.has(targetLine)) return targetLine
+
+    for (let li = targetLine + direction; li >= 0 && li < lineCount; li += direction) {
+      if (visibleCodeLineIndexes.has(li)) return li
+    }
+    return null
+  }, [visibleCodeLineIndexes])
+
   const applyCodeLineNavigation = useCallback((navAction: CodeLineNavigationAction) => {
     if (!navAction) return
+    const currentLineIndex = editCellRef.current?.lineIndex ?? -1
     commit()
     setTimeout(() => {
       const latestLines = prevRef.current.split('\n')
       if (navAction.type === 'upOrDown') {
-        if (navAction.targetLine >= 0 && navAction.targetLine < latestLines.length) {
-          startEditLine(navAction.targetLine)
-          setTimeout(() => {
-            if (!inputRef.current) return
-            const maxPos = inputRef.current.value.length
-            const pos = Math.min(navAction.keepHorizontalPos, maxPos)
-            inputRef.current.selectionStart = pos
-            inputRef.current.selectionEnd = pos
-          }, 0)
+        const direction = navAction.targetLine < currentLineIndex ? -1 : 1
+        const targetLine = resolveVisibleCodeLineTarget(navAction.targetLine, direction, latestLines.length)
+        if (targetLine != null) {
+          startEditLine(targetLine)
+          focusInlineInputAt(navAction.keepHorizontalPos)
         }
         return
       }
 
       if (navAction.type === 'leftToPrevLineEnd') {
-        if (navAction.targetLine >= 0 && navAction.targetLine < latestLines.length) {
-          startEditLine(navAction.targetLine)
-          setTimeout(() => {
-            if (!inputRef.current) return
-            const end = inputRef.current.value.length
-            inputRef.current.selectionStart = end
-            inputRef.current.selectionEnd = end
-          }, 0)
+        const targetLine = resolveVisibleCodeLineTarget(navAction.targetLine, -1, latestLines.length)
+        if (targetLine != null) {
+          startEditLine(targetLine)
+          focusInlineInputAt('end')
         }
         return
       }
 
       if (navAction.type === 'rightToNextLineStart') {
-        if (navAction.targetLine < latestLines.length) {
-          startEditLine(navAction.targetLine)
-          setTimeout(() => {
-            if (!inputRef.current) return
-            inputRef.current.selectionStart = 0
-            inputRef.current.selectionEnd = 0
-          }, 0)
+        const targetLine = resolveVisibleCodeLineTarget(navAction.targetLine, 1, latestLines.length)
+        if (targetLine != null) {
+          startEditLine(targetLine)
+          focusInlineInputAt(0)
         }
       }
     }, 0)
-  }, [commit, startEditLine])
+  }, [commit, focusInlineInputAt, resolveVisibleCodeLineTarget, startEditLine])
 
   const applyEmptyCodeLineDelete = useCallback((params: {
     action: EmptyCodeLineDeleteAction
@@ -4128,14 +4155,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
       const clampedLi = Math.max(0, Math.min(focusLineAfter, latestLines.length - 1))
       startEditLine(clampedLi, undefined, undefined, isVirtual, true)
-      setTimeout(() => {
-        if (!inputRef.current) return
-        const pos = action.preferPrevLine ? inputRef.current.value.length : 0
-        inputRef.current.selectionStart = pos
-        inputRef.current.selectionEnd = pos
-      }, 0)
+      focusInlineInputAt(action.preferPrevLine ? 'end' : 0)
     }, 0)
-  }, [applyTextChange, currentText, focusWrapper, lines, pushUndo, startEditLine])
+  }, [applyTextChange, currentText, focusInlineInputAt, focusWrapper, lines, pushUndo, startEditLine])
 
   const applyParenScopedAction = useCallback((params: {
     action: ParenScopedKeyAction
@@ -4576,7 +4598,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   }, [acIndex, acItems, acVisible, applyCompletion, editCell])
 
   const applyCompletionPopupKey = useCallback((key: string): boolean => {
-    return handleCompletionPopupKey({
+    const handled = handleCompletionPopupKey({
       key,
       acVisible,
       acItems,
@@ -4586,7 +4608,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       onApplyCompletion: applyCompletion,
       onHidePopup: () => setAcVisible(false),
     })
-  }, [acIndex, acItems, acVisible, applyCompletion])
+    if (handled && (key === 'ArrowUp' || key === 'ArrowDown')) {
+      const pos = inputRef.current?.selectionStart ?? editVal.length
+      focusInlineInputAt(pos)
+    }
+    return handled
+  }, [acIndex, acItems, acVisible, applyCompletion, editVal.length, expandMoreCompletion, focusInlineInputAt])
 
   const applyEnterKey = useCallback((cursorPos: number): void => {
     suppressInlineBlurCommit()
@@ -5253,15 +5280,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       window.setTimeout(() => {
         if (navSeq !== subNavSeqRef.current) return
         if (!inputRef.current) startEditLine(cursorLineIndex, undefined, undefined, undefined, true)
-        if (!inputRef.current) return
-        inputRef.current.focus()
-        inputRef.current.selectionStart = 0
-        inputRef.current.selectionEnd = 0
+        focusCodeInputAt(0)
       }, 0)
     }
 
     // 聚焦编辑动作由 flashAfterScrollSettled 触发，确保闪烁先落在目标表格行。
-  }, [applyTextChange, currentText, pushUndo, scrollToLineIndex, startEditLine])
+  }, [applyTextChange, currentText, focusCodeInputAt, pushUndo, scrollToLineIndex, startEditLine])
 
   useImperativeHandle(ref, () => ({
     insertSubroutine: () => {
@@ -5332,12 +5356,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       lastFocusedLine.current = newSubLineIndex
       const focusFirstCodeLine = (): void => {
         startEditLine(firstCodeLineIndex, undefined, undefined, undefined, true)
-        window.setTimeout(() => {
-          if (!inputRef.current) return
-          inputRef.current.focus()
-          inputRef.current.selectionStart = 0
-          inputRef.current.selectionEnd = 0
-        }, 0)
+        focusCodeInputAt(0)
       }
 
       const flashNewSubAfterTableReady = (attempt = 0): void => {
@@ -5496,25 +5515,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
       // 不存在：在文件末尾插入新子程序
       pushUndo(currentText)
-      const existingLocalVarNames = new Set<string>()
-      for (const ln of curLines) {
-        const t = ln.replace(/[\r\t]/g, '').trim()
-        if (!t.startsWith('.局部变量 ')) continue
-        const localName = (splitCSV(t.slice('.局部变量 '.length))[0] || '').trim()
-        if (localName) existingLocalVarNames.add(localName)
-      }
-      for (const p of params) {
-        if (p.name) existingLocalVarNames.add(p.name.trim())
-      }
-      let localNum = 1
-      while (existingLocalVarNames.has('局_变量' + localNum)) localNum++
-      const newLocalVarName = '局_变量' + localNum
-
       const insertLines: string[] = ['', '.子程序 ' + subName + ', , , ']
       for (const p of params) {
         insertLines.push('    .参数 ' + p.name + ', ' + (p.dataType || '整数型') + (p.isByRef ? ', 传址' : ''))
       }
-      insertLines.push('.局部变量 ' + newLocalVarName + ', 整数型')
       // 为新建子程序补一条真实空普通行，避免仅显示无行号的虚拟占位行。
       insertLines.push('')
       const nl = [...curLines, ...insertLines]
@@ -5523,18 +5527,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
       // 新子程序行位置：前置空行后为子程序声明。
       const newSubLineIndex = curLines.length + 1
-      const firstCodeLineIndex = curLines.length + 3 + params.length
+      const firstCodeLineIndex = curLines.length + 2 + params.length
       lastFocusedLine.current = newSubLineIndex
       setTimeout(() => {
         const el = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${newSubLineIndex}"]`)
         el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
         startEditLine(firstCodeLineIndex, undefined, undefined, undefined, true)
-        setTimeout(() => {
-          if (!inputRef.current) return
-          inputRef.current.focus()
-          inputRef.current.selectionStart = 0
-          inputRef.current.selectionEnd = 0
-        }, 0)
+        focusCodeInputAt(0)
       }, 150)
     },
     navigateToLine: (line: number) => {
@@ -5585,7 +5584,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         return
       }
     },
-  }), [applyTextChange, currentText, pushUndo, selectedLines, getSelectedSourceText, getMouseRangeSelectedSourceText, isResourceTableDoc, shouldUseNativeInputPaste, lineNumMaps, startEditLine, navigateToSubprogramInternal])
+  }), [applyTextChange, currentText, focusCodeInputAt, pushUndo, selectedLines, getSelectedSourceText, getMouseRangeSelectedSourceText, isResourceTableDoc, shouldUseNativeInputPaste, lineNumMaps, startEditLine, navigateToSubprogramInternal])
 
   // 查找代码行中第一个有参数的有效命令
   const findCmdWithParams = useCallback((codeLine: string): CompletionItem | null => {

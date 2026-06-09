@@ -32,6 +32,9 @@ const platformLabelMap: Record<string, string> = {
   windows: 'Windows',
   macos: 'macOS',
   linux: 'Linux',
+  android: 'Android',
+  ios: 'iOS',
+  harmony: 'HarmonyOS',
 }
 
 function LibraryDialog({ open, onClose, targetPlatform = 'windows', detachedWindow = false }: LibraryDialogProps): React.JSX.Element | null {

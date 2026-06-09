@@ -279,6 +279,13 @@ function buildReferenceLines(
   }
 }
 
+function rectsIntersect(
+  a: { left: number; top: number; right: number; bottom: number },
+  b: { left: number; top: number; right: number; bottom: number },
+): boolean {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+}
+
 let nextControlId = 1
 
 // ========== 组件 ==========
@@ -304,6 +311,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const [zoom, setZoom] = useState(1)
   const [isSpacePressed, setIsSpacePressed] = useState(false)
   const [isPanningView, setIsPanningView] = useState(false)
+  const [hoveredControlId, setHoveredControlId] = useState<string | null>(null)
   const formVisualColors = resolveFormVisualColors(form)
   const designerRootRef = useRef<HTMLDivElement>(null)
   const canvasRegionRef = useRef<HTMLDivElement>(null)
@@ -318,6 +326,8 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
   const [scrollPos, setScrollPos] = useState({ left: 0, top: 0 })
   const [drawRect, setDrawRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [mouseRulerPos, setMouseRulerPos] = useState<{ x: number; y: number } | null>(null)
   const dragRef = useRef<{
     mode: 'move' | 'resize' | 'create'
     controlId: string
@@ -388,6 +398,29 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     }
     return ticks
   }, [formOffsetTop, rulerMajorStep, rulerMidStep, rulerMinorStep, scrollPos.top, viewportSize.height, zoom])
+
+  const selectedRulerHighlight = useMemo(() => {
+    const ids = selectedIds.size > 0
+      ? selectedIds
+      : (selectedControl ? new Set([selectedControl.id]) : new Set<string>())
+    if (ids.size === 0) return null
+    const selected = form.controls.filter(control => ids.has(control.id))
+    if (selected.length === 0) return null
+    const minLeft = Math.min(...selected.map(control => control.left))
+    const maxRight = Math.max(...selected.map(control => control.left + control.width))
+    const minTop = Math.min(...selected.map(control => control.top))
+    const maxBottom = Math.max(...selected.map(control => control.top + control.height))
+    const x1 = formOffsetLeft + minLeft * zoom - scrollPos.left
+    const x2 = formOffsetLeft + maxRight * zoom - scrollPos.left
+    const y1 = formOffsetTop + (FORM_TITLEBAR_HEIGHT + minTop) * zoom - scrollPos.top
+    const y2 = formOffsetTop + (FORM_TITLEBAR_HEIGHT + maxBottom) * zoom - scrollPos.top
+    return {
+      x: Math.min(x1, x2),
+      y: Math.min(y1, y2),
+      w: Math.abs(x2 - x1),
+      h: Math.abs(y2 - y1),
+    }
+  }, [form.controls, formOffsetLeft, formOffsetTop, scrollPos.left, scrollPos.top, selectedControl, selectedIds, zoom])
 
   useEffect(() => {
     zoomRef.current = zoom
@@ -552,6 +585,21 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       y: (clientY - rect.top) / currentZoom,
     }
   }, [])
+
+  const updateMouseRulerPos = useCallback((clientX: number, clientY: number): void => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    if (!isPointWithinRect(clientX, clientY, rect)) {
+      setMouseRulerPos(null)
+      return
+    }
+    const point = getCanvasPoint(clientX, clientY)
+    setMouseRulerPos({
+      x: formOffsetLeft + point.x * zoom - scrollPos.left,
+      y: formOffsetTop + (FORM_TITLEBAR_HEIGHT + point.y) * zoom - scrollPos.top,
+    })
+  }, [formOffsetLeft, formOffsetTop, getCanvasPoint, scrollPos.left, scrollPos.top, zoom])
 
   const zoomTo = useCallback((nextZoom: number, anchorClientPoint?: { x: number; y: number }) => {
     const host = canvasAreaRef.current
@@ -861,8 +909,57 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       document.addEventListener('mouseup', handleMouseUp)
     } else {
       // 点击空白选中窗口自身
-      setSelectedId('__form__')
-      setSelectedIds(new Set())
+      const handleMouseMove = (ev: MouseEvent): void => {
+        const p = getCanvasPoint(ev.clientX, ev.clientY)
+        const x1 = Math.min(startX, p.x)
+        const y1 = Math.min(startY, p.y)
+        const x2 = Math.max(startX, p.x)
+        const y2 = Math.max(startY, p.y)
+        const w = snap(x2 - x1)
+        const h = snap(y2 - y1)
+        if (w >= 4 || h >= 4) {
+          setMarqueeRect({ x: snap(x1), y: snap(y1), w, h })
+        }
+      }
+
+      const handleMouseUp = (ev: MouseEvent): void => {
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+        const p = getCanvasPoint(ev.clientX, ev.clientY)
+        const x1 = Math.min(startX, p.x)
+        const y1 = Math.min(startY, p.y)
+        const x2 = Math.max(startX, p.x)
+        const y2 = Math.max(startY, p.y)
+        setMarqueeRect(null)
+
+        if (Math.abs(x2 - startX) < 4 && Math.abs(y2 - startY) < 4) {
+          setSelectedId('__form__')
+          setSelectedIds(new Set())
+          return
+        }
+
+        const selectionBox = { left: x1, top: y1, right: x2, bottom: y2 }
+        const nextIds = formRef.current.controls
+          .filter(control => rectsIntersect(selectionBox, {
+            left: control.left,
+            top: control.top,
+            right: control.left + control.width,
+            bottom: control.top + control.height,
+          }))
+          .map(control => control.id)
+
+        if (nextIds.length === 0) {
+          setSelectedId('__form__')
+          setSelectedIds(new Set())
+          return
+        }
+
+        setSelectedIds(new Set(nextIds))
+        setSelectedId(nextIds[0])
+      }
+
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
     }
   }, [activeTool, addControl, getCanvasPoint])
 
@@ -1609,6 +1706,21 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       >
         <div className="vd-ruler-corner" aria-hidden="true" />
         <div className="vd-ruler vd-ruler-top" aria-hidden="true">
+          {mouseRulerPos && (
+            <div
+              className="vd-ruler-cursor vd-ruler-cursor-x"
+              ref={(element) => setCssVars(element, { '--vd-ruler-cursor-pos': `${mouseRulerPos.x}px` })}
+            />
+          )}
+          {selectedRulerHighlight && selectedRulerHighlight.w > 0 && (
+            <div
+              className="vd-ruler-selection vd-ruler-selection-x"
+              ref={(element) => setCssVars(element, {
+                '--vd-ruler-selection-start': `${selectedRulerHighlight.x}px`,
+                '--vd-ruler-selection-size': `${selectedRulerHighlight.w}px`,
+              })}
+            />
+          )}
           {rulerTicksX.map(tick => (
             <div
               key={tick.id}
@@ -1620,6 +1732,21 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           ))}
         </div>
         <div className="vd-ruler vd-ruler-left" aria-hidden="true">
+          {mouseRulerPos && (
+            <div
+              className="vd-ruler-cursor vd-ruler-cursor-y"
+              ref={(element) => setCssVars(element, { '--vd-ruler-cursor-pos': `${mouseRulerPos.y}px` })}
+            />
+          )}
+          {selectedRulerHighlight && selectedRulerHighlight.h > 0 && (
+            <div
+              className="vd-ruler-selection vd-ruler-selection-y"
+              ref={(element) => setCssVars(element, {
+                '--vd-ruler-selection-start': `${selectedRulerHighlight.y}px`,
+                '--vd-ruler-selection-size': `${selectedRulerHighlight.h}px`,
+              })}
+            />
+          )}
           {rulerTicksY.map(tick => (
             <div
               key={tick.id}
@@ -1690,6 +1817,8 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               })
             }}
             onMouseDown={handleCanvasMouseDown}
+            onMouseMove={(e) => updateMouseRulerPos(e.clientX, e.clientY)}
+            onMouseLeave={() => setMouseRulerPos(null)}
             onDoubleClick={handleFormDblClick}
           >
             {alignGuides.x.map(x => (
@@ -1708,6 +1837,18 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             ))}
 
             {/* 拖拽绘制预览 — 直接显示组件外观 */}
+            {marqueeRect && (
+              <div
+                className="vd-marquee-selection"
+                ref={(element) => setCssVars(element, {
+                  '--vd-marquee-left': `${marqueeRect.x}px`,
+                  '--vd-marquee-top': `${marqueeRect.y}px`,
+                  '--vd-marquee-width': `${marqueeRect.w}px`,
+                  '--vd-marquee-height': `${marqueeRect.h}px`,
+                })}
+              />
+            )}
+
             {drawRect && drawRect.w > 0 && drawRect.h > 0 && activeTool && (
               <div
                 className="vd-draw-preview"
@@ -1735,23 +1876,23 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             {form.controls.map(ctrl => {
               const isSelected = ctrl.id === selectedId
               const isMultiSelected = selectedIds.has(ctrl.id)
+              const isHovered = hoveredControlId === ctrl.id && !isSelected && !isMultiSelected
               return (
                 <div
                   key={ctrl.id}
-                  className={`vd-control ${isSelected ? 'vd-control-selected' : ''} ${isMultiSelected ? 'vd-control-multi-selected' : ''}`}
+                  className={`vd-control ${isSelected ? 'vd-control-selected' : ''} ${isMultiSelected ? 'vd-control-multi-selected' : ''} ${isHovered ? 'vd-control-hovered' : ''}`}
                   ref={(element) => setCssVars(element, {
                     '--vd-control-left': `${ctrl.left}px`,
                     '--vd-control-top': `${ctrl.top}px`,
                     '--vd-control-width': `${ctrl.width}px`,
                     '--vd-control-height': `${ctrl.height}px`,
                   })}
+                  onMouseEnter={() => setHoveredControlId(ctrl.id)}
+                  onMouseLeave={() => setHoveredControlId(prev => prev === ctrl.id ? null : prev)}
                   onMouseDown={(e) => handleControlMouseDown(e, ctrl)}
                   onDoubleClick={(e) => handleControlDblClick(e, ctrl)}
                 >
                   {renderControlPreview(ctrl)}
-
-                  {/* 控件名标注 */}
-                  <div className="vd-control-name">{ctrl.name}</div>
 
                   {/* 选中句柄 */}
                   {(isSelected || isMultiSelected) && HANDLES.map(h => (

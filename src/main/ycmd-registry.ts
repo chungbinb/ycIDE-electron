@@ -19,6 +19,8 @@ export interface YcmdCommandEntry {
     windows?: YcmdPlatformImplementation
     macos?: YcmdPlatformImplementation
     linux?: YcmdPlatformImplementation
+    android?: YcmdPlatformImplementation
+    ios?: YcmdPlatformImplementation
     harmony?: YcmdPlatformImplementation
   }
 }
@@ -43,6 +45,8 @@ export interface YcmdManifest {
     windows?: YcmdPlatformImplementation
     macos?: YcmdPlatformImplementation
     linux?: YcmdPlatformImplementation
+    android?: YcmdPlatformImplementation
+    ios?: YcmdPlatformImplementation
     harmony?: YcmdPlatformImplementation
   }
 }
@@ -72,6 +76,7 @@ export interface YcmdResolvedCommand {
   isMember: boolean
   ownerTypeName: string
   commandIndex: number
+  nativeSymbol: string
   libraryName: string
   libraryFileName: string
   source: 'ycmd'
@@ -90,9 +95,18 @@ export interface YcmdRegistryScanResult {
   errors: string[]
 }
 
-export type YcmdTargetPlatform = 'windows' | 'macos' | 'linux' | 'harmony'
+export type YcmdTargetPlatform = 'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'harmony'
 
 const CORE_LIBRARY_FILE_NAME = 'krnln'
+
+export function ycmdCommandIdToNativeSymbol(commandId: string): string {
+  const trimmed = (commandId || '').trim()
+  const dot = trimmed.indexOf('.')
+  const prefix = dot >= 0 ? trimmed.slice(0, dot) : CORE_LIBRARY_FILE_NAME
+  const suffix = dot >= 0 ? trimmed.slice(dot + 1) : trimmed
+  const safePrefix = (prefix || CORE_LIBRARY_FILE_NAME).replace(/[^A-Za-z0-9_]/g, '_')
+  return `${safePrefix}_${suffix.replace(/[^A-Za-z0-9_]/g, '_')}`
+}
 
 function inferCoreCommandCategory(commandId: string, displayName: string): string {
   const id = commandId.toLowerCase()
@@ -216,6 +230,8 @@ function validateImplementations(
     { platform: 'windows', entry: implementations.windows?.entry },
     { platform: 'macos', entry: implementations.macos?.entry },
     { platform: 'linux', entry: implementations.linux?.entry },
+    { platform: 'android', entry: implementations.android?.entry },
+    { platform: 'ios', entry: implementations.ios?.entry },
     { platform: 'harmony', entry: implementations.harmony?.entry },
   ]
   for (const item of entries) {
@@ -359,7 +375,9 @@ function normalizePlatformName(name: string): YcmdTargetPlatform | null {
   if (lower === 'windows' || lower === 'win') return 'windows'
   if (lower === 'linux') return 'linux'
   if (lower === 'macos' || lower === 'mac' || lower === 'unix') return 'macos'
-  if (lower === 'harmony') return 'harmony'
+  if (lower === 'android') return 'android'
+  if (lower === 'ios' || lower === 'iphone' || lower === 'ipad') return 'ios'
+  if (lower === 'harmony' || lower === 'harmonyos' || lower === 'openharmony') return 'harmony'
   return null
 }
 
@@ -379,6 +397,8 @@ function extractSupportedPlatforms(
   if (implementations?.windows?.entry) platforms.push('windows')
   if (implementations?.linux?.entry) platforms.push('linux')
   if (implementations?.macos?.entry) platforms.push('macos')
+  if (implementations?.android?.entry) platforms.push('android')
+  if (implementations?.ios?.entry) platforms.push('ios')
   if (implementations?.harmony?.entry) platforms.push('harmony')
   return platforms
 }
@@ -433,6 +453,7 @@ export function getYcmdCommands(customRootPath?: string, targetPlatform?: YcmdTa
             isMember: false,
             ownerTypeName: '',
             commandIndex: -1,
+            nativeSymbol: ycmdCommandIdToNativeSymbol(commandId),
             libraryName: (manifest.libraryDisplayName || manifest.library || '').trim() || lib.name,
             libraryFileName: lib.name,
             source: 'ycmd',
@@ -463,6 +484,7 @@ export function getYcmdCommands(customRootPath?: string, targetPlatform?: YcmdTa
         isMember: false,
         ownerTypeName: '',
         commandIndex: -1,
+        nativeSymbol: ycmdCommandIdToNativeSymbol(commandId),
         libraryName: (manifest.libraryDisplayName || manifest.library || '').trim() || lib.name,
         libraryFileName: lib.name,
         source: 'ycmd',

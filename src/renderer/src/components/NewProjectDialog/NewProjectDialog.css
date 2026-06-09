@@ -168,6 +168,7 @@
 /* 平台选择 */
 .np-platform-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 

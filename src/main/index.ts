@@ -1,10 +1,11 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell, screen, type BrowserWindowConstructorOptions, type MenuItemConstructorOptions } from 'electron'
 import { join, dirname, basename, extname } from 'path'
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync, unlinkSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync, unlinkSync, rmSync } from 'fs'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import iconv from 'iconv-lite'
 import { libraryManager } from './libraryManager'
 import { compileProject, runExecutable, stopExecutable, isRunning, continueDebugExecutable } from './compiler'
+import { buildAndRunAndroidProject, shouldRunAsAndroid } from './android-runner'
 import { normalizeRuntimePlatform } from '../shared/platform'
 import { getActionAccelerator } from '../shared/shortcut-config'
 import {
@@ -1177,6 +1178,22 @@ app.whenReady().then(() => {
     return 'cancel'
   })
 
+  ipcMain.handle('dialog:confirmProjectOverwrite', async (event, projectDir: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender) || BrowserWindow.getFocusedWindow()
+    if (!win) return 'cancel'
+    const result = await dialog.showMessageBox(win, {
+      type: 'warning',
+      title: '项目已存在',
+      message: '目标项目文件夹已存在。',
+      detail: `是否覆盖此文件夹？\n${projectDir}\n\n覆盖会删除该文件夹中的现有内容。`,
+      buttons: ['覆盖', '取消'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    })
+    return result.response === 0 ? 'overwrite' : 'cancel'
+  })
+
   ipcMain.handle('dialog:confirmUnsavedThemeDraftClose', async (event, intent: 'close-button' | 'overlay' | 'escape' | 'app-exit') => {
     const win = BrowserWindow.fromWebContents(event.sender) || BrowserWindow.getFocusedWindow()
     if (!win) return 'continue'
@@ -1215,8 +1232,20 @@ app.whenReady().then(() => {
     return result.filePaths[0]
   })
 
-  ipcMain.handle('project:create', (_event, info: { name: string; path: string; type: string; platform: string }) => {
+  ipcMain.handle('project:checkCreateTarget', (_event, info: { name: string; path: string }) => {
     const projectDir = join(info.path, info.name)
+    return { projectDir, exists: existsSync(projectDir) }
+  })
+
+  ipcMain.handle('project:create', (_event, info: { name: string; path: string; type: string; platform: string; overwrite?: boolean }) => {
+    const projectDir = join(info.path, info.name)
+    if (existsSync(projectDir)) {
+      if (!info.overwrite) {
+        return { status: 'exists', projectDir }
+      }
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+
     // 创建项目目录结构
     mkdirSync(projectDir, { recursive: true })
     mkdirSync(join(projectDir, 'logs'), { recursive: true })
@@ -1228,21 +1257,28 @@ app.whenReady().then(() => {
       'windows-app': 'WindowsApp',
       'console': 'Console',
       'dll': 'DynamicLibrary',
+      'mobile-app': 'WindowsApp',
+      'mobile-native-module': 'DynamicLibrary',
+      'mobile-shared-library': 'DynamicLibrary',
     }
     const outputType = outputTypeMap[info.type] || 'WindowsApp'
 
     // 生成文件列表
     const files: string[] = []
-    const isWindowsApp = info.type === 'windows-app'
+    const isMobileApp = info.type === 'mobile-app'
+    const isWindowsApp = info.type === 'windows-app' || isMobileApp
 
     if (isWindowsApp) {
       // 窗口程序：创建窗口文件 + 代码文件
+      const mobileFormSize = info.platform === 'ios'
+        ? { width: 390, height: 844 }
+        : { width: 360, height: 800 }
       const efwData = JSON.stringify({
         type: 'window',
         name: '_启动窗口',
         title: info.name,
-        width: 592,
-        height: 384,
+        width: isMobileApp ? mobileFormSize.width : 592,
+        height: isMobileApp ? mobileFormSize.height : 384,
         sourceFile: '_启动窗口.eyc',
         controls: []
       }, null, 2)
@@ -1273,7 +1309,7 @@ app.whenReady().then(() => {
     const eppPath = join(projectDir, `${info.name}.epp`)
     writeFileSync(eppPath, eppLines.join('\n'), 'utf-8')
 
-    return { projectDir, eppPath }
+    return { status: 'created', projectDir, eppPath }
   })
 
   ipcMain.handle('project:readFile', (_event, filePath: string) => {
@@ -2654,6 +2690,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle('compiler:run', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string, debugOptions?: { breakpoints?: Record<string, number[]> }) => {
     const editorFiles = editorFilesObj ? new Map(Object.entries(editorFilesObj)) : undefined
+    if (shouldRunAsAndroid(projectDir)) {
+      const settings = readIDESettings()
+      return buildAndRunAndroidProject(projectDir, settings, editorFiles)
+    }
     const result = await compileProject({ projectDir, debug: true, arch, mode: 'run', breakpoints: debugOptions?.breakpoints || {} }, editorFiles)
     if (result.success && result.outputFile) {
       runExecutable(result.outputFile)

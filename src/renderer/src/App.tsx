@@ -120,7 +120,7 @@ function isBuiltinThemeId(themeId: string): boolean {
 const DEFAULT_THEME_TOKEN_PAYLOAD = createDefaultThemeTokenPayload()
 const FLOW_LINE_TOKEN_KEYS = (THEME_TOKEN_GROUPS.find(group => group.id === 'flow-line')?.items || []).map(item => item.tokenKey)
 
-type TargetPlatform = 'windows' | 'macos' | 'linux'
+type TargetPlatform = 'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'harmony'
 type TargetArch = 'x64' | 'x86' | 'arm64'
 type ActivityBarSide = 'left' | 'right'
 
@@ -170,6 +170,9 @@ function normalizeTargetPlatform(value?: string | null): TargetPlatform {
   const normalized = (value || '').trim().toLowerCase()
   if (normalized === 'macos' || normalized === 'darwin' || normalized === 'mac' || normalized === 'osx') return 'macos'
   if (normalized === 'linux') return 'linux'
+  if (normalized === 'android') return 'android'
+  if (normalized === 'ios' || normalized === 'iphone' || normalized === 'ipad') return 'ios'
+  if (normalized === 'harmony' || normalized === 'harmonyos' || normalized === 'openharmony') return 'harmony'
   if (normalized === 'windows' || normalized === 'win32') return 'windows'
   if (normalized === 'x64' || normalized === 'x86' || normalized === 'arm64') return 'windows'
   return 'windows'
@@ -207,7 +210,7 @@ function normalizeTargetArch(value?: string | null): TargetArch {
 }
 
 function coerceArchByPlatform(platform: TargetPlatform, arch: TargetArch): TargetArch {
-  if (platform === 'macos') return 'arm64'
+  if (platform === 'macos' || platform === 'android' || platform === 'ios' || platform === 'harmony') return 'arm64'
   return arch
 }
 
@@ -1183,8 +1186,8 @@ function App(): React.JSX.Element {
     const result = await window.api.compiler.run(currentProjectDir, editorFiles, targetArch, { breakpoints: breakpointsByFile })
     setIsCompiling(false)
     setForceOutputTab(null)
-    if (result?.success) setIsRunning(true)
-  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, fileProblems, designProblems, debugPause, continueDebugRun, breakpointsByFile])
+    if (result?.success && targetPlatform !== 'android') setIsRunning(true)
+  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, targetPlatform, fileProblems, designProblems, debugPause, continueDebugRun, breakpointsByFile])
 
   // 普通编译
   const handleCompile = useCallback(async () => {
@@ -3710,8 +3713,25 @@ function App(): React.JSX.Element {
 
   const handleNewProjectConfirm = useCallback(async (info: { name: string; path: string; type: string; platform: string }) => {
     try {
-      const result = await window.api?.project?.create(info)
-      if (!result) return
+      const target = await window.api?.project?.checkCreateTarget?.({ name: info.name, path: info.path })
+      const overwrite = !!target?.exists
+      if (target?.exists) {
+        const action = await window.api?.dialog?.confirmProjectOverwrite?.(target.projectDir)
+        if (action !== 'overwrite') return false
+      }
+
+      const closed = await closeCurrentProject({ confirmUnsaved: true, clearLastProject: false })
+      if (!closed) return false
+
+      let result = await window.api?.project?.create({ ...info, overwrite })
+      if (!result) return false
+      if (result.status === 'exists') {
+        const action = await window.api?.dialog?.confirmProjectOverwrite?.(result.projectDir)
+        if (action !== 'overwrite') return false
+        const overwritten = await window.api?.project?.create({ ...info, overwrite: true })
+        if (!overwritten || overwritten.status !== 'created') return false
+        result = overwritten
+      }
 
       setCurrentProjectDir(result.projectDir)
       setIsProjectWorkspace(true)
@@ -3725,15 +3745,14 @@ function App(): React.JSX.Element {
         const nextRoots = await buildProjectTreeFromEpp(eppInfo.projectName, eppInfo.files, result.projectDir)
         const nextRoot = nextRoots[0]
         if (nextRoot) {
-          setProjectTree(prev => {
-            const filtered = prev.filter(root => root.id !== nextRoot.id)
-            return [...filtered, nextRoot]
-          })
+          setProjectTree([nextRoot])
+        } else {
+          setProjectTree([])
         }
       }
 
       // 窗口程序：仅打开 efw 窗口文件
-      if (info.type === 'windows-app') {
+      if (info.type === 'windows-app' || info.type === 'mobile-app') {
         const efwPath = joinPath(result.projectDir, '_启动窗口.efw')
         const efwContent = await window.api?.project?.readFile(efwPath)
         if (efwContent) {
@@ -3791,10 +3810,11 @@ function App(): React.JSX.Element {
         path: result.eppPath,
         label: info.name,
       })
+      return true
     } catch (err) {
       console.error('创建项目失败:', err)
     }
-  }, [buildProjectTreeFromEpp, joinPath, pushRecentOpened])
+  }, [buildProjectTreeFromEpp, closeCurrentProject, joinPath, pushRecentOpened])
 
   // 全局快捷键
   useEffect(() => {
@@ -3994,7 +4014,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.3-beta.55（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.3-beta.56（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]

@@ -717,12 +717,12 @@ extern "C" const char* krnln_GetAppName(int type) {
 }
 
 extern "C" int krnln_SetWaitCursor() {
-  HCURSOR c = LoadCursorW(nullptr, IDC_WAIT);
+  HCURSOR c = LoadCursorW(nullptr, MAKEINTRESOURCEW(32514));
   return SetCursor(c) ? 1 : 0;
 }
 
 extern "C" int krnln_RestroeCursor() {
-  HCURSOR c = LoadCursorW(nullptr, IDC_ARROW);
+  HCURSOR c = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
   return SetCursor(c) ? 1 : 0;
 }
 
@@ -1849,8 +1849,6 @@ extern "C" void krnln_set(void* targetVar, void* valueVar) {
   *reinterpret_cast<uintptr_t*>(targetVar) = reinterpret_cast<uintptr_t>(valueVar);
 }
 
-extern "C" void krnln_store(...);
-
 extern "C" void krnln_store(void* valueVar, void* targetVar) {
   krnln_set(targetVar, valueVar);
 }
@@ -2549,8 +2547,6 @@ extern "C" void krnln_XchgVar(void* a, void* b) {
   std::swap(*pa, *pb);
 }
 
-extern "C" void krnln_ForceXchgVar(...);
-
 extern "C" void krnln_ForceXchgVar(void* a, void* b) {
   krnln_XchgVar(a, b);
 }
@@ -2776,14 +2772,6 @@ extern "C" const char* krnln_fgets(int /*echo*/) {
   std::string line;
   if (!std::getline(std::cin, line)) return keepUtf8("");
   return keepUtf8(line);
-}
-
-extern "C" void krnln_LockWindowUpdate(...) {
-  ::LockWindowUpdate(GetForegroundWindow());
-}
-
-extern "C" void krnln_UnlockWindowUpdate(...) {
-  ::LockWindowUpdate(nullptr);
 }
 
 extern "C" long long krnln_GetSpecTagUnit(...) {

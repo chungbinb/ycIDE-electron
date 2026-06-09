@@ -109,7 +109,7 @@ function Toolbar({
   const canStop = !!isRunning
   const canStep = !!hasProject && !!isDebugPaused
   const canRunToCursor = !!hasProject && !isCompiling && !isRunning
-  const archOptions = platform === 'macos'
+  const archOptions = platform === 'macos' || platform === 'android' || platform === 'ios' || platform === 'harmony'
     ? [{ value: 'arm64', label: 'arm64' }]
     : [
       { value: 'x64', label: 'x64' },
@@ -161,6 +161,9 @@ function Toolbar({
           <option value="windows">Windows</option>
           <option value="macos">macOS</option>
           <option value="linux">Linux</option>
+          <option value="android">Android</option>
+          <option value="ios">iOS</option>
+          <option value="harmony">HarmonyOS</option>
         </select>
       </div>
 
