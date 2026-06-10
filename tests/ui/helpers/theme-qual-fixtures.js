@@ -5,23 +5,19 @@ const {
   getAppRoot,
   launchApp,
   closeApp,
-  openThemeSettings,
+  openThemeManager,
+  switchThemeFromMenu,
+  themeListItem,
   setColorTokenByLabel,
   readRootCssVar,
+  deleteThemesNotIn,
+  getThemeList,
 } = require('./theme-token-coverage-fixtures')
 
-async function openThemeManager(window) {
-  const manager = window.locator('.theme-manager-dialog')
-  if (await manager.isVisible().catch(() => false)) return
-  const settingsDialog = window.locator('.theme-settings-dialog')
-  if (await settingsDialog.isVisible().catch(() => false)) {
-    await window.getByRole('button', { name: '主题管理器' }).click()
-    await expect(manager).toBeVisible()
-    return
-  }
-  await window.getByRole('menuitem', { name: '工具(T)' }).click()
-  await window.getByRole('menuitem', { name: '主题管理器(M)' }).click()
-  await expect(manager).toBeVisible()
+// 主题管理器的导入/导出入口在主题列表的右键菜单中。
+async function openThemeContextMenu(managerPage, themeId) {
+  await themeListItem(managerPage, themeId).first().click({ button: 'right' })
+  await expect(managerPage.locator('.theme-manager-context-menu')).toBeVisible()
 }
 
 async function readThemeConfigSnapshot(app) {
@@ -41,6 +37,8 @@ async function captureAtomicSnapshot(app) {
   }
 }
 
+// 测试钩子安装在主窗口：App.tsx 的导入/导出处理器运行于主窗口 JS 上下文，
+// 即便 UI 呈现在主题管理器弹窗中。
 async function installInvalidImportHook(window) {
   await window.evaluate(() => {
     window.__qualImportCommitCalls = []
@@ -124,8 +122,10 @@ module.exports = {
   getAppRoot,
   launchApp,
   closeApp,
-  openThemeSettings,
   openThemeManager,
+  switchThemeFromMenu,
+  themeListItem,
+  openThemeContextMenu,
   setColorTokenByLabel,
   readRootCssVar,
   captureAtomicSnapshot,
@@ -133,4 +133,6 @@ module.exports = {
   installRoundtripHooks,
   getRoundtripState,
   restoreQualHooks,
+  deleteThemesNotIn,
+  getThemeList,
 }

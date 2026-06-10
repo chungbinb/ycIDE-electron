@@ -25,7 +25,7 @@ test('FLOW-01 + D15-01/D15-02 contract: App starts draft on first edit and uses 
   const source = fs.readFileSync(appPath, 'utf-8')
   assert.match(source, /import \{ createThemeDraftSession, type ThemeDraftSession \} from '\.\.\/\.\.\/shared\/theme-draft'/)
   assert.match(source, /const \[themeDraftSession, setThemeDraftSession\] = useState<ThemeDraftSession \| null>\(null\)/)
-  assert.match(source, /if \(!themeDraftSession\)\s*\{\s*setThemeDraftSession\(createThemeDraftSession\(currentTheme, payload\)\)/)
+  assert.match(source, /if \(!themeDraftSession\)\s*\{\s*setThemeDraftSession\(createThemeDraftSession\(workingThemeId, payload\)\)/)
   assert.match(source, /const applyThemeDraftChange = useCallback\(/)
   assert.doesNotMatch(source, /void persistCurrentThemePayload\(currentTheme, payload\)/)
 })
@@ -95,7 +95,7 @@ test('FLOW-03 + D15-09/D15-10/D15-11/D15-12 contract: save-as-custom validation 
 test('D15-14 contract: unsaved-draft dialog keeps continue-editing as default/cancel action', () => {
   const mainSource = fs.readFileSync(mainPath, 'utf-8')
   assert.match(mainSource, /ipcMain\.handle\('dialog:confirmUnsavedThemeDraftClose'/)
-  assert.match(mainSource, /buttons:\s*\['保存为自定义主题', '放弃改动', '继续编辑'\]/)
+  assert.match(mainSource, /buttons:\s*\['保存', '放弃改动', '继续编辑'\]/)
   assert.match(mainSource, /defaultId:\s*2/)
   assert.match(mainSource, /cancelId:\s*2/)
 })

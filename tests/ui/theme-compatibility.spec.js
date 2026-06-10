@@ -3,12 +3,13 @@ const {
   getAppRoot,
   launchApp,
   closeApp,
-  openThemeSettings,
   createCompatibilityProject,
   createCustomTheme,
   ensureThemeSelected,
   runThemeTransitionScenario,
   assertJitterFailurePolicy,
+  getThemeList,
+  deleteThemesNotIn,
 } = require('./helpers/theme-compatibility-fixtures')
 
 const BUILTIN_DARK = '默认深色'
@@ -20,11 +21,11 @@ test.describe('theme compatibility', () => {
 
   test('QUAL-01: editor/table interactions stay usable during transition-in-progress and post-transition for built-in + custom themes', async () => {
     const app = await launchApp(getAppRoot())
+    const themesBefore = await getThemeList(app.window)
     try {
       await createCompatibilityProject(app.window, 'QUAL01兼容性')
-      await openThemeSettings(app.window)
       const customTheme = `QUAL-01-自定义-${Date.now()}`
-      await createCustomTheme(app.window, customTheme)
+      await createCustomTheme(app, customTheme)
 
       const scenarios = [
         { source: BUILTIN_LIGHT, target: BUILTIN_DARK },
@@ -41,17 +42,18 @@ test.describe('theme compatibility', () => {
         })
       }
     } finally {
+      await deleteThemesNotIn(app.window, themesBefore)
       await closeApp(app)
     }
   })
 
   test('QUAL-01 jitter: collect per-scenario jitter samples for transition paths', async () => {
     const app = await launchApp(getAppRoot())
+    const themesBefore = await getThemeList(app.window)
     try {
       await createCompatibilityProject(app.window, 'QUAL01抖动采样')
-      await openThemeSettings(app.window)
       const customTheme = `QUAL-01-抖动-${Date.now()}`
-      await createCustomTheme(app.window, customTheme)
+      await createCustomTheme(app, customTheme)
       const scenarios = [
         { source: BUILTIN_LIGHT, target: BUILTIN_DARK },
         { source: BUILTIN_DARK, target: BUILTIN_LIGHT },
@@ -73,6 +75,7 @@ test.describe('theme compatibility', () => {
         expect(report?.sampleCount ?? 0).toBeGreaterThan(0)
       }
     } finally {
+      await deleteThemesNotIn(app.window, themesBefore)
       await closeApp(app)
     }
   })
