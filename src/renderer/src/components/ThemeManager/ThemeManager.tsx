@@ -127,8 +127,29 @@ function ThemeManager({
   const [editingThemeName, setEditingThemeName] = useState('')
   const [dialogPosition, setDialogPosition] = useState<{ left: number; top: number } | null>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const headerRef = useRef<HTMLElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
   const themeContextMenuRef = useRef<HTMLDivElement>(null)
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null)
+
+  useEffect(() => {
+    const header = headerRef.current
+    const closeButton = closeButtonRef.current
+    if (!header || !closeButton) return
+
+    if (detachedWindow) {
+      header.style.setProperty('-webkit-app-region', 'drag')
+      closeButton.style.setProperty('-webkit-app-region', 'no-drag')
+      return () => {
+        header.style.removeProperty('-webkit-app-region')
+        closeButton.style.removeProperty('-webkit-app-region')
+      }
+    }
+
+    header.style.removeProperty('-webkit-app-region')
+    closeButton.style.removeProperty('-webkit-app-region')
+    return undefined
+  }, [detachedWindow])
 
   useEffect(() => {
     if (!open) return
@@ -501,9 +522,9 @@ function ThemeManager({
         className={`theme-manager-dialog${detachedWindow ? ' detached' : ''}`}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header className="theme-manager-header" onMouseDown={handleHeaderMouseDown}>
+        <header ref={headerRef} className="theme-manager-header" onMouseDown={handleHeaderMouseDown}>
           <h2 className="theme-manager-title">主题管理器</h2>
-          <button type="button" className="theme-manager-close" onClick={onClose} aria-label="关闭主题管理器">×</button>
+          <button ref={closeButtonRef} type="button" className="theme-manager-close" onClick={onClose} aria-label="关闭主题管理器">×</button>
         </header>
         <div className="theme-manager-body">
           <section className="theme-manager-list" aria-label="主题列表" onContextMenu={(event) => { if (event.target === event.currentTarget) handleThemeContextMenu(event, '') }}>

@@ -40,7 +40,7 @@ interface UseEditorInteractionHandlersParams {
   setEditCell: Dispatch<SetStateAction<EditCellLike | null>>
   setAcVisible: Dispatch<SetStateAction<boolean>>
   findLineAtY: (clientY: number) => number
-  handleLineMouseDown: (e: React.MouseEvent, lineIndex: number) => void
+  handleLineMouseDown: (e: React.MouseEvent, lineIndex: number, opts?: { textSelectable?: boolean; isVirtual?: boolean }) => void
   setExpandedLines: Dispatch<SetStateAction<Set<number>>>
   setSelectedLines: Dispatch<SetStateAction<Set<number>>>
   getMouseRangeSelectedSourceText: () => string | null
@@ -309,8 +309,11 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
   const handleCodeBlockMouseDown = useCallback((
     e: React.MouseEvent<HTMLDivElement>,
     lineIndex: number,
+    isVirtual?: boolean,
   ) => {
-    handleLineMouseDown(e, lineIndex)
+    // 按在代码内容区（非 gutter）时，同一行内的拖动按"行内文本选择"处理
+    const textSelectable = !!(e.target as HTMLElement).closest?.('.eyc-code-line')
+    handleLineMouseDown(e, lineIndex, { textSelectable, isVirtual })
   }, [handleLineMouseDown])
 
   const handleCodeLineFoldMouseDown = useCallback((e: React.MouseEvent<HTMLSpanElement>) => {

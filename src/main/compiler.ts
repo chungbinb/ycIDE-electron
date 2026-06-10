@@ -393,6 +393,33 @@ function buildZigTargetTriple(platform: TargetPlatform, arch: TargetArch): strin
   return 'x86_64-macos'
 }
 
+/** 耗时显示：超过 1 秒时附加人类可读单位，如 "5996 毫秒/5.9 秒"、"599600 毫秒/9 分钟 59.6 秒" */
+function formatElapsedDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) ms = 0
+  if (ms < 1000) return `${ms} 毫秒`
+  const truncate1 = (v: number): string => (Math.floor(v * 10) / 10).toFixed(1)
+  const totalSeconds = ms / 1000
+  let human: string
+  if (totalSeconds < 60) {
+    human = `${truncate1(totalSeconds)} 秒`
+  } else {
+    const dayMs = 24 * 60 * 60 * 1000
+    const hourMs = 60 * 60 * 1000
+    const minuteMs = 60 * 1000
+    const days = Math.floor(ms / dayMs)
+    const hours = Math.floor((ms % dayMs) / hourMs)
+    const minutes = Math.floor((ms % hourMs) / minuteMs)
+    const seconds = (ms % minuteMs) / 1000
+    const parts: string[] = []
+    if (days > 0) parts.push(`${days} 天`)
+    if (days > 0 || hours > 0) parts.push(`${hours} 小时`)
+    parts.push(`${minutes} 分钟`)
+    parts.push(`${truncate1(seconds)} 秒`)
+    human = parts.join(' ')
+  }
+  return `${ms} 毫秒/${human}`
+}
+
 function getBinaryFileName(projectName: string, outputType: string, platform: TargetPlatform): string {
   if (outputType === 'DynamicLibrary') {
     if (platform === 'windows') return `${projectName}.dll`
@@ -662,7 +689,7 @@ async function compileProjectResources(
     const finalObjectPath = join(tempDir, 'project_resources.o')
     writeFileSync(stageRcPath, rcLines.join('\n') + '\n', 'utf-8')
 
-    sendMessage({ type: 'info', text: `正在编译资源(${embeddedCount} 项)...` })
+    sendMessage({ type: 'info', text: embeddedCount === 0 ? '正在编译应用程序清单资源(首次需构建资源编译器，可能较慢)...' : `正在编译资源(${embeddedCount} 项)...` })
 
     const rcSuccess = await new Promise<boolean>((resolve) => {
       const rcArgs = [
@@ -701,7 +728,7 @@ async function compileProjectResources(
     }
 
     copyFileSync(stageObjectPath, finalObjectPath)
-    sendMessage({ type: 'success', text: `资源编译成功: ${embeddedCount} 项` })
+    sendMessage({ type: 'success', text: embeddedCount === 0 ? '应用程序清单资源编译完成' : `资源编译成功: ${embeddedCount} 项` })
     return { success: true, objectFilePath: finalObjectPath }
   } finally {
     try {
@@ -4461,7 +4488,7 @@ function generateMainC(
   const librariesForBuild = linkedLibraries || libraryManager.getLoadedLibraryFiles()
   const usedLibraryNames = new Set(librariesForBuild.map(l => l.name))
   const libraryConstants = collectLibraryConstants(usedLibraryNames)
-  sendMessage({ type: 'info', text: `项目元数据分析完成 (${Date.now() - metadataStartTime} 毫秒)` })
+  sendMessage({ type: 'info', text: `项目元数据分析完成 (${formatElapsedDuration(Date.now() - metadataStartTime)})` })
 
   const transpileContextDigest = createHash('sha1').update(JSON.stringify({
     debugBuild,
@@ -5329,6 +5356,82 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       ...additionalCFiles,
     ]
 
+    // ========== 产物指纹缓存 ==========
+    // 生成的临时源文件每次构建都会重写（mtime 必变），必须按内容哈希参与指纹，
+    // 否则"输入未变化、复用上次产物"的快路径永远不会命中。
+    const collectContentStamp = (filePath: string): string => {
+      try {
+        return `${filePath}|sha1:${createHash('sha1').update(readFileSync(filePath)).digest('hex')}`
+      } catch {
+        return `${filePath}|missing`
+      }
+    }
+    const collectFileStamp = (filePath: string): string => {
+      try {
+        const st = statSync(filePath)
+        return `${filePath}|${st.size}|${Math.round(st.mtimeMs)}`
+      } catch {
+        return `${filePath}|missing`
+      }
+    }
+
+    const resourceEntries = collectProjectResourceEntries(project, editorFiles)
+    const resourceStamps = resourceEntries
+      .map(entry => collectFileStamp(join(project.projectDir, entry.fileName)))
+      .sort()
+    const sourceStamps = [mainC, ...additionalCFiles].map(collectContentStamp).sort()
+    const staticLibStamps = libsToLink
+      .map(lib => libraryManager.findStaticLib(lib.name, targetArch))
+      .filter((x): x is string => !!x)
+      .map(collectFileStamp)
+      .sort()
+    const platformImplStamps = libsToLink
+      .map(lib => lib.libraryPath)
+      .filter(filePath => /\.(?:c|cc|cpp|cxx|m|mm)$/i.test(filePath))
+      .map(collectContentStamp)
+      .sort()
+
+    const buildFingerprint = createHash('sha1').update(JSON.stringify({
+      mode: buildMode,
+      debug: !!options.debug,
+      targetPlatform,
+      targetArch,
+      targetTriple,
+      outputType: project.outputType,
+      outputName: outputFileName,
+      sourceStamps,
+      staticLibStamps,
+      platformImplStamps,
+      resourceStamps,
+    })).digest('hex')
+
+    const previousBuildCache = (() => {
+      try {
+        if (!existsSync(buildCachePath)) return null
+        const raw = JSON.parse(readFileSync(buildCachePath, 'utf-8')) as Partial<BuildArtifactCacheFile>
+        if (!raw || raw.version !== BUILD_ARTIFACT_CACHE_VERSION) return null
+        if (typeof raw.fingerprint !== 'string' || typeof raw.outputBinary !== 'string') return null
+        return raw as BuildArtifactCacheFile
+      } catch {
+        return null
+      }
+    })()
+
+    if (
+      previousBuildCache
+      && previousBuildCache.fingerprint === buildFingerprint
+      && previousBuildCache.outputBinary === outputBinary
+      && existsSync(outputBinary)
+    ) {
+      sendMessage({ type: 'info', text: '未检测到编译输入变化，跳过编译与链接，直接复用上次产物。' })
+      result.success = true
+      result.outputFile = outputBinary
+      result.elapsedMs = Date.now() - startTime
+      sendMessage({ type: 'success', text: `编译成功 (${formatElapsedDuration(result.elapsedMs)})` })
+      sendMessage({ type: 'info', text: `输出文件: ${outputBinary}` })
+      return result
+    }
+
     const resourceBuild = await compileProjectResources(project, targetPlatform, targetArch, tempDir, zigPath, editorFiles)
     if (!resourceBuild.success) {
       result.errorCount++
@@ -5382,72 +5485,6 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       } else {
         sendMessage({ type: 'warning', text: `  ○ ${lib.libName} (${lib.name}) - 未找到静态库，跳过链接` })
       }
-    }
-
-    const collectFileStamp = (filePath: string): string => {
-      try {
-        const st = statSync(filePath)
-        return `${filePath}|${st.size}|${Math.round(st.mtimeMs)}`
-      } catch {
-        return `${filePath}|missing`
-      }
-    }
-
-    const resourceEntries = collectProjectResourceEntries(project, editorFiles)
-    const resourceStamps = resourceEntries
-      .map(entry => collectFileStamp(join(project.projectDir, entry.fileName)))
-      .sort()
-    const sourceStamps = [mainC, ...additionalCFiles].map(collectFileStamp).sort()
-    const staticLibStamps = libsToLink
-      .map(lib => libraryManager.findStaticLib(lib.name, targetArch))
-      .filter((x): x is string => !!x)
-      .map(collectFileStamp)
-      .sort()
-    const platformImplStamps = libsToLink
-      .map(lib => lib.libraryPath)
-      .filter(filePath => /\.(?:c|cc|cpp|cxx|m|mm)$/i.test(filePath))
-      .map(collectFileStamp)
-      .sort()
-
-    const buildFingerprint = createHash('sha1').update(JSON.stringify({
-      mode: buildMode,
-      debug: !!options.debug,
-      targetPlatform,
-      targetArch,
-      targetTriple,
-      outputType: project.outputType,
-      outputName: outputFileName,
-      sourceStamps,
-      staticLibStamps,
-      platformImplStamps,
-      resourceStamps,
-    })).digest('hex')
-
-    const previousBuildCache = (() => {
-      try {
-        if (!existsSync(buildCachePath)) return null
-        const raw = JSON.parse(readFileSync(buildCachePath, 'utf-8')) as Partial<BuildArtifactCacheFile>
-        if (!raw || raw.version !== BUILD_ARTIFACT_CACHE_VERSION) return null
-        if (typeof raw.fingerprint !== 'string' || typeof raw.outputBinary !== 'string') return null
-        return raw as BuildArtifactCacheFile
-      } catch {
-        return null
-      }
-    })()
-
-    if (
-      previousBuildCache
-      && previousBuildCache.fingerprint === buildFingerprint
-      && previousBuildCache.outputBinary === outputBinary
-      && existsSync(outputBinary)
-    ) {
-      sendMessage({ type: 'info', text: '未检测到编译输入变化，跳过编译与链接，直接复用上次产物。' })
-      result.success = true
-      result.outputFile = outputBinary
-      result.elapsedMs = Date.now() - startTime
-      sendMessage({ type: 'success', text: `编译成功 (${result.elapsedMs} 毫秒)` })
-      sendMessage({ type: 'info', text: `输出文件: ${outputBinary}` })
-      return result
     }
 
     args.push('-target', targetTriple)
@@ -5547,7 +5584,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     result.outputFile = outputBinary
     result.elapsedMs = Date.now() - startTime
 
-    sendMessage({ type: 'success', text: `编译成功 (${result.elapsedMs} 毫秒)` })
+    sendMessage({ type: 'success', text: `编译成功 (${formatElapsedDuration(result.elapsedMs)})` })
     sendMessage({ type: 'info', text: `输出文件: ${outputBinary}` })
 
   } catch (e) {

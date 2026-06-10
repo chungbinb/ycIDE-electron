@@ -87,3 +87,111 @@ test('keyboard dispatcher contract: completion popup arrow navigation keeps inpu
   assert.match(completionBlock, /const\s+handled\s*=\s*handleCompletionPopupKey\(/)
   assert.match(completionBlock, /handled\s*&&\s*\(key\s*===\s*'ArrowUp'\s*\|\|\s*key\s*===\s*'ArrowDown'\)[\s\S]*?focusInlineInputAt\(pos\)/)
 })
+
+test('keyboard dispatcher contract: unchanged existing flow commands do not rebuild structure', () => {
+  const source = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+
+  assert.match(source, /const\s+inferredFlowStart\s*=\s*\(\(\)\s*=>\s*\{[\s\S]*?for\s*\(const\s+candidateKw\s+of\s+Object\.keys\(FLOW_START\)\)/)
+  assert.match(source, /if\s*\(editCell\.isVirtual\s*\|\|\s*originalFlowKw\)\s*return\s+null/)
+  // 推断仅允许在渲染层已标记为流程起始的行上进行，普通正文行禁止推断（否则会误溶解所属结构）。
+  assert.match(source, /if\s*\(!wasFlowStartRef\.current\)\s*return\s+null/)
+  assert.match(source, /const\s+effectiveOriginalFlowKw\s*=\s*originalFlowKw\s*\|\|\s*inferredFlowStart\?\.kw\s*\|\|\s*''/)
+  assert.match(source, /const\s+editingExistingFlowStart\s*=\s*!editCell\.isVirtual\s*&&\s*!!effectiveOriginalFlowKw\s*&&\s*!!FLOW_START\[effectiveOriginalFlowKw\]/)
+  assert.match(source, /const\s+existingFlowCommandIsComplete\s*=\s*!editingExistingFlowStart\s*\|\|\s*!!getOuterParenRange\(codeLineEditOrigValRef\.current\.trim\(\)\)/)
+  assert.match(source, /if\s*\(unchanged\s*&&\s*flowContext\s*&&\s*existingFlowCommandIsComplete\)/)
+  assert.match(source, /const\s+preservesExistingFlowStructure\s*=\s*editingExistingFlowStart\s*&&\s*existingFlowStructureIsIntact\s*&&\s*\(!cmdCheckName\s*\|\|\s*cmdCheckName\s*===\s*effectiveOriginalFlowKw\)/)
+  assert.match(source, /let\s+extraLines\s*=\s*preservesExistingFlowStructure\s*\?\s*\[\]\s*:\s*formattedLines\.slice\(1\)/)
+})
+
+test('keyboard dispatcher contract: damaged existing flow structure dissolves before reformatting', () => {
+  const source = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+
+  assert.match(source, /const\s+existingFlowStructureIsIntact\s*=\s*\(\(\)\s*=>\s*\{[\s\S]*?const\s+expected\s*=\s*\(FLOW_AUTO_COMPLETE\[effectiveOriginalFlowKw\]\s*\|\|\s*\[\]\)\.filter/)
+  assert.match(source, /const\s+preservesExistingFlowStructure\s*=\s*editingExistingFlowStart\s*&&\s*existingFlowStructureIsIntact\s*&&\s*\(!cmdCheckName\s*\|\|\s*cmdCheckName\s*===\s*effectiveOriginalFlowKw\)/)
+  assert.match(source, /const\s+shouldDissolveExistingFlow\s*=\s*editingExistingFlowStart\s*&&\s*\(!newIsFlow\s*\|\|\s*!existingFlowStructureIsIntact\s*\|\|\s*cmdCheckName\s*!==\s*effectiveOriginalFlowKw\)/)
+  assert.match(source, /const\s+dissolvedReplacementLines\s*=\s*newIsFlow[\s\S]*?\?\s*\[dropOneFlowIndent\(mainLine\),\s*\.\.\.extraLines\.map\(dropOneFlowIndent\)\][\s\S]*?:\s*\[dropOneFlowIndent\(mainLine\)\]/)
+})
+
+test('keyboard dispatcher contract: invalidated flow command removes structural shell', () => {
+  const source = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+
+  assert.match(source, /if\s*\(trimmed\s*===\s*''\)\s*\{[\s\S]*?if\s*\(newIsFlow\)\s*unindentSet\.add\(i\)[\s\S]*?else\s*deleteSet\.add\(i\)/)
+  assert.match(source, /const\s+patternKws\s*=\s*\(FLOW_AUTO_COMPLETE\[oldKw\]\s*\|\|\s*\[\]\)\.filter\(\(kw\):\s*kw\s+is\s+string\s*=>\s*!!kw\)/)
+  assert.match(source, /const\s+branchKwSet\s*=\s*new\s+Set<string>\(patternKws\.filter\(kw\s*=>\s*kw\s*!==\s*endKw\)\)/)
+  assert.match(source, /if\s*\(lineIndentLen\s*<\s*baseIndentLen\s*&&\s*newIsFlow\)\s*break/)
+  assert.match(source, /if\s*\(!newIsFlow\)\s*\{[\s\S]*?unindentSet\.add\(i\)[\s\S]*?continue[\s\S]*?\}/)
+  assert.match(source, /\/\/[\s\S]*?\n\s*unindentSet\.add\(i\)\s*\n\s*\}/)
+  assert.match(source, /if\s*\(kw\s*&&\s*branchKwSet\.has\(kw\)\)\s*\{[\s\S]*?deleteSet\.add\(i\)[\s\S]*?continue/)
+  assert.match(source, /if\s*\(kw\s*&&\s*endKwSet\.has\(kw\)\)\s*\{[\s\S]*?deleteSet\.add\(i\)[\s\S]*?break/)
+})
+
+test('keyboard dispatcher contract: code line input guards paren protection, smart quotes and caret restore', () => {
+  const source = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+
+  // 命令调用行右括号之后禁止插入内容
+  assert.match(source, /isPureCommandCall\s*&&\s*insertAt\s*>=\s*trimmedOld\.length/)
+  // 智能引号：光标右侧已是引号时跳过；成对上屏光标置中
+  assert.match(source, /const\s+isQuoteChar\s*=\s*\(c\?:\s*string\):\s*boolean\s*=>/)
+  assert.match(source, /if\s*\(isQuoteChar\(old\[insertAt\]\)\)/)
+  // 归一化改写值后由 layout effect 同步恢复光标（防止下一个按键落到行尾）
+  assert.match(source, /const\s+pendingInputCaretRef\s*=\s*useRef<number\s*\|\s*null>\(null\)/)
+  assert.match(source, /useLayoutEffect\(\(\)\s*=>\s*\{[\s\S]{0,400}?pendingInputCaretRef\.current\s*=\s*null[\s\S]{0,200}?setSelectionRange\(pos,\s*pos\)/)
+})
+
+test('keyboard dispatcher contract: same-line horizontal drag selects text instead of whole row', () => {
+  const source = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+
+  assert.match(source, /const\s+lineTextDragCandidateRef\s*=\s*useRef/)
+  assert.match(source, /const\s+lineTextSelectDragRef\s*=\s*useRef/)
+  assert.match(source, /const\s+beginLineTextSelectRef\s*=\s*useRef/)
+  // 纵向拖动意图或拖到另一行 → 行多选；同行横向 → 文本选择
+  assert.match(source, /Math\.abs\(dy\)\s*>=\s*Math\.abs\(dx\)/)
+  // 文本拖选中拖出该行 → 退出编辑态转行多选
+  assert.match(source, /lineTextSelectDragRef\.current\s*=\s*null[\s\S]{0,200}?setEditCell\(null\)/)
+})
+
+test('keyboard dispatcher contract: expanded param rows support nested expression editing with manual fold', () => {
+  const source = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+
+  // 嵌套表达式行编辑：exprPath 路径定位 + 按路径替换子表达式
+  assert.match(source, /exprPath\?: number\[\]/)
+  assert.match(source, /const\s+replaceExprAtPath\s*=\s*useCallback/)
+  assert.match(source, /replaceExprAtPath\(parseCallArgs\(codeLine\)\[editCell\.paramIdx\]\s*\?\?\s*'',\s*editCell\.exprPath,\s*formattedVal\)/)
+  // 嵌套编辑不做实时同步，提交时一次性替换
+  assert.match(source, /if\s*\(editCell\.exprPath\s*&&\s*editCell\.exprPath\.length\s*>\s*0\)\s*return/)
+  // 子树展开由 +/- 手动控制（不随焦点自动展开/收缩）
+  assert.match(source, /expandedParamExprKeys/)
+  assert.match(source, /eyc-param-expr-fold/)
+  // 参数行输入采用与代码行一致的内联无缝编辑
+  assert.match(source, /eyc-param-inline-edit-sizing/)
+})
+
+test('keyboard dispatcher contract: param input suppresses global focus ring', () => {
+  const cssPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/EycTableEditor.css')
+  const css = fs.readFileSync(cssPath, 'utf-8')
+
+  assert.match(css, /\.eyc-param-val-input:focus,\s*\n\.eyc-param-val-input:focus-visible\s*\{[\s\S]{0,200}?outline:\s*none/)
+  // +/- 折叠按钮定位到行号右侧 gutter 区域
+  assert.match(css, /\.eyc-param-expr-fold\s*\{[\s\S]{0,300}?left:\s*calc\(54px - var\(--eyc-param-expand-padding-left/)
+})
+
+test('keyboard dispatcher contract: flow boundary detection uses real subroutine markers', () => {
+  const source = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+
+  // 边界判断必须用真实关键字“.子程序 / .程序集”；曾因编码损坏写成乱码，导致结构扫描跨子程序边界。
+  const boundaryMatches = source.match(/\.startsWith\('\.子程序 '\)/g) || []
+  assert.ok(boundaryMatches.length >= 3, `expected >=3 subroutine boundary checks, got ${boundaryMatches.length}`)
+  assert.doesNotMatch(source, /瀛愮▼搴|绋嬪簭闆/)
+})
+
+test('keyboard dispatcher contract: deleting a visible branch body repairs hidden flow shell', () => {
+  const source = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+
+  assert.match(source, /const\s+repairBrokenFlowAfterDelete\s*=\s*useCallback\(\(sourceLines:\s*string\[\]\):\s*string\[\]\s*=>\s*\{/)
+  assert.match(source, /const\s+structuralKws\s*=\s*pattern\.filter\(\(kw\):\s*kw\s+is\s+string\s*=>\s*!!kw\)/)
+  assert.match(source, /const\s+endLine\s*=\s*indent\s*\+\s*\(usesDottedFlowSyntax\s*\?\s*'\.'\s*:\s*''\)\s*\+\s*endKw/)
+  assert.match(source, /const\s+movedBody\s*=\s*bodyBeforeBranch\.map\(outdentOneLevel\)/)
+  assert.match(source, /lines\.splice\(i\s*\+\s*1,\s*branchIndex\s*-\s*i\s*-\s*1,\s*''\)/)
+  assert.match(source, /lines\.splice\(repairedBranchIndex\s*\+\s*1,\s*0,\s*'',\s*endLine,\s*\.\.\.movedBody\)/)
+  assert.match(source, /repairBrokenFlowAfterDelete\(deletedLines\)/)
+})
