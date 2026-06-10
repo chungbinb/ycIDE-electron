@@ -34,6 +34,8 @@ import {
 import { createThemeDraftSession, type ThemeDraftSession } from '../../shared/theme-draft'
 import { THEME_TOKEN_GROUPS, type FlowLineMode, type FlowLineMultiConfig, type ThemeTokenGroupId } from '../../shared/theme-tokens'
 import { DEFAULT_IDE_SETTINGS, resolveIDESettings, type IDESettings } from '../../shared/settings'
+import { useUiLayoutStore } from './stores/uiLayoutStore'
+import { useSettingsStore } from './stores/settingsStore'
 import type { AIChatMessage, AIChatTool, AIChatWithToolsResult, AIEditResult, AISupportedModel } from '../../shared/ai'
 import type { EProjectImportConflictAction } from '../../shared/eprojectImport'
 import './App.css'
@@ -82,8 +84,7 @@ type EProjectImportDialogState = {
 }
 
 const RECENT_OPENED_KEY = 'ycide.recentOpened.v1'
-const ACTIVITY_BAR_SIDE_KEY = 'ycide.activityBar.side.v1'
-const AI_PANEL_OPEN_KEY = 'ycide.aiPanel.open.v1'
+// 活动栏方向 / AI 面板开关的持久化 key 已随状态迁入 stores/uiLayoutStore.ts
 const LAST_PROJECT_EPP_KEY = 'ycide.lastProject.epp.v1'
 const MAX_RECENT_OPENED = 10
 const DEFAULT_FILE_ENCODING = 'UTF-8'
@@ -666,35 +667,46 @@ async function findProjectDllDetail(
   }
 }
 
+// 纯路径工具：放在模块级以保持引用稳定（组件内定义会让依赖它们的 useCallback 每次渲染都失效）
+function getBaseName(filePath: string): string {
+  const parts = (filePath || '').split(/[\\/]/)
+  return parts[parts.length - 1] || filePath
+}
+
+function getDirName(filePath: string): string {
+  const normalized = (filePath || '').replace(/[\\/]+$/, '')
+  const idx = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'))
+  return idx >= 0 ? normalized.slice(0, idx) : ''
+}
+
 function App(): React.JSX.Element {
   const runtimePlatform = (window.api?.system?.getRuntimePlatform?.() ?? 'windows') as RuntimePlatform
   const pathSeparator = runtimePlatform === 'windows' ? '\\' : '/'
-  const joinPath = (dir: string, fileName: string): string => {
+  const joinPath = useCallback((dir: string, fileName: string): string => {
     const normalizedDir = (dir || '').replace(/[\\/]+$/, '')
     const normalizedFileName = (fileName || '').replace(/^[\\/]+/, '')
     return `${normalizedDir}${pathSeparator}${normalizedFileName}`
-  }
-  const getBaseName = (filePath: string): string => {
-    const parts = (filePath || '').split(/[\\/]/)
-    return parts[parts.length - 1] || filePath
-  }
-  const getDirName = (filePath: string): string => {
-    const normalized = (filePath || '').replace(/[\\/]+$/, '')
-    const idx = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'))
-    return idx >= 0 ? normalized.slice(0, idx) : ''
-  }
-  const [sidebarWidth, setSidebarWidth] = useState(260)
-  const [outputHeight, setOutputHeight] = useState(200)
-  const [showOutput, setShowOutput] = useState(true)
-  const [showLibrary, setShowLibrary] = useState(false)
-  const [showNewProject, setShowNewProject] = useState(false)
+  }, [pathSeparator])
+  // 布局/弹窗状态已迁入 uiLayoutStore（Zustand），变量名保持不变以兼容下方代码
+  const sidebarWidth = useUiLayoutStore(s => s.sidebarWidth)
+  const setSidebarWidth = useUiLayoutStore(s => s.setSidebarWidth)
+  const outputHeight = useUiLayoutStore(s => s.outputHeight)
+  const setOutputHeight = useUiLayoutStore(s => s.setOutputHeight)
+  const showOutput = useUiLayoutStore(s => s.showOutput)
+  const setShowOutput = useUiLayoutStore(s => s.setShowOutput)
+  const showLibrary = useUiLayoutStore(s => s.showLibrary)
+  const setShowLibrary = useUiLayoutStore(s => s.setShowLibrary)
+  const showNewProject = useUiLayoutStore(s => s.showNewProject)
+  const setShowNewProject = useUiLayoutStore(s => s.setShowNewProject)
   const [showThemeSettings, setShowThemeSettings] = useState(false)
-  const [showThemeManager, setShowThemeManager] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
-  const [showAIPanel, setShowAIPanel] = useState(() => {
-    try { return localStorage.getItem(AI_PANEL_OPEN_KEY) === 'true' } catch { return false }
-  })
-  const [ideSettings, setIdeSettings] = useState<IDESettings>(DEFAULT_IDE_SETTINGS)
+  const showThemeManager = useUiLayoutStore(s => s.showThemeManager)
+  const setShowThemeManager = useUiLayoutStore(s => s.setShowThemeManager)
+  const showSettings = useUiLayoutStore(s => s.showSettings)
+  const setShowSettings = useUiLayoutStore(s => s.setShowSettings)
+  const showAIPanel = useUiLayoutStore(s => s.showAIPanel)
+  const toggleAIPanel = useUiLayoutStore(s => s.toggleAIPanel)
+  const ideSettings = useSettingsStore(s => s.ideSettings)
+  const setIdeSettings = useSettingsStore(s => s.setIdeSettings)
   const libraryWindowRef = useRef<Window | null>(null)
   const [libraryPortalRoot, setLibraryPortalRoot] = useState<HTMLElement | null>(null)
   const themeManagerWindowRef = useRef<Window | null>(null)
@@ -703,9 +715,11 @@ function App(): React.JSX.Element {
   const [settingsPortalRoot, setSettingsPortalRoot] = useState<HTMLElement | null>(null)
   const settingsBaselineRef = useRef<IDESettings>(DEFAULT_IDE_SETTINGS)
   const [themeRepairMessage, setThemeRepairMessage] = useState<string | null>(null)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const sidebarCollapsed = useUiLayoutStore(s => s.sidebarCollapsed)
+  const setSidebarCollapsed = useUiLayoutStore(s => s.setSidebarCollapsed)
   const [selection, setSelection] = useState<SelectionTarget>(null)
-  const [sidebarTab, setSidebarTab] = useState<'project' | 'library' | 'property'>('project')
+  const sidebarTab = useUiLayoutStore(s => s.sidebarTab)
+  const setSidebarTab = useUiLayoutStore(s => s.setSidebarTab)
   const [alignAction, setAlignAction] = useState<AlignAction>(null)
   const [multiSelectCount, setMultiSelectCount] = useState(0)
   const [fileEncodingByPath, setFileEncodingByPath] = useState<Record<string, string>>({})
@@ -759,15 +773,10 @@ function App(): React.JSX.Element {
   const [targetPlatform, setTargetPlatform] = useState<TargetPlatform>('windows')
   const [targetArch, setTargetArch] = useState<TargetArch>('x64')
   const [recentOpened, setRecentOpened] = useState<RecentOpenedItem[]>([])
-  const [activityBarSide, setActivityBarSide] = useState<ActivityBarSide>(() => {
-    try {
-      const raw = localStorage.getItem(ACTIVITY_BAR_SIDE_KEY)
-      return raw === 'right' ? 'right' : 'left'
-    } catch {
-      return 'left'
-    }
-  })
-  const [activityBarContextMenu, setActivityBarContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const activityBarSide = useUiLayoutStore(s => s.activityBarSide)
+  const setActivityBarSide = useUiLayoutStore(s => s.setActivityBarSide)
+  const activityBarContextMenu = useUiLayoutStore(s => s.activityBarContextMenu)
+  const setActivityBarContextMenu = useUiLayoutStore(s => s.setActivityBarContextMenu)
   const isWorkspaceEmpty = !currentProjectDir && (openProjectFiles?.length ?? 0) === 0
 
   useEffect(() => {
@@ -812,13 +821,7 @@ function App(): React.JSX.Element {
     }
   }, [])
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(ACTIVITY_BAR_SIDE_KEY, activityBarSide)
-    } catch {
-      // 忽略持久化异常
-    }
-  }, [activityBarSide])
+  // activityBarSide 的 localStorage 持久化已收敛到 uiLayoutStore 的 setter 内
 
   useEffect(() => {
     if (!activityBarContextMenu) return
@@ -3916,12 +3919,8 @@ function App(): React.JSX.Element {
   }, [])
 
   const openAIPanel = useCallback(() => {
-    setShowAIPanel(prev => {
-      const next = !prev
-      try { localStorage.setItem(AI_PANEL_OPEN_KEY, String(next)) } catch {}
-      return next
-    })
-  }, [])
+    toggleAIPanel()
+  }, [toggleAIPanel])
 
   const openUserPanel = useCallback(() => {
     setShowOutput(true)
@@ -4957,9 +4956,47 @@ function App(): React.JSX.Element {
     setActivityBarContextMenu(null)
   }, [toggleActivityBarSide])
 
+  // 以下回调保持引用稳定，供 memo 化的 TitleBar/Toolbar/StatusBar/OutputPanel 使用
+  const handleWindowCloseClick = useCallback(() => { void handleAppClose() }, [handleAppClose])
+  const handleDebugStepOver = useCallback(() => { void handleMenuAction('debug:stepOver') }, [handleMenuAction])
+  const handleDebugStepInto = useCallback(() => { void handleMenuAction('debug:stepInto') }, [handleMenuAction])
+  const handleDebugStepOut = useCallback(() => { void handleMenuAction('debug:stepOut') }, [handleMenuAction])
+  const handleDebugRunToCursor = useCallback(() => { void handleMenuAction('debug:runToCursor') }, [handleMenuAction])
+  const handleToolbarNew = useCallback(() => { void handleMenuAction('file:newFile') }, [handleMenuAction])
+  const handleToolbarOpen = useCallback(() => { void handleMenuAction('file:openFile') }, [handleMenuAction])
+  const handleToolbarSave = useCallback(() => { void handleMenuAction('file:save') }, [handleMenuAction])
+  const handleToolbarUndo = useCallback(() => { void handleMenuAction('edit:undo') }, [handleMenuAction])
+  const handleToolbarRedo = useCallback(() => { void handleMenuAction('edit:redo') }, [handleMenuAction])
+  const handleToolbarPlatformChange = useCallback((platform: string) => {
+    const normalizedPlatform = normalizeTargetPlatform(platform)
+    setTargetPlatform(normalizedPlatform)
+    setTargetArch(prev => coerceArchByPlatform(normalizedPlatform, prev))
+    if (isProjectWorkspace && currentProjectDir) window.api?.project?.updatePlatform(currentProjectDir, normalizedPlatform)
+  }, [isProjectWorkspace, currentProjectDir])
+  const handleToolbarArchChange = useCallback((arch: string) => {
+    const normalizedArch = normalizeTargetArch(arch)
+    setTargetArch(coerceArchByPlatform(targetPlatform, normalizedArch))
+  }, [targetPlatform])
+  const handleToggleOutput = useCallback(() => { setShowOutput(prev => !prev) }, [setShowOutput])
+  const handleCloseOutput = useCallback(() => { setShowOutput(false) }, [setShowOutput])
+  const allProblems = useMemo(() => [...fileProblems, ...designProblems], [fileProblems, designProblems])
+  const problemErrorCount = useMemo(() => allProblems.filter(p => p.severity === 'error').length, [allProblems])
+  const problemWarningCount = useMemo(() => allProblems.filter(p => p.severity === 'warning').length, [allProblems])
+  const displayDebugPause = useMemo(
+    () => (debugPause ? { ...debugPause, line: debugDisplayLine ?? debugPause.line } : null),
+    [debugPause, debugDisplayLine],
+  )
+  const handleDebugContinueClick = useCallback(() => { void continueDebugRun() }, [continueDebugRun])
+  const handleProblemClick = useCallback((p: FileProblem) => {
+    editorRef.current?.navigateToLine(p.line)
+  }, [])
+  const handleReopenWithEncodingClick = useCallback((encoding: string) => {
+    void handleReopenCurrentFileWithEncoding(encoding)
+  }, [handleReopenCurrentFileWithEncoding])
+
   return (
     <div className={`app${isWorkspaceEmpty ? ' app-empty-workspace' : ''}`}>
-      <TitleBar onMenuAction={handleMenuAction} onWindowClose={() => { void handleAppClose() }} runtimePlatform={runtimePlatform} hasProject={!!currentProjectDir && isProjectWorkspace} hasWorkspace={!!currentProjectDir} hasOpenFile={(openProjectFiles?.length ?? 0) > 0} themes={themeList} currentTheme={currentTheme} recentOpened={recentOpened} />
+      <TitleBar onMenuAction={handleMenuAction} onWindowClose={handleWindowCloseClick} runtimePlatform={runtimePlatform} hasProject={!!currentProjectDir && isProjectWorkspace} hasWorkspace={!!currentProjectDir} hasOpenFile={(openProjectFiles?.length ?? 0) > 0} themes={themeList} currentTheme={currentTheme} recentOpened={recentOpened} />
       <Toolbar
         hasProject={!!currentProjectDir && isProjectWorkspace}
         canCompileRun={canCompileRunCurrentTab}
@@ -4969,31 +5006,22 @@ function App(): React.JSX.Element {
         onAlign={setAlignAction}
         onCompileRun={handleCompileRun}
         onStop={handleStop}
-        onDebugStepOver={() => { void handleMenuAction('debug:stepOver') }}
-        onDebugStepInto={() => { void handleMenuAction('debug:stepInto') }}
-        onDebugStepOut={() => { void handleMenuAction('debug:stepOut') }}
-        onDebugRunToCursor={() => { void handleMenuAction('debug:runToCursor') }}
+        onDebugStepOver={handleDebugStepOver}
+        onDebugStepInto={handleDebugStepInto}
+        onDebugStepOut={handleDebugStepOut}
+        onDebugRunToCursor={handleDebugRunToCursor}
         isCompiling={isCompiling}
         isRunning={isRunning}
         isDebugPaused={!!debugPause && !debugResumePending}
         platform={targetPlatform}
         arch={targetArch}
-        onPlatformChange={(platform: string) => {
-          const normalizedPlatform = normalizeTargetPlatform(platform)
-          setTargetPlatform(normalizedPlatform)
-          setTargetArch(prev => coerceArchByPlatform(normalizedPlatform, prev))
-          if (isProjectWorkspace && currentProjectDir) window.api?.project?.updatePlatform(currentProjectDir, normalizedPlatform)
-        }}
-        onArchChange={(arch: string) => {
-          const normalizedArch = normalizeTargetArch(arch)
-          const coercedArch = coerceArchByPlatform(targetPlatform, normalizedArch)
-          setTargetArch(coercedArch)
-        }}
-        onNew={() => handleMenuAction('file:newFile')}
-        onOpen={() => handleMenuAction('file:openFile')}
-        onSave={() => handleMenuAction('file:save')}
-        onUndo={() => handleMenuAction('edit:undo')}
-        onRedo={() => handleMenuAction('edit:redo')}
+        onPlatformChange={handleToolbarPlatformChange}
+        onArchChange={handleToolbarArchChange}
+        onNew={handleToolbarNew}
+        onOpen={handleToolbarOpen}
+        onSave={handleToolbarSave}
+        onUndo={handleToolbarUndo}
+        onRedo={handleToolbarRedo}
       />
       <div className={`app-body${isWorkspaceEmpty ? ' app-body-empty-workspace' : ''}${activityBarSide === 'right' ? ' app-body-right' : ''}`}>
         <aside className={`activity-bar${activityBarSide === 'right' ? ' activity-bar-right' : ''}`} role="navigation" aria-label="主活动栏" onContextMenu={handleActivityBarContextMenu}>
@@ -5124,16 +5152,16 @@ function App(): React.JSX.Element {
             <OutputPanel
               height={outputHeight}
               onResize={setOutputHeight}
-              onClose={() => setShowOutput(false)}
+              onClose={handleCloseOutput}
               messages={outputMessages}
               commandDetail={commandDetail}
               highlightParamIndex={highlightParamIndex}
-              problems={[...fileProblems, ...designProblems]}
-              debugPause={debugPause ? { ...debugPause, line: debugDisplayLine ?? debugPause.line } : null}
+              problems={allProblems}
+              debugPause={displayDebugPause}
               isDebugPaused={!!debugPause && !debugResumePending}
-              onDebugContinue={() => { void continueDebugRun() }}
+              onDebugContinue={handleDebugContinueClick}
               forceTab={forceOutputTab}
-              onProblemClick={(p) => editorRef.current?.navigateToLine(p.line)}
+              onProblemClick={handleProblemClick}
               terminalOutput={terminalOutputLines}
               terminalRunning={terminalRunning}
               terminalLastCommand={terminalCommands.length > 0 ? terminalCommands[terminalCommands.length - 1] : ''}
@@ -5149,7 +5177,7 @@ function App(): React.JSX.Element {
             customModels={ideSettings.aiCustomModels}
             activeFilePath={activeAIFilePath}
             activeFileLabel={activeAIFileLabel}
-            problems={[...fileProblems, ...designProblems]}
+            problems={allProblems}
             placement={activityBarSide === 'right' ? 'left' : 'right'}
             ideContext={aiIdeContext}
             aiFontFamily={ideSettings.aiFontFamily}
@@ -5169,16 +5197,16 @@ function App(): React.JSX.Element {
         )}
       </div>
       <StatusBar
-        onToggleOutput={() => setShowOutput(!showOutput)}
-        errorCount={[...fileProblems, ...designProblems].filter(p => p.severity === 'error').length}
-        warningCount={[...fileProblems, ...designProblems].filter(p => p.severity === 'warning').length}
+        onToggleOutput={handleToggleOutput}
+        errorCount={problemErrorCount}
+        warningCount={problemWarningCount}
         cursorLine={cursorLine}
         cursorColumn={cursorColumn}
         docType={docType}
         workspaceModeLabel={workspaceModeLabel}
         fileEncodingLabel={activeFileEncodingLabel}
         encodingOptions={FILE_ENCODING_OPTIONS}
-        onReopenWithEncoding={(encoding) => { void handleReopenCurrentFileWithEncoding(encoding) }}
+        onReopenWithEncoding={handleReopenWithEncodingClick}
       />
       {showLibrary && libraryPortalRoot && createPortal(
         <LibraryDialog open={showLibrary} onClose={() => setShowLibrary(false)} targetPlatform={targetPlatform} detachedWindow={true} />,

@@ -12,6 +12,10 @@ Thumbs.db
 *.tsbuildinfo
 playwright-report/
 test-results/
+coverage/
+# electron-vite 开发时生成的临时配置文件
+electron.vite.config.*.mjs
+temp_*.txt
 test-fne.mjs
 支持库源码/
 .github/*

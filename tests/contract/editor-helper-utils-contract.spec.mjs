@@ -222,8 +222,9 @@ test('flow auto-expand utils: marker parsing and loop body building are determin
   })
 
   const marker = parseFlowMarkerTargetLine('    \u200C判断 条件')
-  assert.equal(marker.hasMarker, true)
-  assert.equal(marker.flowMark, '    \u200C')
+  // 兼容旧数据契约：编辑态剥离 marker，但不再进入 marker 路径（hasMarker 恒为 false）。
+  assert.equal(marker.hasMarker, false)
+  assert.equal(marker.flowMark, '')
   assert.equal(marker.editValue, '判断 条件')
 
   const loopBody = buildLoopFlowBodyLines('    判断循环首(1)', ['        处理()'])
@@ -244,8 +245,9 @@ test('flow auto-expand utils: marker parsing and loop body building are determin
     formattedLines: ['N1', 'N2'],
     flowMark: '    \u200D',
   })
+  // \u65B0\u5951\u7EA6\uFF1AflowMark \u88AB\u5FFD\u7565\uFF0C\u4E0D\u518D\u56DE\u63D2 marker \u884C\u3002
   assert.equal(cursorLine, 2)
-  assert.deepEqual(toPlain(markerLines), ['X', 'N1', 'N2', '    \u200D', 'Z'])
+  assert.deepEqual(toPlain(markerLines), ['X', 'N1', 'N2', 'Z'])
 })
 
 test('flow command normalize: dotted visible command matches auto expand key', () => {
