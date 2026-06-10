@@ -3,10 +3,24 @@
  * 扫描 lib 目录中的 *.ycmd.json 清单，并补充窗口单元元数据。
  */
 import { app } from 'electron'
-import { dirname, join } from 'path'
-import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { getYcmdCommands, scanYcmdRegistry, type YcmdResolvedCommand } from './ycmd-registry'
-import { STORE_PLATFORM_ORDER, type Platform, type StoreLibraryCard } from '../shared/library-store'
+import { createHash } from 'crypto'
+import AdmZip from 'adm-zip'
+import { dirname, isAbsolute, join, normalize, resolve } from 'path'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { getYcmdCommands, scanYcmdRegistry, type YcmdResolvedCommand, type YcmdTargetPlatform } from './ycmd-registry'
+import {
+  STORE_PLATFORM_ORDER,
+  type InstalledLibraryState,
+  type LibraryInstallResult,
+  type LibraryInstallSource,
+  type LibraryInstallStateFile,
+  type LibraryPackageEntry,
+  type LibraryRemoteIndex,
+  type LibraryRemoteIndexResult,
+  type LibraryRemoveResult,
+  type Platform,
+  type StoreLibraryCard,
+} from '../shared/library-store'
 
 export interface LibraryParam {
   name: string
@@ -24,11 +38,13 @@ export interface LibraryCommand {
   description: string
   returnType: string
   category: string
+  supportedPlatforms?: string[]
   params: LibraryParam[]
   isHidden: boolean
   isMember: boolean
   ownerTypeName: string
   commandIndex: number
+  nativeSymbol?: string
   libraryName: string
   libraryFileName: string
   source: 'ycmd' | 'core'
@@ -79,6 +95,7 @@ export interface LibraryWindowUnit {
   description: string
   className: string
   style: string
+  iconFileName?: string
   properties: LibraryWindowUnitProperty[]
   events: LibraryWindowUnitEvent[]
   libraryName: string
@@ -109,6 +126,7 @@ export interface LibraryItem {
   filePath: string
   loaded: boolean
   isCore: boolean
+  source?: LibraryInstallSource
   libName?: string
   version?: string
   cmdCount?: number
@@ -122,1065 +140,358 @@ export interface LoadResult {
 }
 
 interface LibraryMetadataFile {
+  guid?: string
   description?: string
   author?: string
+  qq?: string
+  email?: string
   homePage?: string
+  otherInfo?: string
   dataTypes?: unknown
   constants?: unknown
   windowUnits?: unknown
+  controlBindings?: unknown
+  eventBindings?: unknown
+}
+
+interface LibraryProtocolControlBinding {
+  unit: string
+  unitEnglishName: string
+  className: string
+  style: string
+}
+
+interface LibraryProtocolEventBinding {
+  unit: string
+  event: string
+}
+
+interface LibraryUnitIconIndexItem {
+  eName: string
+  cName: string
+  iCons: string
 }
 
 interface ParsedLibraryMetadata {
+  guid: string
   description: string
   author: string
+  qq: string
+  email: string
   homePage: string
+  otherInfo: string
   dataTypes: LibraryDataType[]
   constants: LibraryConstant[]
   windowUnits: LibraryWindowUnit[]
 }
 
 const CORE_LIBRARY_NAME = '系统核心支持库'
+const CORE_LIBRARY_FILE_NAME = 'krnln'
+const CORE_LIBRARY_GUID = 'D09F2340818511D396F6AE4C17150413'
 
-const CORE_FLOW_COMMANDS: LibraryCommand[] = [
+const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
+  'impl/linux.cpp': '1ab71de6a48d439a685199c99f61203b736447e10568b618dcdde7214db0d3d4',
+  'impl/macos.mm': '3053240e3b75909dfddc22673d1a0f281bbcac4971d94a7fb6adefc096942029',
+  'impl/windows.cpp': '1ab71de6a48d439a685199c99f61203b736447e10568b618dcdde7214db0d3d4',
+  'krnln.commands.ycmd.json': '8fbe0fd59cbd4913c22ac6551beb7b612cebd55f37b13f3c976c63bb2ccb5b87',
+  'krnln.constants.json': '8183767cf86c0348054a810511b2639bdfe7636c7efeacf096ecb8bfbf4a6fa0',
+  'krnln.library.json': '0b9deb735168f4e67da1ca8be74d937d764fafc0559d973c72b545cbf391868d',
+  'window-units.json': '82a9b8e0a052d4293f828ecabbea55f6357cfcc8db8516f486fc2073efdd14b8',
+}
+
+const DEFAULT_PROTOCOL_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [
+  { name: '标题', englishName: 'text', description: '控件显示文本。', type: 0, typeName: '文本型', isReadOnly: false, pickOptions: [] },
+  { name: '左边', englishName: 'left', description: '控件左边位置。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '顶边', englishName: 'top', description: '控件顶边位置。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '宽度', englishName: 'width', description: '控件宽度。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '高度', englishName: 'height', description: '控件高度。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '标记', englishName: 'tag', description: '控件标记文本。', type: 0, typeName: '文本型', isReadOnly: false, pickOptions: [] },
+  { name: '可视', englishName: 'visible', description: '是否可见。', type: 0, typeName: '逻辑型', isReadOnly: false, pickOptions: [] },
+  { name: '禁止', englishName: 'disable', description: '是否禁用。', type: 0, typeName: '逻辑型', isReadOnly: false, pickOptions: [] },
+  { name: '鼠标指针', englishName: 'MousePointer', description: '鼠标指针类型。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+]
+
+const FIXED_COMMON_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [
+  { name: '标题', englishName: 'text', description: '控件显示文本。', type: 0, typeName: '文本型', isReadOnly: false, pickOptions: [] },
+  { name: '左边', englishName: 'left', description: '控件左边位置。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '顶边', englishName: 'top', description: '控件顶边位置。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '宽度', englishName: 'width', description: '控件宽度。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '高度', englishName: 'height', description: '控件高度。', type: 0, typeName: '整数型', isReadOnly: false, pickOptions: [] },
+  { name: '标记', englishName: 'tag', description: '控件标记文本。', type: 0, typeName: '文本型', isReadOnly: false, pickOptions: [] },
+  { name: '可视', englishName: 'visible', description: '是否可见。', type: 0, typeName: '逻辑型', isReadOnly: false, pickOptions: [] },
+  { name: '禁止', englishName: 'disable', description: '是否禁用。', type: 0, typeName: '逻辑型', isReadOnly: false, pickOptions: [] },
   {
-    name: '如果',
-    englishName: 'ife',
-    description: '根据逻辑条件决定是否执行后续语句，否则跳转到对应分支或结束处。',
-    returnType: '',
-    category: '流程控制',
-    params: [{ name: '条件', type: '逻辑型', description: '本条件值的结果决定下一步程序执行位置。', optional: false, isVariable: false, isArray: false }],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '如果真',
-    englishName: 'if',
-    description: '条件为真时继续向下执行，否则直接跳到对应结束处。',
-    returnType: '',
-    category: '流程控制',
-    params: [{ name: '条件', type: '逻辑型', description: '本条件值的结果决定下一步程序执行位置。', optional: false, isVariable: false, isArray: false }],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '判断',
-    englishName: 'switch',
-    description: '根据逻辑条件决定是否进入当前分支，否则跳转到下一分支继续判断。',
-    returnType: '',
-    category: '流程控制',
-    params: [{ name: '条件', type: '逻辑型', description: '本条件值的结果决定下一步程序执行位置。', optional: false, isVariable: false, isArray: false }],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '否则',
-    englishName: 'else',
-    description: '条件结构的否则分支。',
-    returnType: '',
-    category: '流程控制',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '默认',
-    englishName: 'default',
-    description: '判断结构中的默认分支。',
-    returnType: '',
-    category: '流程控制',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '如果结束',
-    englishName: 'endife',
-    description: '结束“如果”结构。',
-    returnType: '',
-    category: '流程控制',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '如果真结束',
-    englishName: 'endif',
-    description: '结束“如果真”结构。',
-    returnType: '',
-    category: '流程控制',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '判断结束',
-    englishName: 'endswitch',
-    description: '结束“判断”结构。',
-    returnType: '',
-    category: '流程控制',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '判断循环首',
-    englishName: 'while',
-    description: '条件为真时进入循环，否则跳出循环。',
-    returnType: '',
-    category: '流程控制',
-    params: [{ name: '条件', type: '逻辑型', description: '本条件值的结果决定是否进入循环。', optional: false, isVariable: false, isArray: false }],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '判断循环尾',
-    englishName: 'wend',
-    description: '结束“判断循环首”结构并回到循环条件处。',
-    returnType: '',
-    category: '流程控制',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '循环判断首',
-    englishName: 'DoWhile',
-    description: '先执行一次循环体，再由对应的“循环判断尾”决定是否继续。',
-    returnType: '',
-    category: '流程控制',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '循环判断尾',
-    englishName: 'loop',
-    description: '根据逻辑条件决定是否回到对应的“循环判断首”继续循环。',
-    returnType: '',
-    category: '流程控制',
-    params: [{ name: '条件', type: '逻辑型', description: '本条件值的结果决定下一步程序执行位置。', optional: false, isVariable: false, isArray: false }],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '计次循环首',
-    englishName: 'counter',
-    description: '按指定次数执行循环体，可选输出当前已循环次数变量。',
-    returnType: '',
-    category: '流程控制',
-    params: [
-      { name: '循环次数', type: '整数型', description: '指定执行循环体的次数。', optional: false, isVariable: false, isArray: false },
-      { name: '已循环次数记录变量', type: '整数型', description: '记录当前已进入循环的次数。', optional: true, isVariable: true, isArray: false },
+    name: '鼠标指针',
+    englishName: 'MousePointer',
+    description: '鼠标指针类型。',
+    type: 0,
+    typeName: '选择整数',
+    isReadOnly: false,
+    pickOptions: [
+      '0.默认型',
+      '1.标准箭头型',
+      '2.十字型',
+      '3.文本编辑型',
+      '4.沙漏型',
+      '5.箭头问号型',
+      '6.箭头及沙漏型',
+      '7.禁止符型',
+      '8.四向箭头型',
+      '9.北向箭头型',
+      '10.北<->南箭头型',
+      '11.东<->西箭头型',
+      '12.西北<->东南箭头型',
+      '13.东北<->西南箭头型',
+      '14.手型',
+      '15.自定义型',
     ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '计次循环尾',
-    englishName: 'CounterLoop',
-    description: '结束“计次循环首”结构。',
-    returnType: '',
-    category: '流程控制',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '变量循环首',
-    englishName: 'for',
-    description: '利用循环变量执行循环，可指定起始值、目标值和递增值。',
-    returnType: '',
-    category: '流程控制',
-    params: [
-      { name: '变量起始值', type: '整数型', description: '循环变量初始值。', optional: false, isVariable: false, isArray: false },
-      { name: '变量目标值', type: '整数型', description: '循环变量目标值。', optional: false, isVariable: false, isArray: false },
-      { name: '变量递增值', type: '整数型', description: '每轮循环递增或递减值。', optional: false, isVariable: false, isArray: false },
-      { name: '循环变量', type: '整数型', description: '循环变量，可省略。', optional: true, isVariable: true, isArray: false },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '变量循环尾',
-    englishName: 'next',
-    description: '结束“变量循环首”结构。',
-    returnType: '',
-    category: '流程控制',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '到循环尾',
-    englishName: 'continue',
-    description: '转移当前程序执行位置到当前所处循环体的循环尾语句处。',
-    returnType: '',
-    category: '流程控制',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '跳出循环',
-    englishName: 'break',
-    description: '转移当前程序执行位置到当前所处循环体结束后的下一条语句。',
-    returnType: '',
-    category: '流程控制',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '返回',
-    englishName: 'return',
-    description: '返回到调用本子程序的下一条语句处。当前编译器暂不支持返回值类型推导。',
-    returnType: '',
-    category: '流程控制',
-    params: [{ name: '返回到调用方的值', type: '通用型', description: '可选。当前版本仅保留语义，不参与返回值编译。', optional: true, isVariable: false, isArray: false }],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '结束',
-    englishName: 'end',
-    description: '结束当前程序运行。',
-    returnType: '',
-    category: '流程控制',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
   },
 ]
 
-const CORE_LOGIC_COMMANDS: LibraryCommand[] = [
-  {
-    name: '等于',
-    englishName: 'equal',
-    description: '被比较值与比较值相同时返回真，否则返回假。',
-    returnType: '逻辑型',
-    category: '逻辑比较',
-    params: [
-      { name: '被比较值', type: '通用型', description: '参与比较的值。', optional: false, isVariable: false, isArray: false },
-      { name: '比较值', type: '通用型', description: '用于比较的值。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '不等于',
-    englishName: 'notEqual',
-    description: '被比较值与比较值不相同时返回真，否则返回假。',
-    returnType: '逻辑型',
-    category: '逻辑比较',
-    params: [
-      { name: '被比较值', type: '通用型', description: '参与比较的值。', optional: false, isVariable: false, isArray: false },
-      { name: '比较值', type: '通用型', description: '用于比较的值。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '小于',
-    englishName: 'less',
-    description: '被比较值小于比较值时返回真。',
-    returnType: '逻辑型',
-    category: '逻辑比较',
-    params: [
-      { name: '被比较值', type: '通用型', description: '参与比较的值。', optional: false, isVariable: false, isArray: false },
-      { name: '比较值', type: '通用型', description: '用于比较的值。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '大于',
-    englishName: 'greater',
-    description: '被比较值大于比较值时返回真。',
-    returnType: '逻辑型',
-    category: '逻辑比较',
-    params: [
-      { name: '被比较值', type: '通用型', description: '参与比较的值。', optional: false, isVariable: false, isArray: false },
-      { name: '比较值', type: '通用型', description: '用于比较的值。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '小于或等于',
-    englishName: 'lessOrEqual',
-    description: '被比较值小于或等于比较值时返回真。',
-    returnType: '逻辑型',
-    category: '逻辑比较',
-    params: [
-      { name: '被比较值', type: '通用型', description: '参与比较的值。', optional: false, isVariable: false, isArray: false },
-      { name: '比较值', type: '通用型', description: '用于比较的值。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '大于或等于',
-    englishName: 'greaterOrEqual',
-    description: '被比较值大于或等于比较值时返回真。',
-    returnType: '逻辑型',
-    category: '逻辑比较',
-    params: [
-      { name: '被比较值', type: '通用型', description: '参与比较的值。', optional: false, isVariable: false, isArray: false },
-      { name: '比较值', type: '通用型', description: '用于比较的值。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '近似等于',
-    englishName: 'like',
-    description: '比较文本出现在被比较文本首部时返回真。',
-    returnType: '逻辑型',
-    category: '逻辑比较',
-    params: [
-      { name: '被比较文本', type: '文本型', description: '参与比较的文本。', optional: false, isVariable: false, isArray: false },
-      { name: '比较文本', type: '文本型', description: '用于比较的文本。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '并且',
-    englishName: 'and',
-    description: '所有逻辑值都为真时返回真。',
-    returnType: '逻辑型',
-    category: '逻辑比较',
-    params: [
-      { name: '逻辑值一', type: '逻辑型', description: '参与运算的逻辑值。', optional: false, isVariable: false, isArray: false },
-      { name: '逻辑值二', type: '逻辑型', description: '参与运算的逻辑值。', optional: false, isVariable: false, isArray: false, repeatable: true },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '或者',
-    englishName: 'or',
-    description: '任一逻辑值为真时返回真。',
-    returnType: '逻辑型',
-    category: '逻辑比较',
-    params: [
-      { name: '逻辑值一', type: '逻辑型', description: '参与运算的逻辑值。', optional: false, isVariable: false, isArray: false },
-      { name: '逻辑值二', type: '逻辑型', description: '参与运算的逻辑值。', optional: false, isVariable: false, isArray: false, repeatable: true },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '取反',
-    englishName: 'not',
-    description: '将逻辑值取反。',
-    returnType: '逻辑型',
-    category: '逻辑比较',
-    params: [
-      { name: '被反转的逻辑值', type: '逻辑型', description: '需要取反的逻辑值。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-]
+function mergeWithFixedCommonProperties(properties: LibraryWindowUnitProperty[]): LibraryWindowUnitProperty[] {
+  const byName = new Map(properties.map(item => [item.name, item]))
+  const fixedNames = new Set(FIXED_COMMON_UNIT_PROPERTIES.map(item => item.name))
 
-const CORE_DEBUG_COMMANDS: LibraryCommand[] = [
-  {
-    name: '输出调试文本',
-    englishName: 'OutputDebugText',
-    description: '仅在调试版中输出调试文本行，发布版直接跳过。',
-    returnType: '',
-    category: '程序调试',
-    params: [
-      { name: '准备输出的调试文本信息', type: '通用型', description: '要输出的调试文本或值。', optional: false, isVariable: false, isArray: false, repeatable: true },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '暂停',
-    englishName: 'stop',
-    description: '仅在调试版中执行，相当于命中断点。',
-    returnType: '',
-    category: '程序调试',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '检查',
-    englishName: 'assert',
-    description: '仅在调试版中执行，条件为假时暂停并警示。',
-    returnType: '',
-    category: '程序调试',
-    params: [
-      { name: '被校验的条件', type: '逻辑型', description: '需要校验的条件。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-  {
-    name: '是否为调试版',
-    englishName: 'IsDebugVer',
-    description: '当前程序为调试版时返回真，否则返回假。',
-    returnType: '逻辑型',
-    category: '程序调试',
-    params: [],
-    isHidden: false,
-    isMember: false,
-    ownerTypeName: '',
-    commandIndex: -1,
-    libraryName: CORE_LIBRARY_NAME,
-    libraryFileName: 'krnln',
-    source: 'core',
-    manifestPath: '',
-  },
-]
+  const merged: LibraryWindowUnitProperty[] = FIXED_COMMON_UNIT_PROPERTIES.map(item => {
+    const fromUnit = byName.get(item.name)
+    const source = fromUnit || item
+    const pickOptions = source.pickOptions && source.pickOptions.length > 0
+      ? [...source.pickOptions]
+      : [...item.pickOptions]
+    return {
+      ...source,
+      pickOptions,
+    }
+  })
 
-const CORE_DISK_COMMANDS: LibraryCommand[] = [
-  {
-    name: '取磁盘总空间',
-    englishName: 'GetDiskTotalSpace',
-    description: '返回以 1024 字节为单位的指定磁盘全部空间；失败返回 -1。',
-    returnType: '整数型',
-    category: '磁盘操作',
-    params: [
-      { name: '磁盘驱动器字符', type: '文本型', description: '类似“A”“C”，只取首字符；省略时使用当前驱动器。', optional: true, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '取磁盘剩余空间',
-    englishName: 'GetDiskFreeSpace',
-    description: '返回以 1024 字节为单位的指定磁盘剩余空间；失败返回 -1。',
-    returnType: '整数型',
-    category: '磁盘操作',
-    params: [
-      { name: '磁盘驱动器字符', type: '文本型', description: '类似“A”“C”，只取首字符；省略时使用当前驱动器。', optional: true, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '取磁盘卷标',
-    englishName: 'GetDiskLabel',
-    description: '返回指定磁盘的卷标文本；失败返回空文本。',
-    returnType: '文本型',
-    category: '磁盘操作',
-    params: [
-      { name: '磁盘驱动器字符', type: '文本型', description: '类似“A”“C”，只取首字符；省略时使用当前驱动器。', optional: true, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '置磁盘卷标',
-    englishName: 'SetDiskLabel',
-    description: '设置指定磁盘的卷标文本。成功返回真，失败返回假。',
-    returnType: '逻辑型',
-    category: '磁盘操作',
-    params: [
-      { name: '磁盘驱动器字符', type: '文本型', description: '类似“A”“C”，只取首字符；省略时使用当前驱动器。', optional: true, isVariable: false, isArray: false },
-      { name: '欲置入的卷标文本', type: '文本型', description: '新的卷标文本。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '改变驱动器',
-    englishName: 'ChDrive',
-    description: '改变当前的缺省驱动器。成功返回真，失败返回假。',
-    returnType: '逻辑型',
-    category: '磁盘操作',
-    params: [
-      { name: '欲改变到的驱动器', type: '文本型', description: '类似“A”“C”，只取首字符。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '改变目录',
-    englishName: 'ChDir',
-    description: '改变当前目录。成功返回真，失败返回假。',
-    returnType: '逻辑型',
-    category: '磁盘操作',
-    params: [
-      { name: '欲改变到的目录', type: '文本型', description: '目标目录。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '取当前目录',
-    englishName: 'CurDir',
-    description: '返回当前目录；失败返回空文本。',
-    returnType: '文本型',
-    category: '磁盘操作',
-    params: [],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '创建目录',
-    englishName: 'MkDir',
-    description: '创建目录。成功返回真，失败返回假。',
-    returnType: '逻辑型',
-    category: '磁盘操作',
-    params: [
-      { name: '欲创建的目录名称', type: '文本型', description: '要创建的目录。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '删除目录',
-    englishName: 'RmDir',
-    description: '递归删除目录及其中的所有文件和子目录。成功返回真，失败返回假。',
-    returnType: '逻辑型',
-    category: '磁盘操作',
-    params: [
-      { name: '欲删除的目录名称', type: '文本型', description: '要删除的目录。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '复制文件',
-    englishName: 'FileCopy',
-    description: '复制文件。成功返回真，失败返回假。',
-    returnType: '逻辑型',
-    category: '磁盘操作',
-    params: [
-      { name: '被复制的文件名', type: '文本型', description: '源文件。', optional: false, isVariable: false, isArray: false },
-      { name: '复制到的文件名', type: '文本型', description: '目标文件。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '移动文件',
-    englishName: 'FileMove',
-    description: '移动文件。成功返回真，失败返回假。',
-    returnType: '逻辑型',
-    category: '磁盘操作',
-    params: [
-      { name: '被移动的文件', type: '文本型', description: '源文件。', optional: false, isVariable: false, isArray: false },
-      { name: '移动到的位置', type: '文本型', description: '目标位置。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '删除文件',
-    englishName: 'kill',
-    description: '删除文件。成功返回真，失败返回假。',
-    returnType: '逻辑型',
-    category: '磁盘操作',
-    params: [
-      { name: '欲删除的文件名', type: '文本型', description: '目标文件。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '文件更名',
-    englishName: 'name',
-    description: '重命名文件或目录。成功返回真，失败返回假。',
-    returnType: '逻辑型',
-    category: '磁盘操作',
-    params: [
-      { name: '欲更名的原文件或目录名', type: '文本型', description: '原路径。', optional: false, isVariable: false, isArray: false },
-      { name: '欲更改为的现文件或目录名', type: '文本型', description: '新路径。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '文件是否存在',
-    englishName: 'IsFileExist',
-    description: '判断指定文件是否存在。存在返回真，否则返回假。',
-    returnType: '逻辑型',
-    category: '磁盘操作',
-    params: [
-      { name: '欲测试的文件名称', type: '文本型', description: '目标文件。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '寻找文件',
-    englishName: 'dir',
-    description: '按通配符顺序枚举匹配的文件或目录名；第一次调用应提供匹配模式。',
-    returnType: '文本型',
-    category: '磁盘操作',
-    params: [
-      { name: '欲寻找的文件或目录名称', type: '文本型', description: '支持 * 和 ?；后续继续枚举时可省略。', optional: true, isVariable: false, isArray: false },
-      { name: '欲寻找文件的属性', type: '整数型', description: 'Windows 文件属性过滤。省略时默认匹配非目录项。', optional: true, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '取文件尺寸',
-    englishName: 'FileLen',
-    description: '返回文件长度，单位字节；文件不存在时返回 -1。',
-    returnType: '整数型',
-    category: '磁盘操作',
-    params: [
-      { name: '文件名', type: '文本型', description: '目标文件。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '取文件属性',
-    englishName: 'GetAttr',
-    description: '返回文件或目录属性；失败返回 -1。',
-    returnType: '整数型',
-    category: '磁盘操作',
-    params: [
-      { name: '文件名', type: '文本型', description: '目标文件或目录。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '置文件属性',
-    englishName: 'SetAttr',
-    description: '设置文件属性。成功返回真，失败返回假。',
-    returnType: '逻辑型',
-    category: '磁盘操作',
-    params: [
-      { name: '欲设置其属性的文件名称', type: '文本型', description: '目标文件或目录。', optional: false, isVariable: false, isArray: false },
-      { name: '欲设置为的属性值', type: '整数型', description: 'Windows 文件属性值。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '取临时文件名',
-    englishName: 'GetTempFileName',
-    description: '返回一个在目标目录中不存在的 .TMP 全路径文件名。',
-    returnType: '文本型',
-    category: '磁盘操作',
-    params: [
-      { name: '目录名', type: '文本型', description: '省略时使用系统临时目录。', optional: true, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-]
+  for (const item of properties) {
+    if (fixedNames.has(item.name)) continue
+    merged.push({
+      ...item,
+      pickOptions: [...(item.pickOptions || [])],
+    })
+  }
 
-const CORE_BIN_COMMANDS: LibraryCommand[] = [
-  {
-    name: '取字节集长度',
-    englishName: 'BinLen',
-    description: '取字节集型数据的长度。',
-    returnType: '整数型',
-    category: '字节集操作',
-    params: [{ name: '字节集数据', type: '字节集', description: '欲检查长度的字节集数据。', optional: false, isVariable: false, isArray: false }],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '到字节集',
-    englishName: 'ToBin',
-    description: '将指定数据转换为字节集后返回转换结果。',
-    returnType: '字节集',
-    category: '字节集操作',
-    params: [{ name: '欲转换为字节集的数据', type: '通用型', description: '只能为基本数据类型数据或数值型数组。当前版本优先支持基础标量与文本。', optional: false, isVariable: false, isArray: false }],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '取字节集左边',
-    englishName: 'BinLeft',
-    description: '返回字节集左边指定数量的字节。',
-    returnType: '字节集',
-    category: '字节集操作',
-    params: [
-      { name: '欲取其部分的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
-      { name: '欲取出字节的数目', type: '整数型', description: '要取出的字节数。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '取字节集右边',
-    englishName: 'BinRight',
-    description: '返回字节集右边指定数量的字节。',
-    returnType: '字节集',
-    category: '字节集操作',
-    params: [
-      { name: '欲取其部分的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
-      { name: '欲取出字节的数目', type: '整数型', description: '要取出的字节数。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '取字节集中间',
-    englishName: 'BinMid',
-    description: '返回字节集中从指定位置开始的指定数量字节。',
-    returnType: '字节集',
-    category: '字节集操作',
-    params: [
-      { name: '欲取其部分的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
-      { name: '起始取出位置', type: '整数型', description: '从 1 开始。', optional: false, isVariable: false, isArray: false },
-      { name: '欲取出字节的数目', type: '整数型', description: '要取出的字节数。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '寻找字节集',
-    englishName: 'InBin',
-    description: '返回一个字节集在另一字节集中最先出现的位置，位置值从 1 开始；未找到返回 -1。',
-    returnType: '整数型',
-    category: '字节集操作',
-    params: [
-      { name: '被搜寻的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
-      { name: '欲寻找的字节集', type: '字节集', description: '待查找的子字节集。', optional: false, isVariable: false, isArray: false },
-      { name: '起始搜寻位置', type: '整数型', description: '从 1 开始。', optional: true, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '倒找字节集',
-    englishName: 'InBinRev',
-    description: '返回一个字节集在另一字节集中最后出现的位置，位置值从 1 开始；未找到返回 -1。',
-    returnType: '整数型',
-    category: '字节集操作',
-    params: [
-      { name: '被搜寻的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
-      { name: '欲寻找的字节集', type: '字节集', description: '待查找的子字节集。', optional: false, isVariable: false, isArray: false },
-      { name: '起始搜寻位置', type: '整数型', description: '从 1 开始。', optional: true, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '字节集替换',
-    englishName: 'RpBin',
-    description: '将字节集指定位置和长度的部分替换为另一字节集，并返回替换后的结果。',
-    returnType: '字节集',
-    category: '字节集操作',
-    params: [
-      { name: '欲替换其部分的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
-      { name: '起始替换位置', type: '整数型', description: '从 1 开始。', optional: false, isVariable: false, isArray: false },
-      { name: '替换长度', type: '整数型', description: '欲替换的字节数。', optional: false, isVariable: false, isArray: false },
-      { name: '用作替换的字节集', type: '字节集', description: '省略时删除指定部分。', optional: true, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '子字节集替换',
-    englishName: 'RpSubBin',
-    description: '返回一个字节集，其中指定子字节集已被替换为另一子字节集。',
-    returnType: '字节集',
-    category: '字节集操作',
-    params: [
-      { name: '欲被替换的字节集', type: '字节集', description: '源字节集。', optional: false, isVariable: false, isArray: false },
-      { name: '欲被替换的子字节集', type: '字节集', description: '待查找并替换的子字节集。', optional: false, isVariable: false, isArray: false },
-      { name: '用作替换的子字节集', type: '字节集', description: '省略时默认为空字节集。', optional: true, isVariable: false, isArray: false },
-      { name: '进行替换的起始位置', type: '整数型', description: '从 1 开始。', optional: true, isVariable: false, isArray: false },
-      { name: '替换进行的次数', type: '整数型', description: '省略时替换所有可能位置。', optional: true, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '取空白字节集',
-    englishName: 'SpaceBin',
-    description: '返回具有特定数目 0 字节的字节集。',
-    returnType: '字节集',
-    category: '字节集操作',
-    params: [{ name: '零字节数目', type: '整数型', description: '返回字节集的字节数。', optional: false, isVariable: false, isArray: false }],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '取重复字节集',
-    englishName: 'bin',
-    description: '返回包含指定次数字节集重复结果的字节集。',
-    returnType: '字节集',
-    category: '字节集操作',
-    params: [
-      { name: '重复次数', type: '整数型', description: '重复次数。', optional: false, isVariable: false, isArray: false },
-      { name: '待重复的字节集', type: '字节集', description: '待重复的字节集。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '指针到字节集',
-    englishName: 'pbin',
-    description: '返回指定内存指针地址处的一段数据。',
-    returnType: '字节集',
-    category: '字节集操作',
-    params: [
-      { name: '内存数据指针', type: '整数型', description: '指向内存地址的指针值。', optional: false, isVariable: false, isArray: false },
-      { name: '内存数据长度', type: '整数型', description: '要读取的字节数。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '指针到整数',
-    englishName: 'p2int',
-    description: '返回指定内存指针地址处的一个整数值。',
-    returnType: '整数型',
-    category: '字节集操作',
-    params: [{ name: '内存数据指针', type: '整数型', description: '指向内存地址的指针值。', optional: false, isVariable: false, isArray: false }],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '指针到小数',
-    englishName: 'p2float',
-    description: '返回指定内存指针地址处的一个小数值。',
-    returnType: '小数型',
-    category: '字节集操作',
-    params: [{ name: '内存数据指针', type: '整数型', description: '指向内存地址的指针值。', optional: false, isVariable: false, isArray: false }],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '指针到双精度小数',
-    englishName: 'p2double',
-    description: '返回指定内存指针地址处的一个双精度小数值。',
-    returnType: '双精度小数型',
-    category: '字节集操作',
-    params: [{ name: '内存数据指针', type: '整数型', description: '指向内存地址的指针值。', optional: false, isVariable: false, isArray: false }],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '取字节集内整数',
-    englishName: 'GetIntInsideBin',
-    description: '返回字节集中所指定偏移处的整数值。',
-    returnType: '整数型',
-    category: '字节集操作',
-    params: [
-      { name: '待处理的字节集', type: '字节集', description: '待处理的字节集。', optional: false, isVariable: false, isArray: false },
-      { name: '欲获取整数所处偏移', type: '整数型', description: '整数值在字节集中的偏移位置。', optional: false, isVariable: false, isArray: false },
-      { name: '是否反转字节序', type: '逻辑型', description: '省略时默认为假。', optional: true, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '置字节集内整数',
-    englishName: 'SetIntInsideBin',
-    description: '设置字节集中所指定偏移处的整数值。',
-    returnType: '',
-    category: '字节集操作',
-    params: [
-      { name: '待处理的字节集', type: '字节集', description: '待处理的字节集变量。', optional: false, isVariable: true, isArray: false },
-      { name: '欲设置整数所处偏移', type: '整数型', description: '整数值在字节集中的偏移位置。', optional: false, isVariable: false, isArray: false },
-      { name: '欲设置的整数值', type: '整数型', description: '要写入的整数值。', optional: false, isVariable: false, isArray: false },
-      { name: '是否反转字节序', type: '逻辑型', description: '省略时默认为假。', optional: true, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '读入文件',
-    englishName: 'ReadFile',
-    description: '返回一个字节集，其中包含指定文件的所有数据。',
-    returnType: '字节集',
-    category: '磁盘操作',
-    params: [
-      { name: '文件名', type: '文本型', description: '要读入的文件路径。', optional: false, isVariable: false, isArray: false },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-  {
-    name: '写到文件',
-    englishName: 'WriteFile',
-    description: '将一个或数个字节集顺序写到指定文件中，文件原有内容被覆盖。成功返回真，失败返回假。',
-    returnType: '逻辑型',
-    category: '磁盘操作',
-    params: [
-      { name: '文件名', type: '文本型', description: '目标文件路径。', optional: false, isVariable: false, isArray: false },
-      { name: '欲写入文件的数据', type: '字节集', description: '要顺序写入的字节集数据。', optional: false, isVariable: false, isArray: false, repeatable: true },
-    ],
-    isHidden: false, isMember: false, ownerTypeName: '', commandIndex: -1, libraryName: CORE_LIBRARY_NAME, libraryFileName: 'krnln', source: 'core', manifestPath: '',
-  },
-]
+  return merged
+}
+
+const LIBRARY_INSTALL_STATE_VERSION = '1.0'
+
+function normalizeLibraryId(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '')
+}
+
+function normalizeRemoteIndex(raw: unknown): LibraryRemoteIndex {
+  const input = raw && typeof raw === 'object' ? raw as Partial<LibraryRemoteIndex> : {}
+  const libraries = Array.isArray(input.libraries) ? input.libraries : []
+  return {
+    schemaVersion: typeof input.schemaVersion === 'string' && input.schemaVersion.trim() ? input.schemaVersion.trim() : '1.0',
+    updatedAt: typeof input.updatedAt === 'string' ? input.updatedAt.trim() : undefined,
+    libraries: libraries
+      .filter(item => !!item && typeof item === 'object')
+      .map(item => {
+        const id = normalizeLibraryId(item.id)
+        const packageFileName = typeof item.packageFileName === 'string' ? item.packageFileName.trim() : `${id}.zip`
+        const platforms = Array.isArray(item.supportedPlatforms)
+          ? item.supportedPlatforms.filter((platform): platform is Platform => STORE_PLATFORM_ORDER.includes(platform as Platform))
+          : []
+        return {
+          id,
+          displayName: typeof item.displayName === 'string' && item.displayName.trim() ? item.displayName.trim() : id,
+          version: typeof item.version === 'string' && item.version.trim() ? item.version.trim() : '-',
+          packageFileName,
+          packageUrl: typeof item.packageUrl === 'string' ? item.packageUrl.trim() : '',
+          packageSha256: typeof item.packageSha256 === 'string' ? item.packageSha256.trim().toLowerCase() : '',
+          size: typeof item.size === 'number' && Number.isFinite(item.size) ? item.size : undefined,
+          supportedPlatforms: platforms,
+          minYcideVersion: typeof item.minYcideVersion === 'string' ? item.minYcideVersion.trim() : undefined,
+          publishedAt: typeof item.publishedAt === 'string' ? item.publishedAt.trim() : undefined,
+          summary: typeof item.summary === 'string' ? item.summary.trim() : undefined,
+        }
+      })
+      .filter(item => item.id.length > 0 && item.packageUrl.length > 0 && item.id !== CORE_LIBRARY_FILE_NAME),
+  }
+}
+
+function sha256Buffer(buffer: Buffer): string {
+  return createHash('sha256').update(buffer).digest('hex')
+}
+
+function assertSafeZipEntry(entryName: string): string {
+  const normalized = normalize(entryName.replace(/\\/g, '/')).replace(/\\/g, '/')
+  if (!normalized || normalized === '.' || isAbsolute(normalized) || normalized.startsWith('../') || normalized.includes('/../')) {
+    throw new Error(`zip 内含不安全路径: ${entryName}`)
+  }
+  return normalized
+}
+
+function normalizeTargetPlatform(value?: string): YcmdTargetPlatform | undefined {
+  if (value === 'windows' || value === 'macos' || value === 'linux' || value === 'android' || value === 'ios' || value === 'harmony') return value
+  return undefined
+}
+
+// 核心命令现已统一维护在 lib/krnln/krnln.commands.ycmd.json。
 
 class LibraryManager {
-  private static readonly CORE_LIBRARY_FILE_NAME = 'krnln'
   private libraries: LibraryItem[] = []
   private metadataCache = new Map<string, ParsedLibraryMetadata | null>()
 
+  private shouldEnforceCoreLibraryIntegrity(): boolean {
+    if (!app.isPackaged) return false
+    const version = (app.getVersion() || '').toLowerCase()
+    // 仅在稳定正式版强制校验，开发/预发布阶段允许核心库频繁迭代。
+    return !/(alpha|beta|rc|pre|preview|dev|canary)/.test(version)
+  }
+
   private getConfigPath(): string {
     return join(app.getPath('userData'), 'library-state.json')
+  }
+
+  private getInstalledRootPath(): string {
+    return join(app.getPath('userData'), 'libraries')
+  }
+
+  private getInstallStatePath(): string {
+    return join(this.getInstalledRootPath(), 'library-install-state.json')
+  }
+
+  private readInstallState(): LibraryInstallStateFile {
+    try {
+      const filePath = this.getInstallStatePath()
+      if (!existsSync(filePath)) return { schemaVersion: LIBRARY_INSTALL_STATE_VERSION, libraries: {} }
+      const raw = JSON.parse(readFileSync(filePath, 'utf-8')) as Partial<LibraryInstallStateFile>
+      const libraries = raw && typeof raw.libraries === 'object' && raw.libraries ? raw.libraries : {}
+      return { schemaVersion: LIBRARY_INSTALL_STATE_VERSION, libraries: libraries as Record<string, InstalledLibraryState> }
+    } catch {
+      return { schemaVersion: LIBRARY_INSTALL_STATE_VERSION, libraries: {} }
+    }
+  }
+
+  private writeInstallState(state: LibraryInstallStateFile): void {
+    mkdirSync(this.getInstalledRootPath(), { recursive: true })
+    writeFileSync(this.getInstallStatePath(), JSON.stringify({ schemaVersion: LIBRARY_INSTALL_STATE_VERSION, libraries: state.libraries }, null, 2), 'utf-8')
+  }
+
+  private getInstalledLibraryRoot(name: string): string {
+    return join(this.getInstalledRootPath(), normalizeLibraryId(name))
+  }
+
+  async getRemoteIndex(indexUrl: string): Promise<LibraryRemoteIndexResult> {
+    try {
+      const response = await fetch(indexUrl, { cache: 'no-store' })
+      if (!response.ok) return { ok: false, error: `读取支持库索引失败: HTTP ${response.status}` }
+      const json = await response.json()
+      return { ok: true, index: normalizeRemoteIndex(json) }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { ok: false, error: `读取支持库索引失败: ${message}` }
+    }
+  }
+
+  async installFromRemote(name: string, indexUrl: string): Promise<LibraryInstallResult> {
+    const libraryId = normalizeLibraryId(name)
+    if (!libraryId) return { ok: false, error: '支持库标识无效' }
+    if (this.isCore(libraryId)) return { ok: false, error: '核心支持库随 ycIDE 版本发布，不支持从服务器安装' }
+    const indexResult = await this.getRemoteIndex(indexUrl)
+    if (!indexResult.ok) return indexResult
+    const entry = indexResult.index.libraries.find(item => item.id === libraryId)
+    if (!entry) return { ok: false, error: `在线索引中未找到支持库 ${libraryId}` }
+    return this.installPackage(entry)
+  }
+
+  private async installPackage(entry: LibraryPackageEntry): Promise<LibraryInstallResult> {
+    const libraryId = normalizeLibraryId(entry.id)
+    if (this.isCore(libraryId)) return { ok: false, error: '核心支持库随 ycIDE 版本发布，不支持从服务器安装' }
+    const installRoot = this.getInstalledLibraryRoot(libraryId)
+    const tempRoot = join(this.getInstalledRootPath(), `.install-${libraryId}-${Date.now()}`)
+    try {
+      const response = await fetch(entry.packageUrl, { cache: 'no-store' })
+      if (!response.ok) return { ok: false, error: `下载 ${entry.displayName || libraryId} 失败: HTTP ${response.status}` }
+      const buffer = Buffer.from(await response.arrayBuffer())
+      const actualHash = sha256Buffer(buffer)
+      if (entry.packageSha256 && actualHash !== entry.packageSha256.toLowerCase()) {
+        return { ok: false, error: `支持库包校验失败: ${actualHash}` }
+      }
+
+      mkdirSync(tempRoot, { recursive: true })
+      const zip = new AdmZip(buffer)
+      const files: string[] = []
+      for (const zipEntry of zip.getEntries()) {
+        if (zipEntry.isDirectory) continue
+        const relativePath = assertSafeZipEntry(zipEntry.entryName)
+        const outputPath = resolve(tempRoot, relativePath)
+        if (!outputPath.startsWith(resolve(tempRoot))) throw new Error(`zip 内含越界路径: ${zipEntry.entryName}`)
+        mkdirSync(dirname(outputPath), { recursive: true })
+        writeFileSync(outputPath, zipEntry.getData())
+        files.push(relativePath)
+      }
+      if (!files.some(file => file.toLowerCase().endsWith('.ycmd.json'))) {
+        throw new Error('支持库包中未找到 *.ycmd.json 清单')
+      }
+
+      rmSync(installRoot, { recursive: true, force: true })
+      mkdirSync(this.getInstalledRootPath(), { recursive: true })
+      renameSync(tempRoot, installRoot)
+
+      const state = this.readInstallState()
+      const previousLoaded = state.libraries[libraryId]?.loaded ?? this.libraries.find(lib => lib.name === libraryId)?.loaded ?? false
+      const installed: InstalledLibraryState = {
+        id: libraryId,
+        downloaded: true,
+        installed: true,
+        loaded: previousLoaded,
+        version: entry.version || '-',
+        packageSha256: actualHash,
+        sourceUrl: entry.packageUrl,
+        installedAt: new Date().toISOString(),
+        files: files.sort((a, b) => a.localeCompare(b)),
+        updateAvailable: false,
+        lastError: '',
+        disabledReason: '',
+        source: 'installed',
+      }
+      state.libraries[libraryId] = installed
+      this.writeInstallState(state)
+      this.metadataCache.clear()
+      this.scan()
+      return { ok: true, library: installed }
+    } catch (error) {
+      rmSync(tempRoot, { recursive: true, force: true })
+      const message = error instanceof Error ? error.message : String(error)
+      const state = this.readInstallState()
+      const previous = state.libraries[libraryId]
+      state.libraries[libraryId] = {
+        id: libraryId,
+        downloaded: previous?.downloaded ?? false,
+        installed: previous?.installed ?? false,
+        loaded: previous?.loaded ?? false,
+        version: previous?.version || entry.version || '-',
+        packageSha256: previous?.packageSha256 || entry.packageSha256 || '',
+        sourceUrl: entry.packageUrl,
+        installedAt: previous?.installedAt || '',
+        files: previous?.files || [],
+        updateAvailable: previous?.updateAvailable ?? false,
+        lastError: message,
+        disabledReason: previous?.disabledReason || '',
+        source: 'installed',
+      }
+      this.writeInstallState(state)
+      return { ok: false, error: message }
+    }
+  }
+
+  removeInstalled(name: string): LibraryRemoveResult {
+    const libraryId = normalizeLibraryId(name)
+    if (!libraryId) return { ok: false, error: '支持库标识无效' }
+    if (this.isCore(libraryId)) return { ok: false, error: '核心支持库不可移除' }
+    rmSync(this.getInstalledLibraryRoot(libraryId), { recursive: true, force: true })
+    const state = this.readInstallState()
+    delete state.libraries[libraryId]
+    this.writeInstallState(state)
+    this.metadataCache.clear()
+    this.scan()
+    return { ok: true }
   }
 
   private getSavedLoadedNames(): string[] | null {
@@ -1250,11 +561,31 @@ class LibraryManager {
 
   private getMetadataFileCandidates(name: string, folderPath: string): string[] {
     return [
+      join(folderPath, `${name}.library.json`),
+      join(folderPath, `${name}.metadata.json`),
+      join(folderPath, `${name}.identity.json`),
+      join(folderPath, `${name}.protocol.json`),
+      join(folderPath, `${name}.compile-protocol.json`),
+      join(folderPath, 'library.json'),
+      join(folderPath, 'identity.json'),
       join(folderPath, 'window-units.json'),
       join(folderPath, `${name}.window-units.json`),
-      join(folderPath, `${name}.metadata.json`),
-      join(folderPath, `${name}.library.json`),
     ]
+  }
+
+  private getIconIndexCandidates(name: string, folderPath: string): string[] {
+    return [
+      join(folderPath, 'icon', 'icon.json'),
+      join(folderPath, 'icons', 'icon.json'),
+      join(folderPath, `${name}.icon.json`),
+      join(folderPath, 'icon.json'),
+    ]
+  }
+
+  private mergeTextField(current: string, value: unknown): string {
+    if (typeof value !== 'string') return current
+    const trimmed = value.trim()
+    return trimmed || current
   }
 
   private parseLibraryDataTypes(value: unknown): LibraryDataType[] {
@@ -1346,11 +677,147 @@ class LibraryManager {
         description: typeof item.description === 'string' ? item.description.trim() : '',
         className: typeof item.className === 'string' ? item.className.trim() : '',
         style: typeof item.style === 'string' ? item.style.trim() : '',
-        properties: this.parseWindowUnitProperties(item.properties),
+        iconFileName: typeof item.iconFileName === 'string'
+          ? item.iconFileName.trim()
+          : (typeof item.icon === 'string' ? item.icon.trim() : ''),
+        properties: mergeWithFixedCommonProperties(this.parseWindowUnitProperties(item.properties)),
         events: this.parseWindowUnitEvents(item.events),
         libraryName,
       }))
       .filter(item => item.name.length > 0)
+  }
+
+  private parseProtocolControlBindings(value: unknown): LibraryProtocolControlBinding[] {
+    if (!Array.isArray(value)) return []
+    return value
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map(item => ({
+        unit: typeof item.unit === 'string' ? item.unit.trim() : '',
+        unitEnglishName: typeof item.unitEnglishName === 'string' ? item.unitEnglishName.trim() : '',
+        className: typeof item.className === 'string' ? item.className.trim() : '',
+        style: typeof item.style === 'string' ? item.style.trim() : '',
+      }))
+      .filter(item => item.unit.length > 0)
+  }
+
+  private parseProtocolEventBindings(value: unknown): LibraryProtocolEventBinding[] {
+    if (!Array.isArray(value)) return []
+    return value
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map(item => ({
+        unit: typeof item.unit === 'string' ? item.unit.trim() : '',
+        event: typeof item.event === 'string' ? item.event.trim() : '',
+      }))
+      .filter(item => item.unit.length > 0 && item.event.length > 0)
+  }
+
+  private parseWindowUnitsFromProtocol(raw: LibraryMetadataFile, libraryName: string): LibraryWindowUnit[] {
+    const controls = this.parseProtocolControlBindings(raw.controlBindings)
+    if (controls.length === 0) return []
+
+    const eventMap = new Map<string, LibraryWindowUnitEvent[]>()
+    for (const eventBinding of this.parseProtocolEventBindings(raw.eventBindings)) {
+      const existing = eventMap.get(eventBinding.unit) ?? []
+      if (!existing.some(item => item.name === eventBinding.event)) {
+        existing.push({
+          name: eventBinding.event,
+          description: `${eventBinding.unit}的${eventBinding.event}事件。`,
+          args: [],
+        })
+      }
+      eventMap.set(eventBinding.unit, existing)
+    }
+
+    return controls.map(control => ({
+      name: control.unit,
+      englishName: control.unitEnglishName,
+      description: `${control.unit}控件。`,
+      className: control.className,
+      style: control.style,
+      iconFileName: '',
+      properties: mergeWithFixedCommonProperties(DEFAULT_PROTOCOL_UNIT_PROPERTIES),
+      events: eventMap.get(control.unit) ?? [],
+      libraryName,
+    }))
+  }
+
+  private parseUnitIconIndex(value: unknown): LibraryUnitIconIndexItem[] {
+    if (!Array.isArray(value)) return []
+    return value
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map(item => ({
+        eName: typeof item.eName === 'string' ? item.eName.trim() : '',
+        cName: typeof item.cName === 'string' ? item.cName.trim() : '',
+        iCons: typeof item.iCons === 'string' ? item.iCons.trim() : '',
+      }))
+      .filter(item => item.iCons.length > 0 && (item.cName.length > 0 || item.eName.length > 0))
+  }
+
+  private readWindowUnitIconIndex(name: string, folderPath: string): LibraryUnitIconIndexItem[] {
+    for (const candidate of this.getIconIndexCandidates(name, folderPath)) {
+      if (!existsSync(candidate)) continue
+      try {
+        const raw = JSON.parse(readFileSync(candidate, 'utf-8'))
+        const parsed = this.parseUnitIconIndex(raw)
+        if (parsed.length > 0) return parsed
+      } catch {
+        // ignore malformed icon index and continue with other candidates
+      }
+    }
+    return []
+  }
+
+  private applyWindowUnitIconIndex(windowUnits: LibraryWindowUnit[], iconIndex: LibraryUnitIconIndexItem[]): LibraryWindowUnit[] {
+    if (windowUnits.length === 0 || iconIndex.length === 0) return windowUnits
+
+    const byCnName = new Map<string, string>()
+    const byEnName = new Map<string, string>()
+    for (const item of iconIndex) {
+      if (item.cName) byCnName.set(item.cName, item.iCons)
+      if (item.eName) byEnName.set(item.eName.toLowerCase(), item.iCons)
+    }
+
+    return windowUnits.map(unit => {
+      const fromCn = byCnName.get(unit.name)
+      const fromEn = unit.englishName ? byEnName.get(unit.englishName.toLowerCase()) : undefined
+      const iconFileName = unit.iconFileName || fromCn || fromEn || ''
+      if (!iconFileName) return unit
+      return {
+        ...unit,
+        iconFileName,
+      }
+    })
+  }
+
+  private mergeWindowUnits(primary: LibraryWindowUnit[], fallback: LibraryWindowUnit[]): LibraryWindowUnit[] {
+    if (fallback.length === 0) return primary
+    if (primary.length === 0) return fallback
+
+    const map = new Map(primary.map(item => [item.name, item]))
+    for (const unit of fallback) {
+      const existing = map.get(unit.name)
+      if (!existing) {
+        map.set(unit.name, unit)
+        continue
+      }
+
+      const mergedEvents = existing.events.length > 0
+        ? existing.events
+        : unit.events
+      const mergedProperties = existing.properties.length > 0
+        ? existing.properties
+        : unit.properties
+      map.set(unit.name, {
+        ...existing,
+        className: existing.className || unit.className,
+        style: existing.style || unit.style,
+        iconFileName: existing.iconFileName || unit.iconFileName,
+        events: mergedEvents,
+        properties: mergeWithFixedCommonProperties(mergedProperties),
+      })
+    }
+
+    return Array.from(map.values())
   }
 
   private getLibraryMetadata(name: string): ParsedLibraryMetadata | null {
@@ -1359,32 +826,104 @@ class LibraryManager {
     }
 
     const folderPath = this.getLibraryFolder(name)
+    const parsed: ParsedLibraryMetadata = {
+      guid: '',
+      description: '',
+      author: '',
+      qq: '',
+      email: '',
+      homePage: '',
+      otherInfo: '',
+      dataTypes: [],
+      constants: [],
+      windowUnits: [],
+    }
+    let hasMetadata = false
+
     for (const candidate of this.getMetadataFileCandidates(name, folderPath)) {
       if (!existsSync(candidate)) continue
       try {
         const raw = JSON.parse(readFileSync(candidate, 'utf-8')) as LibraryMetadataFile
-        const parsed: ParsedLibraryMetadata = {
-          description: typeof raw.description === 'string' ? raw.description.trim() : '',
-          author: typeof raw.author === 'string' ? raw.author.trim() : '',
-          homePage: typeof raw.homePage === 'string' ? raw.homePage.trim() : '',
-          dataTypes: this.parseLibraryDataTypes(raw.dataTypes),
-          constants: this.parseLibraryConstants(raw.constants),
-          windowUnits: this.parseWindowUnits(raw.windowUnits, name),
+        hasMetadata = true
+        parsed.guid = this.mergeTextField(parsed.guid, raw.guid)
+        parsed.description = this.mergeTextField(parsed.description, raw.description)
+        parsed.author = this.mergeTextField(parsed.author, raw.author)
+        parsed.qq = this.mergeTextField(parsed.qq, raw.qq)
+        parsed.email = this.mergeTextField(parsed.email, raw.email)
+        parsed.homePage = this.mergeTextField(parsed.homePage, raw.homePage)
+        parsed.otherInfo = this.mergeTextField(parsed.otherInfo, raw.otherInfo)
+
+        const dataTypes = this.parseLibraryDataTypes(raw.dataTypes)
+        if (dataTypes.length > 0) parsed.dataTypes = dataTypes
+        const constants = this.parseLibraryConstants(raw.constants)
+        if (constants.length > 0) parsed.constants = constants
+        const windowUnits = this.parseWindowUnits(raw.windowUnits, name)
+        const protocolWindowUnits = this.parseWindowUnitsFromProtocol(raw, name)
+        const mergedWindowUnits = this.mergeWindowUnits(windowUnits, protocolWindowUnits)
+        if (mergedWindowUnits.length > 0) {
+          parsed.windowUnits = this.mergeWindowUnits(parsed.windowUnits, mergedWindowUnits)
         }
-        this.metadataCache.set(name, parsed)
-        return parsed
       } catch {
-        this.metadataCache.set(name, null)
-        return null
+        // ignore malformed metadata file and continue with other candidates
       }
     }
 
-    this.metadataCache.set(name, null)
-    return null
+    if (parsed.windowUnits.length > 0) {
+      const iconIndex = this.readWindowUnitIconIndex(name, folderPath)
+      parsed.windowUnits = this.applyWindowUnitIconIndex(parsed.windowUnits, iconIndex)
+    }
+
+    this.metadataCache.set(name, hasMetadata ? parsed : null)
+    return hasMetadata ? parsed : null
   }
 
   isCore(name: string): boolean {
-    return name === LibraryManager.CORE_LIBRARY_FILE_NAME
+    return normalizeLibraryId(name) === CORE_LIBRARY_FILE_NAME
+  }
+
+  validateCoreLibraryIntegrity(): { ok: boolean; errors: string[] } {
+    if (!this.shouldEnforceCoreLibraryIntegrity()) {
+      return { ok: true, errors: [] }
+    }
+
+    const errors: string[] = []
+    const libRoot = this.getLibFolder()
+    const coreFolder = join(libRoot, CORE_LIBRARY_FILE_NAME)
+    if (!existsSync(coreFolder)) {
+      errors.push(`核心支持库目录不存在: ${coreFolder}`)
+      return { ok: false, errors }
+    }
+
+    const registry = scanYcmdRegistry(libRoot)
+    const core = registry.libraries.find(lib => lib.name === CORE_LIBRARY_FILE_NAME)
+    if (!core) {
+      errors.push('核心支持库清单不存在或未包含任何 *.ycmd.json 文件')
+    } else {
+      for (const manifest of core.manifests) {
+        if (manifest.valid) continue
+        const detail = manifest.errors.join('；') || '清单无效'
+        errors.push(`${manifest.filePath}: ${detail}`)
+      }
+    }
+
+    for (const [relativePath, expectedHash] of Object.entries(CORE_LIBRARY_EXPECTED_SHA256)) {
+      const filePath = join(coreFolder, relativePath)
+      if (!existsSync(filePath)) {
+        errors.push(`核心支持库文件缺失: ${relativePath}`)
+        continue
+      }
+      const actualHash = sha256Buffer(readFileSync(filePath))
+      if (actualHash !== expectedHash) {
+        errors.push(`核心支持库文件被修改: ${relativePath}`)
+      }
+    }
+
+    const metadata = this.getLibraryMetadata(CORE_LIBRARY_FILE_NAME)
+    if (!metadata || metadata.guid !== CORE_LIBRARY_GUID) {
+      errors.push('核心支持库标识文件无效或数字签名不匹配')
+    }
+
+    return { ok: errors.length === 0, errors }
   }
 
   getLibFolder(): string {
@@ -1396,27 +935,45 @@ class LibraryManager {
   }
 
   scan(customFolder?: string): LibraryItem[] {
-    const root = customFolder || this.getLibFolder()
-    const result = scanYcmdRegistry(root)
-    const metaMap = this.getLibraryDisplayMeta(root)
+    const roots = customFolder ? [customFolder] : [this.getLibFolder(), this.getInstalledRootPath()]
     const previousLoaded = new Map(this.libraries.map(l => [l.name, l.loaded]))
     const savedLoaded = this.getSavedLoadedNames()
     const savedSet = savedLoaded ? new Set(savedLoaded) : null
+    const libraryMap = new Map<string, LibraryItem>()
 
     this.metadataCache.clear()
 
-    this.libraries = result.libraries.map(lib => ({
-      name: lib.name,
-      filePath: lib.folderPath,
-      loaded: this.isCore(lib.name)
-        ? true
-        : (savedSet
-            ? savedSet.has(lib.name)
-            : (previousLoaded.get(lib.name) ?? true)),
-      isCore: this.isCore(lib.name),
-      libName: metaMap.get(lib.name)?.libName || lib.name,
-      version: metaMap.get(lib.name)?.version || '-',
-      cmdCount: metaMap.get(lib.name)?.cmdCount ?? lib.manifests.filter(item => item.valid).length,
+    for (const root of roots) {
+      if (!existsSync(root)) continue
+      const result = scanYcmdRegistry(root)
+      const metaMap = this.getLibraryDisplayMeta(root)
+      const source: LibraryInstallSource = root === this.getInstalledRootPath() ? 'installed' : 'bundled'
+      for (const lib of result.libraries) {
+        if (source === 'installed' && this.isCore(lib.name)) continue
+        libraryMap.set(lib.name, {
+          name: lib.name,
+          filePath: lib.folderPath,
+          loaded: this.isCore(lib.name)
+            ? true
+            : (savedSet
+                ? savedSet.has(lib.name)
+                : (previousLoaded.get(lib.name) ?? true)),
+          isCore: this.isCore(lib.name),
+          source,
+          libName: metaMap.get(lib.name)?.libName || lib.name,
+          version: metaMap.get(lib.name)?.version || '-',
+          cmdCount: metaMap.get(lib.name)?.cmdCount ?? lib.manifests.filter(item => item.valid).length,
+          dtCount: 0,
+        })
+      }
+    }
+
+    this.libraries = Array.from(libraryMap.values()).sort((a, b) => {
+      if (a.isCore !== b.isCore) return a.isCore ? -1 : 1
+      return (a.libName || a.name).localeCompare(b.libName || b.name, 'zh-CN')
+    })
+    this.libraries = this.libraries.map(lib => ({
+      ...lib,
       dtCount: this.getLibraryMetadata(lib.name)?.dataTypes.length ?? 0,
     }))
 
@@ -1458,7 +1015,7 @@ class LibraryManager {
 
     const failed: Array<{ name: string; error: string }> = []
     const selected = new Set(selectedNames)
-    selected.add(LibraryManager.CORE_LIBRARY_FILE_NAME)
+    selected.add(CORE_LIBRARY_FILE_NAME)
 
     let loadedCount = 0
     let unloadedCount = 0
@@ -1502,64 +1059,123 @@ class LibraryManager {
     return this.scan()
   }
 
-  getStoreCards(): StoreLibraryCard[] {
+  private librarySupportsTargetPlatform(lib: LibraryItem, targetPlatform?: string): boolean {
+    const platform = normalizeTargetPlatform(targetPlatform)
+    if (!platform || lib.isCore) return true
+    const registry = scanYcmdRegistry(dirname(lib.filePath))
+    const scanned = registry.libraries.find(item => item.name === lib.name)
+    if (!scanned) return false
+    return scanned.manifests.some(item => item.valid && !!item.manifest?.implementations?.[platform]?.entry)
+  }
+
+  private getLoadedLibrariesForTarget(targetPlatform?: string): LibraryItem[] {
+    if (this.libraries.length === 0) this.scan()
+    return this.libraries.filter(lib => lib.loaded && this.librarySupportsTargetPlatform(lib, targetPlatform))
+  }
+
+  async getStoreCards(indexUrl?: string): Promise<StoreLibraryCard[]> {
     const libraries = this.scan()
-    const registry = scanYcmdRegistry(this.getLibFolder())
     const supportedPlatformsById = new Map<string, Platform[]>()
     const downloadedById = new Map<string, boolean>()
+    const installState = this.readInstallState()
+    const remoteIndex = indexUrl ? await this.getRemoteIndex(indexUrl) : null
+    const remoteById = new Map<string, LibraryPackageEntry>()
 
-    for (const lib of registry.libraries) {
-      const platforms = new Set<Platform>()
-      let hasValidManifest = false
-      for (const item of lib.manifests) {
-        if (!item.valid || !item.manifest) continue
-        hasValidManifest = true
-        const implementations = item.manifest.implementations
-        if (!implementations || typeof implementations !== 'object') continue
-        for (const platform of STORE_PLATFORM_ORDER) {
-          if (implementations[platform]?.entry) {
-            platforms.add(platform)
-          }
-        }
-      }
-      supportedPlatformsById.set(lib.name, STORE_PLATFORM_ORDER.filter(platform => platforms.has(platform)))
-      downloadedById.set(lib.name, hasValidManifest)
+    if (remoteIndex?.ok) {
+      for (const item of remoteIndex.index.libraries) remoteById.set(item.id, item)
     }
 
-    return libraries.map(lib => ({
+    for (const root of [this.getLibFolder(), this.getInstalledRootPath()]) {
+      if (!existsSync(root)) continue
+      const registry = scanYcmdRegistry(root)
+      for (const lib of registry.libraries) {
+        const platforms = new Set<Platform>(supportedPlatformsById.get(lib.name) || [])
+        let hasValidManifest = downloadedById.get(lib.name) || false
+        for (const item of lib.manifests) {
+          if (!item.valid || !item.manifest) continue
+          hasValidManifest = true
+          const implementations = item.manifest.implementations
+          if (!implementations || typeof implementations !== 'object') continue
+          for (const platform of STORE_PLATFORM_ORDER) {
+            if (implementations[platform]?.entry) {
+              platforms.add(platform)
+            }
+          }
+        }
+        supportedPlatformsById.set(lib.name, STORE_PLATFORM_ORDER.filter(platform => platforms.has(platform)))
+        downloadedById.set(lib.name, hasValidManifest)
+      }
+    }
+
+    const cards = libraries.map(lib => {
+      const installInfo = installState.libraries[lib.name]
+      const remoteInfo = remoteById.get(lib.name)
+      return {
       id: lib.name,
       displayName: lib.libName || lib.name,
-      version: lib.version || '-',
-      supportedPlatforms: supportedPlatformsById.get(lib.name) || [],
-      isDownloaded: downloadedById.get(lib.name) || false,
+      version: installInfo?.version || lib.version || '-',
+      supportedPlatforms: remoteInfo?.supportedPlatforms || supportedPlatformsById.get(lib.name) || [],
+      isDownloaded: installInfo?.downloaded || downloadedById.get(lib.name) || false,
+      isInstalled: installInfo?.installed || lib.source === 'installed' || lib.source === 'bundled',
       isLoaded: lib.loaded,
       isCore: lib.isCore,
-    }))
+      source: lib.source,
+      updateAvailable: !!remoteInfo && !!installInfo?.version && remoteInfo.version !== installInfo.version,
+      lastError: installInfo?.lastError || '',
+      packageFileName: remoteInfo?.packageFileName,
+      packageUrl: remoteInfo?.packageUrl,
+      packageSha256: remoteInfo?.packageSha256,
+      remoteVersion: remoteInfo?.version,
+      } satisfies StoreLibraryCard
+    })
+
+    for (const remote of remoteById.values()) {
+      if (cards.some(card => card.id === remote.id)) continue
+      const installInfo = installState.libraries[remote.id]
+      cards.push({
+        id: remote.id,
+        displayName: remote.displayName,
+        version: installInfo?.version || remote.version || '-',
+        supportedPlatforms: remote.supportedPlatforms,
+        isDownloaded: installInfo?.downloaded || false,
+        isInstalled: installInfo?.installed || false,
+        isLoaded: installInfo?.loaded || false,
+        isCore: this.isCore(remote.id),
+        source: installInfo?.source || 'installed',
+        updateAvailable: !!installInfo?.version && installInfo.version !== remote.version,
+        lastError: installInfo?.lastError || '',
+        packageFileName: remote.packageFileName,
+        packageUrl: remote.packageUrl,
+        packageSha256: remote.packageSha256,
+        remoteVersion: remote.version,
+      })
+    }
+
+    return cards
   }
 
   private mapYcmdCommand(cmd: YcmdResolvedCommand): LibraryCommand {
     return {
       ...cmd,
+      supportedPlatforms: Array.isArray(cmd.supportedPlatforms) ? [...cmd.supportedPlatforms] : [],
       params: (cmd.params || []).map(p => ({
         name: p.name,
         type: p.type,
         description: p.description,
         optional: !!p.optional,
+        repeatable: !!p.repeatable,
         isVariable: !!p.isVariable,
         isArray: !!p.isArray,
       })),
     }
   }
 
-  getAllCommands(): LibraryCommand[] {
-    if (this.libraries.length === 0) this.scan()
-    const loadedSet = new Set(this.libraries.filter(l => l.loaded).map(l => l.name))
-    const commands: LibraryCommand[] = [
-      ...(loadedSet.has(LibraryManager.CORE_LIBRARY_FILE_NAME) ? [...CORE_FLOW_COMMANDS, ...CORE_LOGIC_COMMANDS, ...CORE_DEBUG_COMMANDS, ...CORE_DISK_COMMANDS, ...CORE_BIN_COMMANDS] : []),
-      ...getYcmdCommands()
-      .filter(cmd => loadedSet.has(cmd.libraryFileName))
-      .map(cmd => this.mapYcmdCommand(cmd)),
-    ]
+  getAllCommands(targetPlatform?: string): LibraryCommand[] {
+    const platform = normalizeTargetPlatform(targetPlatform)
+    const loadedLibraries = this.getLoadedLibrariesForTarget(platform)
+    const loadedYcmdCommands = loadedLibraries
+      .flatMap(lib => getYcmdCommands(dirname(lib.filePath), platform).filter(cmd => cmd.libraryFileName === lib.name))
+    const commands: LibraryCommand[] = loadedYcmdCommands.map(cmd => this.mapYcmdCommand(cmd))
 
     const deduped = new Map<string, LibraryCommand>()
     for (const command of commands) {
@@ -1568,40 +1184,38 @@ class LibraryManager {
     return Array.from(deduped.values())
   }
 
-  getAllDataTypes(): LibraryDataType[] {
-    if (this.libraries.length === 0) this.scan()
-    return this.libraries
-      .filter(lib => lib.loaded)
+  getAllDataTypes(targetPlatform?: string): LibraryDataType[] {
+    return this.getLoadedLibrariesForTarget(targetPlatform)
       .flatMap(lib => this.getLibraryMetadata(lib.name)?.dataTypes || [])
   }
 
   getLibInfo(name: string): LibraryInfo | null {
-    const isCoreLibrary = name === LibraryManager.CORE_LIBRARY_FILE_NAME || name === CORE_LIBRARY_NAME
-    const commands = [
-      ...(isCoreLibrary ? [...CORE_FLOW_COMMANDS, ...CORE_LOGIC_COMMANDS, ...CORE_DEBUG_COMMANDS, ...CORE_DISK_COMMANDS, ...CORE_BIN_COMMANDS] : []),
-      ...getYcmdCommands()
+    if (this.libraries.length === 0) this.scan()
+    const isCoreLibrary = this.isCore(name) || name === CORE_LIBRARY_NAME
+    const item = this.libraries.find(lib => lib.name === name || lib.libName === name)
+    const libraryId = item?.name || name
+    const commands = (item ? getYcmdCommands(dirname(item.filePath)) : [])
       .map(cmd => this.mapYcmdCommand(cmd))
-      .filter(cmd => cmd.libraryFileName === name || cmd.libraryName === name),
-    ]
-    const metadata = this.getLibraryMetadata(name)
+      .filter(cmd => cmd.libraryFileName === libraryId || cmd.libraryName === name || cmd.libraryName === libraryId)
+    const metadata = this.getLibraryMetadata(libraryId)
 
     if (commands.length === 0 && !metadata) return null
 
-    const displayMeta = this.getLibraryDisplayMeta().get(name)
+    const displayMeta = item ? { libName: item.libName || item.name, version: item.version || '-', cmdCount: item.cmdCount || 0 } : this.getLibraryDisplayMeta().get(libraryId)
     return {
       name: isCoreLibrary ? CORE_LIBRARY_NAME : (displayMeta?.libName || name),
-      guid: '-',
+      guid: metadata?.guid || '-',
       version: displayMeta?.version || '-',
-      description: metadata?.description || (isCoreLibrary ? '系统核心支持库内建命令与元数据。' : '由 ycmd 清单生成'),
+      description: metadata?.description || (isCoreLibrary ? '系统核心支持库命令与元数据由支持库清单提供。' : '由 ycmd 清单生成'),
       author: metadata?.author || '-',
       zipCode: '-',
       address: '-',
       phone: '-',
-      qq: '-',
-      email: '-',
+      qq: metadata?.qq || '-',
+      email: metadata?.email || '-',
       homePage: metadata?.homePage || '-',
-      otherInfo: '-',
-      fileName: name,
+      otherInfo: metadata?.otherInfo || '-',
+      fileName: libraryId,
       commands,
       dataTypes: metadata?.dataTypes || [],
       constants: metadata?.constants || [],
@@ -1609,10 +1223,8 @@ class LibraryManager {
     }
   }
 
-  getAllWindowUnits(): LibraryWindowUnit[] {
-    if (this.libraries.length === 0) this.scan()
-    return this.libraries
-      .filter(lib => lib.loaded)
+  getAllWindowUnits(targetPlatform?: string): LibraryWindowUnit[] {
+    return this.getLoadedLibrariesForTarget(targetPlatform)
       .flatMap(lib => this.getLibraryMetadata(lib.name)?.windowUnits || [])
   }
 
@@ -1620,8 +1232,62 @@ class LibraryManager {
     return null
   }
 
-  getLoadedLibraryFiles(): Array<{ name: string; libraryPath: string; libName: string }> {
-    return []
+  getLoadedLibraryFiles(targetPlatform?: string): Array<{ name: string; libraryPath: string; libName: string }> {
+    const platform = normalizeTargetPlatform(targetPlatform)
+    if (this.libraries.length === 0) this.scan()
+
+    const result: Array<{ name: string; libraryPath: string; libName: string }> = []
+    const seen = new Set<string>()
+
+    for (const lib of this.getLoadedLibrariesForTarget(platform)) {
+      const registry = scanYcmdRegistry(dirname(lib.filePath))
+      const scanned = registry.libraries.find(item => item.name === lib.name)
+      if (!scanned) continue
+
+      for (const item of scanned.manifests) {
+        if (!item.valid || !item.manifest) continue
+        const entries: string[] = []
+        const pickEntry = (implementations: typeof item.manifest.implementations | undefined): string | undefined => {
+          if (platform) return implementations?.[platform]?.entry
+          return implementations?.windows?.entry
+            || implementations?.linux?.entry
+            || implementations?.macos?.entry
+            || implementations?.android?.entry
+            || implementations?.ios?.entry
+            || implementations?.harmony?.entry
+        }
+
+        const manifestEntry = pickEntry(item.manifest.implementations)
+        if (manifestEntry) entries.push(manifestEntry)
+
+        if (Array.isArray(item.manifest.commands)) {
+          for (const command of item.manifest.commands) {
+            if (!command || typeof command !== 'object' || '__section' in command) continue
+            const commandEntry = pickEntry(command.implementations || item.manifest.implementations)
+            if (commandEntry) entries.push(commandEntry)
+          }
+        }
+
+        for (const entry of entries) {
+          const implementationPath = resolve(dirname(item.filePath), entry)
+          if (seen.has(implementationPath)) continue
+          try {
+            if (!existsSync(implementationPath) || !statSync(implementationPath).isFile()) continue
+          } catch {
+            continue
+          }
+
+          seen.add(implementationPath)
+          result.push({
+            name: lib.name,
+            libraryPath: implementationPath,
+            libName: lib.libName || lib.name,
+          })
+        }
+      }
+    }
+
+    return result
   }
 }
 

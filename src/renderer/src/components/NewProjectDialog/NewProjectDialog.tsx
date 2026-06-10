@@ -1,6 +1,8 @@
 import { useState, useEffect, useId, useRef } from 'react'
 import './NewProjectDialog.css'
 
+type ProjectPlatformGroup = 'desktop' | 'mobile'
+
 interface ProjectType {
   id: string
   name: string
@@ -8,10 +10,16 @@ interface ProjectType {
   icon: string
 }
 
-const PROJECT_TYPES: ProjectType[] = [
+const DESKTOP_PROJECT_TYPES: ProjectType[] = [
   { id: 'windows-app', name: '窗口程序', description: '创建一个标准的窗口应用程序', icon: '🪟' },
   { id: 'console', name: '控制台程序', description: '创建一个控制台应用程序', icon: '⬛' },
   { id: 'dll', name: '动态链接库', description: '创建一个动态链接库(.dll / .so / .dylib)', icon: '📦' },
+]
+
+const MOBILE_PROJECT_TYPES: ProjectType[] = [
+  { id: 'mobile-app', name: '移动应用', description: '创建一个面向移动端的应用项目', icon: 'APP' },
+  { id: 'mobile-native-module', name: '原生模块', description: '创建一个可被移动应用调用的原生功能模块', icon: 'MOD' },
+  { id: 'mobile-shared-library', name: '共享库', description: '创建一个移动端共享库项目', icon: 'LIB' },
 ]
 
 interface PlatformDef {
@@ -24,25 +32,76 @@ const PLATFORMS: PlatformDef[] = [
   { id: 'windows', name: 'Windows', icon: '🪟' },
   { id: 'linux', name: 'Linux', icon: '🐧' },
   { id: 'macos', name: 'macOS', icon: '🍎' },
+  { id: 'android', name: 'Android', icon: 'A' },
+  { id: 'ios', name: 'iOS', icon: 'iOS' },
+  { id: 'harmony', name: 'HarmonyOS', icon: 'H' },
 ]
+
+function getPlatformGroup(platform: string): ProjectPlatformGroup {
+  return platform === 'android' || platform === 'ios' || platform === 'harmony' ? 'mobile' : 'desktop'
+}
+
+function getProjectTypes(platform: string): ProjectType[] {
+  return getPlatformGroup(platform) === 'mobile' ? MOBILE_PROJECT_TYPES : DESKTOP_PROJECT_TYPES
+}
+
+const PROJECT_TYPE_NAME_PART: Record<string, string> = {
+  'windows-app': '窗口程序',
+  console: '控制台程序',
+  dll: '动态链接库',
+  'mobile-app': '移动应用',
+  'mobile-native-module': '原生模块',
+  'mobile-shared-library': '共享库',
+}
+
+function buildDefaultProjectNameBase(platform: string, type: string): string {
+  return `${platform}${PROJECT_TYPE_NAME_PART[type] || '项目'}-新项目`
+}
+
+async function resolveDefaultProjectName(platform: string, type: string, path: string): Promise<string> {
+  const baseName = buildDefaultProjectNameBase(platform, type)
+  for (let index = 1; index <= 999; index++) {
+    const candidate = `${baseName}${index}`
+    if (!path || !window.api?.project?.checkCreateTarget) return candidate
+    try {
+      const target = await window.api.project.checkCreateTarget({ name: candidate, path })
+      if (!target?.exists) return candidate
+    } catch {
+      return candidate
+    }
+  }
+  return `${baseName}${Date.now()}`
+}
 
 interface NewProjectDialogProps {
   open: boolean
   onClose: () => void
-  onConfirm: (info: { name: string; path: string; type: string; platform: string }) => void
+  onConfirm: (info: { name: string; path: string; type: string; platform: string }) => void | boolean | Promise<void | boolean>
 }
 
 function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): React.JSX.Element | null {
-  const [projectName, setProjectName] = useState('新项目1')
+  const [projectName, setProjectName] = useState('')
   const [projectPath, setProjectPath] = useState('')
   const [selectedType, setSelectedType] = useState('windows-app')
   const [selectedPlatform, setSelectedPlatform] = useState('windows')
+  const projectTypes = getProjectTypes(selectedPlatform)
   const dialogRef = useRef<HTMLDivElement>(null)
   const lastFocusedRef = useRef<HTMLElement | null>(null)
+  const autoProjectNameRef = useRef(true)
+  const defaultNameRequestRef = useRef(0)
+  const wasOpenRef = useRef(false)
   const titleId = useId()
   const descriptionId = useId()
   const nameInputId = useId()
   const pathInputId = useId()
+
+  useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      autoProjectNameRef.current = true
+      setProjectName('')
+    }
+    wasOpenRef.current = open
+  }, [open])
 
   // 打开时获取默认项目路径
   useEffect(() => {
@@ -61,6 +120,28 @@ function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): 
     }
   }, [open])
 
+  useEffect(() => {
+    const nextTypes = getProjectTypes(selectedPlatform)
+    if (!nextTypes.some(type => type.id === selectedType)) {
+      setSelectedType(nextTypes[0]?.id || 'windows-app')
+    }
+  }, [selectedPlatform, selectedType])
+
+  useEffect(() => {
+    if (!open || !autoProjectNameRef.current) return
+    const requestId = ++defaultNameRequestRef.current
+    let cancelled = false
+
+    resolveDefaultProjectName(selectedPlatform, selectedType, projectPath).then((name) => {
+      if (cancelled || requestId !== defaultNameRequestRef.current || !autoProjectNameRef.current) return
+      setProjectName(name)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, selectedPlatform, selectedType, projectPath])
+
   if (!open) return null
 
   const handleBrowse = async (): Promise<void> => {
@@ -72,10 +153,10 @@ function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): 
     }
   }
 
-  const handleConfirm = (): void => {
+  const handleConfirm = async (): Promise<void> => {
     if (!projectName.trim()) return
-    onConfirm({ name: projectName.trim(), path: projectPath, type: selectedType, platform: selectedPlatform })
-    onClose()
+    const result = await onConfirm({ name: projectName.trim(), path: projectPath, type: selectedType, platform: selectedPlatform })
+    if (result !== false) onClose()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
@@ -154,7 +235,7 @@ function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): 
           <div className="np-field">
             <span className="np-field-label">项目类型：</span>
             <div className="np-type-list" aria-label="项目类型">
-              {PROJECT_TYPES.map(t => (
+              {projectTypes.map(t => (
                 <button
                   key={t.id}
                   type="button"
@@ -178,7 +259,10 @@ function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): 
               id={nameInputId}
               type="text"
               value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
+              onChange={(e) => {
+                autoProjectNameRef.current = false
+                setProjectName(e.target.value)
+              }}
               autoFocus
               spellCheck={false}
             />

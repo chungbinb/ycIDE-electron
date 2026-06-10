@@ -121,6 +121,7 @@ interface EycTableEditorProps {
   freezeSubTableHeader?: boolean
   showMinimapPreview?: boolean
   projectDir?: string
+  targetPlatform?: string
   isClassModule?: boolean
   projectGlobalVars?: Array<{ name: string; type: string }>
   windowControlNames?: string[]
@@ -162,6 +163,14 @@ interface EditState {
   paramIdx?: number   // 展开参数编辑：第几个参数 (0-based)
 }
 
+interface ExprExpandItem {
+  name: string
+  value: string
+  commandName?: string
+  commandParamIndex?: number
+  children?: ExprExpandItem[]
+}
+
 const setCssVars = (element: HTMLElement | null, vars: Record<string, string>): void => {
   if (!element) return
   for (const [name, value] of Object.entries(vars)) {
@@ -171,7 +180,7 @@ const setCssVars = (element: HTMLElement | null, vars: Record<string, string>): 
 
 const TABLE_MODE_HIDDEN_FLOW_COMMANDS = new Set(['否则', '如果结束', '默认', '判断结束', '如果真结束'])
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>() }, ref) {
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>() }, ref) {
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
@@ -271,11 +280,50 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   // ===== 行选择状态 =====
   const [selectedLines, setSelectedLines] = useState<Set<number>>(new Set())
+  const [editorContextMenu, setEditorContextMenu] = useState<{ x: number; y: number; lineIndex: number | null } | null>(null)
+  const [contextMenuCanPaste, setContextMenuCanPaste] = useState(false)
   const dragAnchor = useRef<number | null>(null)  // 拖选起点行号
   const isDragging = useRef(false)
   const dragStartPos = useRef<{ x: number; y: number } | null>(null)
   const wasDragSelect = useRef(false)
   const pendingInputDragRef = useRef<{ lineIndex: number; x: number; y: number; allowRowDrag: boolean } | null>(null)
+
+  useEffect(() => {
+    if (!editorContextMenu) return
+    const close = (): void => setEditorContextMenu(null)
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') close()
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('contextmenu', close)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('contextmenu', close)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [editorContextMenu])
+
+  useEffect(() => {
+    if (!editorContextMenu) {
+      setContextMenuCanPaste(false)
+      return
+    }
+    let cancelled = false
+    setContextMenuCanPaste(false)
+    void navigator.clipboard.readText()
+      .then((text) => {
+        if (cancelled) return
+        setContextMenuCanPaste((text || '').length > 0)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setContextMenuCanPaste(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [editorContextMenu])
 
   // ===== 撤销/重做栈 =====
   const undoStack = useRef<string[]>([])
@@ -1110,7 +1158,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   // 加载所有命令（用于补全），含流程关键字
   const reloadCommands = useCallback(() => {
-    window.api.library.getAllCommands().then((cmds: CompletionItem[]) => {
+    window.api.library.getAllCommands(targetPlatform).then((cmds: CompletionItem[]) => {
       const { independentItems, memberItems, libraryConstantItems } = buildCompletionCatalog(cmds)
       allCommandsRef.current = independentItems
       memberCommandsRef.current = memberItems
@@ -1118,7 +1166,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
       setCmdLoadId(n => n + 1)
     }).catch(() => {})
-  }, [])
+  }, [targetPlatform])
 
   // 初始加载 + 支持库变更时重新加载命令
   useEffect(() => {
@@ -1316,9 +1364,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setTimeout(() => {
       if (inputRef.current) {
         const newPos = before.length + prefix.length + item.name.length + caretExtra
-        inputRef.current.selectionStart = newPos
-        inputRef.current.selectionEnd = newPos
-        inputRef.current.focus()
+        try {
+          inputRef.current.focus({ preventScroll: true })
+        } catch {
+          inputRef.current.focus()
+        }
+        inputRef.current.setSelectionRange(newPos, newPos)
       }
     }, 0)
   }, [editVal, editCell])
@@ -1383,6 +1434,40 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       .split(/[\s(（]/)[0]
     if (token.startsWith('.')) return token.slice(1)
     return token
+  }, [])
+
+  const normalizeCodeLineInput = useCallback((raw: string): string => {
+    if (!raw) return raw
+
+    let next = raw
+      .replace(/，/g, ',')
+      .replace(/。/g, '.')
+      .replace(/；/g, ';')
+      .replace(/：/g, ':')
+      .replace(/（/g, '(')
+      .replace(/）/g, ')')
+      .replace(/【/g, '[')
+      .replace(/】/g, ']')
+      .replace(/｛/g, '{')
+      .replace(/｝/g, '}')
+      .replace(/＝/g, '=')
+      .replace(/＋/g, '+')
+      .replace(/－/g, '-')
+      .replace(/＊/g, '*')
+      .replace(/／/g, '/')
+      .replace(/％/g, '%')
+      .replace(/！/g, '!')
+      .replace(/？/g, '?')
+      .replace(/[“”]/g, '"')
+      .replace(/、/g, ',')
+
+    // 中文输入法里的单引号起始（‘/’）按注释前缀处理。
+    next = next.replace(/^(\s*)[‘’]/, "$1'")
+
+    // 统一为 `'<space>注释内容`，便于后续自动排版。
+    next = next.replace(/^(\s*)'(?!\s|$)/, "$1' ")
+
+    return next
   }, [])
 
   /** 代码行编辑结束时自动补全括号（格式化命令），返回 [主行, ...需要插入的后续行] */
@@ -1917,6 +2002,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return !(kw && TABLE_MODE_HIDDEN_FLOW_COMMANDS.has(kw))
     })
   }, [blocks])
+
+  const visibleCodeLineIndexes = useMemo(() => {
+    const indexes = new Set<number>()
+    for (const blk of visibleBlocks) {
+      if (blk.kind === 'codeline') indexes.add(blk.lineIndex)
+    }
+    return indexes
+  }, [visibleBlocks])
 
   const displayFlowLines = useMemo(() => {
     const map = new Map<number, FlowSegment[]>()
@@ -3279,6 +3372,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     if (editCell.cellIndex < 0) {
+      effectiveVal = normalizeCodeLineInput(effectiveVal)
       // 流程上下文中，若文本未改动则直接退出编辑，避免仅点击/失焦触发格式化导致流程结构漂移。
       const unchanged = overrideVal === undefined && effectiveVal === codeLineEditOrigValRef.current
       const flowContext = wasFlowStartRef.current || flowIndentRef.current.length > 0
@@ -3551,7 +3645,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     const nt = nl.join('\n')
     setCurrentText(nt); prevRef.current = nt; onChange(nt); setEditCell(null)
-  }, [editCell, editVal, isClassModule, isResourceTableDoc, lines, normalizeFlowCommandName, onChange, onClassNameRename])
+  }, [editCell, editVal, isClassModule, isResourceTableDoc, lines, normalizeCodeLineInput, normalizeFlowCommandName, onChange, onClassNameRename])
 
   // 每次渲染后重置 commitGuard，允许下一次合法的 commit 调用
   useEffect(() => { commitGuardRef.current = false })
@@ -3922,64 +4016,80 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setEditVal(value)
   }, [])
 
-  const focusCodeInputAt = useCallback((position = 0) => {
-    setTimeout(() => {
-      if (!inputRef.current) return
-      inputRef.current.focus()
-      inputRef.current.selectionStart = position
-      inputRef.current.selectionEnd = position
-    }, 0)
-  }, [])
-
   const beginCodeLineEditByTargetLine = useCallback((lineIndex: number, sourceLines: string[]) => {
     const targetLine = sourceLines[lineIndex] || ''
     beginCodeLineEdit(lineIndex, targetLine)
   }, [beginCodeLineEdit])
 
+  const focusInlineInputAt = useCallback((position: number | 'end') => {
+    const focusAt = (attempt = 0): void => {
+      const input = inputRef.current
+      if (!input) {
+        if (attempt < 8) window.setTimeout(() => focusAt(attempt + 1), 16)
+        return
+      }
+      try {
+        input.focus({ preventScroll: true })
+      } catch {
+        input.focus()
+      }
+      const pos = position === 'end' ? input.value.length : Math.min(position, input.value.length)
+      input.setSelectionRange(pos, pos)
+      if (document.activeElement !== input && attempt < 8) {
+        window.setTimeout(() => focusAt(attempt + 1), 16)
+      }
+    }
+    window.setTimeout(() => focusAt(), 0)
+  }, [])
+
+  const focusCodeInputAt = useCallback((position = 0) => {
+    focusInlineInputAt(position)
+  }, [focusInlineInputAt])
+
+  const resolveVisibleCodeLineTarget = useCallback((targetLine: number, direction: -1 | 1, lineCount: number): number | null => {
+    if (targetLine < 0 || targetLine >= lineCount) return null
+    if (visibleCodeLineIndexes.has(targetLine)) return targetLine
+
+    for (let li = targetLine + direction; li >= 0 && li < lineCount; li += direction) {
+      if (visibleCodeLineIndexes.has(li)) return li
+    }
+    return null
+  }, [visibleCodeLineIndexes])
+
   const applyCodeLineNavigation = useCallback((navAction: CodeLineNavigationAction) => {
     if (!navAction) return
+    const currentLineIndex = editCellRef.current?.lineIndex ?? -1
     commit()
     setTimeout(() => {
       const latestLines = prevRef.current.split('\n')
       if (navAction.type === 'upOrDown') {
-        if (navAction.targetLine >= 0 && navAction.targetLine < latestLines.length) {
-          startEditLine(navAction.targetLine)
-          setTimeout(() => {
-            if (!inputRef.current) return
-            const maxPos = inputRef.current.value.length
-            const pos = Math.min(navAction.keepHorizontalPos, maxPos)
-            inputRef.current.selectionStart = pos
-            inputRef.current.selectionEnd = pos
-          }, 0)
+        const direction = navAction.targetLine < currentLineIndex ? -1 : 1
+        const targetLine = resolveVisibleCodeLineTarget(navAction.targetLine, direction, latestLines.length)
+        if (targetLine != null) {
+          startEditLine(targetLine)
+          focusInlineInputAt(navAction.keepHorizontalPos)
         }
         return
       }
 
       if (navAction.type === 'leftToPrevLineEnd') {
-        if (navAction.targetLine >= 0 && navAction.targetLine < latestLines.length) {
-          startEditLine(navAction.targetLine)
-          setTimeout(() => {
-            if (!inputRef.current) return
-            const end = inputRef.current.value.length
-            inputRef.current.selectionStart = end
-            inputRef.current.selectionEnd = end
-          }, 0)
+        const targetLine = resolveVisibleCodeLineTarget(navAction.targetLine, -1, latestLines.length)
+        if (targetLine != null) {
+          startEditLine(targetLine)
+          focusInlineInputAt('end')
         }
         return
       }
 
       if (navAction.type === 'rightToNextLineStart') {
-        if (navAction.targetLine < latestLines.length) {
-          startEditLine(navAction.targetLine)
-          setTimeout(() => {
-            if (!inputRef.current) return
-            inputRef.current.selectionStart = 0
-            inputRef.current.selectionEnd = 0
-          }, 0)
+        const targetLine = resolveVisibleCodeLineTarget(navAction.targetLine, 1, latestLines.length)
+        if (targetLine != null) {
+          startEditLine(targetLine)
+          focusInlineInputAt(0)
         }
       }
     }, 0)
-  }, [commit, startEditLine])
+  }, [commit, focusInlineInputAt, resolveVisibleCodeLineTarget, startEditLine])
 
   const applyEmptyCodeLineDelete = useCallback((params: {
     action: EmptyCodeLineDeleteAction
@@ -4045,14 +4155,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
       const clampedLi = Math.max(0, Math.min(focusLineAfter, latestLines.length - 1))
       startEditLine(clampedLi, undefined, undefined, isVirtual, true)
-      setTimeout(() => {
-        if (!inputRef.current) return
-        const pos = action.preferPrevLine ? inputRef.current.value.length : 0
-        inputRef.current.selectionStart = pos
-        inputRef.current.selectionEnd = pos
-      }, 0)
+      focusInlineInputAt(action.preferPrevLine ? 'end' : 0)
     }, 0)
-  }, [applyTextChange, currentText, focusWrapper, lines, pushUndo, startEditLine])
+  }, [applyTextChange, currentText, focusInlineInputAt, focusWrapper, lines, pushUndo, startEditLine])
 
   const applyParenScopedAction = useCallback((params: {
     action: ParenScopedKeyAction
@@ -4493,7 +4598,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   }, [acIndex, acItems, acVisible, applyCompletion, editCell])
 
   const applyCompletionPopupKey = useCallback((key: string): boolean => {
-    return handleCompletionPopupKey({
+    const handled = handleCompletionPopupKey({
       key,
       acVisible,
       acItems,
@@ -4503,7 +4608,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       onApplyCompletion: applyCompletion,
       onHidePopup: () => setAcVisible(false),
     })
-  }, [acIndex, acItems, acVisible, applyCompletion])
+    if (handled && (key === 'ArrowUp' || key === 'ArrowDown')) {
+      const pos = inputRef.current?.selectionStart ?? editVal.length
+      focusInlineInputAt(pos)
+    }
+    return handled
+  }, [acIndex, acItems, acVisible, applyCompletion, editVal.length, expandMoreCompletion, focusInlineInputAt])
 
   const applyEnterKey = useCallback((cursorPos: number): void => {
     suppressInlineBlurCommit()
@@ -4754,6 +4864,298 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return true
   }, [currentText, onChange, pushUndo])
 
+  const handleWrapperContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const host = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-line-index]')
+    const lineRaw = host?.dataset.lineIndex
+    const lineIndex = lineRaw == null ? NaN : Number.parseInt(lineRaw, 10)
+    if (Number.isFinite(lineIndex) && lineIndex >= 0) {
+      if (!selectedLines.has(lineIndex)) {
+        setSelectedLines(new Set([lineIndex]))
+      }
+      dragAnchor.current = lineIndex
+      lastFocusedLine.current = lineIndex
+    }
+    focusWrapper()
+    const menuScale = Math.max(eycScale, 0.01)
+    setEditorContextMenu({
+      // 编辑器根节点使用 zoom 缩放；菜单坐标需做反向缩放补偿，保证贴合鼠标点。
+      x: Math.round(e.clientX / menuScale),
+      y: Math.round(e.clientY / menuScale),
+      lineIndex: Number.isFinite(lineIndex) && lineIndex >= 0 ? lineIndex : null,
+    })
+  }, [eycScale, focusWrapper, selectedLines])
+
+  const copySelectionToClipboard = useCallback((): boolean => {
+    if (selectedLines.size > 0) {
+      void navigator.clipboard.writeText(getSelectedSourceText())
+      return true
+    }
+    const selectedText = getMouseRangeSelectedSourceText()
+    if (!selectedText) return false
+    void navigator.clipboard.writeText(selectedText)
+    return true
+  }, [getMouseRangeSelectedSourceText, getSelectedSourceText, selectedLines])
+
+  const resolveContextLineIndex = useCallback((): number => {
+    if (editorContextMenu?.lineIndex !== null && editorContextMenu?.lineIndex !== undefined) {
+      return editorContextMenu.lineIndex
+    }
+    if (selectedLines.size > 0) {
+      return Math.min(...selectedLines)
+    }
+    return Math.max(lastFocusedLine.current, 0)
+  }, [editorContextMenu?.lineIndex, selectedLines])
+
+  const applyLineCommentState = useCallback((mode: 'block' | 'unblock') => {
+    const ls = prevRef.current.split('\n')
+    const targetLines = selectedLines.size > 0
+      ? [...selectedLines].sort((a, b) => a - b)
+      : [resolveContextLineIndex()]
+
+    let changed = false
+    for (const idx of targetLines) {
+      if (idx < 0 || idx >= ls.length) continue
+      const line = ls[idx] || ''
+      const indent = line.match(/^\s*/)?.[0] || ''
+      const body = line.slice(indent.length)
+
+      if (mode === 'block') {
+        if (!body || body.startsWith("'")) continue
+        ls[idx] = `${indent}' ${body}`
+        changed = true
+        continue
+      }
+
+      if (body.startsWith("' ")) {
+        ls[idx] = indent + body.slice(2)
+        changed = true
+      } else if (body.startsWith("'")) {
+        ls[idx] = indent + body.slice(1)
+        changed = true
+      }
+    }
+
+    if (!changed) {
+      setEditorContextMenu(null)
+      return
+    }
+    const nextText = ls.join('\n')
+    pushUndo(prevRef.current)
+    setCurrentText(nextText)
+    prevRef.current = nextText
+    onChange(nextText)
+    setEditorContextMenu(null)
+  }, [onChange, pushUndo, resolveContextLineIndex, selectedLines])
+
+  const pasteFromClipboardAtContext = useCallback(() => {
+    if (shouldUseNativeInputPaste(editCellRef.current)) return
+    void navigator.clipboard.readText().then(clipText => {
+      if (!clipText) return
+      const latestText = prevRef.current
+      const cursorLine = editCellRef.current?.lineIndex
+        ?? editorContextMenu?.lineIndex
+        ?? lastFocusedLine.current
+      const pasteResult = buildMultiLinePasteResult({
+        currentText: latestText,
+        clipText,
+        cursorLine,
+        sanitizePastedText: sanitizePastedTextForCurrent,
+        extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
+        extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+      })
+      if (!pasteResult) return
+      if (pasteResult.routedDeclarations.length > 0) {
+        onRouteDeclarationPaste?.(pasteResult.routedDeclarations)
+      }
+      pushUndo(latestText)
+      const nt = pasteResult.nextText
+      setCurrentText(nt)
+      prevRef.current = nt
+      onChange(nt)
+      const newSel = new Set<number>()
+      for (let i = 0; i < pasteResult.pastedLineCount; i++) newSel.add(pasteResult.insertAt + i)
+      setSelectedLines(newSel)
+      lastFocusedLine.current = pasteResult.insertAt + pasteResult.pastedLineCount - 1
+    })
+  }, [editorContextMenu?.lineIndex, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted, onChange, onRouteDeclarationPaste, pushUndo, sanitizePastedTextForCurrent, shouldUseNativeInputPaste])
+
+  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
+    if (action === 'newSubprogram') {
+      setEditorContextMenu(null)
+      ref && typeof ref !== 'function' && ref.current?.insertSubroutine?.()
+      return
+    }
+    if (action === 'undo') {
+      if (undoStack.current.length > 0) {
+        const prev = undoStack.current.pop()!
+        redoStack.current.push(prevRef.current)
+        setCurrentText(prev)
+        prevRef.current = prev
+        onChange(prev)
+      }
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'redo') {
+      if (redoStack.current.length > 0) {
+        const next = redoStack.current.pop()!
+        undoStack.current.push(prevRef.current)
+        setCurrentText(next)
+        prevRef.current = next
+        onChange(next)
+      }
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'copy') {
+      copySelectionToClipboard()
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'cut') {
+      if (selectedLines.size > 0) {
+        void navigator.clipboard.writeText(getSelectedSourceText())
+        deleteLineSelection(selectedLines)
+      }
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'paste') {
+      pasteFromClipboardAtContext()
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'delete') {
+      if (selectedLines.size > 0) {
+        deleteLineSelection(selectedLines)
+      } else {
+        const line = resolveContextLineIndex()
+        deleteLineSelection(new Set([line]))
+      }
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'insertLine') {
+      const line = resolveContextLineIndex()
+      const latestLines = prevRef.current.split('\n')
+      const insertAt = Math.min(Math.max(line + 1, 0), latestLines.length)
+      latestLines.splice(insertAt, 0, '')
+      const nextText = latestLines.join('\n')
+      pushUndo(prevRef.current)
+      setCurrentText(nextText)
+      prevRef.current = nextText
+      onChange(nextText)
+      lastFocusedLine.current = insertAt
+      setEditorContextMenu(null)
+      window.setTimeout(() => startEditLine(insertAt, undefined, undefined, undefined, true), 0)
+      return
+    }
+    if (action === 'compileLine') {
+      // 触发与快捷键一致的按键事件；如上层已绑定 Shift+Enter，将自动复用。
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }))
+      window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', shiftKey: true, bubbles: true }))
+      setEditorContextMenu(null)
+      return
+    }
+    if (action === 'block') {
+      applyLineCommentState('block')
+      return
+    }
+    if (action === 'unblock') {
+      applyLineCommentState('unblock')
+      return
+    }
+    const ls = prevRef.current.split('\n')
+    const all = new Set<number>()
+    for (let i = 0; i < ls.length; i++) all.add(i)
+    setSelectedLines(all)
+    dragAnchor.current = 0
+    setEditorContextMenu(null)
+  }, [applyLineCommentState, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine])
+
+  const canUndoContextAction = undoStack.current.length > 0
+  const canRedoContextAction = redoStack.current.length > 0
+  const hasLineSelection = selectedLines.size > 0
+  const hasCopySelection = hasLineSelection || (getMouseRangeSelectedSourceText() || '').length > 0
+  const canCutContextAction = hasLineSelection
+
+  useEffect(() => {
+    if (!editorContextMenu) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.isComposing) return
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      const key = (event.key || '').toLowerCase()
+      if (key === 'n') {
+        event.preventDefault()
+        applyEditorContextAction('newSubprogram')
+        return
+      }
+      if (key === 'u') {
+        if (!canUndoContextAction) return
+        event.preventDefault()
+        applyEditorContextAction('undo')
+        return
+      }
+      if (key === 'y') {
+        if (!canRedoContextAction) return
+        event.preventDefault()
+        applyEditorContextAction('redo')
+        return
+      }
+      if (key === 'c') {
+        if (!hasCopySelection) return
+        event.preventDefault()
+        applyEditorContextAction('copy')
+        return
+      }
+      if (key === 't') {
+        if (!canCutContextAction) return
+        event.preventDefault()
+        applyEditorContextAction('cut')
+        return
+      }
+      if (key === 'p') {
+        if (!contextMenuCanPaste) return
+        event.preventDefault()
+        applyEditorContextAction('paste')
+        return
+      }
+      if (key === 'f') {
+        event.preventDefault()
+        applyEditorContextAction('selectAll')
+        return
+      }
+      if (key === 'e') {
+        event.preventDefault()
+        applyEditorContextAction('delete')
+        return
+      }
+      if (key === 'i') {
+        event.preventDefault()
+        applyEditorContextAction('insertLine')
+        return
+      }
+      if (key === 'k') {
+        event.preventDefault()
+        applyEditorContextAction('compileLine')
+        return
+      }
+      if (key === 'g') {
+        event.preventDefault()
+        applyEditorContextAction('block')
+        return
+      }
+      if (key === 'b') {
+        event.preventDefault()
+        applyEditorContextAction('unblock')
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [applyEditorContextAction, canCutContextAction, canRedoContextAction, canUndoContextAction, contextMenuCanPaste, editorContextMenu, hasCopySelection])
+
   const navigateToSubprogramInternal = useCallback((subName: string, fallbackLine?: number, preferredHeaderIndex?: number) => {
     const navSeq = ++subNavSeqRef.current
     const normalizedName = (subName || '').trim()
@@ -4827,19 +5229,42 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (cursorLineIndex < 0 && flashLineIndex >= 0) cursorLineIndex = flashLineIndex
     if (flashLineIndex < 0 || cursorLineIndex < 0) return
 
+    const shouldFlashOnSubTable = subHeaderLineIndex >= 0
     lastFocusedLine.current = flashLineIndex
     scrollToLineIndex(flashLineIndex, 'auto')
 
-    const flashAfterScrollSettled = (): void => {
+    const flashAfterScrollSettled = (attempt = 0): void => {
       if (navSeq !== subNavSeqRef.current) return
+      const wrapper = wrapperRef.current
+      if (!wrapper) return
+
+      // 子程序跳转仅允许闪烁在表格数据行；在“文本裁切过渡帧”中未就绪时短暂重试。
+      const tableFlashEl = wrapper.querySelector<HTMLElement>(`tr.eyc-data-row[data-line-index="${flashLineIndex}"]`)
+      const flashEl = shouldFlashOnSubTable
+        ? tableFlashEl
+        : (tableFlashEl ?? wrapper.querySelector<HTMLElement>(`[data-line-index="${flashLineIndex}"]`))
+
+      if (!flashEl) {
+        if (shouldFlashOnSubTable && attempt < 24) {
+          window.setTimeout(() => flashAfterScrollSettled(attempt + 1), 34)
+          return
+        }
+        // 目标行未稳定出现时宁可不闪，也不命中过渡态错误节点。
+        window.setTimeout(() => focusCursorAtLineStart(), 90)
+        return
+      }
+
       // 清理上一跳残留闪烁，避免视觉上出现“闪错行”。
-      wrapperRef.current?.querySelectorAll('.highlight-flash').forEach((node) => {
+      wrapper.querySelectorAll('.highlight-flash').forEach((node) => {
         node.classList.remove('highlight-flash')
       })
-      const flashEl = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${flashLineIndex}"]`)
-      if (!flashEl) return
       flashEl.classList.add('highlight-flash')
-      setTimeout(() => flashEl.classList.remove('highlight-flash'), 1500)
+      setTimeout(() => {
+        if (navSeq !== subNavSeqRef.current) return
+        flashEl.classList.remove('highlight-flash')
+      }, 1500)
+      // 先建立视觉定位，再进入输入编辑态，避免渲染重排把闪烁误投到光标行。
+      window.setTimeout(() => focusCursorAtLineStart(), 90)
     }
 
     // 等待滚动与布局收敛后再闪烁，避免“先在下方后瞬间居中”时闪烁错位。
@@ -4855,15 +5280,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       window.setTimeout(() => {
         if (navSeq !== subNavSeqRef.current) return
         if (!inputRef.current) startEditLine(cursorLineIndex, undefined, undefined, undefined, true)
-        if (!inputRef.current) return
-        inputRef.current.focus()
-        inputRef.current.selectionStart = 0
-        inputRef.current.selectionEnd = 0
+        focusCodeInputAt(0)
       }, 0)
     }
 
-    window.setTimeout(() => focusCursorAtLineStart(), 40)
-  }, [applyTextChange, currentText, pushUndo, scrollToLineIndex, startEditLine])
+    // 聚焦编辑动作由 flashAfterScrollSettled 触发，确保闪烁先落在目标表格行。
+  }, [applyTextChange, currentText, focusCodeInputAt, pushUndo, scrollToLineIndex, startEditLine])
 
   useImperativeHandle(ref, () => ({
     insertSubroutine: () => {
@@ -4883,6 +5305,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       let num = 1
       while (existingNames.has('子程序' + num)) num++
       const newName = '子程序' + num
+
+      // 收集已有局部变量名，生成不重复的默认名称：局_变量N
+      const existingLocalVarNames = new Set<string>()
+      for (const ln of curLines) {
+        const t = ln.replace(/[\r\t]/g, '').trim()
+        if (!t.startsWith('.局部变量 ')) continue
+        const localName = (splitCSV(t.slice('.局部变量 '.length))[0] || '').trim()
+        if (localName) existingLocalVarNames.add(localName)
+      }
+      let localNum = 1
+      while (existingLocalVarNames.has('局_变量' + localNum)) localNum++
+      const newLocalVarName = '局_变量' + localNum
 
       let insertAt: number
 
@@ -4912,30 +5346,49 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
 
       const nl = [...curLines]
-      // 统一为“真实空行 + 子程序声明 + 真实空普通行”，避免出现无行号虚拟占位行。
-      nl.splice(insertAt, 0, '', '.子程序 ' + newName + ', , , ', '')
+      // 统一为“真实空行 + 子程序声明 + 默认局部变量 + 真实空普通行”。
+      nl.splice(insertAt, 0, '', '.子程序 ' + newName + ', , , ', '.局部变量 ' + newLocalVarName + ', 整数型', '')
       const nt = nl.join('\n')
       applyTextChange(nt)
 
       const newSubLineIndex = insertAt + 1
-      const firstCodeLineIndex = insertAt + 2
+      const firstCodeLineIndex = insertAt + 3
       lastFocusedLine.current = newSubLineIndex
-      window.setTimeout(() => {
-        scrollToLineIndex(newSubLineIndex, 'auto')
-        const el = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${newSubLineIndex}"]`)
-        if (el) {
-          el.classList.add('highlight-flash')
-          window.setTimeout(() => el.classList.remove('highlight-flash'), 1200)
+      const focusFirstCodeLine = (): void => {
+        startEditLine(firstCodeLineIndex, undefined, undefined, undefined, true)
+        focusCodeInputAt(0)
+      }
+
+      const flashNewSubAfterTableReady = (attempt = 0): void => {
+        const wrapper = wrapperRef.current
+        if (!wrapper) return
+        // 仅允许闪烁在表格数据行，避免文本过渡态节点误命中。
+        const tableFlashEl = wrapper.querySelector<HTMLElement>(`tr.eyc-data-row[data-line-index="${newSubLineIndex}"]`)
+        if (!tableFlashEl) {
+          if (attempt < 24) {
+            window.setTimeout(() => flashNewSubAfterTableReady(attempt + 1), 34)
+            return
+          }
+          window.setTimeout(() => focusFirstCodeLine(), 90)
+          return
         }
 
-        startEditLine(firstCodeLineIndex, undefined, undefined, undefined, true)
+        wrapper.querySelectorAll('.highlight-flash').forEach((node) => {
+          node.classList.remove('highlight-flash')
+        })
+        tableFlashEl.classList.add('highlight-flash')
         window.setTimeout(() => {
-          if (!inputRef.current) return
-          inputRef.current.focus()
-          inputRef.current.selectionStart = 0
-          inputRef.current.selectionEnd = 0
-        }, 0)
-      }, 40)
+          tableFlashEl.classList.remove('highlight-flash')
+        }, 1200)
+        window.setTimeout(() => focusFirstCodeLine(), 90)
+      }
+
+      scrollToLineIndex(newSubLineIndex, 'auto')
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          window.setTimeout(() => flashNewSubAfterTableReady(), 30)
+        })
+      })
     },
 
     insertLocalVariable: () => {
@@ -5080,12 +5533,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const el = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${newSubLineIndex}"]`)
         el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
         startEditLine(firstCodeLineIndex, undefined, undefined, undefined, true)
-        setTimeout(() => {
-          if (!inputRef.current) return
-          inputRef.current.focus()
-          inputRef.current.selectionStart = 0
-          inputRef.current.selectionEnd = 0
-        }, 0)
+        focusCodeInputAt(0)
       }, 150)
     },
     navigateToLine: (line: number) => {
@@ -5136,7 +5584,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         return
       }
     },
-  }), [applyTextChange, currentText, pushUndo, selectedLines, getSelectedSourceText, getMouseRangeSelectedSourceText, isResourceTableDoc, shouldUseNativeInputPaste, lineNumMaps, startEditLine, navigateToSubprogramInternal])
+  }), [applyTextChange, currentText, focusCodeInputAt, pushUndo, selectedLines, getSelectedSourceText, getMouseRangeSelectedSourceText, isResourceTableDoc, shouldUseNativeInputPaste, lineNumMaps, startEditLine, navigateToSubprogramInternal])
 
   // 查找代码行中第一个有参数的有效命令
   const findCmdWithParams = useCallback((codeLine: string): CompletionItem | null => {
@@ -5150,6 +5598,134 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     return null
   }, [validCommandNames])
+
+  const findCommandCallWithParams = useCallback((expr: string): { cmd: CompletionItem; args: string[] } | null => {
+    const normalized = (expr || '').trim()
+    if (!normalized) return null
+    const head = /^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.。．]*)\s*[(（]/.exec(normalized)
+    if (!head) return null
+    const cmdName = (head[1] || '').trim()
+    if (!cmdName) return null
+    const cmd = allCommandsRef.current.find(c => c.name === cmdName) || dllCompletionItemsRef.current.find(c => c.name === cmdName)
+    if (!cmd || cmd.params.length === 0) return null
+    const args = parseCallArgs(normalized)
+    return { cmd, args }
+  }, [])
+
+  const findTopLevelAdditiveParts = useCallback((expr: string): { left: string; right: string } | null => {
+    const normalized = (expr || '').trim()
+    if (!normalized) return null
+    let depth = 0
+    let inStr = false
+    let strEnd = ''
+    for (let i = normalized.length - 1; i >= 0; i--) {
+      const ch = normalized[i]
+      if (inStr) {
+        if (ch === strEnd) inStr = false
+        continue
+      }
+      if (ch === '"' || ch === '\u201d') {
+        inStr = true
+        strEnd = ch === '\u201d' ? '\u201c' : '"'
+        continue
+      }
+      if (ch === ')' || ch === '）') { depth++; continue }
+      if (ch === '(' || ch === '（') { depth--; continue }
+      if (depth !== 0) continue
+      if (ch !== '+' && ch !== '＋') continue
+
+      let j = i - 1
+      while (j >= 0 && /\s/.test(normalized[j])) j--
+      const prev = j >= 0 ? normalized[j] : ''
+      if (!prev || /[+\-*/%(<>=!&|,，]/.test(prev)) continue
+
+      const left = normalized.slice(0, i).trim()
+      const right = normalized.slice(i + 1).trim()
+      if (!left || !right) continue
+      return { left, right }
+    }
+    return null
+  }, [])
+
+  const buildExprExpandItems = useCallback((expr: string, depth = 0): ExprExpandItem[] => {
+    if (depth > 6) return []
+    const normalized = (expr || '').trim()
+    if (!normalized) return []
+
+    const additive = findTopLevelAdditiveParts(normalized)
+    if (additive) {
+      const leftChildren = buildExprExpandItems(additive.left, depth + 1)
+      const rightChildren = buildExprExpandItems(additive.right, depth + 1)
+      return [
+        {
+          name: '被加数或文本或字节集',
+          value: additive.left,
+          children: leftChildren.length > 0 ? leftChildren : undefined,
+        },
+        {
+          name: '加数或文本或字节集',
+          value: additive.right,
+          children: rightChildren.length > 0 ? rightChildren : undefined,
+        },
+      ]
+    }
+
+    const call = findCommandCallWithParams(normalized)
+    if (!call) return []
+    return call.cmd.params.map((p, pi) => {
+      const argVal = call.args[pi] !== undefined ? call.args[pi] : ''
+      const childItems = buildExprExpandItems(argVal, depth + 1)
+      return {
+        name: p.name,
+        value: argVal,
+        commandName: call.cmd.name,
+        commandParamIndex: pi,
+        children: childItems.length > 0 ? childItems : undefined,
+      }
+    })
+  }, [findCommandCallWithParams, findTopLevelAdditiveParts])
+
+  const renderExprExpandItems = useCallback((items: ExprExpandItem[], lineIndex: number, depth = 0, keyPrefix = 'root', baseFlowDepth = 0): React.ReactNode => {
+    if (!items || items.length === 0) return null
+    const depthClass = `eyc-param-expand-secondary-depth-${Math.min(Math.max(depth, 0), 6)}`
+    const levelColors = resolveFlowLineColors(flowLineModeConfig, Math.max(0, baseFlowDepth + depth + 1))
+    return (
+      <div
+        className={`eyc-param-expand-secondary ${depthClass}`}
+        ref={(element) => setCssVars(element, {
+          '--flow-inner-link-color': levelColors.innerLink,
+          '--flow-arrow-color': levelColors.arrow,
+        })}
+      >
+        <span className="eyc-param-expand-arrow eyc-param-expand-arrow-secondary" />
+        {items.map((item, idx) => {
+          const itemKey = `${keyPrefix}-${depth}-${idx}`
+          const clickable = !!item.commandName
+          const hasChildren = !!(item.children && item.children.length > 0)
+          return (
+            <Fragment key={itemKey}>
+              <div
+                className={`eyc-param-expand-row eyc-param-expand-row-secondary${clickable ? ' eyc-param-expand-row-clickable' : ''}${hasChildren ? ' eyc-param-expand-row-parent' : ''}`}
+                onClick={clickable ? (e) => {
+                  e.stopPropagation()
+                  const ownerAssembly = findOwnerAssemblyName(lineIndex)
+                  const cmdName = item.commandName || ''
+                  const hintName = userSubNamesRef.current.has(cmdName) ? `__SUB__:${cmdName}:${ownerAssembly}` : cmdName
+                  onCommandClick?.(hintName, item.commandParamIndex)
+                } : undefined}
+              >
+                <span className="eyc-param-expand-mark">※</span>
+                <span className="eyc-param-expand-name">{item.name}</span>
+                <span className="eyc-param-expand-colon">：</span>
+                <span className={`eyc-param-expand-val${isQuotedTextLiteral(item.value) ? ' eTxtcolor' : ''}`}>{item.value || '\u00A0'}</span>
+              </div>
+              {item.children && renderExprExpandItems(item.children, lineIndex, depth + 1, itemKey, baseFlowDepth)}
+            </Fragment>
+          )
+        })}
+      </div>
+    )
+  }, [findOwnerAssemblyName, flowLineModeConfig, onCommandClick])
 
   // 查找代码行中第一个命令名（不要求有参数）
   const findFirstCommandName = useCallback((codeLine: string): string | null => {
@@ -5400,6 +5976,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         className="eyc-table-wrapper"
         ref={wrapperRef}
         onMouseDown={handleWrapperMouseDown}
+        onContextMenu={handleWrapperContextMenu}
         onCopy={handleWrapperCopy}
         onPaste={handleWrapperPaste}
         tabIndex={0}
@@ -5679,6 +6256,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           const sourceLine = blk.isVirtual ? 0 : (blk.lineIndex + 1)
           const hasBreakpoint = sourceLine > 0 && breakpointLineSet.has(sourceLine)
           const isDebugLine = !!debugSourceLine && sourceLine === debugSourceLine
+          const isDiagnosticErrorLine = lineMarkerTypeMap.get(blk.lineIndex) === 'error'
           return (
             <Fragment key={bi}>
             <div
@@ -5702,7 +6280,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 </div>
               </div>
               <div
-                className={`eyc-code-line${editCell && editCell.lineIndex === blk.lineIndex && editCell.isVirtual === blk.isVirtual && editCell.paramIdx === undefined ? ' eyc-code-line-editing' : ''}`}
+                className={`eyc-code-line${isDiagnosticErrorLine ? ' eyc-code-line-error' : ''}${editCell && editCell.lineIndex === blk.lineIndex && editCell.isVirtual === blk.isVirtual && editCell.paramIdx === undefined ? ' eyc-code-line-editing' : ''}`}
                 onClick={(e) => handleCodeLineClick(e, {
                   lineIndex: blk.lineIndex,
                   codeLineRaw,
@@ -5733,7 +6311,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                         pendingInputDragRef.current = { lineIndex: blk.lineIndex, x: e.clientX, y: e.clientY, allowRowDrag: true }
                       }}
                       onChange={e => {
-                        const v = e.target.value
+                        const v = normalizeCodeLineInput(e.target.value)
                         // 命令行括号保护已移除：允许自由编辑命令名与括号外内容
                         setEditVal(v)
                         scheduleLiveUpdate(v)
@@ -5819,9 +6397,22 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                       className="eyc-param-expand-arrow"
                       ref={(element) => setCssVars(element, { '--eyc-param-expand-arrow-left': arrowLeftStyle })}
                     />
-                    <div className="eyc-param-expand-inner">
+                    <div
+                      className="eyc-param-expand-inner"
+                      ref={(element) => {
+                        const baseFlowDepth = Math.max(0, Math.floor(leadingSpaces / 4))
+                        const levelColors = resolveFlowLineColors(flowLineModeConfig, baseFlowDepth)
+                        setCssVars(element, {
+                          '--flow-inner-link-color': levelColors.innerLink,
+                          '--flow-arrow-color': levelColors.arrow,
+                        })
+                      }}
+                    >
                       {lineCmd.params.map((p, pi) => {
                         const isEditingParam = editCell && editCell.lineIndex === blk.lineIndex && editCell.paramIdx === pi
+                        const argVal = argVals[pi] !== undefined ? argVals[pi] : ''
+                        const nestedItems = buildExprExpandItems(argVal)
+                        const hasNestedExpand = !isEditingParam && nestedItems.length > 0
                         const startParamEdit = (e: React.MouseEvent) => {
                           e.stopPropagation()
                           // 点击参数行时提示该参数的信息
@@ -5837,32 +6428,35 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           setTimeout(() => paramInputRef.current?.focus(), 0)
                         }
                         return (
-                          <div key={pi} className={`eyc-param-expand-row${isEditingParam ? '' : ' eyc-param-expand-row-clickable'}`} onClick={isEditingParam ? undefined : startParamEdit}>
-                            <span className="eyc-param-expand-mark">※</span>
-                            <span className="eyc-param-expand-name">{p.name}</span>
-                            <span className="eyc-param-expand-colon">：</span>
-                            {isEditingParam ? (
-                              <input
-                                ref={paramInputRef}
-                                className="eyc-param-val-input"
-                                aria-label={`编辑参数 ${p.name}`}
-                                value={editVal}
-                                onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
-                                onBlur={() => {
-                                  if (shouldSuppressBlurCommit()) return
-                                  commit()
-                                }}
-                                onKeyDown={e => {
-                                  if (handleParamInputCtrlKey(e)) return
-                                  if (e.key === 'Enter') { e.preventDefault(); commit() }
-                                  else if (e.key === 'Escape') setEditCell(null)
-                                }}
-                                spellCheck={false}
-                              />
-                            ) : (
-                              <span className="eyc-param-expand-val">{argVals[pi] !== undefined ? argVals[pi] : '\u00A0'}</span>
-                            )}
-                          </div>
+                          <Fragment key={pi}>
+                            <div className={`eyc-param-expand-row${isEditingParam ? '' : ' eyc-param-expand-row-clickable'}${hasNestedExpand ? ' eyc-param-expand-row-parent' : ''}`} onClick={isEditingParam ? undefined : startParamEdit}>
+                              <span className="eyc-param-expand-mark">※</span>
+                              <span className="eyc-param-expand-name">{p.name}</span>
+                              <span className="eyc-param-expand-colon">：</span>
+                              {isEditingParam ? (
+                                <input
+                                  ref={paramInputRef}
+                                  className="eyc-param-val-input"
+                                  aria-label={`编辑参数 ${p.name}`}
+                                  value={editVal}
+                                  onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
+                                  onBlur={() => {
+                                    if (shouldSuppressBlurCommit()) return
+                                    commit()
+                                  }}
+                                  onKeyDown={e => {
+                                    if (handleParamInputCtrlKey(e)) return
+                                    if (e.key === 'Enter') { e.preventDefault(); commit() }
+                                    else if (e.key === 'Escape') setEditCell(null)
+                                  }}
+                                  spellCheck={false}
+                                />
+                              ) : (
+                                <span className={`eyc-param-expand-val${isQuotedTextLiteral(argVal) ? ' eTxtcolor' : ''}`}>{argVal || '\u00A0'}</span>
+                              )}
+                            </div>
+                            {hasNestedExpand && renderExprExpandItems(nestedItems, blk.lineIndex, 0, `line-${blk.lineIndex}-p-${pi}`, Math.max(0, Math.floor(leadingSpaces / 4)))}
+                          </Fragment>
                         )
                       })}
                     </div>
@@ -6180,6 +6774,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                   s += p.type
                   if (p.isArray) s += '数组'
                   s += ' ' + p.name
+                  if (p.repeatable) s += '...'
                   if (p.optional) s += '］'
                   return s
                 }).join('，')
@@ -6205,7 +6800,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                     {ci.params.map((p, pi) => (
                       <div key={pi} className="eyc-ac-detail-param">
                         <span className="eyc-ac-detail-param-head">
-                          参数&lt;{pi + 1}&gt;的名称为"{p.name}"，类型为"{p.type}{p.isArray ? '(数组)' : ''}{p.isVariable ? '(参考)' : ''}"{p.optional ? '，可以被省略' : ''}。
+                          参数&lt;{pi + 1}&gt;的名称为"{p.name}"，类型为"{p.type}{p.isArray ? '(数组)' : ''}{p.isVariable ? '(参考)' : ''}"{p.optional ? '，可以被省略' : ''}{p.repeatable ? '，可重复追加' : ''}。
                         </span>
                         {p.description && <span className="eyc-ac-detail-param-desc">{p.description}</span>}
                       </div>
@@ -6215,6 +6810,70 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               </div>
             )
           })()}
+        </div>
+      )}
+      {editorContextMenu && (
+        <div
+          className="eyc-editor-context-menu"
+          ref={(element) => setCssVars(element, {
+            '--eyc-context-menu-left': `${editorContextMenu.x}px`,
+            '--eyc-context-menu-top': `${editorContextMenu.y}px`,
+          })}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newSubprogram')}>
+            <span className="eyc-editor-context-menu-item-label">N.新子程序</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
+          </button>
+          <div className="eyc-editor-context-menu-sep" />
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('undo')} disabled={!canUndoContextAction}>
+            <span className="eyc-editor-context-menu-item-label">U.撤销</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+Z</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('redo')} disabled={!canRedoContextAction}>
+            <span className="eyc-editor-context-menu-item-label">Y.重做</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+Y</span>
+          </button>
+          <div className="eyc-editor-context-menu-sep" />
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('copy')} disabled={!hasCopySelection}>
+            <span className="eyc-editor-context-menu-item-label">C.复制</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+C</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('cut')} disabled={!canCutContextAction}>
+            <span className="eyc-editor-context-menu-item-label">T.剪切</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+X</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('paste')} disabled={!contextMenuCanPaste}>
+            <span className="eyc-editor-context-menu-item-label">P.粘贴</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+V</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('selectAll')}>
+            <span className="eyc-editor-context-menu-item-label">F.全选</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+A</span>
+          </button>
+          <div className="eyc-editor-context-menu-sep" />
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('delete')}>
+            <span className="eyc-editor-context-menu-item-label">E.删除行</span>
+            <span className="eyc-editor-context-menu-item-shortcut">F10</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('insertLine')}>
+            <span className="eyc-editor-context-menu-item-label">I.插入新行</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ins</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('compileLine')}>
+            <span className="eyc-editor-context-menu-item-label">K.编译当前行</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Shift+Enter</span>
+          </button>
+          <div className="eyc-editor-context-menu-sep" />
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('block')}>
+            <span className="eyc-editor-context-menu-item-label">G.屏蔽</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+K</span>
+          </button>
+          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('unblock')}>
+            <span className="eyc-editor-context-menu-item-label">B.解除屏蔽</span>
+            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+M</span>
+          </button>
         </div>
       )}
       {debugHover && (

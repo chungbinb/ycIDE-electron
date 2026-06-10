@@ -8,6 +8,7 @@ export interface CompletionParam {
   type: string
   description: string
   optional: boolean
+  repeatable?: boolean
   isVariable: boolean
   isArray: boolean
 }
@@ -49,6 +50,7 @@ export const BUILTIN_TYPE_ITEMS: Array<{ name: string; englishName: string; desc
   { name: '长整数型', englishName: 'int64', description: '可容纳 -9,223,372,036,854,775,808 到 9,223,372,036,854,775,807 之间的数值，尺寸为 8 个字节。' + NUMERIC_TYPE_COMMON_NOTE },
   { name: '小数型', englishName: 'float', description: '可容纳 3.4E +/- 38（7位小数）之间的数值，尺寸为 4 个字节。' + NUMERIC_TYPE_COMMON_NOTE },
   { name: '双精度小数型', englishName: 'double', description: '可容纳 1.7E +/- 308（15位小数）之间的数值，尺寸为 8 个字节。' + NUMERIC_TYPE_COMMON_NOTE },
+  { name: '大整数型', englishName: 'bigint', description: '任意精度整数。用于超出“长整数型”范围的整型计算。' },
   { name: '逻辑型', englishName: 'bool', description: '值只可能为“真”或“假”，尺寸为 2 个字节。“真”和“假”为系统预定义常量，其对应的英文常量名称为“true”和“false”。' },
   { name: '日期时间型', englishName: 'datetime', description: '用作记录日期及时间，尺寸为 8 个字节。' },
   { name: '文本型', englishName: 'text', description: '用作记录一段文本，文本由以字节 0 结束的一系列字符组成。' },

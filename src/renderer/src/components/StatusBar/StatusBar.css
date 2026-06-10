@@ -40,3 +40,57 @@ button.statusbar-item:focus-visible {
 .statusbar-error {
   color: var(--error);
 }
+
+.statusbar-mode {
+  color: var(--text-muted);
+}
+
+.statusbar-encoding {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.statusbar-encoding-button {
+  min-width: 78px;
+  justify-content: center;
+}
+
+.statusbar-encoding-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--spacing-xs));
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--spacing-xs);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  z-index: 30;
+}
+
+.statusbar-encoding-option {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  cursor: pointer;
+}
+
+.statusbar-encoding-option:hover {
+  background: var(--statusbar-item-hover);
+}
+
+.statusbar-encoding-option:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: -1px;
+}
+
+.statusbar-encoding-option.is-active {
+  color: var(--accent);
+}

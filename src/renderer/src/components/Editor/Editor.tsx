@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo, useImperativeHandle,
 import MonacoEditor, { OnMount, OnChange, type Monaco } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import EycTableEditor, { type EycTableEditorHandle, type FileProblem } from './EycTableEditor'
+import { useEditorDiagnosticsProblems } from './editorDiagnostics'
 import VisualDesigner, { type DesignForm, type DesignControl, type SelectionTarget, type LibWindowUnit, type LibUnitEvent, type AlignAction } from './VisualDesigner'
 import { eycToInternalFormat, eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
 import { parseLines } from './eycBlocks'
@@ -258,6 +259,7 @@ export interface DiffLineInfo {
 
 export interface EditorHandle {
   save: () => void
+  saveAs: () => void
   saveAll: () => void
   saveProject: (projectDir: string) => void
   closeActiveTab: () => void
@@ -314,12 +316,18 @@ function stripFileExtension(fileName: string): string {
   return name.slice(0, idx)
 }
 
+function getFileNameFromPath(filePath: string): string {
+  return filePath.split(/[\\/]/).pop() || filePath
+}
+
 function resolveEycTabLabel(filePath: string, content: string): string {
   const assembly = extractAssemblyLabel(content)
   if (assembly) return assembly
   const fileName = filePath.split(/[\\/]/).pop() || filePath
   return stripFileExtension(fileName)
 }
+
+const MONACO_DIAGNOSTICS_OWNER = 'ycide-eyc-diagnostics'
 
 interface ProjectDllParam {
   name: string
@@ -348,6 +356,9 @@ const ROUTED_DECL_DEFAULTS: Record<RoutedDeclLanguage, { label: string; language
 
 type TabBarPosition = 'top' | 'bottom'
 type EycEditorMode = 'table' | 'text'
+type PendingSubNavigation =
+  | { kind: 'create-or-open'; subName: string; params: Array<{ name: string; dataType: string; isByRef: boolean }> }
+  | { kind: 'navigate'; subName: string; fallbackLine?: number }
 const EDITOR_TAB_BAR_POS_KEY = 'ycide.editor.tabbar.position'
 
 function isEycSourceLanguage(language?: string): boolean {
@@ -392,7 +403,7 @@ class EycEditorErrorBoundary extends Component<EycEditorErrorBoundaryProps, EycE
   }
 }
 
-const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }>; currentTheme?: string; themeTokenValues?: Record<string, string>; editorFontFamily?: string; editorFontSize?: number; editorLineHeight?: number; editorFreezeSubTableHeader?: boolean; editorShowMinimapPreview?: boolean }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [], currentTheme = '', themeTokenValues = {}, editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, editorFreezeSubTableHeader = false, editorShowMinimapPreview = true }, ref) {
+const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }>; currentTheme?: string; themeTokenValues?: Record<string, string>; editorFontFamily?: string; editorFontSize?: number; editorLineHeight?: number; editorFreezeSubTableHeader?: boolean; editorShowMinimapPreview?: boolean; targetPlatform?: string; readFileForExternalCheck?: (filePath: string) => Promise<string | null>; resolveFileEncoding?: (filePath: string) => string | undefined }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [], currentTheme = '', themeTokenValues = {}, editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, editorFreezeSubTableHeader = false, editorShowMinimapPreview = true, targetPlatform = 'windows', readFileForExternalCheck, resolveFileEncoding }, ref) {
   const [tabs, setTabs] = useState<EditorTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [tabBarPosition, setTabBarPosition] = useState<TabBarPosition>(() => {
@@ -426,7 +437,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const [eycDiffEditedLines, setEycDiffEditedLines] = useState<Set<number>>(new Set())
   const [eycDiffDeletedAfterLines, setEycDiffDeletedAfterLines] = useState<Set<number>>(new Set())
   const [windowUnits, setWindowUnits] = useState<LibWindowUnit[]>([])
-  const pendingNavigateRef = useRef<{ subName: string; params: Array<{ name: string; dataType: string; isByRef: boolean }> } | null>(null)
+  const pendingNavigateRef = useRef<PendingSubNavigation | null>(null)
   const tabsRef = useRef<EditorTab[]>([])
   const activeTabIdRef = useRef<string | null>(null)
   const monacoThemeId = currentTheme === '默认浅色' ? 'ycide-light' : 'ycide-dark'
@@ -457,9 +468,48 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     return getTabPersistContent(tab)
   }
 
+  const saveTabToDisk = useCallback(async (tab: EditorTab, filePathOverride?: string): Promise<void> => {
+    const targetFilePath = filePathOverride || tab.filePath
+    if (!targetFilePath) return
+    const content = getTabSaveContent(tab)
+    const encoding = resolveFileEncoding?.(targetFilePath)
+    await window.api?.file?.save(targetFilePath, content, encoding)
+  }, [resolveFileEncoding])
+
   const getTabSavedDiskContent = (tab: EditorTab): string => {
     if (isEycSourceLanguage(tab.language)) return eycToYiFormat(tab.savedValue)
     return tab.savedValue
+  }
+
+  const normalizeExternalDiskContentForCompare = (tab: EditorTab, diskContent: string): string => {
+    if (tab.language !== 'efw') return diskContent
+    try {
+      const data = JSON.parse(diskContent)
+      const formData: DesignForm = {
+        name: data.name || data.formName || getFileNameFromPath(tab.filePath || tab.label).replace(/\.efw$/i, ''),
+        title: data.title || '',
+        width: data.width || 592,
+        height: data.height || 384,
+        sourceFile: data.sourceFile,
+        properties: data.properties || undefined,
+        controls: (Array.isArray(data.controls) ? data.controls : []).map((c: any) => ({
+          id: c.id,
+          type: c.type,
+          name: c.name,
+          left: c.x ?? c.left ?? 0,
+          top: c.y ?? c.top ?? 0,
+          width: c.width ?? 100,
+          height: c.height ?? 30,
+          text: c.properties?.['标题'] ?? c.properties?.['内容'] ?? c.properties?.['文本'] ?? c.text ?? c.name ?? '',
+          visible: c.visible ?? true,
+          enabled: c.enabled ?? true,
+          properties: c.properties || {},
+        })),
+      }
+      return JSON.stringify(formData, null, 2)
+    } catch {
+      return diskContent
+    }
   }
 
   const syncSidebarByLanguage = useCallback((language?: string) => {
@@ -487,42 +537,85 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     activeTabIdRef.current = activeTabId
   }, [activeTabId])
 
+  const saveTabAs = useCallback(async (tabId: string): Promise<string | null> => {
+    const tab = tabsRef.current.find(t => t.id === tabId)
+    if (!tab) return null
+
+    const defaultFileName = tab.filePath ? getFileNameFromPath(tab.filePath) : tab.label
+    const savedPath = await window.api?.file?.saveDialog?.(defaultFileName)
+    if (!savedPath) return null
+
+    await saveTabToDisk(tab, savedPath)
+
+    const nextTabId = savedPath
+    setTabs(prev => {
+      const nextTabs = prev.map(t => {
+        if (t.id !== tabId) return t
+        const nextLabel = t.language === 'eyc'
+          ? resolveEycTabLabel(savedPath, t.value)
+          : getFileNameFromPath(savedPath)
+        const nextTab = {
+          ...t,
+          id: nextTabId,
+          filePath: savedPath,
+          label: nextLabel,
+        }
+        return { ...nextTab, savedValue: getTabPersistContent(nextTab) }
+      })
+      onOpenTabsChange?.(nextTabs)
+      return nextTabs
+    })
+    if (activeTabIdRef.current === tabId) {
+      setActiveTabId(nextTabId)
+    }
+
+    return nextTabId
+  }, [onOpenTabsChange, saveTabToDisk])
+
   // 保存当前文件
   const saveCurrentFile = useCallback(() => {
-    setTabs(prev => {
-      const tab = prev.find(t => t.id === activeTabId)
-      if (!tab || !tab.filePath) return prev
-      const content = getTabSaveContent(tab)
-      window.api?.file?.save(tab.filePath, content)
-      return prev.map(t => t.id === activeTabId ? { ...t, savedValue: getTabPersistContent(t) } : t)
-    })
-  }, [activeTabId])
+    void (async () => {
+      const currentId = activeTabIdRef.current
+      if (!currentId) return
+      const tab = tabsRef.current.find(t => t.id === currentId)
+      if (!tab) return
+      if (!tab.filePath) {
+        await saveTabAs(currentId)
+        return
+      }
+
+      await saveTabToDisk(tab)
+      setTabs(prev => {
+        const nextTabs = prev.map(t => t.id === currentId ? { ...t, savedValue: getTabPersistContent(t) } : t)
+        onOpenTabsChange?.(nextTabs)
+        return nextTabs
+      })
+    })()
+  }, [onOpenTabsChange, saveTabAs, saveTabToDisk])
 
   // 保存所有文件
   const saveAllFiles = useCallback(() => {
     setTabs(prev =>
       prev.map(t => {
         if (t.filePath && isTabModified(t)) {
-          const content = getTabSaveContent(t)
-          window.api?.file?.save(t.filePath, content)
+          void saveTabToDisk(t)
           return { ...t, savedValue: getTabPersistContent(t) }
         }
         return t
       })
     )
-  }, [])
+  }, [saveTabToDisk])
 
   const saveProjectFiles = useCallback((projectDir: string) => {
     if (!projectDir) return
     setTabs(prev =>
       prev.map(t => {
         if (!isFileInProjectDir(t.filePath, projectDir) || !isTabModified(t)) return t
-        const content = getTabSaveContent(t)
-        window.api?.file?.save(t.filePath!, content)
+        void saveTabToDisk(t)
         return { ...t, savedValue: getTabPersistContent(t) }
       })
     )
-  }, [])
+  }, [saveTabToDisk])
 
   const applyExternalFileContent = useCallback(() => {
     setTabs(prev => {
@@ -575,63 +668,69 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       setExternalChangePrompt(null)
       return
     }
-    const contentToSave = getTabSaveContent(currentTab)
-    await window.api?.file?.save(currentTab.filePath, contentToSave)
+    await saveTabToDisk(currentTab)
     setTabs(prev => {
       const nextTabs = prev.map(t => t.id === prompt.tabId ? { ...t, savedValue: getTabPersistContent(t) } : t)
       onOpenTabsChange?.(nextTabs)
       return nextTabs
     })
     setExternalChangePrompt(null)
-  }, [externalChangePrompt, onOpenTabsChange])
+  }, [externalChangePrompt, onOpenTabsChange, saveTabToDisk])
 
   // 统一关闭标签逻辑：有改动时先提示保存（保存/不保存/取消）
   const closeTabWithPrompt = useCallback(async (tabId: string) => {
     const tab = tabs.find(t => t.id === tabId)
     if (!tab) return
 
+    let closingTabId = tabId
+
     if (isTabModified(tab)) {
       const action = await window.api?.dialog?.confirmSaveBeforeClose(tab.label)
       if (action === 'cancel') return
-      if (action === 'save' && tab.filePath) {
-        const content = getTabSaveContent(tab)
-        await window.api?.file?.save(tab.filePath, content)
+      if (action === 'save') {
+        if (tab.filePath) {
+          await saveTabToDisk(tab)
+        } else {
+          const savedTabId = await saveTabAs(tab.id)
+          if (!savedTabId) return
+          closingTabId = savedTabId
+        }
       }
     }
 
     setTabs(prev => {
-      const closingTab = prev.find(t => t.id === tabId)
+      const closingTab = prev.find(t => t.id === closingTabId)
       const updatedPrev = (closingTab && isTabModified(closingTab))
         ? prev.map(t => {
-          if (t.id !== tabId) return t
+          if (t.id !== closingTabId) return t
           return { ...t, savedValue: getTabPersistContent(t) }
         })
         : prev
 
-      const newTabs = updatedPrev.filter(t => t.id !== tabId)
+      const newTabs = updatedPrev.filter(t => t.id !== closingTabId)
       if (newTabs.length === 0) {
         setActiveTabId(null)
-      } else if (activeTabId === tabId) {
-        const idx = updatedPrev.findIndex(t => t.id === tabId)
+      } else if (activeTabId === closingTabId) {
+        const idx = updatedPrev.findIndex(t => t.id === closingTabId)
         const newActive = newTabs[Math.min(idx, newTabs.length - 1)]
         setActiveTabId(newActive.id)
       }
       onOpenTabsChange?.(newTabs)
       setEycFallbackTabs(prevFallback => {
-        if (!prevFallback[tabId]) return prevFallback
+        if (!prevFallback[closingTabId]) return prevFallback
         const next = { ...prevFallback }
-        delete next[tabId]
+        delete next[closingTabId]
         return next
       })
       setEycEditorModeTabs(prevModes => {
-        if (!prevModes[tabId]) return prevModes
+        if (!prevModes[closingTabId]) return prevModes
         const next = { ...prevModes }
-        delete next[tabId]
+        delete next[closingTabId]
         return next
       })
       return newTabs
     })
-  }, [tabs, activeTabId, onOpenTabsChange])
+  }, [tabs, activeTabId, onOpenTabsChange, saveTabAs, saveTabToDisk])
 
   // 关闭当前标签页
   const closeActiveFile = useCallback(() => {
@@ -654,7 +753,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       const filtered = prev.filter(t => !isFileInProjectDir(t.filePath, projectDir))
       onOpenTabsChange?.(filtered)
       setEycFallbackTabs(prevFallback => {
-        const next: Record<string, boolean> = {}
+        const next: Record<string, true> = {}
         for (const [tabId, enabled] of Object.entries(prevFallback)) {
           const tab = filtered.find(item => item.id === tabId)
           if (!tab || !enabled) continue
@@ -972,7 +1071,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       if (existingTab.id === activeTabId) {
         eycEditorRef.current?.navigateOrCreateSub(subName, params)
       } else {
-        pendingNavigateRef.current = { subName, params }
+        pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
         setActiveTabId(existingTab.id)
       }
     } else {
@@ -987,7 +1086,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         onOpenTabsChange?.(merged)
         return merged
       })
-      pendingNavigateRef.current = { subName, params }
+      pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
       setActiveTabId(eycPath)
     }
   }, [tabs, activeTabId, buildEventSubName, onOpenTabsChange])
@@ -1150,6 +1249,11 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   // 暴露给父组件的方法
   useImperativeHandle(ref, () => ({
     save: saveCurrentFile,
+    saveAs: () => {
+      const currentId = activeTabIdRef.current
+      if (!currentId) return
+      void saveTabAs(currentId)
+    },
     saveAll: saveAllFiles,
     saveProject: saveProjectFiles,
     closeActiveTab: closeActiveFile,
@@ -1318,14 +1422,34 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       eycEditorRef.current?.navigateToLine(line)
     },
     navigateToSubprogram: (subName: string, fallbackLine?: number) => {
-      eycEditorRef.current?.navigateToSubprogram(subName, fallbackLine)
+      const active = tabs.find(t => t.id === activeTabId)
+      const activeIsSource = !!active && isEycSourceLanguage(active.language)
+      const activeMode: EycEditorMode = active ? (eycEditorModeTabs[active.id] || 'table') : 'table'
+      const fallbackTextMode = !!(active && eycFallbackTabs[active.id])
+      const useTextMode = activeMode === 'text' || fallbackTextMode
+
+      if (activeIsSource && !useTextMode && eycEditorRef.current) {
+        eycEditorRef.current.navigateToSubprogram(subName, fallbackLine)
+        return
+      }
+
+      pendingNavigateRef.current = { kind: 'navigate', subName, fallbackLine }
+
+      if (active && activeIsSource && activeMode === 'text' && !fallbackTextMode) {
+        setEycEditorModeTabs(prev => {
+          if (!prev[active.id]) return prev
+          const next = { ...prev }
+          delete next[active.id]
+          return next
+        })
+      }
     },
     getVisibleLineForSourceLine: (line: number) => {
       return eycEditorRef.current?.getVisibleLineForSourceLine(line) ?? line
     },
     updateFormProperty,
     navigateToEventSub,
-  }), [saveCurrentFile, saveAllFiles, saveProjectFiles, closeActiveFile, closeProjectTabs, clearAllTabs, tabs, activeTabId, onOpenTabsChange, syncSidebarByLanguage, updateFormProperty, navigateToEventSub, appendDiffDecorations, clearDiffDecorations, setEycDiffHighlightLines])
+  }), [saveCurrentFile, saveTabAs, saveAllFiles, saveProjectFiles, closeActiveFile, closeProjectTabs, clearAllTabs, tabs, activeTabId, onOpenTabsChange, syncSidebarByLanguage, updateFormProperty, navigateToEventSub, appendDiffDecorations, clearDiffDecorations, setEycDiffHighlightLines, eycEditorModeTabs, eycFallbackTabs])
 
   // 接收外部打开的项目文件
   useEffect(() => {
@@ -1346,8 +1470,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 
   // 从支持库加载窗口组件信息，并在支持库加载后刷新
   const loadWindowUnits = useCallback(() => {
-    window.api.library.getWindowUnits().then(setWindowUnits).catch(() => {})
-  }, [])
+    window.api.library.getWindowUnits(targetPlatform).then(setWindowUnits).catch(() => {})
+  }, [targetPlatform])
 
   useEffect(() => {
     loadWindowUnits()
@@ -1383,11 +1507,14 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       if (!latestActiveTabId) return
       const latestTab = tabsRef.current.find(t => t.id === latestActiveTabId)
       if (!latestTab?.filePath) return
-      const diskContent = await window.api?.project?.readFile(latestTab.filePath)
+      const diskContent = readFileForExternalCheck
+        ? await readFileForExternalCheck(latestTab.filePath)
+        : await window.api?.project?.readFile(latestTab.filePath)
       if (disposed || diskContent == null) return
 
       const savedDiskContent = getTabSavedDiskContent(latestTab)
-      if (diskContent !== savedDiskContent) {
+      const comparableDiskContent = normalizeExternalDiskContentForCompare(latestTab, diskContent)
+      if (comparableDiskContent !== savedDiskContent) {
         setExternalChangePrompt(prev => {
           if (prev && prev.tabId === latestTab.id && prev.externalContent === diskContent) return prev
           return {
@@ -1409,7 +1536,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       disposed = true
       window.clearInterval(timer)
     }
-  }, [activeTabId, tabs])
+  }, [activeTabId, tabs, readFileForExternalCheck])
 
   // 收集项目内全局变量（.egv + 已打开标签页），用于 EYC 补全
   useEffect(() => {
@@ -1800,7 +1927,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         syncProjectTreeAfterEventSubChange()
       } else {
         onSidebarTab?.('project')
-        pendingNavigateRef.current = { subName, params }
+        pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
         setActiveTabId(existingTab.id)
       }
     } else {
@@ -1817,7 +1944,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         return merged
       })
       onSidebarTab?.('project')
-      pendingNavigateRef.current = { subName, params }
+      pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
       setActiveTabId(eycPath)
     }
   }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, onSidebarTab, syncProjectTreeAfterEventSubChange])
@@ -1846,7 +1973,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         eycEditorRef.current?.navigateOrCreateSub(subName, params)
         syncProjectTreeAfterEventSubChange()
       } else {
-        pendingNavigateRef.current = { subName, params }
+        pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
         setActiveTabId(existingTab.id)
       }
     } else {
@@ -1861,7 +1988,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         onOpenTabsChange?.(merged)
         return merged
       })
-      pendingNavigateRef.current = { subName, params }
+      pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
       setActiveTabId(eycPath)
     }
   }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, syncProjectTreeAfterEventSubChange])
@@ -1871,18 +1998,50 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     if (!pendingNavigateRef.current) return
     const activeT = tabs.find(t => t.id === activeTabId)
     if (!activeT || activeT.language !== 'eyc') return
+
+    const tabMode: EycEditorMode = eycEditorModeTabs[activeT.id] || 'table'
+    const fallbackTextMode = !!eycFallbackTabs[activeT.id]
+    const useTextMode = tabMode === 'text' || fallbackTextMode
+
+    // 手动文本模式下先切回表格，再执行跳转，避免先在文本态产生视觉定位。
+    if (useTextMode) {
+      if (!fallbackTextMode) {
+        setEycEditorModeTabs(prev => {
+          if (!prev[activeT.id]) return prev
+          const next = { ...prev }
+          delete next[activeT.id]
+          return next
+        })
+      }
+      return
+    }
+
+    if (!eycEditorRef.current) return
     const pending = pendingNavigateRef.current
     pendingNavigateRef.current = null
     setTimeout(() => {
-      eycEditorRef.current?.navigateOrCreateSub(pending.subName, pending.params)
-      syncProjectTreeAfterEventSubChange()
+      if (!eycEditorRef.current) return
+      if (pending.kind === 'create-or-open') {
+        eycEditorRef.current.navigateOrCreateSub(pending.subName, pending.params)
+        syncProjectTreeAfterEventSubChange()
+        return
+      }
+      eycEditorRef.current.navigateToSubprogram(pending.subName, pending.fallbackLine)
     }, 100)
-  }, [activeTabId, tabs, syncProjectTreeAfterEventSubChange])
+  }, [activeTabId, tabs, eycEditorModeTabs, eycFallbackTabs, syncProjectTreeAfterEventSubChange])
 
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0] || null
   const activeTabEycMode: EycEditorMode = activeTab ? (eycEditorModeTabs[activeTab.id] || 'table') : 'table'
   const activeTabFallbackTextMode = !!(activeTab && eycFallbackTabs[activeTab.id])
-  const activeTabUseTextMode = activeTabEycMode === 'text' || activeTabFallbackTextMode
+  const activeTabForceTableForPendingNavigation = !!(
+    activeTab
+    && isEycSourceLanguage(activeTab.language)
+    && pendingNavigateRef.current
+    && activeTabEycMode === 'text'
+    && !activeTabFallbackTextMode
+  )
+  const activeTabUseTextMode = (activeTabEycMode === 'text' || activeTabFallbackTextMode)
+    && !activeTabForceTableForPendingNavigation
   const activeTabTextModeValue = useMemo(() => {
     if (!activeTab || !isEycSourceLanguage(activeTab.language)) return ''
     return eycToYiFormat(activeTab.value)
@@ -1921,6 +2080,49 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const activeWindowControlNames = useMemo(() => {
     return activeWindowControls.map(c => c.name)
   }, [activeWindowControls])
+
+  const textModeValidCommandNames = useMemo(() => new Set<string>(), [])
+  const textModeAllKnownVarNames = useMemo(() => new Set<string>(), [])
+  const textModeReservedNameSet = useMemo(() => new Set<string>(), [])
+  const textModeDiagnosticsProblems = useEditorDiagnosticsProblems({
+    text: activeTabTextModeValue,
+    hasCommandCatalog: false,
+    validCommandNames: textModeValidCommandNames,
+    allKnownVarNames: textModeAllKnownVarNames,
+    reservedNameSet: textModeReservedNameSet,
+  })
+
+  useEffect(() => {
+    const monaco = monacoRef.current
+    const ed = editorRef.current
+    if (!monaco || !ed) return
+    const model = ed.getModel()
+    if (!model) return
+
+    const isSourceTextMode = !!activeTab && isEycSourceLanguage(activeTab.language) && activeTabUseTextMode
+    if (!isSourceTextMode) {
+      monaco.editor.setModelMarkers(model, MONACO_DIAGNOSTICS_OWNER, [])
+      return
+    }
+
+    const markers: editor.IMarkerData[] = textModeDiagnosticsProblems.map(problem => {
+      const startLineNumber = Math.max(1, Math.floor(problem.line || 1))
+      const startColumn = Math.max(1, Math.floor(problem.column || 1))
+      return {
+        startLineNumber,
+        startColumn,
+        endLineNumber: startLineNumber,
+        endColumn: startColumn + 1,
+        message: problem.message,
+        severity: problem.severity === 'error'
+          ? monaco.MarkerSeverity.Error
+          : monaco.MarkerSeverity.Warning,
+      }
+    })
+
+    monaco.editor.setModelMarkers(model, MONACO_DIAGNOSTICS_OWNER, markers)
+    onProblemsChange?.(textModeDiagnosticsProblems as FileProblem[])
+  }, [activeTab, activeTabUseTextMode, onProblemsChange, textModeDiagnosticsProblems])
 
   const handleEditorMount: OnMount = useCallback((editorInstance, monaco) => {
     editorRef.current = editorInstance
@@ -2346,6 +2548,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                 freezeSubTableHeader={editorFreezeSubTableHeader}
                 showMinimapPreview={editorShowMinimapPreview}
                 projectDir={projectDir}
+                targetPlatform={targetPlatform}
                 isClassModule={activeTab.label.toLowerCase().endsWith('.ecc')}
                 projectGlobalVars={projectGlobalVars}
                 windowControlNames={activeWindowControlNames}

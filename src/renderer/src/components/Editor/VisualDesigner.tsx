@@ -1,5 +1,5 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
-import Icon, { UNIT_ICON_MAP } from '../Icon/Icon'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import Icon, { resolveUnitIconName } from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './VisualDesigner.css'
 
@@ -29,6 +29,7 @@ export interface LibWindowUnit {
   englishName: string
   description: string
   libraryName: string
+  iconFileName?: string
   properties: LibUnitProperty[]
   events: LibUnitEvent[]
 }
@@ -98,9 +99,45 @@ const HANDLES: HandleDir[] = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']
 // 网格吸附
 const GRID = 4
 const ALIGN_SNAP_TOLERANCE = 6
+const FORM_TITLEBAR_HEIGHT = 32
+const FORM_MIN_WIDTH = 180
+const FORM_MIN_HEIGHT = 80
+const MIN_ZOOM = 0.25
+const MAX_ZOOM = 10
+const ZOOM_STEP = 0.1
+const RULER_SIZE = 24
+const WORKSPACE_MARGIN = 640
+const TOOLBOX_DOCK_LIST_MIN_WIDTH = 130
+const TOOLBOX_ICON_MIN_WIDTH = 86
+const TOOLBOX_DOCK_MAX_WIDTH = 420
+const TOOLBOX_FLOAT_LIST_MIN_WIDTH = 130
+const TOOLBOX_FLOAT_MIN_HEIGHT = 220
+const TOOLBOX_STATE_STORAGE_KEY = 'ycide.visual-designer.toolbox-state.v1'
 
 function snap(v: number): number {
   return Math.round(v / GRID) * GRID
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function computeWorkspaceSpan(contentSize: number, viewportSize: number): number {
+  return Math.max(contentSize + WORKSPACE_MARGIN * 2, viewportSize + WORKSPACE_MARGIN * 2)
+}
+
+function computeNiceIntegerStep(raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 1) return 1
+  const magnitude = 10 ** Math.floor(Math.log10(raw))
+  const normalized = raw / magnitude
+  if (normalized <= 1) return magnitude
+  if (normalized <= 2) return 2 * magnitude
+  if (normalized <= 5) return 5 * magnitude
+  return 10 * magnitude
+}
+
+function isPointWithinRect(x: number, y: number, rect: DOMRect): boolean {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
 }
 
 function setCssVars(element: HTMLElement | null, vars: Record<string, string>): void {
@@ -108,6 +145,19 @@ function setCssVars(element: HTMLElement | null, vars: Record<string, string>): 
   for (const [name, value] of Object.entries(vars)) {
     element.style.setProperty(name, value)
   }
+}
+
+function getToolboxMinWidth(viewMode: 'icon' | 'list'): number {
+  return viewMode === 'icon' ? TOOLBOX_ICON_MIN_WIDTH : TOOLBOX_DOCK_LIST_MIN_WIDTH
+}
+
+function computeToolboxVisualScale(width: number, viewMode: 'icon' | 'list'): number {
+  const base = viewMode === 'icon' ? 130 : 160
+  return clamp(width / base, 0.82, 1.4)
+}
+
+function computeToolboxListColumns(width: number): number {
+  return clamp(Math.floor(width / 130), 2, 6)
 }
 
 type AxisSnapResult = { pos: number; guide: number } | null
@@ -229,6 +279,13 @@ function buildReferenceLines(
   }
 }
 
+function rectsIntersect(
+  a: { left: number; top: number; right: number; bottom: number },
+  b: { left: number; top: number; right: number; bottom: number },
+): boolean {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+}
+
 let nextControlId = 1
 
 // ========== 组件 ==========
@@ -243,14 +300,34 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeTool, setActiveTool] = useState<string | null>(null)
   const [toolboxFloat, setToolboxFloat] = useState(false)
+  const [toolboxDockSide, setToolboxDockSide] = useState<'left' | 'right'>('right')
+  const [toolboxDockWidth, setToolboxDockWidth] = useState(160)
   const [toolboxViewMode, setToolboxViewMode] = useState<'icon' | 'list'>('list')
+  const [toolboxListMultiColumn, setToolboxListMultiColumn] = useState(false)
   const [toolboxSearch, setToolboxSearch] = useState('')
   const [toolboxPos, setToolboxPos] = useState({ x: 80, y: 40 })
   const [toolboxSize, setToolboxSize] = useState({ w: 160, h: 400 })
   const [alignGuides, setAlignGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] })
+  const [zoom, setZoom] = useState(1)
+  const [isSpacePressed, setIsSpacePressed] = useState(false)
+  const [isPanningView, setIsPanningView] = useState(false)
+  const [hoveredControlId, setHoveredControlId] = useState<string | null>(null)
   const formVisualColors = resolveFormVisualColors(form)
+  const designerRootRef = useRef<HTMLDivElement>(null)
+  const canvasRegionRef = useRef<HTMLDivElement>(null)
+  const canvasAreaRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
+  const zoomRef = useRef(zoom)
+  const isSpacePressedRef = useRef(false)
+  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null)
+  const initializedCenterRef = useRef(false)
+  const viewStateHydratedRef = useRef(false)
+  const [toolboxStateReady, setToolboxStateReady] = useState(false)
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
+  const [scrollPos, setScrollPos] = useState({ left: 0, top: 0 })
   const [drawRect, setDrawRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [mouseRulerPos, setMouseRulerPos] = useState<{ x: number; y: number } | null>(null)
   const dragRef = useRef<{
     mode: 'move' | 'resize' | 'create'
     controlId: string
@@ -273,6 +350,377 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const selectedControl = selectedId && selectedId !== '__form__'
     ? form.controls.find(c => c.id === selectedId) || null
     : null
+  const visualFormWidth = Math.max(form.width, FORM_MIN_WIDTH)
+  const visualFormHeight = Math.max(form.height, FORM_MIN_HEIGHT)
+  const viewStateStorageKey = useMemo(() => {
+    const rawId = (form.sourceFile || form.name || 'untitled-form').trim()
+    const safeId = rawId.replace(/[^\w.-]+/g, '_').toLowerCase()
+    return `ycide.visual-designer.view-state.${safeId}`
+  }, [form.name, form.sourceFile])
+  const scaledFormWidth = visualFormWidth * zoom
+  const scaledFormHeight = (visualFormHeight + FORM_TITLEBAR_HEIGHT) * zoom
+  const workspaceWidth = computeWorkspaceSpan(scaledFormWidth, viewportSize.width)
+  const workspaceHeight = computeWorkspaceSpan(scaledFormHeight, viewportSize.height)
+  const formOffsetLeft = (workspaceWidth - scaledFormWidth) / 2
+  const formOffsetTop = (workspaceHeight - scaledFormHeight) / 2
+  const rulerMinorStep = useMemo(() => computeNiceIntegerStep(12 / Math.max(zoom, 0.01)), [zoom])
+  const rulerMidStep = rulerMinorStep * 5
+  const rulerMajorStep = rulerMinorStep * 10
+
+  const rulerTicksX = useMemo(() => {
+    if (viewportSize.width <= 0) return [] as Array<{ id: string; pos: number; level: 'minor' | 'mid' | 'major'; label: string }>
+    const startUnit = (scrollPos.left - formOffsetLeft) / zoom
+    const endUnit = (scrollPos.left + viewportSize.width - formOffsetLeft) / zoom
+    const first = Math.floor(startUnit / rulerMinorStep) * rulerMinorStep - rulerMinorStep
+    const last = Math.ceil(endUnit / rulerMinorStep) * rulerMinorStep + rulerMinorStep
+    const ticks: Array<{ id: string; pos: number; level: 'minor' | 'mid' | 'major'; label: string }> = []
+    for (let unit = first; unit <= last; unit += rulerMinorStep) {
+      const pos = formOffsetLeft + unit * zoom - scrollPos.left
+      if (pos < -32 || pos > viewportSize.width + 32) continue
+      const level: 'minor' | 'mid' | 'major' = unit % rulerMajorStep === 0 ? 'major' : (unit % rulerMidStep === 0 ? 'mid' : 'minor')
+      ticks.push({ id: `x-${unit}`, pos, level, label: level === 'major' ? String(unit) : '' })
+    }
+    return ticks
+  }, [formOffsetLeft, rulerMajorStep, rulerMidStep, rulerMinorStep, scrollPos.left, viewportSize.width, zoom])
+
+  const rulerTicksY = useMemo(() => {
+    if (viewportSize.height <= 0) return [] as Array<{ id: string; pos: number; level: 'minor' | 'mid' | 'major'; label: string }>
+    const startUnit = (scrollPos.top - formOffsetTop) / zoom
+    const endUnit = (scrollPos.top + viewportSize.height - formOffsetTop) / zoom
+    const first = Math.floor(startUnit / rulerMinorStep) * rulerMinorStep - rulerMinorStep
+    const last = Math.ceil(endUnit / rulerMinorStep) * rulerMinorStep + rulerMinorStep
+    const ticks: Array<{ id: string; pos: number; level: 'minor' | 'mid' | 'major'; label: string }> = []
+    for (let unit = first; unit <= last; unit += rulerMinorStep) {
+      const pos = formOffsetTop + unit * zoom - scrollPos.top
+      if (pos < -32 || pos > viewportSize.height + 32) continue
+      const level: 'minor' | 'mid' | 'major' = unit % rulerMajorStep === 0 ? 'major' : (unit % rulerMidStep === 0 ? 'mid' : 'minor')
+      ticks.push({ id: `y-${unit}`, pos, level, label: level === 'major' ? String(unit) : '' })
+    }
+    return ticks
+  }, [formOffsetTop, rulerMajorStep, rulerMidStep, rulerMinorStep, scrollPos.top, viewportSize.height, zoom])
+
+  const selectedRulerHighlight = useMemo(() => {
+    const ids = selectedIds.size > 0
+      ? selectedIds
+      : (selectedControl ? new Set([selectedControl.id]) : new Set<string>())
+    if (ids.size === 0) return null
+    const selected = form.controls.filter(control => ids.has(control.id))
+    if (selected.length === 0) return null
+    const minLeft = Math.min(...selected.map(control => control.left))
+    const maxRight = Math.max(...selected.map(control => control.left + control.width))
+    const minTop = Math.min(...selected.map(control => control.top))
+    const maxBottom = Math.max(...selected.map(control => control.top + control.height))
+    const x1 = formOffsetLeft + minLeft * zoom - scrollPos.left
+    const x2 = formOffsetLeft + maxRight * zoom - scrollPos.left
+    const y1 = formOffsetTop + (FORM_TITLEBAR_HEIGHT + minTop) * zoom - scrollPos.top
+    const y2 = formOffsetTop + (FORM_TITLEBAR_HEIGHT + maxBottom) * zoom - scrollPos.top
+    return {
+      x: Math.min(x1, x2),
+      y: Math.min(y1, y2),
+      w: Math.abs(x2 - x1),
+      h: Math.abs(y2 - y1),
+    }
+  }, [form.controls, formOffsetLeft, formOffsetTop, scrollPos.left, scrollPos.top, selectedControl, selectedIds, zoom])
+
+  useEffect(() => {
+    zoomRef.current = zoom
+  }, [zoom])
+
+  useEffect(() => {
+    isSpacePressedRef.current = isSpacePressed
+  }, [isSpacePressed])
+
+  useEffect(() => {
+    initializedCenterRef.current = false
+    viewStateHydratedRef.current = false
+    pendingScrollRef.current = null
+
+    let restoredZoom = 1
+    let restoredScroll: { left: number; top: number } | null = null
+
+    try {
+      const raw = localStorage.getItem(viewStateStorageKey)
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          zoom?: number
+          scrollLeft?: number
+          scrollTop?: number
+        }
+        if (typeof parsed.zoom === 'number' && Number.isFinite(parsed.zoom)) {
+          restoredZoom = clamp(parsed.zoom, MIN_ZOOM, MAX_ZOOM)
+        }
+        if (
+          typeof parsed.scrollLeft === 'number'
+          && Number.isFinite(parsed.scrollLeft)
+          && typeof parsed.scrollTop === 'number'
+          && Number.isFinite(parsed.scrollTop)
+        ) {
+          restoredScroll = {
+            left: Math.max(0, parsed.scrollLeft),
+            top: Math.max(0, parsed.scrollTop),
+          }
+        }
+      }
+    } catch {
+      // Ignore corrupt local view-state payloads.
+    }
+
+    pendingScrollRef.current = restoredScroll
+    setZoom(restoredZoom)
+    setScrollPos({ left: 0, top: 0 })
+  }, [viewStateStorageKey])
+
+  useEffect(() => {
+    const isTypingTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false
+      const tag = target.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+      return target.isContentEditable
+    }
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.code !== 'Space') return
+      if (isTypingTarget(event.target)) return
+      event.preventDefault()
+      event.stopPropagation()
+      setIsSpacePressed(true)
+    }
+
+    const onKeyUp = (event: KeyboardEvent): void => {
+      if (event.code !== 'Space') return
+      if (!isTypingTarget(event.target)) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+      setIsSpacePressed(false)
+    }
+
+    const onWindowBlur = (): void => {
+      setIsSpacePressed(false)
+      setIsPanningView(false)
+    }
+
+    window.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('keyup', onKeyUp, true)
+    window.addEventListener('blur', onWindowBlur)
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('keyup', onKeyUp, true)
+      window.removeEventListener('blur', onWindowBlur)
+    }
+  }, [])
+
+  useEffect(() => {
+    const host = canvasAreaRef.current
+    if (!host) return
+
+    const updateSize = (): void => {
+      setViewportSize({ width: host.clientWidth, height: host.clientHeight })
+    }
+
+    updateSize()
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateSize)
+      return () => window.removeEventListener('resize', updateSize)
+    }
+
+    const observer = new ResizeObserver(() => updateSize())
+    observer.observe(host)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    const host = canvasAreaRef.current
+    if (!host) return
+    if (viewportSize.width <= 0 || viewportSize.height <= 0) return
+
+    const maxLeft = Math.max(0, workspaceWidth - host.clientWidth)
+    const maxTop = Math.max(0, workspaceHeight - host.clientHeight)
+
+    if (pendingScrollRef.current) {
+      const nextLeft = clamp(pendingScrollRef.current.left, 0, maxLeft)
+      const nextTop = clamp(pendingScrollRef.current.top, 0, maxTop)
+      host.scrollLeft = nextLeft
+      host.scrollTop = nextTop
+      setScrollPos({ left: nextLeft, top: nextTop })
+      pendingScrollRef.current = null
+      initializedCenterRef.current = true
+      viewStateHydratedRef.current = true
+      return
+    }
+
+    if (!initializedCenterRef.current) {
+      const centerLeft = (workspaceWidth - host.clientWidth) / 2
+      const centerTop = (workspaceHeight - host.clientHeight) / 2
+      host.scrollLeft = centerLeft
+      host.scrollTop = centerTop
+      setScrollPos({ left: centerLeft, top: centerTop })
+      initializedCenterRef.current = true
+      viewStateHydratedRef.current = true
+    }
+  }, [workspaceWidth, workspaceHeight, viewportSize.width, viewportSize.height])
+
+  useEffect(() => {
+    if (!viewStateHydratedRef.current) return
+    try {
+      localStorage.setItem(viewStateStorageKey, JSON.stringify({
+        zoom,
+        scrollLeft: scrollPos.left,
+        scrollTop: scrollPos.top,
+      }))
+    } catch {
+      // Ignore storage quota/security failures.
+    }
+  }, [scrollPos.left, scrollPos.top, viewStateStorageKey, zoom])
+
+  const getCanvasPoint = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
+    const canvas = canvasRef.current
+    if (!canvas) return { x: 0, y: 0 }
+    const rect = canvas.getBoundingClientRect()
+    const currentZoom = zoomRef.current || 1
+    return {
+      x: (clientX - rect.left) / currentZoom,
+      y: (clientY - rect.top) / currentZoom,
+    }
+  }, [])
+
+  const updateMouseRulerPos = useCallback((clientX: number, clientY: number): void => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    if (!isPointWithinRect(clientX, clientY, rect)) {
+      setMouseRulerPos(null)
+      return
+    }
+    const point = getCanvasPoint(clientX, clientY)
+    setMouseRulerPos({
+      x: formOffsetLeft + point.x * zoom - scrollPos.left,
+      y: formOffsetTop + (FORM_TITLEBAR_HEIGHT + point.y) * zoom - scrollPos.top,
+    })
+  }, [formOffsetLeft, formOffsetTop, getCanvasPoint, scrollPos.left, scrollPos.top, zoom])
+
+  const zoomTo = useCallback((nextZoom: number, anchorClientPoint?: { x: number; y: number }) => {
+    const host = canvasAreaRef.current
+    const currentZoom = zoomRef.current || 1
+    const targetZoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM)
+    if (!host || Math.abs(targetZoom - currentZoom) < 1e-6) return
+
+    const rect = host.getBoundingClientRect()
+    const hasAnchor = !!anchorClientPoint && isPointWithinRect(anchorClientPoint.x, anchorClientPoint.y, rect)
+    const anchorX = hasAnchor ? anchorClientPoint!.x : rect.left + rect.width / 2
+    const anchorY = hasAnchor ? anchorClientPoint!.y : rect.top + rect.height / 2
+    const viewportX = anchorX - rect.left
+    const viewportY = anchorY - rect.top
+
+    const oldScaledW = visualFormWidth * currentZoom
+    const oldScaledH = (visualFormHeight + FORM_TITLEBAR_HEIGHT) * currentZoom
+    const oldWorkspaceW = computeWorkspaceSpan(oldScaledW, host.clientWidth)
+    const oldWorkspaceH = computeWorkspaceSpan(oldScaledH, host.clientHeight)
+    const oldOffsetX = (oldWorkspaceW - oldScaledW) / 2
+    const oldOffsetY = (oldWorkspaceH - oldScaledH) / 2
+
+    const worldX = host.scrollLeft + viewportX
+    const worldY = host.scrollTop + viewportY
+    const formX = (worldX - oldOffsetX) / currentZoom
+    const formY = (worldY - oldOffsetY) / currentZoom
+
+    const newScaledW = visualFormWidth * targetZoom
+    const newScaledH = (visualFormHeight + FORM_TITLEBAR_HEIGHT) * targetZoom
+    const newWorkspaceW = computeWorkspaceSpan(newScaledW, host.clientWidth)
+    const newWorkspaceH = computeWorkspaceSpan(newScaledH, host.clientHeight)
+    const newOffsetX = (newWorkspaceW - newScaledW) / 2
+    const newOffsetY = (newWorkspaceH - newScaledH) / 2
+    const newWorldX = newOffsetX + formX * targetZoom
+    const newWorldY = newOffsetY + formY * targetZoom
+
+    pendingScrollRef.current = {
+      left: newWorldX - viewportX,
+      top: newWorldY - viewportY,
+    }
+
+    setZoom(targetZoom)
+  }, [visualFormWidth, visualFormHeight])
+
+  const stepZoom = useCallback((direction: 1 | -1, anchorClientPoint?: { x: number; y: number }) => {
+    const currentZoom = zoomRef.current || 1
+    zoomTo(currentZoom + direction * ZOOM_STEP, anchorClientPoint)
+  }, [zoomTo])
+
+  const handleCanvasScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const host = e.currentTarget
+    setScrollPos({ left: host.scrollLeft, top: host.scrollTop })
+  }, [])
+
+  const handleCanvasPanMouseDownCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    canvasRegionRef.current?.focus({ preventScroll: true })
+    const active = document.activeElement
+    if (active instanceof HTMLElement && active !== canvasRegionRef.current && active.tagName === 'BUTTON') {
+      active.blur()
+    }
+
+    if (e.button !== 0) return
+    if (!isSpacePressedRef.current) return
+    const host = canvasAreaRef.current
+    if (!host) return
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    const startX = e.clientX
+    const startY = e.clientY
+    const startLeft = host.scrollLeft
+    const startTop = host.scrollTop
+    setIsPanningView(true)
+
+    const handleMouseMove = (ev: MouseEvent): void => {
+      const dx = ev.clientX - startX
+      const dy = ev.clientY - startY
+      host.scrollLeft = startLeft - dx
+      host.scrollTop = startTop - dy
+      setScrollPos({ left: host.scrollLeft, top: host.scrollTop })
+    }
+
+    const handleMouseUp = (): void => {
+      setIsPanningView(false)
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [])
+
+  const handleCanvasAreaWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    const isZoomGesture = e.ctrlKey || e.metaKey
+    if (!isZoomGesture) return
+    e.preventDefault()
+    const direction = Math.sign(-e.deltaY)
+    if (direction > 0) stepZoom(1, { x: e.clientX, y: e.clientY })
+    else if (direction < 0) stepZoom(-1, { x: e.clientX, y: e.clientY })
+  }, [stepZoom])
+
+  const handleCanvasAreaKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.code === 'Space') {
+      e.preventDefault()
+      return
+    }
+    if (e.key === '+' || e.key === '=') {
+      e.preventDefault()
+      stepZoom(1)
+      return
+    }
+    if (e.key === '-' || e.key === '_') {
+      e.preventDefault()
+      stepZoom(-1)
+      return
+    }
+    if (e.key === '0') {
+      e.preventDefault()
+      setZoom(1)
+    }
+  }, [stepZoom])
 
   // 同步 lastSelectedId
   useEffect(() => {
@@ -414,12 +862,13 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   // 画布鼠标按下 — 开始创建控件或选中窗口
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return
-    const canvas = canvasRef.current!
-    const rect = canvas.getBoundingClientRect()
-    const bx = canvas.clientLeft
-    const by = canvas.clientTop
-    const startX = e.clientX - rect.left - bx
-    const startY = e.clientY - rect.top - by
+    if (isSpacePressedRef.current) {
+      e.preventDefault()
+      return
+    }
+    const start = getCanvasPoint(e.clientX, e.clientY)
+    const startX = start.x
+    const startY = start.y
 
     if (activeTool) {
       // 拖拽绘制控件：按住鼠标拖动定义大小
@@ -427,8 +876,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       setDrawRect({ x: snap(startX), y: snap(startY), w: 0, h: 0 })
 
       const handleMouseMove = (ev: MouseEvent): void => {
-        const mx = ev.clientX - rect.left - bx
-        const my = ev.clientY - rect.top - by
+        const p = getCanvasPoint(ev.clientX, ev.clientY)
+        const mx = p.x
+        const my = p.y
         const x1 = Math.min(startX, mx)
         const y1 = Math.min(startY, my)
         const x2 = Math.max(startX, mx)
@@ -439,8 +889,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       const handleMouseUp = (ev: MouseEvent): void => {
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
-        const mx = ev.clientX - rect.left - bx
-        const my = ev.clientY - rect.top - by
+        const p = getCanvasPoint(ev.clientX, ev.clientY)
+        const mx = p.x
+        const my = p.y
         const x1 = Math.min(startX, mx)
         const y1 = Math.min(startY, my)
         const drawW = snap(Math.abs(mx - startX))
@@ -458,10 +909,59 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       document.addEventListener('mouseup', handleMouseUp)
     } else {
       // 点击空白选中窗口自身
-      setSelectedId('__form__')
-      setSelectedIds(new Set())
+      const handleMouseMove = (ev: MouseEvent): void => {
+        const p = getCanvasPoint(ev.clientX, ev.clientY)
+        const x1 = Math.min(startX, p.x)
+        const y1 = Math.min(startY, p.y)
+        const x2 = Math.max(startX, p.x)
+        const y2 = Math.max(startY, p.y)
+        const w = snap(x2 - x1)
+        const h = snap(y2 - y1)
+        if (w >= 4 || h >= 4) {
+          setMarqueeRect({ x: snap(x1), y: snap(y1), w, h })
+        }
+      }
+
+      const handleMouseUp = (ev: MouseEvent): void => {
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+        const p = getCanvasPoint(ev.clientX, ev.clientY)
+        const x1 = Math.min(startX, p.x)
+        const y1 = Math.min(startY, p.y)
+        const x2 = Math.max(startX, p.x)
+        const y2 = Math.max(startY, p.y)
+        setMarqueeRect(null)
+
+        if (Math.abs(x2 - startX) < 4 && Math.abs(y2 - startY) < 4) {
+          setSelectedId('__form__')
+          setSelectedIds(new Set())
+          return
+        }
+
+        const selectionBox = { left: x1, top: y1, right: x2, bottom: y2 }
+        const nextIds = formRef.current.controls
+          .filter(control => rectsIntersect(selectionBox, {
+            left: control.left,
+            top: control.top,
+            right: control.left + control.width,
+            bottom: control.top + control.height,
+          }))
+          .map(control => control.id)
+
+        if (nextIds.length === 0) {
+          setSelectedId('__form__')
+          setSelectedIds(new Set())
+          return
+        }
+
+        setSelectedIds(new Set(nextIds))
+        setSelectedId(nextIds[0])
+      }
+
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
     }
-  }, [activeTool, addControl])
+  }, [activeTool, addControl, getCanvasPoint])
 
   // 窗口标题栏点击 — 选中窗口
   const handleFormTitleClick = useCallback((e: React.MouseEvent) => {
@@ -480,11 +980,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const origH = form.height
 
     const handleMouseMove = (ev: MouseEvent): void => {
-      const dx = ev.clientX - startX
-      const dy = ev.clientY - startY
+      const currentZoom = zoomRef.current || 1
+      const dx = (ev.clientX - startX) / currentZoom
+      const dy = (ev.clientY - startY) / currentZoom
       let w = origW, h = origH
-      if (handle.includes('e')) w = Math.max(80, origW + dx)
-      if (handle.includes('s')) h = Math.max(60, origH + dy)
+      if (handle.includes('e')) w = Math.max(FORM_MIN_WIDTH, origW + dx)
+      if (handle.includes('s')) h = Math.max(FORM_MIN_HEIGHT, origH + dy)
       onChangeRef.current({ ...formRef.current, width: snap(w), height: snap(h) })
     }
 
@@ -517,6 +1018,131 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const defaultEvent = formUnit?.events?.[0] ?? null
     onFormDoubleClick?.(form, defaultEvent)
   }, [windowUnits, onFormDoubleClick, form])
+
+  useEffect(() => {
+    const minW = getToolboxMinWidth(toolboxViewMode)
+    if (!toolboxFloat && toolboxDockWidth < minW) {
+      setToolboxDockWidth(minW)
+    }
+    if (toolboxFloat && toolboxSize.w < minW) {
+      setToolboxSize(prev => ({ ...prev, w: minW }))
+    }
+  }, [toolboxDockWidth, toolboxFloat, toolboxSize.w, toolboxViewMode])
+
+  const clampFloatingToolboxRect = useCallback((x: number, y: number, w: number, h: number) => {
+    const hostRect = designerRootRef.current?.getBoundingClientRect()
+    if (!hostRect) return { x, y, w, h }
+
+    const minWidth = getToolboxMinWidth(toolboxViewMode)
+    const maxWidth = Math.max(minWidth, Math.floor(hostRect.width))
+    const maxHeight = Math.max(TOOLBOX_FLOAT_MIN_HEIGHT, Math.floor(hostRect.height))
+    const nextW = clamp(Math.round(w), minWidth, maxWidth)
+    const nextH = clamp(Math.round(h), TOOLBOX_FLOAT_MIN_HEIGHT, maxHeight)
+
+    const minX = hostRect.left
+    const maxX = Math.max(minX, hostRect.right - nextW)
+    const minY = hostRect.top
+    const maxY = Math.max(minY, hostRect.bottom - nextH)
+
+    return {
+      x: clamp(Math.round(x), minX, maxX),
+      y: clamp(Math.round(y), minY, maxY),
+      w: nextW,
+      h: nextH,
+    }
+  }, [toolboxViewMode])
+
+  const toggleToolboxFloat = useCallback(() => {
+    if (toolboxFloat) {
+      setToolboxFloat(false)
+      return
+    }
+    const hostRect = designerRootRef.current?.getBoundingClientRect()
+    const desiredX = hostRect
+      ? (toolboxDockSide === 'right' ? hostRect.right - toolboxSize.w - 8 : hostRect.left + 8)
+      : toolboxPos.x
+    const desiredY = hostRect ? hostRect.top + 40 : toolboxPos.y
+    const next = clampFloatingToolboxRect(desiredX, desiredY, toolboxSize.w, toolboxSize.h)
+    setToolboxPos({ x: next.x, y: next.y })
+    setToolboxSize({ w: next.w, h: next.h })
+    setToolboxFloat(true)
+  }, [clampFloatingToolboxRect, toolboxDockSide, toolboxFloat, toolboxPos.x, toolboxPos.y, toolboxSize.h, toolboxSize.w])
+
+  const handleDockResizeStart = useCallback((e: React.MouseEvent) => {
+    if (toolboxFloat) return
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startW = toolboxDockWidth
+    const side = toolboxDockSide
+    const minW = getToolboxMinWidth(toolboxViewMode)
+
+    const handleMouseMove = (ev: MouseEvent): void => {
+      const dx = ev.clientX - startX
+      const raw = side === 'right' ? startW - dx : startW + dx
+      setToolboxDockWidth(clamp(Math.round(raw), minW, TOOLBOX_DOCK_MAX_WIDTH))
+    }
+
+    const handleMouseUp = (): void => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+    }
+
+    document.body.style.cursor = 'ew-resize'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [toolboxDockSide, toolboxDockWidth, toolboxFloat, toolboxViewMode])
+
+  const handleFloatResizeStart = useCallback((e: React.MouseEvent) => {
+    if (!toolboxFloat) return
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startY = e.clientY
+    const startW = toolboxSize.w
+    const startH = toolboxSize.h
+    const startPos = toolboxPos
+
+    const handleMouseMove = (ev: MouseEvent): void => {
+      const dx = ev.clientX - startX
+      const dy = ev.clientY - startY
+      const next = clampFloatingToolboxRect(startPos.x, startPos.y, startW + dx, startH + dy)
+      setToolboxPos({ x: next.x, y: next.y })
+      setToolboxSize({ w: next.w, h: next.h })
+    }
+
+    const handleMouseUp = (): void => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+    }
+
+    document.body.style.cursor = 'nwse-resize'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [clampFloatingToolboxRect, toolboxFloat, toolboxPos, toolboxSize.h, toolboxSize.w])
+
+  useEffect(() => {
+    if (!toolboxFloat) return
+
+    const clampNow = (): void => {
+      const next = clampFloatingToolboxRect(toolboxPos.x, toolboxPos.y, toolboxSize.w, toolboxSize.h)
+      if (next.x !== toolboxPos.x || next.y !== toolboxPos.y) {
+        setToolboxPos({ x: next.x, y: next.y })
+      }
+      if (next.w !== toolboxSize.w || next.h !== toolboxSize.h) {
+        setToolboxSize({ w: next.w, h: next.h })
+      }
+    }
+
+    clampNow()
+
+    if (typeof ResizeObserver === 'undefined' || !designerRootRef.current) return
+    const observer = new ResizeObserver(() => clampNow())
+    observer.observe(designerRootRef.current)
+    return () => observer.disconnect()
+  }, [clampFloatingToolboxRect, toolboxFloat, toolboxPos.x, toolboxPos.y, toolboxSize.h, toolboxSize.w])
 
   // 控件鼠标按下 — 开始移动（支持 Shift 多选）
   const handleControlMouseDown = useCallback((e: React.MouseEvent, ctrl: DesignControl) => {
@@ -551,11 +1177,6 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       setSelectedId(ctrl.id)
     }
 
-    const canvas = canvasRef.current!
-    const rect = canvas.getBoundingClientRect()
-    const bx = canvas.clientLeft
-    const by = canvas.clientTop
-
     if (isInMultiSelect && selectedIds.size >= 2) {
       // 多选拖拽：记录所有选中控件的初始位置
       const origPositions = new Map<string, { left: number; top: number }>()
@@ -571,12 +1192,14 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       const groupWidth = maxRight - minLeft
       const groupHeight = maxBottom - minTop
       const refs = buildReferenceLines(form.controls, selectedIds, form.width, form.height)
-      const startX = e.clientX - rect.left - bx
-      const startY = e.clientY - rect.top - by
+      const start = getCanvasPoint(e.clientX, e.clientY)
+      const startX = start.x
+      const startY = start.y
 
       const handleMouseMove = (ev: MouseEvent): void => {
-        const mx = ev.clientX - rect.left - bx
-        const my = ev.clientY - rect.top - by
+        const p = getCanvasPoint(ev.clientX, ev.clientY)
+        const mx = p.x
+        const my = p.y
         let dx = snap(mx - startX)
         let dy = snap(my - startY)
 
@@ -626,8 +1249,8 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       dragRef.current = {
         mode: 'move',
         controlId: ctrl.id,
-        startX: e.clientX - rect.left - bx,
-        startY: e.clientY - rect.top - by,
+        startX: getCanvasPoint(e.clientX, e.clientY).x,
+        startY: getCanvasPoint(e.clientX, e.clientY).y,
         origLeft: ctrl.left,
         origTop: ctrl.top,
         origWidth: ctrl.width,
@@ -637,8 +1260,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       const handleMouseMove = (ev: MouseEvent): void => {
         const d = dragRef.current
         if (!d) return
-        const mx = ev.clientX - rect.left - bx
-        const my = ev.clientY - rect.top - by
+        const p = getCanvasPoint(ev.clientX, ev.clientY)
+        const mx = p.x
+        const my = p.y
         const dx = snap(mx - d.startX)
         const dy = snap(my - d.startY)
 
@@ -675,23 +1299,20 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
     }
-  }, [updateControl, selectedIds, selectedId, form.controls, form.width, form.height])
+  }, [updateControl, selectedIds, selectedId, form.controls, form.width, form.height, getCanvasPoint])
 
   // 句柄鼠标按下 — 开始缩放
   const handleResizeMouseDown = useCallback((e: React.MouseEvent, ctrl: DesignControl, handle: HandleDir) => {
     e.stopPropagation()
     if (e.button !== 0) return
 
-    const canvas = canvasRef.current!
-    const rect = canvas.getBoundingClientRect()
-    const bx = canvas.clientLeft
-    const by = canvas.clientTop
+    const start = getCanvasPoint(e.clientX, e.clientY)
     dragRef.current = {
       mode: 'resize',
       controlId: ctrl.id,
       handle,
-      startX: e.clientX - rect.left - bx,
-      startY: e.clientY - rect.top - by,
+      startX: start.x,
+      startY: start.y,
       origLeft: ctrl.left,
       origTop: ctrl.top,
       origWidth: ctrl.width,
@@ -701,8 +1322,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const handleMouseMove = (ev: MouseEvent): void => {
       const d = dragRef.current
       if (!d || !d.handle) return
-      const mx = ev.clientX - rect.left - bx
-      const my = ev.clientY - rect.top - by
+      const p = getCanvasPoint(ev.clientX, ev.clientY)
+      const mx = p.x
+      const my = p.y
       const dx = mx - d.startX
       const dy = my - d.startY
 
@@ -737,11 +1359,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     document.body.style.cursor = cursorMap[handle]
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-  }, [updateControl])
+  }, [updateControl, getCanvasPoint])
 
   // 渲染单个控件的预览外观
   const renderControlPreview = (ctrl: DesignControl): React.JSX.Element => {
     const controlColors = resolveControlVisualColors(ctrl)
+    const unitInfo = windowUnits.find(u => u.name === ctrl.type)
 
     switch (ctrl.type) {
       case '按钮':
@@ -760,7 +1383,16 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       case '编辑框':
       case '超级编辑框':
         return (
-          <div className="vd-preview vd-preview-input">{ctrl.text}</div>
+          <div
+            className="vd-preview vd-preview-input"
+            ref={(element) => setCssVars(element, {
+              '--vd-preview-bg': readColorProperty(ctrl.properties, ['背景颜色', '背景色', '背景']) || '#ffffff',
+              '--vd-preview-border': controlColors.border,
+              '--vd-preview-text': controlColors.text,
+            })}
+          >
+            {ctrl.text}
+          </div>
         )
       case '标签':
         return (
@@ -837,7 +1469,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       case '图片组':
         return (
           <div className="vd-preview vd-preview-compact">
-            {UNIT_ICON_MAP[ctrl.type] ? <Icon name={UNIT_ICON_MAP[ctrl.type]} size={12} /> : '?'}
+            <Icon name={resolveUnitIconName(ctrl.type, unitInfo?.iconFileName, unitInfo?.libraryName)} size={12} />
           </div>
         )
       default:
@@ -852,11 +1484,16 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const handleToolboxDragStart = useCallback((e: React.MouseEvent) => {
     if (!toolboxFloat) return
     e.preventDefault()
-    const startX = e.clientX - toolboxPos.x
-    const startY = e.clientY - toolboxPos.y
+    e.stopPropagation()
+    const startMouseX = e.clientX
+    const startMouseY = e.clientY
+    const startPos = toolboxPos
 
     const handleMouseMove = (ev: MouseEvent): void => {
-      setToolboxPos({ x: ev.clientX - startX, y: ev.clientY - startY })
+      const rawX = startPos.x + (ev.clientX - startMouseX)
+      const rawY = startPos.y + (ev.clientY - startMouseY)
+      const next = clampFloatingToolboxRect(rawX, rawY, toolboxSize.w, toolboxSize.h)
+      setToolboxPos({ x: next.x, y: next.y })
     }
     const handleMouseUp = (): void => {
       document.removeEventListener('mousemove', handleMouseMove)
@@ -864,7 +1501,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     }
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-  }, [toolboxFloat, toolboxPos])
+  }, [clampFloatingToolboxRect, toolboxFloat, toolboxPos, toolboxSize.h, toolboxSize.w])
 
   // 过滤工具箱项（使用支持库的窗口组件）
   const toolboxItems = windowUnits.length > 0
@@ -873,33 +1510,136 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const filteredTools = toolboxSearch
     ? toolboxItems.filter(u => u.name.includes(toolboxSearch) || u.englishName.toLowerCase().includes(toolboxSearch.toLowerCase()))
     : toolboxItems
+  const isListMultiColumn = toolboxViewMode === 'list' && toolboxListMultiColumn
+
+  useEffect(() => {
+    setToolboxStateReady(false)
+    try {
+      const raw = localStorage.getItem(TOOLBOX_STATE_STORAGE_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          float?: boolean
+          dockSide?: string
+          dockWidth?: number
+          viewMode?: string
+          listMultiColumn?: boolean
+          posX?: number
+          posY?: number
+          sizeW?: number
+          sizeH?: number
+        }
+        const parsedViewMode: 'icon' | 'list' = parsed.viewMode === 'icon' ? 'icon' : 'list'
+        const minW = getToolboxMinWidth(parsedViewMode)
+
+        if (typeof parsed.float === 'boolean') setToolboxFloat(parsed.float)
+        if (parsed.dockSide === 'left' || parsed.dockSide === 'right') {
+          setToolboxDockSide(parsed.dockSide)
+        }
+        if (typeof parsed.dockWidth === 'number' && Number.isFinite(parsed.dockWidth)) {
+          setToolboxDockWidth(clamp(Math.round(parsed.dockWidth), minW, TOOLBOX_DOCK_MAX_WIDTH))
+        }
+        setToolboxViewMode(parsedViewMode)
+        if (typeof parsed.listMultiColumn === 'boolean') {
+          setToolboxListMultiColumn(parsed.listMultiColumn)
+        }
+
+        if (
+          typeof parsed.posX === 'number' && Number.isFinite(parsed.posX)
+          && typeof parsed.posY === 'number' && Number.isFinite(parsed.posY)
+        ) {
+          setToolboxPos({ x: Math.round(parsed.posX), y: Math.round(parsed.posY) })
+        }
+        if (
+          typeof parsed.sizeW === 'number' && Number.isFinite(parsed.sizeW)
+          && typeof parsed.sizeH === 'number' && Number.isFinite(parsed.sizeH)
+        ) {
+          setToolboxSize({
+            w: Math.max(minW, Math.round(parsed.sizeW)),
+            h: Math.max(TOOLBOX_FLOAT_MIN_HEIGHT, Math.round(parsed.sizeH)),
+          })
+        }
+      }
+    } catch {
+      // Ignore invalid toolbox state payload.
+    }
+    setToolboxStateReady(true)
+  }, [])
+
+  useEffect(() => {
+    if (!toolboxStateReady) return
+    try {
+      localStorage.setItem(TOOLBOX_STATE_STORAGE_KEY, JSON.stringify({
+        float: toolboxFloat,
+        dockSide: toolboxDockSide,
+        dockWidth: toolboxDockWidth,
+        viewMode: toolboxViewMode,
+        listMultiColumn: toolboxListMultiColumn,
+        posX: toolboxPos.x,
+        posY: toolboxPos.y,
+        sizeW: toolboxSize.w,
+        sizeH: toolboxSize.h,
+      }))
+    } catch {
+      // Ignore storage quota/security failures.
+    }
+  }, [toolboxDockSide, toolboxDockWidth, toolboxFloat, toolboxListMultiColumn, toolboxPos.x, toolboxPos.y, toolboxSize.h, toolboxSize.w, toolboxStateReady, toolboxViewMode])
 
   // 工具箱渲染
   const renderToolbox = (): React.JSX.Element => (
     <div
-      className={`vd-toolbox ${toolboxFloat ? 'vd-toolbox-float' : ''} ${toolboxViewMode === 'icon' ? 'vd-toolbox-icon-mode' : ''}`}
+      className={`vd-toolbox ${toolboxFloat ? 'vd-toolbox-float' : `vd-toolbox-docked vd-toolbox-docked-${toolboxDockSide}`} ${toolboxViewMode === 'icon' ? 'vd-toolbox-icon-mode' : ''}`}
       ref={(element) => {
-        if (!toolboxFloat) return
+        if (!element) return
+        const widthForScale = toolboxFloat ? toolboxSize.w : toolboxDockWidth
+        const visualScale = computeToolboxVisualScale(widthForScale, toolboxViewMode)
+        const tileSize = Math.max(30, Math.round(34 * visualScale))
+        const listColumns = computeToolboxListColumns(widthForScale)
+        if (!toolboxFloat) {
+          setCssVars(element, {
+            '--vd-toolbox-dock-width': `${toolboxDockWidth}px`,
+            '--vd-toolbox-scale': `${visualScale}`,
+            '--vd-toolbox-tile-size': `${tileSize}px`,
+            '--vd-toolbox-list-columns': `${listColumns}`,
+          })
+          return
+        }
         setCssVars(element, {
           '--vd-toolbox-left': `${toolboxPos.x}px`,
           '--vd-toolbox-top': `${toolboxPos.y}px`,
           '--vd-toolbox-width': `${toolboxSize.w}px`,
           '--vd-toolbox-height': `${toolboxSize.h}px`,
+          '--vd-toolbox-scale': `${visualScale}`,
+          '--vd-toolbox-tile-size': `${tileSize}px`,
+          '--vd-toolbox-list-columns': `${listColumns}`,
         })
       }}
     >
       <div className="vd-toolbox-header" onMouseDown={handleToolboxDragStart}>
         <span className="vd-toolbox-title">控件工具箱</span>
         <div className="vd-toolbox-actions">
+          {!toolboxFloat && (
+            <button
+              className="vd-toolbox-btn"
+              title={toolboxDockSide === 'right' ? '停靠到左侧' : '停靠到右侧'}
+              onClick={() => setToolboxDockSide(prev => prev === 'right' ? 'left' : 'right')}
+            >{toolboxDockSide === 'right' ? '⇤' : '⇥'}</button>
+          )}
           <button
             className="vd-toolbox-btn"
             title={toolboxViewMode === 'list' ? '图标视图' : '列表视图'}
             onClick={() => setToolboxViewMode(toolboxViewMode === 'list' ? 'icon' : 'list')}
           >{toolboxViewMode === 'list' ? '▦' : '☰'}</button>
+          {toolboxViewMode === 'list' && (
+            <button
+              className="vd-toolbox-btn"
+              title={toolboxListMultiColumn ? '切换为列表单列' : '切换为列表多列'}
+              onClick={() => setToolboxListMultiColumn(prev => !prev)}
+            >{toolboxListMultiColumn ? '◫' : '☷'}</button>
+          )}
           <button
             className="vd-toolbox-btn"
             title={toolboxFloat ? '固定' : '浮动'}
-            onClick={() => setToolboxFloat(!toolboxFloat)}
+            onClick={toggleToolboxFloat}
           >{toolboxFloat ? '📌' : '🔓'}</button>
         </div>
       </div>
@@ -912,7 +1652,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           className="vd-toolbox-search-input"
         />
       </div>
-      <div className="vd-toolbox-list">
+      <div className={`vd-toolbox-list ${isListMultiColumn ? 'vd-toolbox-list-multi' : ''}`}>
         <button
           className={`vd-tool-item ${activeTool === null ? 'active' : ''}`}
           onClick={() => setActiveTool(null)}
@@ -928,7 +1668,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             onClick={() => setActiveTool(activeTool === unit.name ? null : unit.name)}
             title={`${unit.name} (${unit.libraryName})`}
           >
-            <span className="vd-tool-icon">{UNIT_ICON_MAP[unit.name] ? <Icon name={UNIT_ICON_MAP[unit.name]} size={16} /> : unit.name.charAt(0)}</span>
+            <span className="vd-tool-icon"><Icon name={resolveUnitIconName(unit.name, unit.iconFileName, unit.libraryName)} size={16} /></span>
             {toolboxViewMode === 'list' && <span className="vd-tool-label">{unit.name}</span>}
           </button>
         ))}
@@ -936,13 +1676,114 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           <div className="vd-toolbox-empty">请先加载支持库</div>
         )}
       </div>
+      {!toolboxFloat && (
+        <div
+          className={`vd-toolbox-resizer vd-toolbox-resizer-docked vd-toolbox-resizer-${toolboxDockSide}`}
+          onMouseDown={handleDockResizeStart}
+          title="拖拽调整工具箱宽度"
+        />
+      )}
+      {toolboxFloat && (
+        <div
+          className="vd-toolbox-resizer vd-toolbox-resizer-float"
+          onMouseDown={handleFloatResizeStart}
+          title="拖拽调整工具箱大小"
+        />
+      )}
     </div>
   )
 
   return (
-    <div className="vd">
+    <div className="vd" ref={designerRootRef}>
       {/* 画布区域 */}
-      <div className="vd-canvas-area">
+      <div
+        className="vd-canvas-area"
+        ref={canvasRegionRef}
+        onKeyDown={handleCanvasAreaKeyDown}
+        tabIndex={0}
+        role="region"
+        aria-label="可视化设计器画布。按住Ctrl键后滚轮可按鼠标焦点缩放；按住空格并左键拖拽可平移画布；按加号和减号缩放，按0重置比例。"
+      >
+        <div className="vd-ruler-corner" aria-hidden="true" />
+        <div className="vd-ruler vd-ruler-top" aria-hidden="true">
+          {mouseRulerPos && (
+            <div
+              className="vd-ruler-cursor vd-ruler-cursor-x"
+              ref={(element) => setCssVars(element, { '--vd-ruler-cursor-pos': `${mouseRulerPos.x}px` })}
+            />
+          )}
+          {selectedRulerHighlight && selectedRulerHighlight.w > 0 && (
+            <div
+              className="vd-ruler-selection vd-ruler-selection-x"
+              ref={(element) => setCssVars(element, {
+                '--vd-ruler-selection-start': `${selectedRulerHighlight.x}px`,
+                '--vd-ruler-selection-size': `${selectedRulerHighlight.w}px`,
+              })}
+            />
+          )}
+          {rulerTicksX.map(tick => (
+            <div
+              key={tick.id}
+              className={`vd-ruler-tick vd-ruler-tick-x ${tick.level}`}
+              ref={(element) => setCssVars(element, { '--vd-ruler-tick-pos': `${tick.pos}px` })}
+            >
+              {tick.level === 'major' && <span className="vd-ruler-label">{tick.label}</span>}
+            </div>
+          ))}
+        </div>
+        <div className="vd-ruler vd-ruler-left" aria-hidden="true">
+          {mouseRulerPos && (
+            <div
+              className="vd-ruler-cursor vd-ruler-cursor-y"
+              ref={(element) => setCssVars(element, { '--vd-ruler-cursor-pos': `${mouseRulerPos.y}px` })}
+            />
+          )}
+          {selectedRulerHighlight && selectedRulerHighlight.h > 0 && (
+            <div
+              className="vd-ruler-selection vd-ruler-selection-y"
+              ref={(element) => setCssVars(element, {
+                '--vd-ruler-selection-start': `${selectedRulerHighlight.y}px`,
+                '--vd-ruler-selection-size': `${selectedRulerHighlight.h}px`,
+              })}
+            />
+          )}
+          {rulerTicksY.map(tick => (
+            <div
+              key={tick.id}
+              className={`vd-ruler-tick vd-ruler-tick-y ${tick.level}`}
+              ref={(element) => setCssVars(element, { '--vd-ruler-tick-pos': `${tick.pos}px` })}
+            >
+              {tick.level === 'major' && <span className="vd-ruler-label">{tick.label}</span>}
+            </div>
+          ))}
+        </div>
+
+        <div
+          className={`vd-canvas-scroll ${isSpacePressed ? 'vd-canvas-scroll-pan-ready' : ''} ${isPanningView ? 'vd-canvas-scroll-pan-active' : ''}`}
+          ref={canvasAreaRef}
+          onScroll={handleCanvasScroll}
+          onWheel={handleCanvasAreaWheel}
+          onMouseDownCapture={handleCanvasPanMouseDownCapture}
+        >
+          <div
+            className="vd-canvas-workspace"
+            ref={(element) => setCssVars(element, {
+              '--vd-workspace-width': `${workspaceWidth}px`,
+              '--vd-workspace-height': `${workspaceHeight}px`,
+            })}
+          >
+        <div className="vd-zoom-indicator" aria-live="polite">{Math.round(zoom * 100)}%</div>
+
+        <div
+          className="vd-form-zoom-shell"
+          ref={(element) => setCssVars(element, {
+            '--vd-zoom': `${zoom}`,
+            '--vd-shell-width': `${visualFormWidth * zoom}px`,
+            '--vd-shell-height': `${(visualFormHeight + FORM_TITLEBAR_HEIGHT) * zoom}px`,
+            '--vd-shell-left': `${formOffsetLeft}px`,
+            '--vd-shell-top': `${formOffsetTop}px`,
+          })}
+        >
 
         {/* 窗口外壳 */}
         <div
@@ -971,11 +1812,13 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             ref={(element) => {
               canvasRef.current = element
               setCssVars(element, {
-                '--vd-form-width': `${form.width}px`,
-                '--vd-form-height': `${form.height}px`,
+                '--vd-form-width': `${visualFormWidth}px`,
+                '--vd-form-height': `${visualFormHeight}px`,
               })
             }}
             onMouseDown={handleCanvasMouseDown}
+            onMouseMove={(e) => updateMouseRulerPos(e.clientX, e.clientY)}
+            onMouseLeave={() => setMouseRulerPos(null)}
             onDoubleClick={handleFormDblClick}
           >
             {alignGuides.x.map(x => (
@@ -994,6 +1837,18 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             ))}
 
             {/* 拖拽绘制预览 — 直接显示组件外观 */}
+            {marqueeRect && (
+              <div
+                className="vd-marquee-selection"
+                ref={(element) => setCssVars(element, {
+                  '--vd-marquee-left': `${marqueeRect.x}px`,
+                  '--vd-marquee-top': `${marqueeRect.y}px`,
+                  '--vd-marquee-width': `${marqueeRect.w}px`,
+                  '--vd-marquee-height': `${marqueeRect.h}px`,
+                })}
+              />
+            )}
+
             {drawRect && drawRect.w > 0 && drawRect.h > 0 && activeTool && (
               <div
                 className="vd-draw-preview"
@@ -1021,23 +1876,23 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             {form.controls.map(ctrl => {
               const isSelected = ctrl.id === selectedId
               const isMultiSelected = selectedIds.has(ctrl.id)
+              const isHovered = hoveredControlId === ctrl.id && !isSelected && !isMultiSelected
               return (
                 <div
                   key={ctrl.id}
-                  className={`vd-control ${isSelected ? 'vd-control-selected' : ''} ${isMultiSelected ? 'vd-control-multi-selected' : ''}`}
+                  className={`vd-control ${isSelected ? 'vd-control-selected' : ''} ${isMultiSelected ? 'vd-control-multi-selected' : ''} ${isHovered ? 'vd-control-hovered' : ''}`}
                   ref={(element) => setCssVars(element, {
                     '--vd-control-left': `${ctrl.left}px`,
                     '--vd-control-top': `${ctrl.top}px`,
                     '--vd-control-width': `${ctrl.width}px`,
                     '--vd-control-height': `${ctrl.height}px`,
                   })}
+                  onMouseEnter={() => setHoveredControlId(ctrl.id)}
+                  onMouseLeave={() => setHoveredControlId(prev => prev === ctrl.id ? null : prev)}
                   onMouseDown={(e) => handleControlMouseDown(e, ctrl)}
                   onDoubleClick={(e) => handleControlDblClick(e, ctrl)}
                 >
                   {renderControlPreview(ctrl)}
-
-                  {/* 控件名标注 */}
-                  <div className="vd-control-name">{ctrl.name}</div>
 
                   {/* 选中句柄 */}
                   {(isSelected || isMultiSelected) && HANDLES.map(h => (
@@ -1060,6 +1915,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               <div className="vd-handle vd-form-handle-se" onMouseDown={(e) => handleFormResizeMouseDown(e, 'se')} />
             </>
           )}
+        </div>
+        </div>
+          </div>
         </div>
       </div>
 

@@ -72,6 +72,7 @@ import DateTimePickerSvg from '../../assets/icons/DateTimePicker.svg?raw'
 import SliderSvg from '../../assets/icons/Slider.svg?raw'
 import TabSvg from '../../assets/icons/Tab.svg?raw'
 import MutuallExclusiveCheckboxSvg from '../../assets/icons/MutuallExclusiveCheckbox.svg?raw'
+import ButtonSvg from '../../assets/icons/Button.svg?raw'
 import ImageButtonSvg from '../../assets/icons/ImageButton.svg?raw'
 import CursorSvg from '../../assets/icons/Cursor.svg?raw'
 import HorizontalScrollBarSvg from '../../assets/icons/HorizontalScrollBar.svg?raw'
@@ -90,6 +91,7 @@ import ColorPickerSvg from '../../assets/icons/ColorPicker.svg?raw'
 import SpinnerSvg from '../../assets/icons/Spinner.svg?raw'
 import HyperLinkSvg from '../../assets/icons/HyperLink.svg?raw'
 import EditSvg from '../../assets/icons/Edit.svg?raw'
+import QuestionMarkSvg from '../../assets/icons/QuestionMark.svg?raw'
 
 /** Icon name registry */
 export const ICON_MAP: Record<string, string> = {
@@ -159,6 +161,7 @@ export const ICON_MAP: Record<string, string> = {
   'slider': SliderSvg,
   'tab': TabSvg,
   'checkbox': MutuallExclusiveCheckboxSvg,
+  'button': ButtonSvg,
   'image-button': ImageButtonSvg,
   'cursor': CursorSvg,
   'hscrollbar': HorizontalScrollBarSvg,
@@ -177,6 +180,7 @@ export const ICON_MAP: Record<string, string> = {
   'spinner': SpinnerSvg,
   'hyperlink': HyperLinkSvg,
   'edit': EditSvg,
+  'unknown-unit': QuestionMarkSvg,
 }
 
 function stripSvgTitle(raw: string): string {
@@ -287,7 +291,7 @@ export default function Icon({ name, size = 16, className = '', title, preserveO
  */
 export const UNIT_ICON_MAP: Record<string, string> = {
   '窗口': 'windows-form',
-  '按钮': 'image-button',
+  '按钮': 'button',
   '编辑框': 'textbox',
   '标签': 'label',
   '图片框': 'image',
@@ -334,4 +338,80 @@ export const UNIT_ICON_MAP: Record<string, string> = {
   '数据库提供者': 'datasource',
   '外部数据库': 'datasource',
   '外部数据提供者': 'datasource',
+}
+
+export const UNIT_ICON_FILE_MAP: Record<string, string> = {
+  'BindingNavigator_16x.png': 'datasource',
+  'BindingSource_16x.png': 'datasource',
+  'Button_16x.png': 'button',
+  'Checkbox_16x.png': 'checkbox',
+  'CheckboxList_16x.png': 'listbox',
+  'ClientStatistcs_16x.png': 'network',
+  'ColorDialog_16x.png': 'color-picker',
+  'ComboBox_16x.png': 'listbox',
+  'Cursor_16x.png': 'cursor',
+  'DatabaseGroup_16x.png': 'datasource',
+  'DatePicker_16x.png': 'date-picker',
+  'Diagram_16x.png': 'network',
+  'Driver_16x.png': 'custom-control',
+  'FolderBrowserDialogControl_16x.png': 'folder-closed',
+  'GroupBox_16x.png': 'groupbox',
+  'HorizontalScrollBarControl_16x.png': 'hscrollbar',
+  'Image_16x.png': 'image',
+  'ImageButton_16x.png': 'image-button',
+  'Label_16x.png': 'label',
+  'LinkButton_16x.png': 'hyperlink',
+  'ListBox_16x.png': 'listbox',
+  'ListView_16x.png': 'datagrid',
+  'MaskedTextbox_16x.png': 'textbox',
+  'Media_16x.png': 'image',
+  'MenuItem_16x.png': 'custom-control',
+  'MonthCalendar_16x.png': 'month-calendar',
+  'OpenfileDialog_16x.png': 'dialog',
+  'PaintBrush_16x.png': 'panel',
+  'Panel_16x.png': 'panel',
+  'PrintDialog_16x.png': 'dialog',
+  'ProgressBar_16x.png': 'progressbar',
+  'ProjectFilterFile_16x.png': 'custom-control',
+  'RadioButton_16x.png': 'radiobutton',
+  'Relationship_16x.png': 'datasource',
+  'RichTextBox_16x.png': 'edit',
+  'SerialPort_16x.png': 'serialport',
+  'ServerReport_16x.png': 'server',
+  'Slider_16x.png': 'slider',
+  'SpinButton_16x.png': 'spinner',
+  'StatusStrip_16x.png': 'custom-control',
+  'Tab_16x.png': 'tab',
+  'Table_16x.png': 'datagrid',
+  'TableAdapter_16x.png': 'datasource',
+  'TextArea_16x.png': 'edit',
+  'TextBox_16x.png': 'textbox',
+  'Timer_16x.png': 'timer',
+  'ToolBar_16x.png': 'toolbox',
+  'TreeView_16x.png': 'custom-control',
+  'VerticalScrollBarControl_16x.png': 'vscrollbar',
+  'VideoCamera_16x.png': 'image',
+}
+
+function isCoreLibraryUnit(libraryName?: string): boolean {
+  const raw = typeof libraryName === 'string' ? libraryName.trim().toLowerCase() : ''
+  if (!raw) return false
+  if (raw === 'krnln' || raw === 'core') return true
+  return raw.includes('核心支持库')
+}
+
+export function resolveUnitIconName(unitName: string, iconFileName?: string, libraryName?: string): string {
+  const iconFile = typeof iconFileName === 'string' ? iconFileName.trim() : ''
+  if (iconFile) {
+    const fileName = iconFile.replace(/\\/g, '/').split('/').pop() || iconFile
+    const mapped = UNIT_ICON_FILE_MAP[fileName]
+    if (mapped && ICON_MAP[mapped]) return mapped
+    return 'unknown-unit'
+  }
+
+  if (isCoreLibraryUnit(libraryName)) {
+    return UNIT_ICON_MAP[unitName] || 'unknown-unit'
+  }
+
+  return 'unknown-unit'
 }

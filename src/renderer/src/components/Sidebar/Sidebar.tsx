@@ -1,8 +1,27 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import type { DesignControl, DesignForm, SelectionTarget, LibWindowUnit, LibUnitProperty, LibUnitEvent } from '../Editor/VisualDesigner'
-import Icon from '../Icon/Icon'
+import Icon, { resolveUnitIconName } from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './Sidebar.css'
+
+const MOUSE_POINTER_PICK_OPTIONS = [
+  '0.默认型',
+  '1.标准箭头型',
+  '2.十字型',
+  '3.文本编辑型',
+  '4.沙漏型',
+  '5.箭头问号型',
+  '6.箭头及沙漏型',
+  '7.禁止符型',
+  '8.四向箭头型',
+  '9.北向箭头型',
+  '10.北<->南箭头型',
+  '11.东<->西箭头型',
+  '12.西北<->东南箭头型',
+  '13.东北<->西南箭头型',
+  '14.手型',
+  '15.自定义型',
+]
 
 type SidebarTab = 'project' | 'library' | 'property'
 type SidebarTabsPlacement = 'top' | 'bottom'
@@ -36,6 +55,43 @@ const TREE_TYPE_LABEL: Record<TreeNode['type'], string> = {
   resource: '资源',
 }
 
+const FILE_ICON_BY_EXT: Record<string, string> = {
+  c: 'class',
+  cc: 'class',
+  cpp: 'class',
+  cxx: 'class',
+  h: 'field',
+  hh: 'field',
+  hpp: 'field',
+  hxx: 'field',
+  ts: 'method',
+  js: 'method',
+  json: 'property',
+  xml: 'property',
+  yml: 'property',
+  yaml: 'property',
+  md: 'edit',
+  txt: 'edit',
+}
+
+function getWorkspaceFileIconName(node: TreeNode): string {
+  const fileName = (node.fileName || node.label || '').toLowerCase()
+  const ext = fileName.includes('.') ? fileName.split('.').pop() || '' : ''
+  if (ext && FILE_ICON_BY_EXT[ext]) return FILE_ICON_BY_EXT[ext]
+  return 'module'
+}
+
+function getTreeNodeIconName(node: TreeNode, expanded: boolean): string {
+  if (node.type === 'folder') {
+    return expanded ? TREE_ICON_MAP['folder-expanded'] : TREE_ICON_MAP.folder
+  }
+  // 普通文件夹工作区文件：按扩展名给占位语言图标。
+  if (node.id.startsWith('ws:file:')) {
+    return getWorkspaceFileIconName(node)
+  }
+  return TREE_ICON_MAP[node.type] || 'custom-control'
+}
+
 const setCssVars = (element: HTMLElement | null, vars: Record<string, string>): void => {
   if (!element) return
   for (const [name, value] of Object.entries(vars)) {
@@ -62,6 +118,8 @@ interface SidebarProps {
   onCloseProject?: (projectDir: string) => void
   /** 支持库加载或卸载时的回调 */
   onLibraryChange?: () => void
+  /** 支持库树选中项提示回调（写入全局提示面板） */
+  onLibraryHint?: (hint: { title: string; lines: string[] }) => void
 }
 
 interface LibItem {
@@ -196,7 +254,7 @@ function TreeItem({
         onDoubleClick={() => {
           if (isFileNode && onOpenFile) {
             onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
-          } else if (!hasChildren && onOpenFile) {
+          } else if (!hasChildren && node.type !== 'folder' && onOpenFile) {
             onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
           }
         }}
@@ -253,7 +311,7 @@ function TreeItem({
             e.preventDefault()
             if (isFileNode && onOpenFile) onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
             else if (hasChildren) setExpanded(!expanded)
-            else if (onOpenFile) onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
+            else if (node.type !== 'folder' && onOpenFile) onOpenFile(openFileId, openFileName, targetLine, node.type, node.label)
           }
         }}
       >
@@ -261,7 +319,7 @@ function TreeItem({
           <span className={`tree-arrow ${expanded ? 'expanded' : ''}`} aria-hidden="true">▶</span>
         )}
         {!hasChildren && <span className="tree-arrow-placeholder" aria-hidden="true" />}
-        <Icon preserveOriginalColors name={(node.type === 'folder' ? (expanded ? TREE_ICON_MAP['folder-expanded'] : TREE_ICON_MAP['folder']) : TREE_ICON_MAP[node.type]) || 'custom-control'} size={16} />
+        <Icon preserveOriginalColors name={getTreeNodeIconName(node, expanded)} size={16} />
         <span className="tree-label">{node.label}</span>
         {shouldShowModifiedDot && <span className="tree-item-modified-dot" title="未保存更改" aria-label="未保存更改">●</span>}
       </div>
@@ -291,11 +349,136 @@ interface LibDetail {
   version: string
   author: string
   description: string
-  commands: Array<{ name: string; category: string; description: string; isHidden: boolean }>
+  commands: Array<{
+    name: string
+    englishName?: string
+    category: string
+    description: string
+    returnType?: string
+    supportedPlatforms?: string[]
+    params?: Array<{
+      name: string
+      type: string
+      description?: string
+      optional?: boolean
+      isVariable?: boolean
+      isArray?: boolean
+    }>
+    isHidden: boolean
+  }>
   dataTypes: Array<{ name: string; description: string }>
+  windowUnits: LibWindowUnit[]
 }
 
-function LibraryPanel(): React.JSX.Element {
+interface LibraryHintInfo {
+  title: string
+  lines: string[]
+}
+
+const TYPE_ENGLISH_MAP: Record<string, string> = {
+  '整数型': 'int',
+  '短整数型': 'short',
+  '长整数型': 'long',
+  '小数型': 'float',
+  '双精度小数型': 'double',
+  '逻辑型': 'bool',
+  '文本型': 'text',
+  '字节型': 'byte',
+  '日期时间型': 'datetime',
+  '字节集': 'bin',
+  '子程序指针': 'subptr',
+  '通用型': 'all',
+}
+
+function toDisplayEnglishCommandName(englishName: string | undefined, commandName: string): string {
+  const raw = (englishName || '').trim()
+  if (!raw) return commandName
+  const dot = raw.lastIndexOf('.')
+  if (dot < 0) return raw
+  return raw.slice(dot + 1) || raw
+}
+
+function getCommandLongDescription(command: {
+  name: string
+  englishName?: string
+  description: string
+}): string {
+  return command.description?.trim() || '暂无说明。'
+}
+
+function formatPlatformLabel(platform: string): string {
+  const key = platform.toLowerCase()
+  if (key === 'windows') return 'Windows'
+  if (key === 'linux') return 'Linux'
+  if (key === 'macos') return 'macOS'
+  if (key === 'android') return 'Android'
+  if (key === 'ios') return 'iOS'
+  if (key === 'harmony') return 'HarmonyOS'
+  return platform
+}
+
+function getOperatingSystemSupportText(platforms: string[] | undefined): string {
+  const normalized = Array.from(new Set((platforms || []).map(formatPlatformLabel)))
+  if (normalized.length === 0) return '暂无说明。'
+  return normalized.join('、')
+}
+
+function buildCommandHint(
+  command: {
+    name: string
+    englishName?: string
+    category: string
+    description: string
+    returnType?: string
+    supportedPlatforms?: string[]
+    params?: Array<{
+      name: string
+      type: string
+      description?: string
+      optional?: boolean
+      repeatable?: boolean
+      isVariable?: boolean
+      isArray?: boolean
+    }>
+  },
+  libraryDisplayName: string,
+  categoryName: string,
+): LibraryHintInfo {
+  const commandParams = command.params || []
+  const retLabel = command.returnType ? `〈${command.returnType}〉` : '〈无返回值〉'
+  const paramSig = commandParams.length > 0
+    ? commandParams.map(param => {
+        let text = ''
+        if (param.optional) text += '［'
+        text += `${param.type}${param.isArray ? '数组' : ''} ${param.name}`
+        if (param.repeatable) text += '...'
+        if (param.optional) text += '］'
+        return text
+      }).join('，')
+    : ''
+  const source = `${libraryDisplayName}->${categoryName}`
+  const englishName = toDisplayEnglishCommandName(command.englishName, command.name)
+  const lines: string[] = [
+    `英文名称：${englishName}`,
+    getCommandLongDescription(command),
+  ]
+
+  commandParams.forEach((param, index) => {
+    const englishType = TYPE_ENGLISH_MAP[param.type]
+    const typeLabel = englishType ? `${param.type}（${englishType}）` : param.type
+    lines.push(`参数<${index + 1}>的名称为“${param.name}”，类型为“${typeLabel}”${param.repeatable ? '，可重复追加' : ''}。${param.description || ''}`.trim())
+  })
+
+  lines.push('')
+  lines.push(`操作系统支持： ${getOperatingSystemSupportText(command.supportedPlatforms)}`)
+
+  return {
+    title: `调用格式： ${retLabel} ${command.name} （${paramSig}） - ${source}`,
+    lines,
+  }
+}
+
+function LibraryPanel({ onHint }: { onHint?: (hint: LibraryHintInfo) => void }): React.JSX.Element {
   const [libs, setLibs] = useState<LibItem[]>([])
   const [loaded, setLoaded] = useState(false)
   const [expandedLibs, setExpandedLibs] = useState<Set<string>>(new Set())
@@ -351,12 +534,45 @@ function LibraryPanel(): React.JSX.Element {
       const detail = libDetails[lib.name]
       if (!isExpanded || !detail) continue
 
-      if (detail.dataTypes.length > 0) {
+      const windowUnits = detail.windowUnits || []
+      const windowUnitMap = new Map(windowUnits.map(unit => [unit.name, unit]))
+      const plainDataTypes = detail.dataTypes.filter(dt => !windowUnitMap.has(dt.name))
+
+      if (windowUnits.length > 0 || plainDataTypes.length > 0) {
         const dtGroupId = getLibraryItemId('dt-group', lib.name)
         ids.push(dtGroupId)
         const dtKey = `${lib.name}::__dt__`
         if (expandedCats.has(dtKey)) {
-          for (const dt of detail.dataTypes) {
+          for (const unit of windowUnits) {
+            const unitId = getLibraryItemId('dt-unit', lib.name, unit.name)
+            ids.push(unitId)
+            const unitKey = `${lib.name}::__dtunit__::${unit.name}`
+            if (!expandedCats.has(unitKey)) continue
+
+            if (unit.properties.length > 0) {
+              const propGroupId = getLibraryItemId('dt-unit-prop-group', lib.name, unit.name)
+              ids.push(propGroupId)
+              const propKey = `${lib.name}::__dtunitprop__::${unit.name}`
+              if (expandedCats.has(propKey)) {
+                for (const prop of unit.properties) {
+                  ids.push(getLibraryItemId('dt-unit-prop', lib.name, unit.name, prop.name))
+                }
+              }
+            }
+
+            if (unit.events.length > 0) {
+              const eventGroupId = getLibraryItemId('dt-unit-event-group', lib.name, unit.name)
+              ids.push(eventGroupId)
+              const eventKey = `${lib.name}::__dtunitevent__::${unit.name}`
+              if (expandedCats.has(eventKey)) {
+                for (const event of unit.events) {
+                  ids.push(getLibraryItemId('dt-unit-event', lib.name, unit.name, event.name))
+                }
+              }
+            }
+          }
+
+          for (const dt of plainDataTypes) {
             ids.push(getLibraryItemId('dt', lib.name, dt.name))
           }
         }
@@ -472,12 +688,21 @@ function LibraryPanel(): React.JSX.Element {
     }
   }, [focusAdjacentLibraryItem, focusParentLibraryItem])
 
+  const applyLibrarySelection = useCallback((itemId: string, hintInfo: LibraryHintInfo) => {
+    setFocusedLibraryItemId(itemId)
+    onHint?.(hintInfo)
+  }, [onHint])
+
   return (
     <div className="sidebar-panel">
-      <ul className="tree" aria-label="支持库列表">
+      <div className="library-tree-wrap">
+        <ul className="tree" aria-label="支持库列表">
         {loadedLibs.map(lib => {
           const isExpanded = expandedLibs.has(lib.name)
           const detail = libDetails[lib.name]
+          const windowUnits = detail?.windowUnits || []
+          const windowUnitMap = new Map(windowUnits.map(unit => [unit.name, unit]))
+          const plainDataTypes = detail ? detail.dataTypes.filter(dt => !windowUnitMap.has(dt.name)) : []
           // 按分类分组命令（排除隐藏命令）
           const catMap: Record<string, LibDetail['commands']> = {}
           if (detail) {
@@ -505,7 +730,16 @@ function LibraryPanel(): React.JSX.Element {
                 })}
                 tabIndex={isRovingFocused ? 0 : -1}
                 onFocus={() => setFocusedLibraryItemId(libItemId)}
-                onClick={() => { setFocusedLibraryItemId(libItemId); void toggleLib(lib.name) }}
+                onClick={() => {
+                  applyLibrarySelection(libItemId, {
+                    title: `支持库：${lib.libName || lib.name}`,
+                    lines: [
+                      detail?.description || '暂无说明。',
+                      `版本：${detail?.version || '未知'}，作者：${detail?.author || '未知'}`,
+                    ],
+                  })
+                  void toggleLib(lib.name)
+                }}
                 onKeyDown={(event) => handleLibraryItemKeyDown(event, { hasChildren: true, expanded: isExpanded, onToggle: () => { void toggleLib(lib.name) } })}
               >
                 <span
@@ -521,7 +755,7 @@ function LibraryPanel(): React.JSX.Element {
               {isExpanded && detail && (
                 <ul>
                   {/* 数据类型分组 */}
-                  {detail.dataTypes.length > 0 && (() => {
+                  {(windowUnits.length > 0 || plainDataTypes.length > 0) && (() => {
                     const dtKey = `${lib.name}::__dt__`
                     const dtExpanded = expandedCats.has(dtKey)
                     const dtGroupItemId = getLibraryItemId('dt-group', lib.name)
@@ -537,7 +771,15 @@ function LibraryPanel(): React.JSX.Element {
                           })}
                           tabIndex={isDtGroupFocused ? 0 : -1}
                           onFocus={() => setFocusedLibraryItemId(dtGroupItemId)}
-                          onClick={() => { setFocusedLibraryItemId(dtGroupItemId); toggleCat(dtKey) }}
+                          onClick={() => {
+                            applyLibrarySelection(dtGroupItemId, {
+                              title: `数据类型：${lib.libName || lib.name}`,
+                              lines: [
+                                `共 ${windowUnits.length + plainDataTypes.length} 项。`,
+                              ],
+                            })
+                            toggleCat(dtKey)
+                          }}
                           onKeyDown={(event) => handleLibraryItemKeyDown(event, { hasChildren: true, expanded: dtExpanded, onToggle: () => toggleCat(dtKey) })}
                         >
                           <span
@@ -547,11 +789,221 @@ function LibraryPanel(): React.JSX.Element {
                           >▶</span>
                           <Icon preserveOriginalColors name="class" size={16} />
                           <span className="tree-label">数据类型</span>
-                          <span className="tree-badge">{detail.dataTypes.length}</span>
+                          <span className="tree-badge">{windowUnits.length + plainDataTypes.length}</span>
                         </div>
                         {dtExpanded && (
                           <ul>
-                            {detail.dataTypes.map(dt => (
+                            {windowUnits.map(unit => {
+                              const unitKey = `${lib.name}::__dtunit__::${unit.name}`
+                              const unitExpanded = expandedCats.has(unitKey)
+                              const unitItemId = getLibraryItemId('dt-unit', lib.name, unit.name)
+                              const isUnitFocused = focusedLibraryItemId ? focusedLibraryItemId === unitItemId : visibleLibraryItemIds[0] === unitItemId
+                              const hasUnitChildren = unit.properties.length > 0 || unit.events.length > 0
+                              const unitIcon = resolveUnitIconName(unit.name, unit.iconFileName, unit.libraryName)
+
+                              return (
+                                <li key={unit.name} className="tree-node">
+                                  <div
+                                    className={`tree-item ${hasUnitChildren ? 'tree-branch' : 'tree-leaf'}`}
+                                    data-library-item="true"
+                                    aria-label={`窗口组件 ${unit.name}，${hasUnitChildren ? (unitExpanded ? '已展开' : '已折叠') : '无子项'}`}
+                                    ref={(element) => setCssVars(element, {
+                                      '--tree-item-padding-left': 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px) * 2)',
+                                    })}
+                                    tabIndex={isUnitFocused ? 0 : -1}
+                                    onFocus={() => setFocusedLibraryItemId(unitItemId)}
+                                    onClick={() => {
+                                      applyLibrarySelection(unitItemId, {
+                                        title: `组件名称：${unit.name}`,
+                                        lines: [
+                                          unit.description || '暂无说明。',
+                                          `属性 ${unit.properties.length} 项，事件 ${unit.events.length} 项。`,
+                                        ],
+                                      })
+                                      if (hasUnitChildren) toggleCat(unitKey)
+                                    }}
+                                    onKeyDown={(event) => handleLibraryItemKeyDown(event, {
+                                      hasChildren: hasUnitChildren,
+                                      expanded: unitExpanded,
+                                      onToggle: hasUnitChildren ? () => toggleCat(unitKey) : undefined,
+                                    })}
+                                  >
+                                    {hasUnitChildren
+                                      ? (
+                                        <span
+                                          className={`tree-arrow ${unitExpanded ? 'expanded' : ''}`}
+                                          aria-hidden="true"
+                                          onClick={(e) => { e.stopPropagation(); toggleCat(unitKey) }}
+                                        >▶</span>
+                                        )
+                                      : <span className="tree-arrow-placeholder" aria-hidden="true" />}
+                                    <Icon preserveOriginalColors name={unitIcon} size={16} />
+                                    <span className="tree-label">{unit.name}</span>
+                                  </div>
+
+                                  {hasUnitChildren && unitExpanded && (
+                                    <ul>
+                                      {unit.properties.length > 0 && (() => {
+                                        const propKey = `${lib.name}::__dtunitprop__::${unit.name}`
+                                        const propExpanded = expandedCats.has(propKey)
+                                        const propGroupItemId = getLibraryItemId('dt-unit-prop-group', lib.name, unit.name)
+                                        const isPropGroupFocused = focusedLibraryItemId ? focusedLibraryItemId === propGroupItemId : visibleLibraryItemIds[0] === propGroupItemId
+                                        return (
+                                          <li className="tree-node">
+                                            <div
+                                              className="tree-item tree-branch"
+                                              data-library-item="true"
+                                              aria-label={`属性分组，${propExpanded ? '已展开' : '已折叠'}，共 ${unit.properties.length} 项`}
+                                              ref={(element) => setCssVars(element, {
+                                                '--tree-item-padding-left': 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px) * 3)',
+                                              })}
+                                              tabIndex={isPropGroupFocused ? 0 : -1}
+                                              onFocus={() => setFocusedLibraryItemId(propGroupItemId)}
+                                              onClick={() => {
+                                                applyLibrarySelection(propGroupItemId, {
+                                                  title: `属性分组：${unit.name}`,
+                                                  lines: [
+                                                    `该组件共 ${unit.properties.length} 个属性。`,
+                                                  ],
+                                                })
+                                                toggleCat(propKey)
+                                              }}
+                                              onKeyDown={(event) => handleLibraryItemKeyDown(event, { hasChildren: true, expanded: propExpanded, onToggle: () => toggleCat(propKey) })}
+                                            >
+                                              <span
+                                                className={`tree-arrow ${propExpanded ? 'expanded' : ''}`}
+                                                aria-hidden="true"
+                                                onClick={(e) => { e.stopPropagation(); toggleCat(propKey) }}
+                                              >▶</span>
+                                              <Icon preserveOriginalColors name="property" size={16} />
+                                              <span className="tree-label">属性</span>
+                                              <span className="tree-badge">{unit.properties.length}</span>
+                                            </div>
+                                            {propExpanded && (
+                                              <ul>
+                                                {unit.properties.map(prop => {
+                                                  const propItemId = getLibraryItemId('dt-unit-prop', lib.name, unit.name, prop.name)
+                                                  const isPropFocused = focusedLibraryItemId ? focusedLibraryItemId === propItemId : visibleLibraryItemIds[0] === propItemId
+                                                  return (
+                                                    <li key={prop.name} className="tree-node">
+                                                      <div
+                                                        className="tree-item tree-leaf"
+                                                        data-library-item="true"
+                                                        aria-label={`属性 ${prop.name}${prop.typeName ? `，${prop.typeName}` : ''}`}
+                                                        ref={(element) => setCssVars(element, {
+                                                          '--tree-item-padding-left': 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px) * 4)',
+                                                        })}
+                                                        title={prop.description || prop.typeName}
+                                                        tabIndex={isPropFocused ? 0 : -1}
+                                                        onFocus={() => setFocusedLibraryItemId(propItemId)}
+                                                        onClick={() => applyLibrarySelection(propItemId, {
+                                                          title: `属性名称：${prop.name}`,
+                                                          lines: [
+                                                            prop.description || '暂无说明。',
+                                                            `属性类型：${prop.typeName || '未知'}${prop.isReadOnly ? '（只读）' : ''}`,
+                                                          ],
+                                                        })}
+                                                        onKeyDown={(event) => handleLibraryItemKeyDown(event, { hasChildren: false })}
+                                                      >
+                                                        <span className="tree-arrow-placeholder" aria-hidden="true" />
+                                                        <Icon preserveOriginalColors name="property" size={16} />
+                                                        <span className="tree-label">{prop.name}</span>
+                                                      </div>
+                                                    </li>
+                                                  )
+                                                })}
+                                              </ul>
+                                            )}
+                                          </li>
+                                        )
+                                      })()}
+
+                                      {unit.events.length > 0 && (() => {
+                                        const eventKey = `${lib.name}::__dtunitevent__::${unit.name}`
+                                        const eventExpanded = expandedCats.has(eventKey)
+                                        const eventGroupItemId = getLibraryItemId('dt-unit-event-group', lib.name, unit.name)
+                                        const isEventGroupFocused = focusedLibraryItemId ? focusedLibraryItemId === eventGroupItemId : visibleLibraryItemIds[0] === eventGroupItemId
+                                        return (
+                                          <li className="tree-node">
+                                            <div
+                                              className="tree-item tree-branch"
+                                              data-library-item="true"
+                                              aria-label={`事件分组，${eventExpanded ? '已展开' : '已折叠'}，共 ${unit.events.length} 项`}
+                                              ref={(element) => setCssVars(element, {
+                                                '--tree-item-padding-left': 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px) * 3)',
+                                              })}
+                                              tabIndex={isEventGroupFocused ? 0 : -1}
+                                              onFocus={() => setFocusedLibraryItemId(eventGroupItemId)}
+                                              onClick={() => {
+                                                applyLibrarySelection(eventGroupItemId, {
+                                                  title: `事件分组：${unit.name}`,
+                                                  lines: [
+                                                    `该组件共 ${unit.events.length} 个事件。`,
+                                                  ],
+                                                })
+                                                toggleCat(eventKey)
+                                              }}
+                                              onKeyDown={(event) => handleLibraryItemKeyDown(event, { hasChildren: true, expanded: eventExpanded, onToggle: () => toggleCat(eventKey) })}
+                                            >
+                                              <span
+                                                className={`tree-arrow ${eventExpanded ? 'expanded' : ''}`}
+                                                aria-hidden="true"
+                                                onClick={(e) => { e.stopPropagation(); toggleCat(eventKey) }}
+                                              >▶</span>
+                                              <Icon preserveOriginalColors name="event" size={16} />
+                                              <span className="tree-label">事件</span>
+                                              <span className="tree-badge">{unit.events.length}</span>
+                                            </div>
+                                            {eventExpanded && (
+                                              <ul>
+                                                {unit.events.map(evt => {
+                                                  const eventItemId = getLibraryItemId('dt-unit-event', lib.name, unit.name, evt.name)
+                                                  const isEventFocused = focusedLibraryItemId ? focusedLibraryItemId === eventItemId : visibleLibraryItemIds[0] === eventItemId
+                                                  return (
+                                                    <li key={evt.name} className="tree-node">
+                                                      <div
+                                                        className="tree-item tree-leaf"
+                                                        data-library-item="true"
+                                                        aria-label={`事件 ${evt.name}${evt.args.length > 0 ? `，参数 ${evt.args.length} 个` : ''}`}
+                                                        ref={(element) => setCssVars(element, {
+                                                          '--tree-item-padding-left': 'calc(var(--tree-indent-base, 8px) + var(--tree-indent-step, 16px) * 4)',
+                                                        })}
+                                                        title={evt.description}
+                                                        tabIndex={isEventFocused ? 0 : -1}
+                                                        onFocus={() => setFocusedLibraryItemId(eventItemId)}
+                                                        onClick={() => {
+                                                          const eventLines = [
+                                                            evt.description || '暂无说明。',
+                                                          ]
+                                                          if (evt.args.length > 0) {
+                                                            eventLines.push(`事件参数：${evt.args.map(arg => arg.name).join('、')}`)
+                                                          }
+                                                          applyLibrarySelection(eventItemId, {
+                                                            title: `事件名称：${evt.name}`,
+                                                            lines: eventLines,
+                                                          })
+                                                        }}
+                                                        onKeyDown={(event) => handleLibraryItemKeyDown(event, { hasChildren: false })}
+                                                      >
+                                                        <span className="tree-arrow-placeholder" aria-hidden="true" />
+                                                        <Icon preserveOriginalColors name="event" size={16} />
+                                                        <span className="tree-label">{evt.name}</span>
+                                                      </div>
+                                                    </li>
+                                                  )
+                                                })}
+                                              </ul>
+                                            )}
+                                          </li>
+                                        )
+                                      })()}
+                                    </ul>
+                                  )}
+                                </li>
+                              )
+                            })}
+
+                            {plainDataTypes.map(dt => (
                               <li key={dt.name} className="tree-node">
                                 <div className="tree-item tree-leaf" data-library-item="true" aria-label={`数据类型 ${dt.name}${dt.description ? `，${dt.description}` : ''}`}
                                   ref={(element) => setCssVars(element, {
@@ -560,7 +1012,13 @@ function LibraryPanel(): React.JSX.Element {
                                   title={dt.description}
                                   tabIndex={(focusedLibraryItemId ? focusedLibraryItemId === getLibraryItemId('dt', lib.name, dt.name) : visibleLibraryItemIds[0] === getLibraryItemId('dt', lib.name, dt.name)) ? 0 : -1}
                                   onFocus={() => setFocusedLibraryItemId(getLibraryItemId('dt', lib.name, dt.name))}
-                                  onClick={() => setFocusedLibraryItemId(getLibraryItemId('dt', lib.name, dt.name))}
+                                  onClick={() => applyLibrarySelection(getLibraryItemId('dt', lib.name, dt.name), {
+                                    title: `数据类型：${dt.name}`,
+                                    lines: [
+                                      dt.description || '暂无说明。',
+                                      `所属支持库：${lib.libName || lib.name}`,
+                                    ],
+                                  })}
                                   onKeyDown={(event) => handleLibraryItemKeyDown(event, { hasChildren: false })}
                                 >
                                   <span className="tree-arrow-placeholder" aria-hidden="true" />
@@ -592,7 +1050,16 @@ function LibraryPanel(): React.JSX.Element {
                           })}
                           tabIndex={isCatFocused ? 0 : -1}
                           onFocus={() => setFocusedLibraryItemId(catItemId)}
-                          onClick={() => { setFocusedLibraryItemId(catItemId); toggleCat(catKey) }}
+                          onClick={() => {
+                            applyLibrarySelection(catItemId, {
+                              title: `命令分类：${cat}`,
+                              lines: [
+                                `该分类共 ${cmds.length} 条命令。`,
+                                `所属支持库：${lib.libName || lib.name}`,
+                              ],
+                            })
+                            toggleCat(catKey)
+                          }}
                           onKeyDown={(event) => handleLibraryItemKeyDown(event, { hasChildren: true, expanded: catExpanded, onToggle: () => toggleCat(catKey) })}
                         >
                           <span
@@ -615,7 +1082,14 @@ function LibraryPanel(): React.JSX.Element {
                                   title={cmd.description}
                                   tabIndex={(focusedLibraryItemId ? focusedLibraryItemId === getLibraryItemId('cmd', lib.name, cat, cmd.name) : visibleLibraryItemIds[0] === getLibraryItemId('cmd', lib.name, cat, cmd.name)) ? 0 : -1}
                                   onFocus={() => setFocusedLibraryItemId(getLibraryItemId('cmd', lib.name, cat, cmd.name))}
-                                  onClick={() => setFocusedLibraryItemId(getLibraryItemId('cmd', lib.name, cat, cmd.name))}
+                                  onClick={() => applyLibrarySelection(
+                                    getLibraryItemId('cmd', lib.name, cat, cmd.name),
+                                    buildCommandHint(
+                                      cmd,
+                                      lib.name === 'krnln' ? '系统核心支持库' : (lib.libName || lib.name),
+                                      cat,
+                                    ),
+                                  )}
                                   onKeyDown={(event) => handleLibraryItemKeyDown(event, { hasChildren: false })}
                                 >
                                   <span className="tree-arrow-placeholder" aria-hidden="true" />
@@ -641,6 +1115,7 @@ function LibraryPanel(): React.JSX.Element {
           <li className="sidebar-empty">暂无已加载支持库</li>
         )}
       </ul>
+      </div>
     </div>
   )
 }
@@ -1048,7 +1523,10 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
                 <tr className="prop-row"><th className="prop-name" scope="row">顶边</th><td className="prop-value">0</td></tr>
                 <tr className="prop-row"><th className="prop-name" scope="row">宽度</th><td className="prop-value"><EditableIntCell value={f.width} ariaLabel="宽度" onChange={v => onPropertyChange?.('form', null, '宽度', v)} /></td></tr>
                 <tr className="prop-row"><th className="prop-name" scope="row">高度</th><td className="prop-value"><EditableIntCell value={f.height} ariaLabel="高度" onChange={v => onPropertyChange?.('form', null, '高度', v)} /></td></tr>
-                <tr className="prop-row"><th className="prop-name" scope="row">可视</th><td className="prop-value">真</td></tr>
+                <tr className="prop-row"><th className="prop-name" scope="row">标记</th><td className="prop-value"><EditableTextCell value={String(f.properties?.['标记'] ?? '')} ariaLabel="标记" onChange={v => onPropertyChange?.('form', null, '标记', v)} /></td></tr>
+                <tr className="prop-row"><th className="prop-name" scope="row">可视</th><td className="prop-value"><EditableBoolCell value={Boolean(f.properties?.['可视'] ?? true)} ariaLabel="可视" onChange={v => onPropertyChange?.('form', null, '可视', v)} /></td></tr>
+                <tr className="prop-row"><th className="prop-name" scope="row">禁止</th><td className="prop-value"><EditableBoolCell value={Boolean(f.properties?.['禁止'] ?? false)} ariaLabel="禁止" onChange={v => onPropertyChange?.('form', null, '禁止', v)} /></td></tr>
+                <tr className="prop-row"><th className="prop-name" scope="row">鼠标指针</th><td className="prop-value"><EditablePickCell value={Number(f.properties?.['鼠标指针'] ?? 0)} options={MOUSE_POINTER_PICK_OPTIONS} ariaLabel="鼠标指针" onChange={v => onPropertyChange?.('form', null, '鼠标指针', v)} /></td></tr>
               </>
             )}
           </tbody>
@@ -1102,8 +1580,10 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
               <tr className="prop-row"><th className="prop-name" scope="row">顶边</th><td className="prop-value"><EditableIntCell value={control.top} ariaLabel="顶边" onChange={v => onPropertyChange?.('control', control.id, '顶边', v)} /></td></tr>
               <tr className="prop-row"><th className="prop-name" scope="row">宽度</th><td className="prop-value"><EditableIntCell value={control.width} ariaLabel="宽度" onChange={v => onPropertyChange?.('control', control.id, '宽度', v)} /></td></tr>
               <tr className="prop-row"><th className="prop-name" scope="row">高度</th><td className="prop-value"><EditableIntCell value={control.height} ariaLabel="高度" onChange={v => onPropertyChange?.('control', control.id, '高度', v)} /></td></tr>
+              <tr className="prop-row"><th className="prop-name" scope="row">标记</th><td className="prop-value"><EditableTextCell value={String(control.properties['标记'] ?? '')} ariaLabel="标记" onChange={v => onPropertyChange?.('control', control.id, '标记', v)} /></td></tr>
               <tr className="prop-row"><th className="prop-name" scope="row">可视</th><td className="prop-value"><EditableBoolCell value={control.visible} ariaLabel="可视" onChange={v => onPropertyChange?.('control', control.id, '可视', v)} /></td></tr>
               <tr className="prop-row"><th className="prop-name" scope="row">禁止</th><td className="prop-value"><EditableBoolCell value={!control.enabled} ariaLabel="禁止" onChange={v => onPropertyChange?.('control', control.id, '禁止', v)} /></td></tr>
+              <tr className="prop-row"><th className="prop-name" scope="row">鼠标指针</th><td className="prop-value"><EditablePickCell value={Number(control.properties['鼠标指针'] ?? 0)} options={MOUSE_POINTER_PICK_OPTIONS} ariaLabel="鼠标指针" onChange={v => onPropertyChange?.('control', control.id, '鼠标指针', v)} /></td></tr>
             </>
           )}
         </tbody>
@@ -1112,7 +1592,7 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
   )
 }
 
-function Sidebar({ width, onResize, placement = 'left', selection, activeTab, onTabChange, onSelectControl, onPropertyChange, projectTree, onOpenFile, activeFileId, projectDir, openTabs = [], onEventNavigate, onSaveProject, onCloseProject, onLibraryChange }: SidebarProps): React.JSX.Element {
+function Sidebar({ width, onResize, placement = 'left', selection, activeTab, onTabChange, onSelectControl, onPropertyChange, projectTree, onOpenFile, activeFileId, projectDir, openTabs = [], onEventNavigate, onSaveProject, onCloseProject, onLibraryChange, onLibraryHint }: SidebarProps): React.JSX.Element {
   const SIDEBAR_MIN_WIDTH = 150
   const SIDEBAR_MAX_WIDTH = 500
   const SIDEBAR_RESIZE_STEP = 16
@@ -1507,7 +1987,7 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
         )}
         {activeTab === 'library' && (
           <div id="sidebar-panel-library">
-            <LibraryPanel />
+            <LibraryPanel onHint={onLibraryHint} />
           </div>
         )}
         {activeTab === 'property' && (

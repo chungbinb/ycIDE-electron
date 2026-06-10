@@ -42,12 +42,9 @@
   border-bottom: 1px solid var(--border-color);
   background: var(--titlebar-bg);
   cursor: move;
+  -webkit-user-select: none;
   user-select: none;
   flex-shrink: 0;
-}
-
-.theme-manager-header {
-  -webkit-app-region: drag;
 }
 
 .theme-manager-title {
@@ -63,7 +60,6 @@
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
-  -webkit-app-region: no-drag;
 }
 
 .theme-manager-close:hover {
@@ -126,6 +122,7 @@
   letter-spacing: 1px;
   font-size: 11px;
   padding: 2px 0;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -195,9 +192,9 @@
 }
 
 .theme-manager-tag-warning {
-  border-color: color-mix(in srgb, var(--warning) 60%, transparent);
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--warning) 14%, var(--bg-tertiary));
+  border-color: var(--warning-surface-border);
+  color: var(--warning-surface-text);
+  background: var(--warning-surface-bg);
 }
 
 .theme-manager-detail {
@@ -226,9 +223,9 @@
 }
 
 .theme-manager-detail-draft {
-  border: 1px solid color-mix(in srgb, var(--warning) 60%, transparent);
-  background: color-mix(in srgb, var(--warning) 14%, var(--bg-tertiary));
-  color: var(--text-primary);
+  border: 1px solid var(--warning-surface-border);
+  background: var(--warning-surface-bg);
+  color: var(--warning-surface-text);
   border-radius: 4px;
   padding: 8px 10px;
   font-size: 12px;
@@ -285,14 +282,14 @@
 }
 
 .theme-manager-btn-danger {
-  border-color: color-mix(in srgb, var(--error) 50%, var(--border-color));
+  border-color: var(--error);
 }
 
 .theme-manager-feedback {
   margin: 0 16px 12px;
-  border: 1px solid color-mix(in srgb, var(--warning) 60%, transparent);
-  background: color-mix(in srgb, var(--warning) 14%, var(--bg-tertiary));
-  color: var(--text-primary);
+  border: 1px solid var(--warning-surface-border);
+  background: var(--warning-surface-bg);
+  color: var(--warning-surface-text);
   font-size: 12px;
   line-height: 1.5;
   padding: 8px 10px;

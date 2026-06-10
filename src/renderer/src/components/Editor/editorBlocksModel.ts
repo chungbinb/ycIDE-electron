@@ -36,9 +36,37 @@ function createBlocksModelWorker(): Worker | null {
 export function useEditorBlocksModel(input: BlocksModelInput): BlocksModelState {
   const OPEN_PREVIEW_MAX_LINES = 220
   const PREVIEW_LENGTH_DELTA_THRESHOLD = 2000
+  const SYNC_MODEL_MAX_LINES = 1500
+  const SYNC_MODEL_MAX_CHARS = 120000
+  const canBuildSynchronously = (text: string): boolean => {
+    if (text.length > SYNC_MODEL_MAX_CHARS) return false
+
+    let lineCount = 1
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) !== 10) continue
+      lineCount++
+      if (lineCount > SYNC_MODEL_MAX_LINES) return false
+    }
+
+    return true
+  }
+  const buildFullState = (text: string, isClassModule: boolean, isResourceTableDoc: boolean): BlocksModelState => {
+    const model = buildEditorBlocksModel(text, isClassModule, isResourceTableDoc)
+    return {
+      blocks: model.blocks,
+      flowLines: {
+        map: new Map<number, FlowSegment[]>(model.flowMapEntries),
+        maxDepth: model.flowMaxDepth,
+      },
+    }
+  }
   const [state, setState] = useState<BlocksModelState>(() => ({
-    blocks: buildHeadLineBlocks(input.text, OPEN_PREVIEW_MAX_LINES),
-    flowLines: { map: new Map<number, FlowSegment[]>(), maxDepth: 0 },
+    ...(canBuildSynchronously(input.text)
+      ? buildFullState(input.text, input.isClassModule, input.isResourceTableDoc)
+      : {
+          blocks: buildHeadLineBlocks(input.text, OPEN_PREVIEW_MAX_LINES),
+          flowLines: { map: new Map<number, FlowSegment[]>(), maxDepth: 0 },
+        }),
   }))
 
   const workerRef = useRef<Worker | null>(null)
@@ -89,6 +117,17 @@ export function useEditorBlocksModel(input: BlocksModelInput): BlocksModelState 
       || lengthDelta >= PREVIEW_LENGTH_DELTA_THRESHOLD
       || (headChanged && tailChanged)
 
+    const id = ++requestIdRef.current
+
+    if (canBuildSynchronously(normalized.text)) {
+      setState(buildFullState(
+        normalized.text,
+        normalized.isClassModule,
+        normalized.isResourceTableDoc,
+      ))
+      return
+    }
+
     if (shouldUseHeadPreview && !normalized.suppressHeadPreview) {
       const quickBlocks = buildHeadLineBlocks(normalized.text, OPEN_PREVIEW_MAX_LINES)
       setState(prev => ({
@@ -97,22 +136,14 @@ export function useEditorBlocksModel(input: BlocksModelInput): BlocksModelState 
       }))
     }
 
-    const id = ++requestIdRef.current
     const worker = workerRef.current
 
     if (!worker) {
-      const model = buildEditorBlocksModel(
+      setState(buildFullState(
         normalized.text,
         normalized.isClassModule,
         normalized.isResourceTableDoc,
-      )
-      setState({
-        blocks: model.blocks,
-        flowLines: {
-          map: new Map<number, FlowSegment[]>(model.flowMapEntries),
-          maxDepth: model.flowMaxDepth,
-        },
-      })
+      ))
       return
     }
 

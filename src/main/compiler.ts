@@ -1,12 +1,14 @@
 import { join, dirname, basename, extname } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, copyFileSync, rmSync } from 'fs'
 import { execFile, ChildProcess } from 'child_process'
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 import { tmpdir } from 'os'
+import { createHash } from 'crypto'
 import { libraryManager } from './libraryManager'
 import type { LibraryCommand as LibCommand, LibraryConstant as LibConstant, LibraryWindowUnit as LibWindowUnit } from './libraryManager'
-import { getYcmdCommands } from './ycmd-registry'
 import { generateDebugRuntimeCode } from './debug-runtime'
+import { createCommandResolvers } from './compilerCommandResolvers'
+import { ycmdCommandIdToNativeSymbol } from './ycmd-registry'
 
 // 编译消息类型
 export interface CompileMessage {
@@ -147,6 +149,17 @@ interface LibraryCompileProtocol {
   eventBindings?: LibraryEventBindingSpec[]
   commandBindings?: LibraryCommandBindingSpec[]
   controlBindings?: LibraryControlBindingSpec[]
+  windowUnits?: Array<{
+    name?: string
+    englishName?: string
+    className?: string
+    style?: string
+    events?: Array<{
+      name?: string
+      channel?: EventChannel
+      code?: string
+    }>
+  }>
 }
 
 interface NormalizedEventBinding {
@@ -162,7 +175,11 @@ interface LibraryCommandBindingSpec {
   library?: string
   command: string
   commandEnglishName?: string
-  emit: string
+  emit?: string
+  expr?: string
+  exprOp?: string
+  exprBuilder?: string
+  emitBuilder?: string
 }
 
 interface NormalizedCommandBinding {
@@ -170,6 +187,10 @@ interface NormalizedCommandBinding {
   command: string
   commandEnglishName: string
   emit: string
+  expr: string
+  exprOp: string
+  exprBuilder: string
+  emitBuilder: string
 }
 
 interface LibraryControlBindingSpec {
@@ -194,7 +215,38 @@ interface LoadedCompileProtocols {
   controls: NormalizedControlBinding[]
 }
 
+interface TranspileCacheEntry {
+  fingerprint: string
+  cFileName: string
+}
+
+interface TranspileCacheFile {
+  version: number
+  entries: Record<string, TranspileCacheEntry>
+}
+
+const TRANSPILE_CACHE_VERSION = 2
+
+interface BuildArtifactCacheFile {
+  version: number
+  fingerprint: string
+  outputBinary: string
+}
+
+const BUILD_ARTIFACT_CACHE_VERSION = 1
+
+interface ProjectCompileMetadata {
+  globals: GlobalVarDef[]
+  constants: ConstantDef[]
+  resources: ProjectResourceEntry[]
+  subprograms: SubprogramDef[]
+  dataTypes: ProjectDataTypeDef[]
+  dllCommands: ProjectDllCommandDef[]
+}
+
 let compileProtocolCache: LoadedCompileProtocols | null = null
+let compileProtocolCacheSignature = ''
+let projectCompileMetadataCache: { fingerprint: string; metadata: ProjectCompileMetadata } | null = null
 let activeProjectCustomTypeNames: Set<string> = new Set()
 
 // 正在运行的进程
@@ -289,6 +341,7 @@ function getAppDirectory(): string {
 }
 
 type TargetPlatform = 'windows' | 'linux' | 'macos'
+type UnsupportedTargetPlatform = 'android' | 'ios' | 'harmony'
 type TargetArch = 'x86' | 'x64' | 'arm64'
 
 function getHostTargetPlatform(): TargetPlatform {
@@ -306,6 +359,14 @@ function getHostTargetArch(): TargetArch {
 function normalizeTargetPlatform(value?: string | null): TargetPlatform | null {
   const normalized = (value || '').trim().toLowerCase()
   if (normalized === 'windows' || normalized === 'linux' || normalized === 'macos') return normalized
+  return null
+}
+
+function normalizeUnsupportedTargetPlatform(value?: string | null): UnsupportedTargetPlatform | null {
+  const normalized = (value || '').trim().toLowerCase()
+  if (normalized === 'android') return 'android'
+  if (normalized === 'ios' || normalized === 'iphone' || normalized === 'ipad') return 'ios'
+  if (normalized === 'harmony' || normalized === 'harmonyos' || normalized === 'openharmony') return 'harmony'
   return null
 }
 
@@ -515,6 +576,25 @@ function pickResourceStageRoot(zigPath: string): string {
   return candidates[0]
 }
 
+function buildWindowsCommonControlsManifest(): string {
+  return [
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    '<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">',
+    '  <dependency>',
+    '    <dependentAssembly>',
+    '      <assemblyIdentity',
+    '        type="win32"',
+    '        name="Microsoft.Windows.Common-Controls"',
+    '        version="6.0.0.0"',
+    '        processorArchitecture="*"',
+    '        publicKeyToken="6595b64144ccf1df"',
+    '        language="*" />',
+    '    </dependentAssembly>',
+    '  </dependency>',
+    '</assembly>',
+  ].join('\n')
+}
+
 async function compileProjectResources(
   project: ProjectInfo,
   targetPlatform: TargetPlatform,
@@ -524,7 +604,8 @@ async function compileProjectResources(
   editorFiles?: Map<string, string>,
 ): Promise<{ success: boolean; objectFilePath: string | null }> {
   const entries = collectProjectResourceEntries(project, editorFiles)
-  if (entries.length === 0) return { success: true, objectFilePath: null }
+  const shouldEmbedManifest = project.outputType === 'WindowsApp'
+  if (entries.length === 0 && !shouldEmbedManifest) return { success: true, objectFilePath: null }
 
   if (targetPlatform !== 'windows') {
     sendMessage({ type: 'warning', text: `警告: 目标平台 ${targetPlatform} 暂不支持编译 .erc 资源，已跳过 ${entries.length} 项资源。` })
@@ -538,6 +619,11 @@ async function compileProjectResources(
 
   try {
     const rcLines: string[] = ['// Generated by ycIDE compiler']
+    if (shouldEmbedManifest) {
+      const manifestFileName = 'ycide_app.manifest'
+      writeFileSync(join(stageDir, manifestFileName), buildWindowsCommonControlsManifest() + '\n', 'utf-8')
+      rcLines.push(`1 RT_MANIFEST "${manifestFileName}"`)
+    }
     const usedNames = new Set<string>()
     let embeddedCount = 0
 
@@ -566,7 +652,7 @@ async function compileProjectResources(
       embeddedCount += 1
     }
 
-    if (embeddedCount === 0) {
+    if (embeddedCount === 0 && !shouldEmbedManifest) {
       sendMessage({ type: 'warning', text: '警告: 没有可用资源被编译进目标文件。' })
       return { success: true, objectFilePath: null }
     }
@@ -797,30 +883,64 @@ function parseEventBindingsFromProtocol(content: string, libName: string): Norma
     return []
   }
 
-  if (!json || !Array.isArray(json.eventBindings)) return []
-
   const result: NormalizedEventBinding[] = []
-  for (const item of json.eventBindings) {
-    if (!item || typeof item !== 'object') continue
-    const channel = item.channel
-    if (!channel || !['WM_COMMAND', 'WM_NOTIFY', 'WM_HSCROLL', 'WM_VSCROLL'].includes(channel)) continue
-
-    const unit = normalizeKey(item.unit || '')
-    const event = normalizeKey(item.event || '')
-    if (!unit || !event) continue
+  const pushNormalizedEvent = (
+    libraryName: string,
+    unitText: string,
+    unitEnglishNameText: string,
+    eventText: string,
+    channel: EventChannel,
+    codeText?: string,
+  ): void => {
+    if (!['WM_COMMAND', 'WM_NOTIFY', 'WM_HSCROLL', 'WM_VSCROLL'].includes(channel)) return
+    const unit = normalizeKey(unitText)
+    const event = normalizeKey(eventText)
+    if (!unit || !event) return
 
     const normalized: NormalizedEventBinding = {
-      library: normalizeKey(item.library || libName),
+      library: normalizeKey(libraryName),
       unit,
-      unitEnglishName: normalizeKey(item.unitEnglishName || ''),
+      unitEnglishName: normalizeKey(unitEnglishNameText),
       event,
       channel,
-      code: (item.code || '').trim(),
+      code: (codeText || '').trim(),
     }
-
     // WM_COMMAND / WM_NOTIFY 需要通知码，滚动消息不需要。
-    if ((channel === 'WM_COMMAND' || channel === 'WM_NOTIFY') && !normalized.code) continue
+    if ((channel === 'WM_COMMAND' || channel === 'WM_NOTIFY') && !normalized.code) return
     result.push(normalized)
+  }
+
+  if (Array.isArray(json.eventBindings)) {
+    for (const item of json.eventBindings) {
+      if (!item || typeof item !== 'object') continue
+      const channel = item.channel
+      if (!channel) continue
+      pushNormalizedEvent(
+        item.library || libName,
+        item.unit || '',
+        item.unitEnglishName || '',
+        item.event || '',
+        channel,
+        item.code,
+      )
+    }
+  }
+
+  if (Array.isArray(json.windowUnits)) {
+    for (const unit of json.windowUnits) {
+      if (!unit || typeof unit !== 'object' || !Array.isArray(unit.events)) continue
+      for (const ev of unit.events) {
+        if (!ev || typeof ev !== 'object' || !ev.channel) continue
+        pushNormalizedEvent(
+          libName,
+          unit.name || '',
+          unit.englishName || '',
+          ev.name || '',
+          ev.channel,
+          ev.code,
+        )
+      }
+    }
   }
   return result
 }
@@ -841,12 +961,20 @@ function parseCommandBindingsFromProtocol(content: string, libName: string): Nor
     const command = normalizeKey(item.command || '')
     const commandEnglishName = normalizeKey(item.commandEnglishName || '')
     const emit = (item.emit || '').trim()
-    if ((!command && !commandEnglishName) || !emit) continue
+    const expr = (item.expr || '').trim()
+    const exprOp = normalizeKey(item.exprOp || '')
+    const exprBuilder = normalizeKey(item.exprBuilder || '')
+    const emitBuilder = normalizeKey(item.emitBuilder || '')
+    if ((!command && !commandEnglishName) || (!emit && !expr && !exprOp && !exprBuilder && !emitBuilder)) continue
     result.push({
       library: normalizeKey(item.library || libName),
       command,
       commandEnglishName,
       emit,
+      expr,
+      exprOp,
+      exprBuilder,
+      emitBuilder,
     })
   }
   return result
@@ -860,33 +988,57 @@ function parseControlBindingsFromProtocol(content: string, libName: string): Nor
     return []
   }
 
-  if (!json || !Array.isArray(json.controlBindings)) return []
-
   const result: NormalizedControlBinding[] = []
-  for (const item of json.controlBindings) {
-    if (!item || typeof item !== 'object') continue
-    const unit = normalizeKey(item.unit || '')
-    const className = (item.className || '').trim()
-    if (!unit || !className) continue
+  const pushNormalizedControl = (
+    libraryName: string,
+    unitText: string,
+    unitEnglishNameText: string,
+    classNameText?: string,
+    styleText?: string,
+  ): void => {
+    const unit = normalizeKey(unitText)
+    const className = (classNameText || '').trim()
+    if (!unit || !className) return
     result.push({
-      library: normalizeKey(item.library || libName),
+      library: normalizeKey(libraryName),
       unit,
-      unitEnglishName: normalizeKey(item.unitEnglishName || ''),
+      unitEnglishName: normalizeKey(unitEnglishNameText),
       className,
-      style: (item.style || '').trim(),
+      style: (styleText || '').trim(),
     })
+  }
+
+  if (Array.isArray(json.controlBindings)) {
+    for (const item of json.controlBindings) {
+      if (!item || typeof item !== 'object') continue
+      pushNormalizedControl(
+        item.library || libName,
+        item.unit || '',
+        item.unitEnglishName || '',
+        item.className,
+        item.style,
+      )
+    }
+  }
+
+  if (Array.isArray(json.windowUnits)) {
+    for (const unit of json.windowUnits) {
+      if (!unit || typeof unit !== 'object') continue
+      pushNormalizedControl(
+        libName,
+        unit.name || '',
+        unit.englishName || '',
+        unit.className,
+        unit.style,
+      )
+    }
   }
   return result
 }
 
 function loadCompileProtocols(): LoadedCompileProtocols {
-  if (compileProtocolCache) return compileProtocolCache
-
-  const events: NormalizedEventBinding[] = []
-  const commands: NormalizedCommandBinding[] = []
-  const controls: NormalizedControlBinding[] = []
   const libs = libraryManager.getList().filter(l => l.loaded)
-
+  const signatureParts: string[] = []
   for (const lib of libs) {
     const dir = (() => {
       try {
@@ -897,6 +1049,48 @@ function loadCompileProtocols(): LoadedCompileProtocols {
     })()
     const candidates = [
       join(dir, `${lib.name}.events.json`),
+      join(dir, 'window-units.json'),
+      join(dir, `${lib.name}.window-units.json`),
+      join(dir, `${lib.name}.protocol.json`),
+      join(dir, `${lib.name}.compile-protocol.json`),
+    ]
+    let matchedPath = ''
+    let matchedMtime = 0
+    let matchedSize = 0
+    for (const candidate of candidates) {
+      if (!existsSync(candidate)) continue
+      matchedPath = candidate
+      try {
+        const st = statSync(candidate)
+        matchedMtime = st.mtimeMs
+        matchedSize = st.size
+      } catch {
+        matchedMtime = 0
+        matchedSize = 0
+      }
+      break
+    }
+    signatureParts.push(`${lib.name}|${matchedPath}|${matchedMtime}|${matchedSize}`)
+  }
+  const signature = signatureParts.sort().join('||')
+
+  if (compileProtocolCache && compileProtocolCacheSignature === signature) return compileProtocolCache
+
+  const events: NormalizedEventBinding[] = []
+  const commands: NormalizedCommandBinding[] = []
+  const controls: NormalizedControlBinding[] = []
+  for (const lib of libs) {
+    const dir = (() => {
+      try {
+        return statSync(lib.filePath).isDirectory() ? lib.filePath : dirname(lib.filePath)
+      } catch {
+        return dirname(lib.filePath)
+      }
+    })()
+    const candidates = [
+      join(dir, `${lib.name}.events.json`),
+      join(dir, 'window-units.json'),
+      join(dir, `${lib.name}.window-units.json`),
       join(dir, `${lib.name}.protocol.json`),
       join(dir, `${lib.name}.compile-protocol.json`),
     ]
@@ -916,15 +1110,16 @@ function loadCompileProtocols(): LoadedCompileProtocols {
             type: 'info',
             text: `已加载支持库编译协议: ${basename(p)} (事件 ${parsedEvents.length} / 命令 ${parsedCommands.length} / 控件 ${parsedControls.length})`
           })
+          break
         }
       } catch {
         sendMessage({ type: 'warning', text: `警告: 读取支持库编译协议失败: ${p}` })
       }
-      break
     }
   }
 
   compileProtocolCache = { events, commands, controls }
+  compileProtocolCacheSignature = signature
   return compileProtocolCache
 }
 
@@ -954,7 +1149,12 @@ function resolveEventByProtocol(
 
 function applyEmitTemplate(template: string, args: string[]): string {
   const cArgs = args.map(a => formatArgForC(a))
+  const optionalTextArgs = args.map(a => formatOptionalTextArgForC(a))
   return template
+    .replace(/\{opt(\d+)\}/g, (_m, idxText) => {
+      const idx = parseInt(idxText, 10)
+      return Number.isInteger(idx) && idx >= 0 && idx < optionalTextArgs.length ? optionalTextArgs[idx] : 'NULL'
+    })
     .replace(/\{args\}/g, cArgs.join(', '))
     .replace(/\{(\d+)\}/g, (_m, idxText) => {
       const idx = parseInt(idxText, 10)
@@ -979,9 +1179,106 @@ function resolveCommandByProtocol(
   for (const b of bindings) {
     if (b.library && b.library !== lib) continue
     const matched = (!!b.command && b.command === cmd) || (!!b.commandEnglishName && b.commandEnglishName === cmdEn)
-    if (!matched) continue
+    if (!matched || !b.emit) continue
     return applyEmitTemplate(b.emit, args)
   }
+
+  for (const b of bindings) {
+    if (b.library && b.library !== lib) continue
+    const matched = (!!b.command && b.command === cmd) || (!!b.commandEnglishName && b.commandEnglishName === cmdEn)
+    if (!matched || !b.emitBuilder) continue
+    if (b.emitBuilder === 'outputdebugtext') {
+      const fallbackCommandMap = buildCommandMap()
+      const parts = args.filter(arg => (arg || '').trim().length > 0)
+      const lines: string[] = []
+      lines.push('do {')
+      lines.push('#if YC_DEBUG_BUILD')
+      lines.push('    yc_debug_line_begin();')
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]
+        if (i > 0) lines.push('    yc_debug_line_part("|");')
+        lines.push(`    yc_debug_line_part(${translateExpressionToC(part, fallbackCommandMap)});`)
+      }
+      lines.push('    yc_debug_line_end();')
+      lines.push('#endif')
+      lines.push('} while (0);')
+      return lines.join('\n')
+    }
+    if (b.emitBuilder === 'pause') {
+      return ['do {', '#if YC_DEBUG_BUILD', '    DebugBreak();', '#endif', '} while (0);'].join('\n')
+    }
+    if (b.emitBuilder === 'check') {
+      const cond = translateExpressionToC(args[0] || '0')
+      const rawCond = ((args[0] || '').trim() || '0').replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      return [
+        'do {',
+        '#if YC_DEBUG_BUILD',
+        `    if (!(${cond})) {`,
+        '        yc_debug_line_begin();',
+        '        yc_debug_line_part(L"检查失败: ");',
+        `        yc_debug_line_part(L"${rawCond}");`,
+        '        yc_debug_line_end();',
+        '        DebugBreak();',
+        '    }',
+        '#endif',
+        '} while (0);',
+      ].join('\n')
+    }
+  }
+  return null
+}
+
+function resolveCommandExprByProtocol(
+  bindings: NormalizedCommandBinding[],
+  libraryFileName: string,
+  commandName: string,
+  commandEnglishName: string,
+  args: string[],
+  commandMap?: Map<string, ResolvedCommand>,
+  directCallables?: DirectCallableNames,
+): string | null {
+  if (bindings.length === 0) return null
+
+  const lib = normalizeKey(libraryFileName)
+  const cmd = normalizeKey(commandName)
+  const cmdEn = normalizeKey(commandEnglishName)
+  if (!cmd && !cmdEn) return null
+
+  for (const b of bindings) {
+    if (b.library && b.library !== lib) continue
+    const matched = (!!b.command && b.command === cmd) || (!!b.commandEnglishName && b.commandEnglishName === cmdEn)
+    if (!matched || !b.expr) continue
+    return applyEmitTemplate(b.expr, args)
+  }
+
+  for (const b of bindings) {
+    if (b.library && b.library !== lib) continue
+    const matched = (!!b.command && b.command === cmd) || (!!b.commandEnglishName && b.commandEnglishName === cmdEn)
+    if (!matched || !b.exprOp) continue
+    switch (b.exprOp) {
+      case 'eq': return buildComparisonExpression(args[0] || '0', args[1] || '0', '==', commandMap, directCallables)
+      case 'ne': return buildComparisonExpression(args[0] || '0', args[1] || '0', '!=', commandMap, directCallables)
+      case 'lt': return buildComparisonExpression(args[0] || '0', args[1] || '0', '<', commandMap, directCallables)
+      case 'gt': return buildComparisonExpression(args[0] || '0', args[1] || '0', '>', commandMap, directCallables)
+      case 'le': return buildComparisonExpression(args[0] || '0', args[1] || '0', '<=', commandMap, directCallables)
+      case 'ge': return buildComparisonExpression(args[0] || '0', args[1] || '0', '>=', commandMap, directCallables)
+      case 'and': return buildLogicChainExpression(args, '&&', commandMap, directCallables)
+      case 'or': return buildLogicChainExpression(args, '||', commandMap, directCallables)
+      case 'not': return `(!(${translateExpressionToC(args[0] || '0', commandMap, directCallables)}))`
+      case 'startswith': return `yc_text_starts_with(${translateExpressionToC(args[0] || '""', commandMap, directCallables)}, ${translateExpressionToC(args[1] || '""', commandMap, directCallables)})`
+      default: break
+    }
+  }
+
+  for (const b of bindings) {
+    if (b.library && b.library !== lib) continue
+    const matched = (!!b.command && b.command === cmd) || (!!b.commandEnglishName && b.commandEnglishName === cmdEn)
+    if (!matched || !b.exprBuilder) continue
+    if (b.exprBuilder === 'writefilebins') {
+      return `yc_fs_write_file_bins(${formatArgForC(args[0] || '""', commandMap, directCallables)}, std::vector<YC_BIN>{${args.slice(1).map(arg => formatArgForC(arg, commandMap, directCallables)).join(', ')}})`
+    }
+  }
+
   return null
 }
 
@@ -1067,7 +1364,7 @@ function mapTypeToCType(type: string): string {
   if (trimmed.includes('指针') || trimmed.includes('ptr') || trimmed.includes('PTR')) return 'intptr_t'
   const map: Record<string, string> = {
     '整数型': 'int', '长整数型': 'long long', '小数型': 'float',
-    '双精度小数型': 'double', '文本型': 'wchar_t*', '逻辑型': 'int', '字节集': 'YC_BIN',
+    '双精度小数型': 'double', '文本型': 'wchar_t*', '逻辑型': 'int', '字节集': 'YC_BIN', '大整数型': 'YC_BIG', '大数': 'YC_BIG',
     '字节型': 'unsigned char', '短整数型': 'short',
   }
   return map[trimmed] || 'int'
@@ -1079,6 +1376,7 @@ function getTypeDefaultInitializer(type: string): string {
   const cType = mapTypeToCType(trimmed)
   if (cType === 'wchar_t*') return 'NULL'
   if (cType === 'YC_BIN') return 'YC_BIN()'
+  if (cType === 'YC_BIG') return 'YC_BIG()'
   if (cType === 'float') return '0.0f'
   if (cType === 'double') return '0.0'
   return '0'
@@ -1288,6 +1586,7 @@ function collectGenericFallbackLibraryFileNames(project: ProjectInfo, editorFile
     if (!call?.name) return
     const resolved = commandMap.get(call.name)
     if (!resolved?.libraryFileName) return
+    if (isYcmdNativeCommand(resolved)) return
     const protocolCode = resolveCommandByProtocol(
       protocols.commands,
       resolved.libraryFileName,
@@ -1412,9 +1711,9 @@ function toCLibraryConstantValue(c: LibraryConstantDef): string {
 
 // 从已加载的支持库构建命令查找表
 // 命令名 → 支持库命令信息（来源由支持库元数据决定）
-function buildCommandMap(): Map<string, LibCommand & { libraryName: string; libraryFileName: string }> {
+function buildCommandMap(targetPlatform?: TargetPlatform): Map<string, LibCommand & { libraryName: string; libraryFileName: string }> {
   const map = new Map<string, LibCommand & { libraryName: string; libraryFileName: string }>()
-  const allCommands = libraryManager.getAllCommands()
+  const allCommands = libraryManager.getAllCommands(targetPlatform)
 
   for (const cmd of allCommands) {
     if (cmd.isHidden) continue
@@ -1426,31 +1725,23 @@ function buildCommandMap(): Map<string, LibCommand & { libraryName: string; libr
 
 interface CommandSignatureDef {
   name: string
+  englishName: string
   params: Array<{ optional: boolean; repeatable?: boolean }>
   source: 'fne' | 'ycmd' | 'projectDll'
   libraryFileName: string
   manifestPath?: string
 }
 
-function buildCommandSignatureMap(projectDllCommands: ProjectDllCommandDef[] = []): Map<string, CommandSignatureDef> {
+function buildCommandSignatureMap(projectDllCommands: ProjectDllCommandDef[] = [], targetPlatform?: TargetPlatform): Map<string, CommandSignatureDef> {
   const map = new Map<string, CommandSignatureDef>()
 
-  for (const cmd of libraryManager.getAllCommands()) {
+  for (const cmd of libraryManager.getAllCommands(targetPlatform)) {
     if (cmd.isHidden) continue
     map.set(cmd.name, {
       name: cmd.name,
+      englishName: cmd.englishName || '',
       params: (cmd.params || []).map(p => ({ optional: !!p.optional, repeatable: !!p.repeatable })),
-      source: 'fne',
-      libraryFileName: cmd.libraryFileName,
-    })
-  }
-
-  for (const cmd of getYcmdCommands()) {
-    if (map.has(cmd.name)) continue
-    map.set(cmd.name, {
-      name: cmd.name,
-      params: (cmd.params || []).map(p => ({ optional: !!p.optional, repeatable: !!(p as { repeatable?: boolean }).repeatable })),
-      source: 'ycmd',
+      source: cmd.source === 'ycmd' ? 'ycmd' : 'fne',
       libraryFileName: cmd.libraryFileName,
       manifestPath: cmd.manifestPath,
     })
@@ -1459,6 +1750,7 @@ function buildCommandSignatureMap(projectDllCommands: ProjectDllCommandDef[] = [
   for (const dllCmd of projectDllCommands) {
     map.set(dllCmd.name, {
       name: dllCmd.name,
+      englishName: '',
       params: dllCmd.params.map(param => ({ optional: !!param.optional })),
       source: 'projectDll',
       libraryFileName: dllCmd.dllFileName,
@@ -1678,10 +1970,65 @@ function collectProjectSubprogramNames(project: ProjectInfo, editorFiles?: Map<s
   return new Set(collectProjectSubprogramDefs(project, editorFiles).map(sub => sub.name))
 }
 
-function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Map<string, string>): string[] {
+function buildProjectCompileMetadataFingerprint(project: ProjectInfo, editorFiles?: Map<string, string>): string {
+  const relevant = project.files.filter(f =>
+    f.type === 'EYC'
+    || f.type === 'EGV'
+    || f.type === 'ECS'
+    || f.type === 'EDT'
+    || f.type === 'ELL'
+    || f.type === 'ERC'
+    || /\.(eyc|ecc|egv|ecs|edt|ell|erc)$/i.test(f.fileName),
+  )
+
+  const fileStamps = relevant
+    .map((f) => {
+      const inMemory = editorFiles?.get(f.fileName)
+      if (inMemory !== undefined) {
+        const memHash = createHash('sha1').update(inMemory).digest('hex')
+        return `${f.fileName}|mem|${memHash}`
+      }
+      const sourcePath = join(project.projectDir, f.fileName)
+      try {
+        const st = statSync(sourcePath)
+        return `${f.fileName}|disk|${st.size}|${Math.round(st.mtimeMs)}`
+      } catch {
+        return `${f.fileName}|missing`
+      }
+    })
+    .sort()
+
+  return createHash('sha1').update(JSON.stringify({
+    projectDir: project.projectDir,
+    projectName: project.projectName,
+    outputType: project.outputType,
+    fileStamps,
+  })).digest('hex')
+}
+
+function resolveProjectCompileMetadata(project: ProjectInfo, editorFiles?: Map<string, string>): ProjectCompileMetadata {
+  const fingerprint = buildProjectCompileMetadataFingerprint(project, editorFiles)
+  if (projectCompileMetadataCache && projectCompileMetadataCache.fingerprint === fingerprint) {
+    return projectCompileMetadataCache.metadata
+  }
+
+  const metadata: ProjectCompileMetadata = {
+    globals: collectProjectGlobalVars(project, editorFiles),
+    constants: collectProjectConstants(project, editorFiles),
+    resources: collectProjectResourceEntries(project, editorFiles),
+    subprograms: collectProjectSubprogramDefs(project, editorFiles),
+    dataTypes: collectProjectDataTypes(project, editorFiles),
+    dllCommands: collectProjectDllCommands(project, editorFiles),
+  }
+  projectCompileMetadataCache = { fingerprint, metadata }
+  return metadata
+}
+
+function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Map<string, string>, targetPlatform?: TargetPlatform): string[] {
   const errors: string[] = []
-  const commandMap = buildCommandSignatureMap(collectProjectDllCommands(project, editorFiles))
+  const commandMap = buildCommandSignatureMap(collectProjectDllCommands(project, editorFiles), targetPlatform)
   const subprogramNames = collectProjectSubprogramNames(project, editorFiles)
+  const protocols = loadCompileProtocols()
 
   const validateOne = (fileName: string, lineNo: number, call: { name: string; args: string[] } | null): void => {
     if (!call?.name) return
@@ -1701,10 +2048,31 @@ function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Ma
       return
     }
 
-    // 当前阶段先让 ycmd 命令可见并参与签名校验；平台实现注入将在下一阶段接入。
+    // ycmd 命令只在“无任何后端路径”时才报错：
+    // 1) 协议映射（window-units / protocol）
+    // 2) 内建命令代码生成器
+    // 3) 内建表达式生成器
+    // 4) 同名子程序（用户自定义）
     if (command.source === 'ycmd' && !subprogramNames.has(call.name)) {
-      const detail = command.manifestPath ? `（清单: ${command.manifestPath}）` : ''
-      errors.push(`错误: ${fileName}:${lineNo} 命令「${command.name}」来自 ycmd，当前编译后端尚未接入平台实现注入${detail}`)
+      const protocolCode = resolveCommandByProtocol(
+        protocols.commands,
+        command.libraryFileName,
+        command.name,
+        command.englishName,
+        args,
+      )
+      const protocolExpr = resolveCommandExprByProtocol(
+        protocols.commands,
+        command.libraryFileName,
+        command.name,
+        command.englishName,
+        args,
+      )
+      const hasBackendPath = isYcmdNativeCommand(command as ResolvedCommand) || !!protocolCode || !!protocolExpr || !!COMMAND_CODE_GENERATORS[command.name] || !!COMMAND_EXPR_GENERATORS[command.name]
+      if (!hasBackendPath) {
+        const detail = command.manifestPath ? `（清单: ${command.manifestPath}）` : ''
+        errors.push(`错误: ${fileName}:${lineNo} 命令「${command.name}」来自 ycmd，但当前命令尚未接入后端实现${detail}`)
+      }
     }
   }
 
@@ -1765,6 +2133,7 @@ function convertFullWidthOps(expr: string): string {
     .replace(/－/g, '-')
     .replace(/×/g, '*')
     .replace(/÷/g, '/')
+    .replace(/％/g, '%')
 }
 
 function replaceConstantRefs(expr: string): string {
@@ -1787,7 +2156,7 @@ function replaceLogicalOperatorAliases(expr: string): string {
 
 function replaceControlTextPropertyRefs(expr: string): string {
   return expr.replace(
-    /([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*)\.(内容|文本|标题|text)\b/gi,
+    /([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*)\.(内容|文本|标题|text)(?![\u4e00-\u9fa5A-Za-z0-9_])/gi,
     (_match, ctrlName: string) => `yc_get_control_text(L"${escapeCString(ctrlName)}")`,
   )
 }
@@ -1797,10 +2166,47 @@ function isTextExpression(expr: string): boolean {
   return /^L"(?:[^"\\]|\\.)*"$/.test(trimmed)
     || /^yc_get_control_text\(/.test(trimmed)
     || /^yc_text_concat\(/.test(trimmed)
+    || /^yc_utf8_to_wide\(/.test(trimmed)
+    || /^\(\[\&\]\(\)\s*->\s*wchar_t\*/.test(trimmed)
     || /^yc_fs_get_current_dir\(/.test(trimmed)
     || /^yc_fs_get_disk_label\(/.test(trimmed)
     || /^yc_fs_get_temp_file_name\(/.test(trimmed)
     || /^yc_fs_dir\(/.test(trimmed)
+}
+
+function isTextLiteralExpression(expr: string): boolean {
+  return /^L"(?:[^"\\]|\\.)*"$/.test((expr || '').trim())
+}
+
+function isBigExpression(expr: string): boolean {
+  const trimmed = expr.trim()
+  return /^YC_BIG\(/.test(trimmed)
+}
+
+type VariableTypeResolver = (name: string) => string | undefined
+
+function getExprSimpleIdentifierType(expr: string, variableTypeResolver?: VariableTypeResolver): string {
+  if (!variableTypeResolver) return ''
+  const trimmed = (expr || '').trim()
+  if (!trimmed) return ''
+  const identMatch = trimmed.match(/^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*$/)
+  if (!identMatch) return ''
+  const baseName = trimmed.split('.')[0] || ''
+  return (variableTypeResolver(baseName) || '').trim()
+}
+
+function isTextRawOperand(expr: string, variableTypeResolver?: VariableTypeResolver): boolean {
+  const dataType = getExprSimpleIdentifierType(expr, variableTypeResolver)
+  return dataType === '文本型'
+}
+
+function isBigRawOperand(expr: string, variableTypeResolver?: VariableTypeResolver): boolean {
+  const dataType = getExprSimpleIdentifierType(expr, variableTypeResolver)
+  return dataType === '大整数型' || dataType === '大数'
+}
+
+function normalizeBuiltinCallName(name: string): string {
+  return (name || '').trim().toLowerCase()
 }
 
 function findTopLevelComparison(expr: string): { left: string; operator: string; right: string } | null {
@@ -1880,7 +2286,7 @@ function findTopLevelAdditive(expr: string): { left: string; operator: string; r
     let j = i - 1
     while (j >= 0 && /\s/.test(expr[j])) j--
     const prev = j >= 0 ? expr[j] : ''
-    if (!prev || /[+\-*/(<>=!&|,]/.test(prev)) continue
+    if (!prev || /[+\-*/%(<>=!&|,]/.test(prev)) continue
 
     return {
       left: expr.slice(0, i).trim(),
@@ -1917,7 +2323,7 @@ function findTopLevelMultiplicative(expr: string): { left: string; operator: str
       continue
     }
     if (depth !== 0) continue
-    if (ch !== '*' && ch !== '/') continue
+    if (ch !== '*' && ch !== '/' && ch !== '%') continue
 
     return {
       left: expr.slice(0, i).trim(),
@@ -1929,7 +2335,13 @@ function findTopLevelMultiplicative(expr: string): { left: string; operator: str
   return null
 }
 
-function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
+function translateExpressionToC(
+  expr: string,
+  commandMap?: Map<string, ResolvedCommand>,
+  directCallables?: DirectCallableNames,
+  variableTypeResolver?: VariableTypeResolver,
+  preferBigIntLiteral = false,
+): string {
   const trimmed = (expr || '').trim()
   if (!trimmed) return '0'
 
@@ -1947,19 +2359,74 @@ function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedC
 
   if (trimmed === '真') return '1'
   if (trimmed === '假') return '0'
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return trimmed
+  if (/^-?\d+$/.test(trimmed)) {
+    try {
+      const value = BigInt(trimmed)
+      const max = BigInt('9223372036854775807')
+      const min = BigInt('-9223372036854775808')
+      if (value > max || value < min) {
+        if (preferBigIntLiteral) {
+          return `YC_BIG(L"${trimmed}")`
+        }
+        if (value > max) return '9223372036854775807LL'
+        return '-9223372036854775807LL - 1'
+      }
+      return `${trimmed}LL`
+    } catch {
+      return '0'
+    }
+  }
+  if (/^-?\d+\.\d+$/.test(trimmed)) return trimmed
 
   if (commandMap) {
     const call = parseCommandCall(trimmed)
     if (call && call.name) {
+      const builtinName = normalizeBuiltinCallName(call.name)
+      if (builtinName === '到文本') {
+        const src = translateExpressionToC(
+          call.args?.[0] || '0',
+          commandMap,
+          directCallables,
+          variableTypeResolver,
+          preferBigIntLiteral,
+        )
+        return `yc_value_to_text(${src})`
+      }
+      if (builtinName === '到数值') {
+        const src = translateExpressionToC(
+          call.args?.[0] || '0',
+          commandMap,
+          directCallables,
+          variableTypeResolver,
+          preferBigIntLiteral,
+        )
+        if (preferBigIntLiteral) {
+          return `yc_value_to_big(${src})`
+        }
+      }
+
       const resolved = commandMap.get(call.name)
       if (resolved) {
+        if (isYcmdNativeCommand(resolved)) {
+          return generateYcmdNativeCommandExpr(resolved, call.args || [], commandMap, directCallables)
+        }
+        const protocols = loadCompileProtocols()
+        const protocolExpr = resolveCommandExprByProtocol(
+          protocols.commands,
+          resolved.libraryFileName,
+          resolved.name,
+          resolved.englishName,
+          call.args || [],
+          commandMap,
+          directCallables,
+        )
+        if (protocolExpr) return protocolExpr
         const exprGenerator = COMMAND_EXPR_GENERATORS[resolved.name]
         if (exprGenerator) return exprGenerator(call.args || [], commandMap, directCallables)
         return generateYcGenericCommandExpr(resolved, call.args || [])
       }
       if (directCallables?.has(call.name)) {
-        return `${call.name}(${(call.args || []).map(arg => translateExpressionToC(arg, commandMap, directCallables)).join(', ')})`
+        return `${call.name}(${(call.args || []).map(arg => translateExpressionToC(arg, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)).join(', ')})`
       }
     }
   }
@@ -1971,12 +2438,27 @@ function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedC
 
   const comparison = findTopLevelComparison(translated)
   if (comparison && comparison.left && comparison.right) {
-    const left = translateExpressionToC(comparison.left, commandMap, directCallables)
-    const right = translateExpressionToC(comparison.right, commandMap, directCallables)
+    const left = translateExpressionToC(comparison.left, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    const right = translateExpressionToC(comparison.right, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
     const normalizedOperator = comparison.operator === '=' ? '==' : comparison.operator
+    const leftIsBig = isBigExpression(left) || isBigRawOperand(comparison.left, variableTypeResolver)
+    const rightIsBig = isBigExpression(right) || isBigRawOperand(comparison.right, variableTypeResolver)
 
-    if ((normalizedOperator === '==' || normalizedOperator === '!=') && (isTextExpression(left) || isTextExpression(right))) {
+    if (
+      (normalizedOperator === '==' || normalizedOperator === '!=')
+      && !(leftIsBig || rightIsBig)
+      && (
+        isTextExpression(left)
+        || isTextExpression(right)
+        || isTextRawOperand(comparison.left, variableTypeResolver)
+        || isTextRawOperand(comparison.right, variableTypeResolver)
+      )
+    ) {
       return `(yc_text_compare(${left}, ${right}) ${normalizedOperator} 0)`
+    }
+
+    if (leftIsBig || rightIsBig) {
+      return `(yc_value_to_big(${left}) ${normalizedOperator} yc_value_to_big(${right}))`
     }
 
     return `(${left} ${normalizedOperator} ${right})`
@@ -1984,9 +2466,20 @@ function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedC
 
   const additive = findTopLevelAdditive(translated)
   if (additive && additive.left && additive.right) {
-    const left = translateExpressionToC(additive.left, commandMap, directCallables)
-    const right = translateExpressionToC(additive.right, commandMap, directCallables)
-    if (additive.operator === '+' && (isTextExpression(left) || isTextExpression(right))) {
+    const left = translateExpressionToC(additive.left, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    const right = translateExpressionToC(additive.right, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    const leftIsBig = isBigExpression(left) || isBigRawOperand(additive.left, variableTypeResolver)
+    const rightIsBig = isBigExpression(right) || isBigRawOperand(additive.right, variableTypeResolver)
+    if (
+      additive.operator === '+'
+      && !(leftIsBig || rightIsBig)
+      && (
+        isTextExpression(left)
+        || isTextExpression(right)
+        || isTextRawOperand(additive.left, variableTypeResolver)
+        || isTextRawOperand(additive.right, variableTypeResolver)
+      )
+    ) {
       return `yc_text_concat(${left}, ${right})`
     }
     return `(${left} ${additive.operator} ${right})`
@@ -1994,8 +2487,16 @@ function translateExpressionToC(expr: string, commandMap?: Map<string, ResolvedC
 
   const multiplicative = findTopLevelMultiplicative(translated)
   if (multiplicative && multiplicative.left && multiplicative.right) {
-    const left = translateExpressionToC(multiplicative.left, commandMap, directCallables)
-    const right = translateExpressionToC(multiplicative.right, commandMap, directCallables)
+    const left = translateExpressionToC(multiplicative.left, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    const right = translateExpressionToC(multiplicative.right, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    const leftIsBig = isBigExpression(left) || isBigRawOperand(multiplicative.left, variableTypeResolver)
+    const rightIsBig = isBigExpression(right) || isBigRawOperand(multiplicative.right, variableTypeResolver)
+    if (leftIsBig || rightIsBig) {
+      if (multiplicative.operator === '%') {
+        return `yc_big_mod(yc_value_to_big(${left}), yc_value_to_big(${right}))`
+      }
+      return `(yc_value_to_big(${left}) ${multiplicative.operator} yc_value_to_big(${right}))`
+    }
     return `(${left} ${multiplicative.operator} ${right})`
   }
 
@@ -2119,6 +2620,98 @@ function splitArguments(argsStr: string): string[] {
 type ResolvedCommand = LibCommand & { libraryName: string; libraryFileName: string }
 type DirectCallableNames = Set<string>
 
+function getYcmdNativeSymbol(cmd: ResolvedCommand): string {
+  return cmd.nativeSymbol || ycmdCommandIdToNativeSymbol(cmd.englishName || cmd.name || '')
+}
+
+function isYcmdNativeCommand(cmd: ResolvedCommand): boolean {
+  return cmd.source === 'ycmd' && !!getYcmdNativeSymbol(cmd)
+}
+
+function mapYcmdNativeParamType(typeName: string): { cType: string; expr: (arg: string, commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames) => string } {
+  const normalizedType = (typeName || '').trim()
+  if (normalizedType === '通用型' || normalizedType.includes('通用') || normalizedType.includes('閫氱敤')) {
+    return { cType: 'const char*', expr: (arg, commandMap, directCallables) => (arg ? `yc_wide_to_utf8(yc_value_to_text(${formatArgForC(arg, commandMap, directCallables)}))` : '(const char*)""') }
+  }
+  const cType = mapTypeToCType(typeName || '')
+  if (cType === 'wchar_t*') {
+    return { cType: 'const char*', expr: (arg, commandMap, directCallables) => (arg ? `yc_wide_to_utf8(${formatArgForC(arg, commandMap, directCallables)})` : '(const char*)""') }
+  }
+  if (cType === 'YC_BIN') {
+    return { cType: 'const char*', expr: (arg, commandMap, directCallables) => (arg ? `yc_bin_to_cstr(${formatArgForC(arg, commandMap, directCallables)})` : '(const char*)""') }
+  }
+  if (cType === 'YC_BIG') {
+    return { cType: 'long long', expr: (arg, commandMap, directCallables) => `(long long)(${formatArgForC(arg, commandMap, directCallables)})` }
+  }
+  return { cType, expr: (arg, commandMap, directCallables) => formatArgForC(arg, commandMap, directCallables) }
+}
+
+function mapYcmdNativeReturnType(typeName: string): { cType: string; expr: (callExpr: string) => string; isVoid: boolean } {
+  const trimmed = (typeName || '').trim()
+  if (!trimmed || trimmed === '无返回值' || trimmed === 'void') {
+    return { cType: 'void', expr: callExpr => callExpr, isVoid: true }
+  }
+  const cType = mapTypeToCType(trimmed)
+  if (cType === 'wchar_t*') {
+    return { cType: 'const char*', expr: callExpr => `yc_utf8_to_wide(${callExpr})`, isVoid: false }
+  }
+  if (cType === 'YC_BIN') {
+    return { cType: 'const char*', expr: callExpr => `yc_cstr_to_bin(${callExpr})`, isVoid: false }
+  }
+  if (cType === 'YC_BIG') {
+    return { cType: 'long long', expr: callExpr => `YC_BIG(std::to_wstring((long long)(${callExpr})).c_str())`, isVoid: false }
+  }
+  return { cType, expr: callExpr => callExpr, isVoid: false }
+}
+
+function buildYcmdNativeSignature(cmd: ResolvedCommand): { symbol: string; returnType: ReturnType<typeof mapYcmdNativeReturnType>; params: ReturnType<typeof mapYcmdNativeParamType>[] } {
+  return {
+    symbol: getYcmdNativeSymbol(cmd),
+    returnType: mapYcmdNativeReturnType(cmd.returnType || ''),
+    params: (cmd.params || []).map(p => mapYcmdNativeParamType(p.type || '')),
+  }
+}
+
+function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
+  const sig = buildYcmdNativeSignature(cmd)
+  const argCount = Math.max(args.length, sig.params.length)
+  const callArgs = Array.from({ length: argCount }, (_unused, index) => {
+    const param = sig.params[index] || sig.params[sig.params.length - 1] || mapYcmdNativeParamType('')
+    const arg = args[index] || ''
+    return param.expr(arg, commandMap, directCallables)
+  })
+  const callExpr = `${sig.symbol}(${callArgs.join(', ')})`
+  if (sig.returnType.isVoid) {
+    return `([&]() -> int { ${callExpr}; return 0; })()`
+  }
+  return `([&]() -> ${mapTypeToCType(cmd.returnType || '整数型')} { return ${sig.returnType.expr(callExpr)}; })()`
+}
+
+function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
+  const sig = buildYcmdNativeSignature(cmd)
+  const argCount = Math.max(args.length, sig.params.length)
+  const callArgs = Array.from({ length: argCount }, (_unused, index) => {
+    const param = sig.params[index] || sig.params[sig.params.length - 1] || mapYcmdNativeParamType('')
+    const arg = args[index] || ''
+    return param.expr(arg, commandMap, directCallables)
+  })
+  return `{ (void)${sig.symbol}(${callArgs.join(', ')}); }`
+}
+
+function generateYcmdNativeDeclarations(targetPlatform: TargetPlatform): string {
+  const declarations: string[] = []
+  const seen = new Set<string>()
+  for (const cmd of buildCommandMap(targetPlatform).values()) {
+    if (!isYcmdNativeCommand(cmd)) continue
+    const sig = buildYcmdNativeSignature(cmd)
+    if (seen.has(sig.symbol)) continue
+    seen.add(sig.symbol)
+    const paramTypes = sig.params.map(p => p.cType).join(', ')
+    declarations.push(`extern "C" ${sig.returnType.cType} ${sig.symbol}(${paramTypes});`)
+  }
+  return declarations.length > 0 ? `${declarations.join('\n')}\n\n` : ''
+}
+
 function generateYcGenericCommandExpr(cmd: ResolvedCommand, args: string[]): string {
   const n = args.length
   const lines: string[] = []
@@ -2127,7 +2720,7 @@ function generateYcGenericCommandExpr(cmd: ResolvedCommand, args: string[]): str
   if (n > 0) {
     lines.push(`YC_MDATA_INF __yc_args[${n}] = {};`)
     for (let i = 0; i < n; i++) {
-      const p = cmd.params[i]
+      const p = resolveYcCommandParamSpec(cmd.params, i)
       const mapped = mapParamTypeToYcDataType(p?.type || '')
       const valueExpr = formatArgForYcCommand(args[i], mapped.field)
       lines.push(`__yc_args[${i}].m_dtDataType = ${mapped.dtConst};`)
@@ -2211,6 +2804,9 @@ function mapReturnTypeToYcField(typeName: string): { field: string; expr: string
 }
 
 function generateYcGenericCommandCall(cmd: LibCommand & { libraryName: string; libraryFileName: string }, args: string[]): string {
+  if (isYcmdNativeCommand(cmd as ResolvedCommand)) {
+    return generateYcmdNativeCommandCall(cmd as ResolvedCommand, args)
+  }
   const n = args.length
   const lines: string[] = []
   lines.push('{')
@@ -2218,7 +2814,7 @@ function generateYcGenericCommandCall(cmd: LibCommand & { libraryName: string; l
   if (n > 0) {
     lines.push(`YC_MDATA_INF __yc_args[${n}] = {};`)
     for (let i = 0; i < n; i++) {
-      const p = cmd.params[i]
+      const p = resolveYcCommandParamSpec(cmd.params, i)
       const mapped = mapParamTypeToYcDataType(p?.type || '')
       const valueExpr = formatArgForYcCommand(args[i], mapped.field)
       lines.push(`__yc_args[${i}].m_dtDataType = ${mapped.dtConst};`)
@@ -2232,6 +2828,9 @@ function generateYcGenericCommandCall(cmd: LibCommand & { libraryName: string; l
 }
 
 function generateYcGenericCommandAssign(cmd: LibCommand & { libraryName: string; libraryFileName: string }, args: string[], leftExpr: string): string {
+  if (isYcmdNativeCommand(cmd as ResolvedCommand)) {
+    return `{ ${leftExpr} = ${generateYcmdNativeCommandExpr(cmd as ResolvedCommand, args)}; }`
+  }
   const n = args.length
   const lines: string[] = []
   lines.push('{')
@@ -2239,7 +2838,7 @@ function generateYcGenericCommandAssign(cmd: LibCommand & { libraryName: string;
   if (n > 0) {
     lines.push(`YC_MDATA_INF __yc_args[${n}] = {};`)
     for (let i = 0; i < n; i++) {
-      const p = cmd.params[i]
+      const p = resolveYcCommandParamSpec(cmd.params, i)
       const mapped = mapParamTypeToYcDataType(p?.type || '')
       const valueExpr = formatArgForYcCommand(args[i], mapped.field)
       lines.push(`__yc_args[${i}].m_dtDataType = ${mapped.dtConst};`)
@@ -2254,200 +2853,33 @@ function generateYcGenericCommandAssign(cmd: LibCommand & { libraryName: string;
   return lines.join(' ')
 }
 
-// 命令 → C代码生成器（直接按命令名索引，不按库名分组）
-// 命令属于哪个支持库由 buildCommandMap() 自动获取
-// 这里只定义命令的C代码翻译规则
-type CommandCodeGenerator = (args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames) => string
-type CommandExprGenerator = (args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames) => string
+function resolveYcCommandParamSpec(
+  params: Array<{ type?: string; repeatable?: boolean }> | undefined,
+  index: number,
+): { type?: string; repeatable?: boolean } | undefined {
+  if (!Array.isArray(params) || params.length === 0) return undefined
+  if (index >= 0 && index < params.length) return params[index]
 
-function escapeCWideString(text: string): string {
-  return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  const tail = params[params.length - 1]
+  if (tail?.repeatable) return tail
+  return undefined
 }
 
-function buildDebugTextLine(args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
-  const parts = args.filter(arg => (arg || '').trim().length > 0)
-  const lines: string[] = []
-  lines.push('do {')
-  lines.push('#if YC_DEBUG_BUILD')
-  lines.push('    yc_debug_line_begin();')
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i]
-    if (i > 0) lines.push('    yc_debug_line_part("|");')
-    lines.push(`    yc_debug_line_part(${translateExpressionToC(part, commandMap, directCallables)});`)
-  }
-  lines.push('    yc_debug_line_end();')
-  lines.push('#endif')
-  lines.push('} while (0);')
-  return lines.join('\n')
-}
-
-const COMMAND_EXPR_GENERATORS: Record<string, CommandExprGenerator> = {
-  '取本机名': (_args) => 'yc_get_local_hostname()',
-  '取主机名': (_args) => 'yc_get_local_hostname()',
-  '等于': (args, commandMap, directCallables) => buildComparisonExpression(args[0] || '0', args[1] || '0', '==', commandMap, directCallables),
-  '不等于': (args, commandMap, directCallables) => buildComparisonExpression(args[0] || '0', args[1] || '0', '!=', commandMap, directCallables),
-  '小于': (args, commandMap, directCallables) => buildComparisonExpression(args[0] || '0', args[1] || '0', '<', commandMap, directCallables),
-  '大于': (args, commandMap, directCallables) => buildComparisonExpression(args[0] || '0', args[1] || '0', '>', commandMap, directCallables),
-  '小于或等于': (args, commandMap, directCallables) => buildComparisonExpression(args[0] || '0', args[1] || '0', '<=', commandMap, directCallables),
-  '大于或等于': (args, commandMap, directCallables) => buildComparisonExpression(args[0] || '0', args[1] || '0', '>=', commandMap, directCallables),
-  '近似等于': (args, commandMap, directCallables) => `yc_text_starts_with(${translateExpressionToC(args[0] || '""', commandMap, directCallables)}, ${translateExpressionToC(args[1] || '""', commandMap, directCallables)})`,
-  '并且': (args, commandMap, directCallables) => buildLogicChainExpression(args, '&&', commandMap, directCallables),
-  '或者': (args, commandMap, directCallables) => buildLogicChainExpression(args, '||', commandMap, directCallables),
-  '取反': (args, commandMap, directCallables) => `(!(${translateExpressionToC(args[0] || '0', commandMap, directCallables)}))`,
-  '是否为调试版': () => '(YC_DEBUG_BUILD ? 1 : 0)',
-  '取磁盘总空间': (args, commandMap, directCallables) => `yc_fs_disk_total_kb(${formatOptionalTextArgForC(args[0], commandMap, directCallables)})`,
-  '取磁盘剩余空间': (args, commandMap, directCallables) => `yc_fs_disk_free_kb(${formatOptionalTextArgForC(args[0], commandMap, directCallables)})`,
-  '取磁盘卷标': (args, commandMap, directCallables) => `yc_fs_get_disk_label(${formatOptionalTextArgForC(args[0], commandMap, directCallables)})`,
-  '置磁盘卷标': (args, commandMap, directCallables) => `yc_fs_set_disk_label(${formatOptionalTextArgForC(args[0], commandMap, directCallables)}, ${formatArgForC(args[1] || '""', commandMap, directCallables)})`,
-  '改变驱动器': (args, commandMap, directCallables) => `yc_fs_change_drive(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '改变目录': (args, commandMap, directCallables) => `yc_fs_change_dir(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '取当前目录': () => 'yc_fs_get_current_dir()',
-  '创建目录': (args, commandMap, directCallables) => `yc_fs_create_dir(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '删除目录': (args, commandMap, directCallables) => `yc_fs_remove_dir_all(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '复制文件': (args, commandMap, directCallables) => `yc_fs_copy_file(${formatArgForC(args[0] || '""', commandMap, directCallables)}, ${formatArgForC(args[1] || '""', commandMap, directCallables)})`,
-  '移动文件': (args, commandMap, directCallables) => `yc_fs_move_file(${formatArgForC(args[0] || '""', commandMap, directCallables)}, ${formatArgForC(args[1] || '""', commandMap, directCallables)})`,
-  '删除文件': (args, commandMap, directCallables) => `yc_fs_delete_file(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '文件更名': (args, commandMap, directCallables) => `yc_fs_rename_path(${formatArgForC(args[0] || '""', commandMap, directCallables)}, ${formatArgForC(args[1] || '""', commandMap, directCallables)})`,
-  '文件是否存在': (args, commandMap, directCallables) => `yc_fs_file_exists(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '寻找文件': (args, commandMap, directCallables) => `yc_fs_dir(${formatOptionalTextArgForC(args[0], commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)})`,
-  '取文件尺寸': (args, commandMap, directCallables) => `yc_fs_file_len(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '取文件属性': (args, commandMap, directCallables) => `yc_fs_get_attr(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '置文件属性': (args, commandMap, directCallables) => `yc_fs_set_attr(${formatArgForC(args[0] || '""', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)})`,
-  '取临时文件名': (args, commandMap, directCallables) => `yc_fs_get_temp_file_name(${formatOptionalTextArgForC(args[0], commandMap, directCallables)})`,
-  '读入文件': (args, commandMap, directCallables) => `yc_fs_read_file_bin(${formatArgForC(args[0] || '""', commandMap, directCallables)})`,
-  '写到文件': (args, commandMap, directCallables) => `yc_fs_write_file_bins(${formatArgForC(args[0] || '""', commandMap, directCallables)}, std::vector<YC_BIN>{${args.slice(1).map(arg => formatArgForC(arg, commandMap, directCallables)).join(', ')}})`,
-  '取字节集长度': (args, commandMap, directCallables) => `yc_bin_len(${formatArgForC(args[0] || '0', commandMap, directCallables)})`,
-  '到字节集': (args, commandMap, directCallables) => `yc_to_bin(${formatArgForC(args[0] || '0', commandMap, directCallables)})`,
-  '取字节集左边': (args, commandMap, directCallables) => `yc_bin_left(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)})`,
-  '取字节集右边': (args, commandMap, directCallables) => `yc_bin_right(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)})`,
-  '取字节集中间': (args, commandMap, directCallables) => `yc_bin_mid(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '1', commandMap, directCallables)}, ${formatArgForC(args[2] || '0', commandMap, directCallables)})`,
-  '寻找字节集': (args, commandMap, directCallables) => `yc_bin_find(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)}, ${formatArgForC(args[2] || '1', commandMap, directCallables)})`,
-  '倒找字节集': (args, commandMap, directCallables) => `yc_bin_rfind(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)}, ${formatArgForC(args[2] || '0', commandMap, directCallables)})`,
-  '字节集替换': (args, commandMap, directCallables) => `yc_bin_replace(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '1', commandMap, directCallables)}, ${formatArgForC(args[2] || '0', commandMap, directCallables)}, ${args[3] ? formatArgForC(args[3], commandMap, directCallables) : 'YC_BIN()'})`,
-  '子字节集替换': (args, commandMap, directCallables) => `yc_bin_replace_sub(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)}, ${args[2] ? formatArgForC(args[2], commandMap, directCallables) : 'YC_BIN()'}, ${formatArgForC(args[3] || '1', commandMap, directCallables)}, ${formatArgForC(args[4] || '0', commandMap, directCallables)})`,
-  '取空白字节集': (args, commandMap, directCallables) => `yc_bin_space(${formatArgForC(args[0] || '0', commandMap, directCallables)})`,
-  '取重复字节集': (args, commandMap, directCallables) => `yc_bin_repeat(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)})`,
-  '指针到字节集': (args, commandMap, directCallables) => `yc_bin_from_address((long long)(${formatArgForC(args[0] || '0', commandMap, directCallables)}), ${formatArgForC(args[1] || '0', commandMap, directCallables)})`,
-  '指针到整数': (args, commandMap, directCallables) => `yc_ptr_to_int((long long)(${formatArgForC(args[0] || '0', commandMap, directCallables)}))`,
-  '指针到小数': (args, commandMap, directCallables) => `yc_ptr_to_float((long long)(${formatArgForC(args[0] || '0', commandMap, directCallables)}))`,
-  '指针到双精度小数': (args, commandMap, directCallables) => `yc_ptr_to_double((long long)(${formatArgForC(args[0] || '0', commandMap, directCallables)}))`,
-  '取字节集内整数': (args, commandMap, directCallables) => `yc_bin_get_int(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)}, ${formatArgForC(args[2] || '0', commandMap, directCallables)})`,
-}
-
-const COMMAND_CODE_GENERATORS: Record<string, CommandCodeGenerator> = {
-  '信息框': (args, commandMap, directCallables) => {
-    const msg = formatArgForC(args[0] || '', commandMap, directCallables)
-    const flags = args[1] || '0'
-    const title = args.length > 2 ? formatArgForC(args[2], commandMap, directCallables) : 'L"提示"'
-    return `MessageBoxW(NULL, ${msg}, ${title}, ${flags});`
+const {
+  COMMAND_EXPR_GENERATORS,
+  COMMAND_CODE_GENERATORS,
+  generateCCodeForCommand,
+} = createCommandResolvers({
+  resolveCommandByProtocol: (protocolBindings, libraryFileName, commandName, commandEnglishName, args) => resolveCommandByProtocol(protocolBindings as NormalizedCommandBinding[], libraryFileName, commandName, commandEnglishName, args),
+  resolveCommandExprByProtocol: (protocolBindings, libraryFileName, commandName, commandEnglishName, args, commandMap, directCallables) => resolveCommandExprByProtocol(protocolBindings as NormalizedCommandBinding[], libraryFileName, commandName, commandEnglishName, args, commandMap as Map<string, ResolvedCommand> | undefined, directCallables as DirectCallableNames | undefined),
+  loadCompileProtocols,
+  generateYcGenericCommandCall: (cmd, args, commandMap, directCallables) => {
+    if (isYcmdNativeCommand(cmd as ResolvedCommand)) {
+      return generateYcmdNativeCommandCall(cmd as ResolvedCommand, args, commandMap as Map<string, ResolvedCommand> | undefined, directCallables as DirectCallableNames | undefined)
+    }
+    return generateYcGenericCommandCall(cmd as ResolvedCommand, args)
   },
-  '标准输出': (args, commandMap, directCallables) => {
-    const arg = args[0] || '0'
-    return `yc_debug_output_value(${formatArgForC(arg, commandMap, directCallables)});`
-  },
-  '调试输出': (args, commandMap, directCallables) => {
-    const arg = args[0] || '0'
-    return `yc_debug_output_value(${formatArgForC(arg, commandMap, directCallables)});`
-  },
-  '输出调试文本': (args, commandMap, directCallables) => buildDebugTextLine(args, commandMap, directCallables),
-  '暂停': () => ['do {', '#if YC_DEBUG_BUILD', '    DebugBreak();', '#endif', '} while (0);'].join('\n'),
-  '检查': (args, commandMap, directCallables) => {
-    const cond = translateExpressionToC(args[0] || '0', commandMap, directCallables)
-    const rawCond = escapeCWideString((args[0] || '').trim() || '0')
-    return [
-      'do {',
-      '#if YC_DEBUG_BUILD',
-      `    if (!(${cond})) {`,
-      '        yc_debug_line_begin();',
-      '        yc_debug_line_part(L"检查失败: ");',
-      `        yc_debug_line_part(L"${rawCond}");`,
-      '        yc_debug_line_end();',
-      '        DebugBreak();',
-      '    }',
-      '#endif',
-      '} while (0);',
-    ].join('\n')
-  },
-  '是否为调试版': () => `(void)${COMMAND_EXPR_GENERATORS['是否为调试版']([])};`,
-  '取本机名': (args) => {
-    return `(void)${COMMAND_EXPR_GENERATORS['取本机名'](args)};`
-  },
-  '取主机名': (args) => {
-    return `(void)${COMMAND_EXPR_GENERATORS['取主机名'](args)};`
-  },
-  '等于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['等于'](args, commandMap, directCallables)};`,
-  '不等于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['不等于'](args, commandMap, directCallables)};`,
-  '小于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['小于'](args, commandMap, directCallables)};`,
-  '大于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['大于'](args, commandMap, directCallables)};`,
-  '小于或等于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['小于或等于'](args, commandMap, directCallables)};`,
-  '大于或等于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['大于或等于'](args, commandMap, directCallables)};`,
-  '近似等于': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['近似等于'](args, commandMap, directCallables)};`,
-  '并且': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['并且'](args, commandMap, directCallables)};`,
-  '或者': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['或者'](args, commandMap, directCallables)};`,
-  '取反': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取反'](args, commandMap, directCallables)};`,
-  '取磁盘总空间': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取磁盘总空间'](args, commandMap, directCallables)};`,
-  '取磁盘剩余空间': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取磁盘剩余空间'](args, commandMap, directCallables)};`,
-  '取磁盘卷标': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取磁盘卷标'](args, commandMap, directCallables)};`,
-  '置磁盘卷标': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['置磁盘卷标'](args, commandMap, directCallables)};`,
-  '改变驱动器': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['改变驱动器'](args, commandMap, directCallables)};`,
-  '改变目录': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['改变目录'](args, commandMap, directCallables)};`,
-  '取当前目录': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取当前目录'](args, commandMap, directCallables)};`,
-  '创建目录': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['创建目录'](args, commandMap, directCallables)};`,
-  '删除目录': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['删除目录'](args, commandMap, directCallables)};`,
-  '复制文件': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['复制文件'](args, commandMap, directCallables)};`,
-  '移动文件': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['移动文件'](args, commandMap, directCallables)};`,
-  '删除文件': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['删除文件'](args, commandMap, directCallables)};`,
-  '文件更名': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['文件更名'](args, commandMap, directCallables)};`,
-  '文件是否存在': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['文件是否存在'](args, commandMap, directCallables)};`,
-  '寻找文件': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['寻找文件'](args, commandMap, directCallables)};`,
-  '取文件尺寸': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取文件尺寸'](args, commandMap, directCallables)};`,
-  '取文件属性': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取文件属性'](args, commandMap, directCallables)};`,
-  '置文件属性': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['置文件属性'](args, commandMap, directCallables)};`,
-  '取临时文件名': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取临时文件名'](args, commandMap, directCallables)};`,
-  '读入文件': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['读入文件'](args, commandMap, directCallables)};`,
-  '写到文件': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['写到文件'](args, commandMap, directCallables)};`,
-  '取字节集长度': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取字节集长度'](args, commandMap, directCallables)};`,
-  '到字节集': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['到字节集'](args, commandMap, directCallables)};`,
-  '取字节集左边': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取字节集左边'](args, commandMap, directCallables)};`,
-  '取字节集右边': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取字节集右边'](args, commandMap, directCallables)};`,
-  '取字节集中间': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取字节集中间'](args, commandMap, directCallables)};`,
-  '寻找字节集': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['寻找字节集'](args, commandMap, directCallables)};`,
-  '倒找字节集': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['倒找字节集'](args, commandMap, directCallables)};`,
-  '字节集替换': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['字节集替换'](args, commandMap, directCallables)};`,
-  '子字节集替换': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['子字节集替换'](args, commandMap, directCallables)};`,
-  '取空白字节集': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取空白字节集'](args, commandMap, directCallables)};`,
-  '取重复字节集': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取重复字节集'](args, commandMap, directCallables)};`,
-  '指针到字节集': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['指针到字节集'](args, commandMap, directCallables)};`,
-  '指针到整数': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['指针到整数'](args, commandMap, directCallables)};`,
-  '指针到小数': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['指针到小数'](args, commandMap, directCallables)};`,
-  '指针到双精度小数': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['指针到双精度小数'](args, commandMap, directCallables)};`,
-  '取字节集内整数': (args, commandMap, directCallables) => `(void)${COMMAND_EXPR_GENERATORS['取字节集内整数'](args, commandMap, directCallables)};`,
-  '置字节集内整数': (args, commandMap, directCallables) => `yc_bin_set_int(${formatArgForC(args[0] || '0', commandMap, directCallables)}, ${formatArgForC(args[1] || '0', commandMap, directCallables)}, ${formatArgForC(args[2] || '0', commandMap, directCallables)}, ${formatArgForC(args[3] || '0', commandMap, directCallables)});`,
-}
-
-// 为支持库命令生成C代码
-function generateCCodeForCommand(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
-  const protocols = loadCompileProtocols()
-  const protocolCode = resolveCommandByProtocol(
-    protocols.commands,
-    cmd.libraryFileName,
-    cmd.name,
-    cmd.englishName,
-    args,
-  )
-  if (protocolCode) {
-    return protocolCode
-  }
-
-  // 查找已注册的代码生成器
-  const generator = COMMAND_CODE_GENERATORS[cmd.name]
-  if (generator) {
-    return generator(args, commandMap, directCallables)
-  }
-
-  // 通用回退：按“库名 + 命令索引”走支持库命令分发表。
-  return generateYcGenericCommandCall(cmd, args)
-}
+})
 
 function mapProjectDllTypeToCType(type: string): string {
   const trimmed = (type || '').trim()
@@ -2597,7 +3029,7 @@ function generateProjectDllWrapperCode(projectDllCommands: ProjectDllCommandDef[
 // 命令识别基于已加载的支持库，支持第三方支持库扩展
 function transpileEycContent(eycContent: string, fileName: string, projectGlobals: GlobalVarDef[] = [], projectConstants: ConstantDef[] = [], projectResources: ProjectResourceEntry[] = [], libraryConstants: LibraryConstantDef[] = [], projectSubprograms: SubprogramDef[] = [], projectDataTypes: ProjectDataTypeDef[] = [], projectDllCommands: ProjectDllCommandDef[] = [], debugBuild = false, breakpoints: Record<string, number[]> = {}, targetPlatform: TargetPlatform = 'windows'): string {
   // 从已加载的支持库构建命令查找表
-  const commandMap = buildCommandMap()
+  const commandMap = buildCommandMap(targetPlatform)
   const isClassModuleSource = /\.ecc$/i.test(fileName)
   const directCallables: DirectCallableNames = new Set(projectSubprograms.map(sub => sub.name))
   for (const dllCmd of projectDllCommands) directCallables.add(dllCmd.name)
@@ -2605,8 +3037,209 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   const lines = eycContent.split('\n')
   let result = `/* 由 ycIDE 自动从 ${fileName} 生成 */\n`
   result += '#include <windows.h>\n#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <direct.h>\n#include <wchar.h>\n#include <wctype.h>\n#include <string.h>\n#include <filesystem>\n#include <vector>\n#include <string>\n#include <algorithm>\n#include <fstream>\n\n'
+  result += generateYcmdNativeDeclarations(targetPlatform)
   result += 'namespace ycfs = std::filesystem;\n\n'
   result += 'typedef std::vector<unsigned char> YC_BIN;\n\n'
+  result += 'struct YC_BIG {\n'
+  result += '    bool neg;\n'
+  result += '    std::string digits;\n'
+  result += '    YC_BIG(): neg(false), digits("0") {}\n'
+  result += '    YC_BIG(long long v): neg(false), digits("0") {\n'
+  result += '        unsigned long long mag = 0;\n'
+  result += '        if (v < 0) {\n'
+  result += '            neg = true;\n'
+  result += '            mag = (unsigned long long)(-(v + 1)) + 1ULL;\n'
+  result += '        } else {\n'
+  result += '            mag = (unsigned long long)v;\n'
+  result += '        }\n'
+  result += '        digits.clear();\n'
+  result += '        do {\n'
+  result += '            digits.push_back((char)(\'0\' + (mag % 10ULL)));\n'
+  result += '            mag /= 10ULL;\n'
+  result += '        } while (mag > 0ULL);\n'
+  result += '        std::reverse(digits.begin(), digits.end());\n'
+  result += '        if (digits == "0") neg = false;\n'
+  result += '    }\n'
+  result += '    YC_BIG(int v): YC_BIG((long long)v) {}\n'
+  result += '    YC_BIG(short v): YC_BIG((long long)v) {}\n'
+  result += '    YC_BIG(unsigned char v): YC_BIG((long long)v) {}\n'
+  result += '    YC_BIG(const wchar_t* s): neg(false), digits("0") {\n'
+  result += '        if (!s) return;\n'
+  result += '        while (*s && iswspace(*s)) ++s;\n'
+  result += '        if (*s == L\'-\') { neg = true; ++s; }\n'
+  result += '        else if (*s == L\'+\') { ++s; }\n'
+  result += '        std::string out;\n'
+  result += '        while (*s) {\n'
+  result += '            if (*s >= L\'0\' && *s <= L\'9\') out.push_back((char)(*s));\n'
+  result += '            else if (!iswspace(*s)) break;\n'
+  result += '            ++s;\n'
+  result += '        }\n'
+  result += '        size_t first = 0;\n'
+  result += '        while (first + 1 < out.size() && out[first] == \'0\') ++first;\n'
+  result += '        if (!out.empty()) out = out.substr(first);\n'
+  result += '        if (out.empty()) { digits = "0"; neg = false; }\n'
+  result += '        else { digits = out; if (digits == "0") neg = false; }\n'
+  result += '    }\n'
+  result += '    YC_BIG(wchar_t* s): YC_BIG((const wchar_t*)s) {}\n'
+  result += '};\n\n'
+  result += 'static std::string yc_big_trim_abs(const std::string& in) {\n'
+  result += '    if (in.empty()) return "0";\n'
+  result += '    size_t i = 0;\n'
+  result += '    while (i + 1 < in.size() && in[i] == \'0\') ++i;\n'
+  result += '    return in.substr(i);\n'
+  result += '}\n\n'
+  result += 'static int yc_big_cmp_abs(const std::string& a, const std::string& b) {\n'
+  result += '    std::string aa = yc_big_trim_abs(a);\n'
+  result += '    std::string bb = yc_big_trim_abs(b);\n'
+  result += '    if (aa.size() != bb.size()) return aa.size() < bb.size() ? -1 : 1;\n'
+  result += '    if (aa == bb) return 0;\n'
+  result += '    return aa < bb ? -1 : 1;\n'
+  result += '}\n\n'
+  result += 'static std::string yc_big_add_abs(const std::string& a, const std::string& b) {\n'
+  result += '    std::string aa = yc_big_trim_abs(a);\n'
+  result += '    std::string bb = yc_big_trim_abs(b);\n'
+  result += '    int i = (int)aa.size() - 1;\n'
+  result += '    int j = (int)bb.size() - 1;\n'
+  result += '    int carry = 0;\n'
+  result += '    std::string out;\n'
+  result += '    while (i >= 0 || j >= 0 || carry) {\n'
+  result += '        int da = i >= 0 ? (aa[(size_t)i] - \'0\') : 0;\n'
+  result += '        int db = j >= 0 ? (bb[(size_t)j] - \'0\') : 0;\n'
+  result += '        int sum = da + db + carry;\n'
+  result += '        out.push_back((char)(\'0\' + (sum % 10)));\n'
+  result += '        carry = sum / 10;\n'
+  result += '        --i; --j;\n'
+  result += '    }\n'
+  result += '    std::reverse(out.begin(), out.end());\n'
+  result += '    return yc_big_trim_abs(out);\n'
+  result += '}\n\n'
+  result += 'static std::string yc_big_sub_abs(const std::string& a, const std::string& b) {\n'
+  result += '    // 要求 |a| >= |b|\n'
+  result += '    std::string aa = yc_big_trim_abs(a);\n'
+  result += '    std::string bb = yc_big_trim_abs(b);\n'
+  result += '    int i = (int)aa.size() - 1;\n'
+  result += '    int j = (int)bb.size() - 1;\n'
+  result += '    int borrow = 0;\n'
+  result += '    std::string out;\n'
+  result += '    while (i >= 0) {\n'
+  result += '        int da = (aa[(size_t)i] - \'0\') - borrow;\n'
+  result += '        int db = j >= 0 ? (bb[(size_t)j] - \'0\') : 0;\n'
+  result += '        if (da < db) { da += 10; borrow = 1; } else { borrow = 0; }\n'
+  result += '        out.push_back((char)(\'0\' + (da - db)));\n'
+  result += '        --i; --j;\n'
+  result += '    }\n'
+  result += '    while (out.size() > 1 && out.back() == \'0\') out.pop_back();\n'
+  result += '    std::reverse(out.begin(), out.end());\n'
+  result += '    return yc_big_trim_abs(out);\n'
+  result += '}\n\n'
+  result += 'static std::string yc_big_mul_abs(const std::string& a, const std::string& b) {\n'
+  result += '    std::string aa = yc_big_trim_abs(a);\n'
+  result += '    std::string bb = yc_big_trim_abs(b);\n'
+  result += '    if (aa == "0" || bb == "0") return "0";\n'
+  result += '    std::vector<int> tmp(aa.size() + bb.size(), 0);\n'
+  result += '    for (int i = (int)aa.size() - 1; i >= 0; --i) {\n'
+  result += '        for (int j = (int)bb.size() - 1; j >= 0; --j) {\n'
+  result += '            int p = (aa[(size_t)i] - \'0\') * (bb[(size_t)j] - \'0\');\n'
+  result += '            int idx = i + j + 1;\n'
+  result += '            int sum = tmp[(size_t)idx] + p;\n'
+  result += '            tmp[(size_t)idx] = sum % 10;\n'
+  result += '            tmp[(size_t)(idx - 1)] += sum / 10;\n'
+  result += '        }\n'
+  result += '    }\n'
+  result += '    std::string out;\n'
+  result += '    size_t i = 0;\n'
+  result += '    while (i + 1 < tmp.size() && tmp[i] == 0) ++i;\n'
+  result += '    for (; i < tmp.size(); ++i) out.push_back((char)(\'0\' + tmp[i]));\n'
+  result += '    return yc_big_trim_abs(out);\n'
+  result += '}\n\n'
+  result += 'static void yc_big_runtime_div_zero(const char* op) {\n'
+  result += '    fprintf(stderr, "! 大整数型运算错误|除数不能为0|%s\\n", op ? op : "/");\n'
+  result += '    fflush(stderr);\n'
+  result += '    if (IsDebuggerPresent()) DebugBreak();\n'
+  result += '}\n\n'
+  result += 'static std::string yc_big_div_abs(const std::string& a, const std::string& b) {\n'
+  result += '    std::string aa = yc_big_trim_abs(a);\n'
+  result += '    std::string bb = yc_big_trim_abs(b);\n'
+  result += '    if (bb == "0") { yc_big_runtime_div_zero("/"); return "0"; }\n'
+  result += '    if (yc_big_cmp_abs(aa, bb) < 0) return "0";\n'
+  result += '    std::string cur = "0";\n'
+  result += '    std::string quo;\n'
+  result += '    for (size_t i = 0; i < aa.size(); ++i) {\n'
+  result += '        if (cur == "0") cur = std::string(1, aa[i]);\n'
+  result += '        else cur.push_back(aa[i]);\n'
+  result += '        cur = yc_big_trim_abs(cur);\n'
+  result += '        int q = 0;\n'
+  result += '        while (yc_big_cmp_abs(cur, bb) >= 0) {\n'
+  result += '            cur = yc_big_sub_abs(cur, bb);\n'
+  result += '            ++q;\n'
+  result += '        }\n'
+  result += '        quo.push_back((char)(\'0\' + q));\n'
+  result += '    }\n'
+  result += '    return yc_big_trim_abs(quo);\n'
+  result += '}\n\n'
+  result += 'static std::string yc_big_mod_abs(const std::string& a, const std::string& b) {\n'
+  result += '    std::string aa = yc_big_trim_abs(a);\n'
+  result += '    std::string bb = yc_big_trim_abs(b);\n'
+  result += '    if (bb == "0") { yc_big_runtime_div_zero("%"); return "0"; }\n'
+  result += '    if (yc_big_cmp_abs(aa, bb) < 0) return aa;\n'
+  result += '    std::string cur = "0";\n'
+  result += '    for (size_t i = 0; i < aa.size(); ++i) {\n'
+  result += '        if (cur == "0") cur = std::string(1, aa[i]);\n'
+  result += '        else cur.push_back(aa[i]);\n'
+  result += '        cur = yc_big_trim_abs(cur);\n'
+  result += '        while (yc_big_cmp_abs(cur, bb) >= 0) {\n'
+  result += '            cur = yc_big_sub_abs(cur, bb);\n'
+  result += '        }\n'
+  result += '    }\n'
+  result += '    return yc_big_trim_abs(cur);\n'
+  result += '}\n\n'
+  result += 'static YC_BIG yc_big_normalized(bool neg, const std::string& digits) {\n'
+  result += '    YC_BIG out;\n'
+  result += '    out.digits = yc_big_trim_abs(digits);\n'
+  result += '    out.neg = (out.digits != "0") ? neg : false;\n'
+  result += '    return out;\n'
+  result += '}\n\n'
+  result += 'static YC_BIG operator-(const YC_BIG& v) {\n'
+  result += '    return yc_big_normalized(!v.neg, v.digits);\n'
+  result += '}\n\n'
+  result += 'static YC_BIG operator+(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    if (a.neg == b.neg) return yc_big_normalized(a.neg, yc_big_add_abs(a.digits, b.digits));\n'
+  result += '    int cmp = yc_big_cmp_abs(a.digits, b.digits);\n'
+  result += '    if (cmp == 0) return YC_BIG();\n'
+  result += '    if (cmp > 0) return yc_big_normalized(a.neg, yc_big_sub_abs(a.digits, b.digits));\n'
+  result += '    return yc_big_normalized(b.neg, yc_big_sub_abs(b.digits, a.digits));\n'
+  result += '}\n\n'
+  result += 'static YC_BIG operator-(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    return a + (-b);\n'
+  result += '}\n\n'
+  result += 'static YC_BIG operator*(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    bool neg = (a.neg != b.neg);\n'
+  result += '    return yc_big_normalized(neg, yc_big_mul_abs(a.digits, b.digits));\n'
+  result += '}\n\n'
+  result += 'static YC_BIG operator/(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    bool neg = (a.neg != b.neg);\n'
+  result += '    return yc_big_normalized(neg, yc_big_div_abs(a.digits, b.digits));\n'
+  result += '}\n\n'
+  result += 'static YC_BIG yc_big_mod(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    bool neg = a.neg;\n'
+  result += '    return yc_big_normalized(neg, yc_big_mod_abs(a.digits, b.digits));\n'
+  result += '}\n\n'
+  result += 'static YC_BIG operator%(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    return yc_big_mod(a, b);\n'
+  result += '}\n\n'
+  result += 'static bool operator==(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    return a.neg == b.neg && yc_big_trim_abs(a.digits) == yc_big_trim_abs(b.digits);\n'
+  result += '}\n\n'
+  result += 'static bool operator!=(const YC_BIG& a, const YC_BIG& b) { return !(a == b); }\n\n'
+  result += 'static bool operator<(const YC_BIG& a, const YC_BIG& b) {\n'
+  result += '    if (a.neg != b.neg) return a.neg;\n'
+  result += '    int cmp = yc_big_cmp_abs(a.digits, b.digits);\n'
+  result += '    return a.neg ? (cmp > 0) : (cmp < 0);\n'
+  result += '}\n\n'
+  result += 'static bool operator>(const YC_BIG& a, const YC_BIG& b) { return b < a; }\n\n'
+  result += 'static bool operator<=(const YC_BIG& a, const YC_BIG& b) { return !(b < a); }\n\n'
+  result += 'static bool operator>=(const YC_BIG& a, const YC_BIG& b) { return !(a < b); }\n\n'
+
   result += `#define YC_DEBUG_BUILD ${debugBuild ? 1 : 0}\n\n`
   result += '#define YC_SDT_BYTE 0x80000101u\n'
   result += '#define YC_SDT_SHORT 0x80000201u\n'
@@ -2638,6 +3271,9 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'static wchar_t* yc_wcsdup_text(const wchar_t* s);\n'
   result += 'static wchar_t* yc_empty_text(void);\n'
   result += 'static wchar_t* yc_utf8_to_wide(const char* s);\n'
+  result += 'static const char* yc_wide_to_utf8(const wchar_t* s);\n'
+  result += 'static const char* yc_bin_to_cstr(const YC_BIN& value);\n'
+  result += 'static YC_BIN yc_cstr_to_bin(const char* value);\n'
   result += 'static wchar_t* yc_format_win32_error(DWORD errorCode);\n'
   result += 'static void yc_runtime_note_begin(void);\n'
   result += 'static void yc_runtime_note_part(const wchar_t* s);\n'
@@ -2695,6 +3331,10 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'static void yc_debug_output_value(const YC_BIN& value) {\n'
   result += '    printf("<字节集 %zu>\\n", value.size());\n'
   result += '}\n'
+  result += 'static void yc_debug_output_value(const YC_BIG& value) {\n'
+  result += '    if (value.neg && value.digits != "0") printf("-");\n'
+  result += '    printf("%s\\n", value.digits.c_str());\n'
+  result += '}\n'
   result += 'static void yc_debug_output_value(float v) {\n'
   result += '    printf("%.6g\\n", v);\n'
   result += '}\n'
@@ -2734,6 +3374,12 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    printf("<字节集 %zu>", value.size());\n'
   result += '#endif\n'
   result += '}\n'
+  result += 'static void yc_debug_line_part(const YC_BIG& value) {\n'
+  result += '#if YC_DEBUG_BUILD\n'
+  result += '    if (value.neg && value.digits != "0") printf("-");\n'
+  result += '    printf("%s", value.digits.c_str());\n'
+  result += '#endif\n'
+  result += '}\n'
   result += 'static void yc_debug_line_part(float v) {\n'
   result += '#if YC_DEBUG_BUILD\n'
   result += '    printf("%.6g", v);\n'
@@ -2770,6 +3416,10 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'static void yc_runtime_note_part(double v) {\n'
   result += '    printf("%.12g", v);\n'
   result += '}\n'
+  result += 'static void yc_runtime_note_part(const YC_BIG& value) {\n'
+  result += '    if (value.neg && value.digits != "0") printf("-");\n'
+  result += '    printf("%s", value.digits.c_str());\n'
+  result += '}\n'
   result += 'template <typename T> static void yc_runtime_note_part(T v) {\n'
   result += '    printf("%lld", (long long)(v));\n'
   result += '}\n'
@@ -2789,6 +3439,31 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '        free(out);\n'
   result += '        return yc_empty_text();\n'
   result += '    }\n'
+  result += '    return out;\n'
+  result += '}\n\n'
+
+  result += 'static const char* yc_wide_to_utf8(const wchar_t* s) {\n'
+  result += '    static thread_local std::string out;\n'
+  result += '    out.clear();\n'
+  result += '    if (!s) return out.c_str();\n'
+  result += '    int n = WideCharToMultiByte(CP_UTF8, 0, s, -1, NULL, 0, NULL, NULL);\n'
+  result += '    if (n <= 1) return out.c_str();\n'
+  result += '    out.resize((size_t)n - 1);\n'
+  result += '    WideCharToMultiByte(CP_UTF8, 0, s, -1, out.data(), n, NULL, NULL);\n'
+  result += '    return out.c_str();\n'
+  result += '}\n\n'
+
+  result += 'static const char* yc_bin_to_cstr(const YC_BIN& value) {\n'
+  result += '    static thread_local std::string out;\n'
+  result += '    out.assign((const char*)value.data(), value.size());\n'
+  result += '    return out.c_str();\n'
+  result += '}\n\n'
+
+  result += 'static YC_BIN yc_cstr_to_bin(const char* value) {\n'
+  result += '    YC_BIN out;\n'
+  result += '    if (!value) return out;\n'
+  result += '    const size_t n = strlen(value);\n'
+  result += '    out.assign((const unsigned char*)value, (const unsigned char*)value + n);\n'
   result += '    return out;\n'
   result += '}\n\n'
   result += 'static wchar_t* yc_get_local_hostname(void) {\n'
@@ -2880,6 +3555,43 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    memcpy(out + leftLen, rhs, sizeof(wchar_t) * (rightLen + 1));\n'
   result += '    return out;\n'
   result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(long long value) {\n'
+  result += '    wchar_t buf[64];\n'
+  result += '    swprintf(buf, 64, L"%lld", value);\n'
+  result += '    return yc_wcsdup_text(buf);\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(int value) {\n'
+  result += '    return yc_value_to_text((long long)value);\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(double value) {\n'
+  result += '    wchar_t buf[128];\n'
+  result += '    swprintf(buf, 128, L"%.15g", value);\n'
+  result += '    return yc_wcsdup_text(buf);\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(float value) {\n'
+  result += '    return yc_value_to_text((double)value);\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(const wchar_t* value) {\n'
+  result += '    return yc_wcsdup_text(value ? value : L"");\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(wchar_t* value) {\n'
+  result += '    return yc_value_to_text((const wchar_t*)value);\n'
+  result += '}\n\n'
+  result += 'static wchar_t* yc_value_to_text(const YC_BIG& value) {\n'
+  result += '    std::wstring out;\n'
+  result += '    if (value.neg && value.digits != "0") out.push_back(L\'-\');\n'
+  result += '    for (char c : value.digits) out.push_back((wchar_t)c);\n'
+  result += '    return yc_wcsdup_text(out.c_str());\n'
+  result += '}\n\n'
+  result += 'static YC_BIG yc_value_to_big(const YC_BIG& value) { return value; }\n\n'
+  result += 'static YC_BIG yc_value_to_big(long long value) { return YC_BIG(value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(int value) { return YC_BIG((long long)value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(short value) { return YC_BIG((long long)value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(unsigned char value) { return YC_BIG((long long)value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(double value) { return YC_BIG((long long)value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(float value) { return YC_BIG((long long)value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(const wchar_t* value) { return YC_BIG(value); }\n\n'
+  result += 'static YC_BIG yc_value_to_big(wchar_t* value) { return YC_BIG((const wchar_t*)value); }\n\n'
   result += 'static size_t yc_bin_clamp_count(int count) {\n'
   result += '    return count <= 0 ? 0u : (size_t)count;\n'
   result += '}\n\n'
@@ -3332,6 +4044,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   let subParams: Array<{ name: string; type: string }> = []
   let subBody = ''
   let blockIndent = 1
+  let flowStack: Array<{ name: string; lineNo: number; hasElse: boolean }> = []
   let loopTempIndex = 0
   let pendingBreakpointLine: number | null = null
   let visibleDebugVars: Array<{ name: string; type: string }> = []
@@ -3349,6 +4062,15 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     if (!name) return
     if (visibleDebugVars.some(v => v.name === name)) return
     visibleDebugVars.push({ name, type })
+  }
+
+  const resolveVisibleVarType = (name: string): string | undefined => {
+    const target = (name || '').trim()
+    if (!target) return undefined
+    for (let i = visibleDebugVars.length - 1; i >= 0; i--) {
+      if (visibleDebugVars[i].name === target) return visibleDebugVars[i].type
+    }
+    return undefined
   }
 
   const emitDebugVarSnapshot = (displayName: string, typeName: string, expr: string, depth = 0) => {
@@ -3381,6 +4103,17 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     appendSubLine(code)
   }
 
+  const throwSourceError = (lineNo: number, message: string): never => {
+    throw new Error(`${fileName}:${lineNo}: ${message}`)
+  }
+
+  const assertSubFlowClosed = (lineNo: number) => {
+    const unclosed = flowStack[flowStack.length - 1]
+    if (unclosed) {
+      throwSourceError(lineNo, `${unclosed.lineNo} 行的 .${unclosed.name} 缺少结束语句`)
+    }
+  }
+
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const rawLine = lines[lineIndex]
     pendingBreakpointLine = inSub && breakpointLines.has(lineIndex + 1) ? (lineIndex + 1) : null
@@ -3402,6 +4135,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     if (line.startsWith('.子程序 ')) {
       // 如果之前有子程序，先输出
       if (inSub && subName) {
+        assertSubFlowClosed(lineIndex + 1)
         const storage = isClassModuleSource ? 'static ' : ''
         result += `${storage}void ${subName}(${buildSubSignature(subName, subParams)}) {\n${subBody}}\n\n`
       }
@@ -3410,6 +4144,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       subParams = []
       subBody = ''
       blockIndent = 1
+      flowStack = []
       inSub = true
       visibleDebugVars = [
         ...projectGlobals.map(gv => ({ name: gv.name, type: gv.type })),
@@ -3461,10 +4196,20 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
           const cond = formatArgForC(flowCall?.args?.[0] || '0', commandMap, directCallables)
           emitSubLine(`if ${wrapConditionForC(cond)} {`)
           blockIndent++
+          flowStack.push({ name: flowName, lineNo: lineIndex + 1, hasElse: false })
           continue
         }
 
         if (flowName === '否则' || flowName === '默认') {
+          const currentFlow = flowStack[flowStack.length - 1]
+          const expectedStart = flowName === '默认' ? '判断' : '如果'
+          if (!currentFlow || currentFlow.name !== expectedStart) {
+            throwSourceError(lineIndex + 1, `.${flowName} 没有匹配的 .${expectedStart}`)
+          }
+          if (currentFlow.hasElse) {
+            throwSourceError(lineIndex + 1, `.${currentFlow.name} 只能包含一个 .${flowName}`)
+          }
+          currentFlow.hasElse = true
           blockIndent = Math.max(1, blockIndent - 1)
           emitSubLine('} else {')
           blockIndent++
@@ -3472,6 +4217,12 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         }
 
         if (flowName === '如果结束' || flowName === '如果真结束' || flowName === '判断结束') {
+          const currentFlow = flowStack[flowStack.length - 1]
+          const expectedStart = flowName === '判断结束' ? '判断' : flowName === '如果真结束' ? '如果真' : '如果'
+          if (!currentFlow || currentFlow.name !== expectedStart) {
+            throwSourceError(lineIndex + 1, `.${flowName} 没有匹配的 .${expectedStart}`)
+          }
+          flowStack.pop()
           blockIndent = Math.max(1, blockIndent - 1)
           emitSubLine('}')
           continue
@@ -3587,12 +4338,33 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
             }
             continue
           }
-          const assignCode = generateYcGenericCommandAssign(rhsResolved, rhsCall.args || [], left)
+          const assignCode = isYcmdNativeCommand(rhsResolved)
+            ? `{ ${left} = ${generateYcmdNativeCommandExpr(rhsResolved, rhsCall.args || [], commandMap, directCallables)}; }`
+            : generateYcGenericCommandAssign(rhsResolved, rhsCall.args || [], left)
           emitSubLine(assignCode)
           continue
         }
 
-        const right = formatArgForC(rightRaw, commandMap, directCallables)
+        const leftSimpleVarType = (() => {
+          if (!/^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*$/.test(left)) return ''
+          for (let i = visibleDebugVars.length - 1; i >= 0; i--) {
+            if (visibleDebugVars[i].name === left) return (visibleDebugVars[i].type || '').trim()
+          }
+          return ''
+        })()
+
+        const right = translateExpressionToC(
+          rightRaw,
+          commandMap,
+          directCallables,
+          resolveVisibleVarType,
+          leftSimpleVarType === '大整数型' || leftSimpleVarType === '大数',
+        )
+
+        if (leftSimpleVarType === '文本型' && (!isTextExpression(right) || isTextLiteralExpression(right))) {
+          emitSubLine(`${left} = yc_value_to_text(${right});`)
+          continue
+        }
 
         if (propMatch) {
           const ctrlName = propMatch[1]
@@ -3634,6 +4406,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
 
   // 输出最后一个子程序
   if (inSub && subName) {
+    assertSubFlowClosed(lines.length)
     const storage = isClassModuleSource ? 'static ' : ''
     result += `${storage}void ${subName}(${buildSubSignature(subName, subParams)}) {\n${subBody}}\n\n`
   }
@@ -3654,22 +4427,106 @@ function generateMainC(
 ): string[] {
   const mainCPath = join(tempDir, 'main.cpp')
   const additionalCFiles: string[] = []
+  const transpileCachePath = join(tempDir, '.transpile-cache.json')
+  const metadataStartTime = Date.now()
+  sendMessage({ type: 'info', text: '正在分析项目元数据...' })
+
+  const cacheFile = (() => {
+    try {
+      if (!existsSync(transpileCachePath)) return null
+      const raw = JSON.parse(readFileSync(transpileCachePath, 'utf-8')) as Partial<TranspileCacheFile>
+      if (!raw || raw.version !== TRANSPILE_CACHE_VERSION || !raw.entries || typeof raw.entries !== 'object') return null
+      return raw as TranspileCacheFile
+    } catch {
+      return null
+    }
+  })()
+  const previousTranspileEntries = cacheFile?.entries || {}
+  const nextTranspileEntries: Record<string, TranspileCacheEntry> = {}
 
   let mainCode = '/* 由 ycIDE 自动生成 */\n'
   mainCode += `/* 项目名称: ${project.projectName} */\n\n`
   mainCode += '#include <windows.h>\n#include <commctrl.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n#include <io.h>\n#include <fcntl.h>\n\n'
+  mainCode += generateYcmdNativeDeclarations(targetPlatform)
 
   const isWindowsApp = project.outputType === 'WindowsApp'
-  const projectGlobals = collectProjectGlobalVars(project, editorFiles)
-  const projectConstants = collectProjectConstants(project, editorFiles)
-  const projectResources = collectProjectResourceEntries(project, editorFiles)
-  const projectSubprograms = collectProjectSubprogramDefs(project, editorFiles)
-  const projectDataTypes = collectProjectDataTypes(project, editorFiles)
-  const projectDllCommands = collectProjectDllCommands(project, editorFiles)
+  const projectMeta = resolveProjectCompileMetadata(project, editorFiles)
+  const projectGlobals = projectMeta.globals
+  const projectConstants = projectMeta.constants
+  const projectResources = projectMeta.resources
+  const projectSubprograms = projectMeta.subprograms
+  const projectDataTypes = projectMeta.dataTypes
+  const projectDllCommands = projectMeta.dllCommands
   activeProjectCustomTypeNames = new Set(projectDataTypes.map(dt => dt.name))
   const librariesForBuild = linkedLibraries || libraryManager.getLoadedLibraryFiles()
   const usedLibraryNames = new Set(librariesForBuild.map(l => l.name))
   const libraryConstants = collectLibraryConstants(usedLibraryNames)
+  sendMessage({ type: 'info', text: `项目元数据分析完成 (${Date.now() - metadataStartTime} 毫秒)` })
+
+  const transpileContextDigest = createHash('sha1').update(JSON.stringify({
+    debugBuild,
+    targetPlatform,
+    outputType: project.outputType,
+    globals: projectGlobals,
+    constants: projectConstants,
+    resources: projectResources,
+    subprograms: projectSubprograms,
+    dataTypes: projectDataTypes,
+    dllCommands: projectDllCommands,
+    libraryConstants,
+  })).digest('hex')
+
+  const getBreakpointDigest = (fileName: string): string => {
+    const points = breakpoints[fileName] || []
+    if (points.length === 0) return ''
+    const sorted = Array.from(new Set(points)).sort((a, b) => a - b)
+    return sorted.join(',')
+  }
+
+  const transpileProjectFile = (
+    fileName: string,
+    content: string,
+    constantsForFile: LibraryConstantDef[],
+  ): void => {
+    const cFileName = fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
+    const cFilePath = join(tempDir, cFileName)
+    const fingerprint = createHash('sha1').update([
+      String(TRANSPILE_CACHE_VERSION),
+      fileName,
+      transpileContextDigest,
+      getBreakpointDigest(fileName),
+      JSON.stringify(constantsForFile),
+      content,
+    ].join('\n---\n')).digest('hex')
+
+    const previous = previousTranspileEntries[fileName]
+    if (previous && previous.fingerprint === fingerprint && existsSync(cFilePath)) {
+      additionalCFiles.push(cFilePath)
+      nextTranspileEntries[fileName] = { fingerprint, cFileName }
+      sendMessage({ type: 'info', text: `复用已转换文件: ${cFileName}` })
+      return
+    }
+
+    sendMessage({ type: 'info', text: `正在转换源文件: ${fileName}` })
+    const cCode = transpileEycContent(
+      content,
+      fileName,
+      projectGlobals,
+      projectConstants,
+      projectResources,
+      constantsForFile,
+      projectSubprograms,
+      projectDataTypes,
+      projectDllCommands,
+      debugBuild,
+      breakpoints,
+      targetPlatform,
+    )
+    writeFileSync(cFilePath, cCode, 'utf-8')
+    additionalCFiles.push(cFilePath)
+    nextTranspileEntries[fileName] = { fingerprint, cFileName }
+    sendMessage({ type: 'info', text: `已生成: ${cFileName}` })
+  }
 
   mainCode += '#define YC_SDT_BYTE 0x80000101u\n'
   mainCode += '#define YC_SDT_SHORT 0x80000201u\n'
@@ -3863,13 +4720,7 @@ function generateMainC(
       const content = editorContent || (existsSync(eycPath) ? readFileSync(eycPath, 'utf-8') : '')
       if (!content) continue
 
-      sendMessage({ type: 'info', text: `正在转换源文件: ${f.fileName}` })
-      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, projectResources, libraryConstants, projectSubprograms, projectDataTypes, projectDllCommands, debugBuild, breakpoints, targetPlatform)
-      const cFileName = f.fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
-      const cFilePath = join(tempDir, cFileName)
-      writeFileSync(cFilePath, cCode, 'utf-8')
-      additionalCFiles.push(cFilePath)
-      sendMessage({ type: 'info', text: `已生成: ${cFileName}` })
+      transpileProjectFile(f.fileName, content, libraryConstants)
     }
 
     const allUnits = libraryManager.getAllWindowUnits()
@@ -3898,7 +4749,14 @@ function generateMainC(
       const visFlag = ctrl.visible ? ' | WS_VISIBLE' : ''
       const disFlag = ctrl.disabled ? ' | WS_DISABLED' : ''
       const style = `${baseStyle}${visFlag}${disFlag}`
-      const text = ctrl.text || ctrl.name
+      const isEditLike =
+        className === 'EDIT'
+        || ctrl.type === '编辑框'
+        || ctrl.type === '超级编辑框'
+        || ctrl.type === '文本框'
+        || ctrl.type === 'Edit'
+        || ctrl.type === 'TextBox'
+      const text = isEditLike ? (ctrl.text || '') : (ctrl.text || ctrl.name)
       mainCode += `    hCtrl = CreateWindowExW(0, L"${className}", L"${text}",\n`
       mainCode += `        ${style},\n`
       mainCode += `        ${ctrl.x}, ${ctrl.y}, ${ctrl.width}, ${ctrl.height},\n`
@@ -4194,6 +5052,8 @@ function generateMainC(
     mainCode += '        }\n'
     mainCode += '    }\n'
     mainCode += '    g_hInstance = hInstance;\n'
+    mainCode += '    INITCOMMONCONTROLSEX icc = { sizeof(INITCOMMONCONTROLSEX), ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES | ICC_LISTVIEW_CLASSES | ICC_TREEVIEW_CLASSES | ICC_TAB_CLASSES };\n'
+    mainCode += '    InitCommonControlsEx(&icc);\n'
     // 初始化有窗口组件的支持库（按配置加载动态模块）
     {
       for (const lib of librariesForBuild) {
@@ -4302,12 +5162,7 @@ function generateMainC(
       const content = editorContent || (existsSync(eycPath) ? readFileSync(eycPath, 'utf-8') : '')
       if (!content) continue
 
-      sendMessage({ type: 'info', text: `正在转换源文件: ${f.fileName}` })
-      const cCode = transpileEycContent(content, f.fileName, projectGlobals, projectConstants, projectResources, [], projectSubprograms, projectDataTypes, projectDllCommands, debugBuild, breakpoints, targetPlatform)
-      const cFileName = f.fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
-      const cFilePath = join(tempDir, cFileName)
-      writeFileSync(cFilePath, cCode, 'utf-8')
-      additionalCFiles.push(cFilePath)
+      transpileProjectFile(f.fileName, content, [])
     }
 
     mainCode += '/* 控制台程序入口点 */\n'
@@ -4342,6 +5197,16 @@ function generateMainC(
     mainCode += '}\n'
   }
 
+  try {
+    const cachePayload: TranspileCacheFile = {
+      version: TRANSPILE_CACHE_VERSION,
+      entries: nextTranspileEntries,
+    }
+    writeFileSync(transpileCachePath, JSON.stringify(cachePayload), 'utf-8')
+  } catch {
+    // 缓存写入失败不影响本次编译。
+  }
+
   writeFileSync(mainCPath, mainCode, 'utf-8')
   return additionalCFiles
 }
@@ -4353,7 +5218,6 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
   }
 
   const startTime = Date.now()
-  compileProtocolCache = null
   activeProjectCustomTypeNames = new Set()
 
   try {
@@ -4374,7 +5238,25 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       return result
     }
 
-    const signatureErrors = validateProjectCommandSignatures(project, editorFiles)
+    const buildMode = options.mode || 'compile'
+    const hostPlatform = getHostTargetPlatform()
+    const hostArch = getHostTargetArch()
+    const projectPlatform = normalizeTargetPlatform(project.platform)
+    const unsupportedProjectPlatform = normalizeUnsupportedTargetPlatform(project.platform)
+
+    if (buildMode === 'compile' && unsupportedProjectPlatform) {
+      sendMessage({ type: 'error', text: `错误: 目标平台 ${unsupportedProjectPlatform} 已可在项目中选择，但当前编译后端还没有实现移动端原生构建。` })
+      result.errorCount++
+      result.elapsedMs = Date.now() - startTime
+      return result
+    }
+
+    // 运行按钮固定编译为宿主平台；编译按钮按 .epp 目标平台。
+    const targetPlatform: TargetPlatform = buildMode === 'run'
+      ? hostPlatform
+      : (projectPlatform || hostPlatform)
+
+    const signatureErrors = validateProjectCommandSignatures(project, editorFiles, targetPlatform)
     if (signatureErrors.length > 0) {
       for (const message of signatureErrors) {
         sendMessage({ type: 'error', text: message })
@@ -4385,16 +5267,6 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     }
 
     sendMessage({ type: 'info', text: `正在编译项目: ${project.projectName}` })
-
-    const buildMode = options.mode || 'compile'
-    const hostPlatform = getHostTargetPlatform()
-    const hostArch = getHostTargetArch()
-    const projectPlatform = normalizeTargetPlatform(project.platform)
-
-    // 运行按钮固定编译为宿主平台；编译按钮按 .epp 目标平台。
-    const targetPlatform: TargetPlatform = buildMode === 'run'
-      ? hostPlatform
-      : (projectPlatform || hostPlatform)
 
     // 编译按钮允许工具栏架构覆盖；运行按钮固定宿主架构。
     const targetArch: TargetArch = buildMode === 'run'
@@ -4429,7 +5301,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     mkdirSync(outputDir, { recursive: true })
 
     // ========== 支持库链接 ==========
-    const loadedLibs = libraryManager.getLoadedLibraryFiles()
+    const loadedLibs = libraryManager.getLoadedLibraryFiles(targetPlatform)
     const usedLibraryNames = collectUsedLibraryFileNames(project, editorFiles)
     const genericFallbackLibraryNames = collectGenericFallbackLibraryFileNames(project, editorFiles)
     const libsToLink = loadedLibs.filter(l => usedLibraryNames.has(l.name))
@@ -4449,6 +5321,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     const outputFileName = getBinaryFileName(outputName, project.outputType, targetPlatform)
     const outputBinary = join(outputDir, outputFileName)
     const mainC = join(tempDir, 'main.cpp')
+    const buildCachePath = join(tempDir, '.build-artifact-cache.json')
 
     const args: string[] = [
       '-o', outputBinary,
@@ -4483,7 +5356,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
     // 平台系统库
     if (targetPlatform === 'windows') {
-      args.push('-lkernel32', '-luser32', '-lgdi32')
+      args.push('-lkernel32', '-luser32', '-lgdi32', '-lcomctl32', '-loleaut32')
     }
 
     // ========== 支持库链接 ==========
@@ -4503,9 +5376,78 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       if (staticLib) {
         args.push(staticLib, ...extraDeps)
         sendMessage({ type: 'info', text: `  ✓ ${lib.libName} (${lib.name}) - 静态链接: ${basename(staticLib)}` })
+      } else if (/\.(?:c|cc|cpp|cxx|m|mm)$/i.test(lib.libraryPath)) {
+        args.push(lib.libraryPath, ...extraDeps)
+        sendMessage({ type: 'info', text: `  ${lib.libName} (${lib.name}) - platform source: ${basename(lib.libraryPath)}` })
       } else {
         sendMessage({ type: 'warning', text: `  ○ ${lib.libName} (${lib.name}) - 未找到静态库，跳过链接` })
       }
+    }
+
+    const collectFileStamp = (filePath: string): string => {
+      try {
+        const st = statSync(filePath)
+        return `${filePath}|${st.size}|${Math.round(st.mtimeMs)}`
+      } catch {
+        return `${filePath}|missing`
+      }
+    }
+
+    const resourceEntries = collectProjectResourceEntries(project, editorFiles)
+    const resourceStamps = resourceEntries
+      .map(entry => collectFileStamp(join(project.projectDir, entry.fileName)))
+      .sort()
+    const sourceStamps = [mainC, ...additionalCFiles].map(collectFileStamp).sort()
+    const staticLibStamps = libsToLink
+      .map(lib => libraryManager.findStaticLib(lib.name, targetArch))
+      .filter((x): x is string => !!x)
+      .map(collectFileStamp)
+      .sort()
+    const platformImplStamps = libsToLink
+      .map(lib => lib.libraryPath)
+      .filter(filePath => /\.(?:c|cc|cpp|cxx|m|mm)$/i.test(filePath))
+      .map(collectFileStamp)
+      .sort()
+
+    const buildFingerprint = createHash('sha1').update(JSON.stringify({
+      mode: buildMode,
+      debug: !!options.debug,
+      targetPlatform,
+      targetArch,
+      targetTriple,
+      outputType: project.outputType,
+      outputName: outputFileName,
+      sourceStamps,
+      staticLibStamps,
+      platformImplStamps,
+      resourceStamps,
+    })).digest('hex')
+
+    const previousBuildCache = (() => {
+      try {
+        if (!existsSync(buildCachePath)) return null
+        const raw = JSON.parse(readFileSync(buildCachePath, 'utf-8')) as Partial<BuildArtifactCacheFile>
+        if (!raw || raw.version !== BUILD_ARTIFACT_CACHE_VERSION) return null
+        if (typeof raw.fingerprint !== 'string' || typeof raw.outputBinary !== 'string') return null
+        return raw as BuildArtifactCacheFile
+      } catch {
+        return null
+      }
+    })()
+
+    if (
+      previousBuildCache
+      && previousBuildCache.fingerprint === buildFingerprint
+      && previousBuildCache.outputBinary === outputBinary
+      && existsSync(outputBinary)
+    ) {
+      sendMessage({ type: 'info', text: '未检测到编译输入变化，跳过编译与链接，直接复用上次产物。' })
+      result.success = true
+      result.outputFile = outputBinary
+      result.elapsedMs = Date.now() - startTime
+      sendMessage({ type: 'success', text: `编译成功 (${result.elapsedMs} 毫秒)` })
+      sendMessage({ type: 'info', text: `输出文件: ${outputBinary}` })
+      return result
     }
 
     args.push('-target', targetTriple)
@@ -4515,10 +5457,16 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
     // 调试/优化选项
     if (options.debug) {
-      args.push('-g')
+      args.push('-g', '-O0')
+      sendMessage({ type: 'info', text: '优化级别: O0 (调试优先)' })
+    } else if (buildMode === 'run') {
+      // 运行按钮优先响应速度，避免每次测试都走 O2 的慢编译路径。
+      args.push('-O0', '-fno-ident')
+      sendMessage({ type: 'info', text: '优化级别: O0 (快速运行)' })
     } else {
       args.push('-O2', '-fno-ident', '-ffunction-sections', '-fdata-sections')
       args.push('-Wl,--gc-sections')
+      sendMessage({ type: 'info', text: '优化级别: O2 (发布编译)' })
     }
 
     sendMessage({ type: 'info', text: '正在编译...' })
@@ -4584,6 +5532,17 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       return result
     }
 
+    try {
+      const cachePayload: BuildArtifactCacheFile = {
+        version: BUILD_ARTIFACT_CACHE_VERSION,
+        fingerprint: buildFingerprint,
+        outputBinary,
+      }
+      writeFileSync(buildCachePath, JSON.stringify(cachePayload), 'utf-8')
+    } catch {
+      // 缓存写入失败不影响本次编译。
+    }
+
     result.success = true
     result.outputFile = outputBinary
     result.elapsedMs = Date.now() - startTime
@@ -4618,6 +5577,53 @@ export function runExecutable(exePath: string): boolean {
   const workDir = dirname(exePath)
   const debugCmdFile = join(workDir, '.ycdbg_cmd')
 
+  const formatLaunchError = (err: NodeJS.ErrnoException): string => {
+    const parts = [err.message]
+    if (err.code) parts.push(`code=${err.code}`)
+    if (typeof err.errno === 'number') parts.push(`errno=${err.errno}`)
+    if (err.syscall) parts.push(`syscall=${err.syscall}`)
+    if (err.path) parts.push(`path=${err.path}`)
+    return parts.join(' | ')
+  }
+
+  const canFallbackToShellOpen = (err: NodeJS.ErrnoException): boolean => {
+    if (process.platform !== 'win32') return false
+
+    const code = (err.code ?? '').toUpperCase()
+    const message = err.message ?? ''
+    const errno = typeof err.errno === 'number' ? err.errno : null
+
+    if (code === 'EPERM' || code === 'EACCES' || code === 'UNKNOWN') return true
+    if (errno === -4048) return true
+    return /spawn\s+(EPERM|EACCES)/i.test(message)
+  }
+
+  const isLikelySecurityInterception = (err: NodeJS.ErrnoException): boolean => {
+    if (process.platform !== 'win32') return false
+
+    const message = err.message ?? ''
+    const code = (err.code ?? '').toUpperCase()
+    const errno = typeof err.errno === 'number' ? err.errno : null
+
+    if (code === 'EPERM' || code === 'EACCES' || code === 'UNKNOWN') return true
+    if (errno === -4048) return true
+    return /spawn\s+(EPERM|EACCES)|operation not permitted|access is denied/i.test(message)
+  }
+
+  const fallbackOpenViaShell = (): void => {
+    void shell.openPath(exePath).then((result) => {
+      if (result) {
+        sendMessage({ type: 'error', text: `启动程序失败(回退启动也失败): ${result}` })
+        return
+      }
+      sendMessage({ type: 'warning', text: '已回退为系统 Shell 启动，当前会话无法跟踪进程输出/退出状态。' })
+      sendMessage({ type: 'success', text: '程序已通过系统 Shell 启动。' })
+    }).catch((error) => {
+      const text = error instanceof Error ? error.message : String(error)
+      sendMessage({ type: 'error', text: `启动程序失败(回退启动异常): ${text}` })
+    })
+  }
+
   try {
     writeFileSync(debugCmdFile, '0', 'utf-8')
     runningDebugCmdFile = debugCmdFile
@@ -4631,6 +5637,10 @@ export function runExecutable(exePath: string): boolean {
     runningProcess = proc
     let stdoutBuffer = ''
     let stderrBuffer = ''
+
+    proc.on('spawn', () => {
+      sendMessage({ type: 'success', text: `程序已启动 (PID: ${proc.pid})` })
+    })
 
     proc.stdout?.on('data', (data: Buffer) => {
       stdoutBuffer = emitBufferedOutputChunk(data.toString('utf-8'), stdoutBuffer, 'info')
@@ -4661,10 +5671,23 @@ export function runExecutable(exePath: string): boolean {
       runningProcess = null
       runningDebugCmdFile = null
       runningDebugResumeToken = 0
-      sendMessage({ type: 'error', text: `启动程序失败: ${err.message}` })
+      const detailed = formatLaunchError(err)
+      const blockedBySecuritySoftware = isLikelySecurityInterception(err)
+      if (canFallbackToShellOpen(err)) {
+        sendMessage({ type: 'warning', text: `直接启动失败，正在尝试系统 Shell 回退启动: ${detailed}` })
+        if (blockedBySecuritySoftware) {
+          sendMessage({ type: 'warning', text: `疑似被安全软件拦截。请检查杀毒软件隔离区/日志，并将输出目录加入“受信任或排除”后重试。输出目录: ${workDir}` })
+        }
+        fallbackOpenViaShell()
+        return
+      }
+      if (blockedBySecuritySoftware) {
+        sendMessage({ type: 'warning', text: `疑似被安全软件拦截。请检查杀毒软件隔离区/日志，并将输出目录加入“受信任或排除”后重试。输出目录: ${workDir}` })
+      }
+      sendMessage({ type: 'error', text: `启动程序失败: ${detailed}` })
     })
 
-    sendMessage({ type: 'success', text: `程序已启动 (PID: ${proc.pid})` })
+    // execFile 返回即表示启动请求已发起；实际成功由 spawn 事件回报。
     return true
   } catch (e) {
     sendMessage({ type: 'error', text: `启动程序失败: ${e instanceof Error ? e.message : String(e)}` })

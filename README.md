@@ -40,7 +40,36 @@ npm run dev
 
 # 打包
 npm run package:win
+
+# Windows 签名打包（可选）
+npm run package:win:signed
+
+# 生成误报申诉包（示例）
+npm run security:av:report -- --sample "D:\\Documents\\ycIDE Projects\\新项目6\\output\\windows\\x64\\新项目6.exe" --compiler "zig c++" --target "windows-x64" --mode "运行(宿主平台)" --detection "VHO:Trojan-PSW.Win32.ReaderDB.gen"
 ```
+
+## 杀毒软件误报排查与发布建议
+
+### 本地排查（用户）
+- 如果运行日志中出现 `spawn EPERM` / `EACCES` / `UNKNOWN`（或 errno 为 `-4048`），通常是安全软件拦截导致。
+- 先检查安全软件隔离区，确认是否已删除或阻止你刚编译的 exe。
+- 生成误报申诉包：
+
+```bash
+npm run security:av:report -- --sample "<你的exe路径>" --compiler "zig c++" --target "windows-x64" --mode "运行(宿主平台)"
+```
+
+- 生成目录默认位于 `debug_logs/av-report-时间戳/`，包含 `report.json` 与 `attachments/`，可直接提交给杀软厂商误报通道。
+
+### 发布建议（项目维护者）
+- 不把“让所有用户手工加白名单”作为默认方案。
+- 推荐在发布链路使用签名打包（证书通过环境变量注入）。
+- 可用环境变量：
+	- `YCIDE_WIN_CERT_FILE`：证书文件路径（PFX）
+	- `YCIDE_WIN_CERT_PASSWORD`：证书密码
+	- `YCIDE_WIN_TIMESTAMP_URL`：RFC3161 时间戳服务地址（可选）
+	- `YCIDE_WIN_PUBLISHER_NAME`：发布者名称（可选）
+	- `YCIDE_REQUIRE_WIN_SIGN=1`：强制要求签名（未配置证书时打包失败）
 
 ## 贡献
 欢迎任何形式的贡献！无论是修复 bug、添加新功能、改进文档还是提供反馈，都非常感谢。请遵循以下步骤：

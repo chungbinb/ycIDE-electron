@@ -5,6 +5,11 @@ export type OpenProjectSelectionResult =
   | { status: 'epp'; eppPath: string }
   | { status: 'eFile'; eFilePath: string; projectName: string; targetDir: string; targetExists: boolean }
 
+export type OpenWorkspaceFolderSelectionResult =
+  | { status: 'canceled' }
+  | { status: 'epp'; eppPath: string }
+  | { status: 'folder'; folderPath: string }
+
 export type EProjectImportRequest = {
   eFilePath: string
   password?: string

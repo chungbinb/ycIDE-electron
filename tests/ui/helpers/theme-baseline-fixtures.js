@@ -1,6 +1,15 @@
 const fs = require('node:fs')
 const path = require('node:path')
-const { _electron: electron, expect } = require('@playwright/test')
+const { expect } = require('@playwright/test')
+const {
+  launchApp,
+  findThemeManagerPage,
+  openThemeManager,
+  applyThemeFromManager,
+  switchThemeFromMenu,
+  themeListItem,
+  readRootCssVar,
+} = require('./theme-token-coverage-fixtures')
 
 const THEME_IDS = {
   dark: '默认深色',
@@ -11,19 +20,7 @@ const THEME_IDS = {
 const ROOT_BG_PRIMARY = '--bg-primary'
 
 async function launchElectronApp(appRoot) {
-  const electronApp = await electron.launch({
-    args: [appRoot],
-    cwd: appRoot,
-    env: {
-      ...process.env,
-      CI: '1',
-    },
-  })
-
-  const window = await electronApp.firstWindow()
-  await window.waitForLoadState('domcontentloaded')
-  await expect(window.locator('.titlebar')).toBeVisible()
-  return { electronApp, window }
+  return launchApp(appRoot)
 }
 
 async function getUserDataPath(electronApp) {
@@ -43,29 +40,26 @@ function createInvalidThemeConfig() {
   return {
     version: 2,
     currentThemeId: THEME_IDS.invalid,
+    // themePayloads 缺失会被判为 config_parse_failed（不进修复流程），
+    // 这里要构造的是“配置结构合法但主题不存在”的 repair_required 场景。
+    themePayloads: {},
     lastError: null,
     retainedInvalidTheme: null,
   }
 }
 
 async function chooseThemeFromTitlebar(window, themeId) {
-  await window.getByRole('menuitem', { name: '查看(V)' }).click()
-  await window.getByRole('menuitem', { name: '主题' }).hover()
-  await window.getByRole('menuitem', { name: themeId }).click()
+  await switchThemeFromMenu(window, themeId)
 }
 
-async function openThemeSettings(window) {
-  await window.getByRole('menuitem', { name: '工具(T)' }).click()
-  await window.getByRole('menuitem', { name: '系统配置(O)' }).click()
-  await expect(window.locator('.theme-settings-dialog')).toBeVisible()
-}
-
-async function chooseThemeFromSettings(window, themeId) {
-  await window.getByRole('radio', { name: themeId }).click()
-}
-
-async function readRootCssVar(window, variableName) {
-  return window.evaluate((name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim(), variableName)
+// repair_required 警告会自动打开主题管理器弹窗，等待其出现。
+async function waitForThemeManagerPage(app, timeout = 15000) {
+  let page = null
+  await expect.poll(async () => {
+    page = await findThemeManagerPage(app)
+    return !!page
+  }, { timeout }).toBe(true)
+  return page
 }
 
 module.exports = {
@@ -75,8 +69,10 @@ module.exports = {
   writeThemeConfig,
   createInvalidThemeConfig,
   chooseThemeFromTitlebar,
-  openThemeSettings,
-  chooseThemeFromSettings,
+  openThemeManager,
+  applyThemeFromManager,
+  waitForThemeManagerPage,
+  themeListItem,
   readRootCssVar,
   THEME_IDS,
   ROOT_BG_PRIMARY,

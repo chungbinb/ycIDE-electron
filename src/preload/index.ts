@@ -3,7 +3,7 @@ import { normalizeRuntimePlatform } from '../shared/platform'
 import { THEME_CONFIG_VERSION } from '../shared/theme'
 import type { IDESettings } from '../shared/settings'
 import type { AIChatRequest, AIChatResult, AIChatWithToolsRequest, AIChatWithToolsResult, AIEditRequest, AIEditResult } from '../shared/ai'
-import type { EProjectImportRequest, EProjectImportResult, OpenProjectSelectionResult } from '../shared/eprojectImport'
+import type { EProjectImportRequest, EProjectImportResult, OpenProjectSelectionResult, OpenWorkspaceFolderSelectionResult } from '../shared/eprojectImport'
 import type {
   SaveAsCustomThemeRequest,
   SaveAsCustomThemeResult,
@@ -46,17 +46,26 @@ const api = {
   },
   // 文件操作
   file: {
+    openDialog: () => ipcRenderer.invoke('file:openDialog') as Promise<string | null>,
+    saveDialog: (defaultPath?: string) => ipcRenderer.invoke('file:saveDialog', defaultPath) as Promise<string | null>,
     open: (path: string) => ipcRenderer.invoke('file:open', path),
-    save: (path: string, content: string) => ipcRenderer.invoke('file:save', path, content),
+    save: (path: string, content: string, encoding?: string) => ipcRenderer.invoke('file:save', path, content, encoding),
     readDir: (path: string) => ipcRenderer.invoke('file:readDir', path)
   },
   // 项目管理
   project: {
     getDefaultPath: () => ipcRenderer.invoke('project:getDefaultPath') as Promise<string>,
     selectDirectory: () => ipcRenderer.invoke('project:selectDirectory') as Promise<string | null>,
-    create: (info: { name: string; path: string; type: string; platform: string }) =>
-      ipcRenderer.invoke('project:create', info) as Promise<{ projectDir: string; eppPath: string }>,
+    checkCreateTarget: (info: { name: string; path: string }) =>
+      ipcRenderer.invoke('project:checkCreateTarget', info) as Promise<{ projectDir: string; exists: boolean }>,
+    create: (info: { name: string; path: string; type: string; platform: string; overwrite?: boolean }) =>
+      ipcRenderer.invoke('project:create', info) as Promise<
+        | { status: 'created'; projectDir: string; eppPath: string }
+        | { status: 'exists'; projectDir: string }
+      >,
     readFile: (filePath: string) => ipcRenderer.invoke('project:readFile', filePath) as Promise<string | null>,
+    readFileWithEncoding: (filePath: string, preferredEncoding?: string) =>
+      ipcRenderer.invoke('project:readFileWithEncoding', filePath, preferredEncoding) as Promise<{ content: string; encoding: string } | null>,
     parseEpp: (eppPath: string) => ipcRenderer.invoke('project:parseEpp', eppPath) as Promise<{
       projectName: string; outputType: string; platform: string;
       files: Array<{ type: string; fileName: string; flag: number }>;
@@ -66,6 +75,7 @@ const api = {
     saveOpenTabs: (projectDir: string, session: { openTabs: string[]; activeTabPath?: string }) => ipcRenderer.invoke('project:saveOpenTabs', projectDir, session),
     loadOpenTabs: (projectDir: string) => ipcRenderer.invoke('project:loadOpenTabs', projectDir) as Promise<{ openTabs: string[]; activeTabPath?: string }>,
     openEpp: () => ipcRenderer.invoke('project:openEpp') as Promise<OpenProjectSelectionResult>,
+    openWorkspaceFolder: () => ipcRenderer.invoke('project:openWorkspaceFolder') as Promise<OpenWorkspaceFolderSelectionResult>,
     importEFile: (request: EProjectImportRequest) => ipcRenderer.invoke('project:importEFile', request) as Promise<EProjectImportResult>,
     addFile: (projectDir: string, fileName: string, fileType: string, content: string) =>
       ipcRenderer.invoke('project:addFile', projectDir, fileName, fileType, content) as Promise<string>,
@@ -126,10 +136,13 @@ const api = {
     applySelection: (selectedNames: string[]) => ipcRenderer.invoke('library:applySelection', selectedNames),
     getList: () => ipcRenderer.invoke('library:getList'),
     getStoreCards: () => ipcRenderer.invoke('library:getStoreCards'),
+    getRemoteIndex: () => ipcRenderer.invoke('library:getRemoteIndex'),
+    installFromRemote: (name: string) => ipcRenderer.invoke('library:installFromRemote', name),
+    removeInstalled: (name: string) => ipcRenderer.invoke('library:removeInstalled', name),
     getInfo: (name: string) => ipcRenderer.invoke('library:getInfo', name),
-    getAllCommands: () => ipcRenderer.invoke('library:getAllCommands'),
-    getAllDataTypes: () => ipcRenderer.invoke('library:getAllDataTypes'),
-    getWindowUnits: () => ipcRenderer.invoke('library:getWindowUnits'),
+    getAllCommands: (targetPlatform?: string) => ipcRenderer.invoke('library:getAllCommands', targetPlatform),
+    getAllDataTypes: (targetPlatform?: string) => ipcRenderer.invoke('library:getAllDataTypes', targetPlatform),
+    getWindowUnits: (targetPlatform?: string) => ipcRenderer.invoke('library:getWindowUnits', targetPlatform),
   },
   // 命令元数据（ycmd）
   ycmd: {
@@ -199,6 +212,8 @@ const api = {
   dialog: {
     confirmSaveBeforeClose: (fileLabel: string) =>
       ipcRenderer.invoke('dialog:confirmSaveBeforeClose', fileLabel) as Promise<'save' | 'discard' | 'cancel'>,
+    confirmProjectOverwrite: (projectDir: string) =>
+      ipcRenderer.invoke('dialog:confirmProjectOverwrite', projectDir) as Promise<'overwrite' | 'cancel'>,
     confirmUnsavedThemeDraftClose: (intent: 'close-button' | 'overlay' | 'escape' | 'app-exit') =>
       ipcRenderer.invoke('dialog:confirmUnsavedThemeDraftClose', intent) as Promise<'save' | 'discard' | 'continue'>,
   },

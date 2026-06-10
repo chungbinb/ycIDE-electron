@@ -16,8 +16,29 @@
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  min-width: 130px;
   min-height: 0;
   overflow: hidden;
+  position: relative;
+  --vd-toolbox-scale: 1;
+  --vd-toolbox-tile-size: 34px;
+  --vd-toolbox-list-columns: 2;
+}
+
+.vd-toolbox.vd-toolbox-docked {
+  width: var(--vd-toolbox-dock-width, 160px);
+}
+
+.vd-toolbox.vd-toolbox-docked-right {
+  order: 2;
+  border-left: 1px solid var(--border-color);
+  border-right: none;
+}
+
+.vd-toolbox.vd-toolbox-docked-left {
+  order: 0;
+  border-left: none;
+  border-right: 1px solid var(--border-color);
 }
 
 /* 浮动工具箱：使用 fixed 定位，不被父容器裁剪 */
@@ -26,20 +47,17 @@
   left: var(--vd-toolbox-left, 0px);
   top: var(--vd-toolbox-top, 0px);
   width: var(--vd-toolbox-width, 130px);
-  height: var(--vd-toolbox-height, auto);
+  height: var(--vd-toolbox-height, 400px);
   z-index: 1000;
   border: 1px solid var(--border-color);
   border-radius: 4px;
   box-shadow: 0 4px 16px var(--menu-shadow);
-  border-right: 1px solid var(--border-color);
-  height: auto;
-  resize: both;
   overflow: hidden;
 }
 
 /* 图标模式下宽度更窄 */
 .vd-toolbox.vd-toolbox-icon-mode {
-  width: 130px;
+  min-width: 86px;
 }
 .vd-toolbox.vd-toolbox-icon-mode.vd-toolbox-float {
   min-width: 86px;
@@ -48,7 +66,7 @@
 .vd-toolbox-header {
   display: flex;
   align-items: center;
-  padding: 4px 6px;
+  padding: calc(4px * var(--vd-toolbox-scale)) calc(6px * var(--vd-toolbox-scale));
   border-bottom: 1px solid var(--border-color);
   cursor: default;
   gap: 4px;
@@ -60,7 +78,7 @@
 
 .vd-toolbox-title {
   flex: 1;
-  font-size: 10px;
+  font-size: calc(10px * var(--vd-toolbox-scale));
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -77,12 +95,12 @@
 }
 
 .vd-toolbox-btn {
-  width: 18px;
-  height: 18px;
+  width: calc(18px * var(--vd-toolbox-scale));
+  height: calc(18px * var(--vd-toolbox-scale));
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: calc(10px * var(--vd-toolbox-scale));
   border: none;
   background: none;
   color: var(--text-secondary);
@@ -97,7 +115,7 @@
 
 /* 搜索框 */
 .vd-toolbox-search {
-  padding: 4px;
+  padding: calc(4px * var(--vd-toolbox-scale));
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
@@ -108,8 +126,8 @@
 .vd-toolbox-search-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 2px 6px;
-  font-size: 11px;
+  padding: calc(2px * var(--vd-toolbox-scale)) calc(6px * var(--vd-toolbox-scale));
+  font-size: calc(11px * var(--vd-toolbox-scale));
   border: 1px solid var(--border-color);
   border-radius: 3px;
   background: var(--bg-primary);
@@ -127,40 +145,57 @@
   overflow-x: hidden;
 }
 
+.vd-toolbox-list.vd-toolbox-list-multi {
+  display: grid;
+  grid-template-columns: repeat(var(--vd-toolbox-list-columns, 2), minmax(0, 1fr));
+  align-content: flex-start;
+  gap: calc(4px * var(--vd-toolbox-scale));
+  padding: calc(4px * var(--vd-toolbox-scale));
+}
+
+.vd-toolbox-list.vd-toolbox-list-multi .vd-tool-item {
+  width: 100%;
+  min-width: 0;
+}
+
+.vd-toolbox-list.vd-toolbox-list-multi .vd-toolbox-empty {
+  grid-column: 1 / -1;
+}
+
 .vd-toolbox-icon-mode .vd-toolbox-list {
   display: flex;
   flex-wrap: wrap;
   align-content: flex-start;
   align-items: flex-start;
-  gap: 4px;
-  padding: 4px;
+  gap: calc(4px * var(--vd-toolbox-scale));
+  padding: calc(4px * var(--vd-toolbox-scale));
 }
 
 .vd-tool-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
+  gap: calc(6px * var(--vd-toolbox-scale));
+  padding: calc(4px * var(--vd-toolbox-scale)) calc(6px * var(--vd-toolbox-scale));
   border: none;
   background: none;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 11px;
+  font-size: calc(11px * var(--vd-toolbox-scale));
   width: 100%;
   text-align: left;
   border-left: 2px solid transparent;
 }
 .vd-toolbox-icon-mode .vd-tool-item {
   justify-content: center;
-  padding: 6px 0;
+  padding: calc(6px * var(--vd-toolbox-scale)) 0;
   flex-direction: column;
   gap: 0;
-  width: 34px;
-  min-width: 34px;
-  flex: 0 0 34px;
+  width: var(--vd-toolbox-tile-size);
+  min-width: var(--vd-toolbox-tile-size);
+  flex: 0 0 var(--vd-toolbox-tile-size);
   border-left: none;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: calc(4px * var(--vd-toolbox-scale));
 }
 .vd-tool-item:hover {
   background: var(--bg-hover);
@@ -178,16 +213,13 @@
 }
 
 .vd-tool-icon {
-  font-size: 14px;
+  font-size: calc(14px * var(--vd-toolbox-scale));
   line-height: 1;
-  width: 22px;
-  height: 22px;
+  width: calc(22px * var(--vd-toolbox-scale));
+  height: calc(22px * var(--vd-toolbox-scale));
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  background: var(--bg-tertiary);
   flex-shrink: 0;
 }
 
@@ -200,25 +232,248 @@
 /* 画布区域 */
 .vd-canvas-area {
   flex: 1;
-  overflow: auto;
-  display: flex;
-  justify-content: flex-start;
-  padding: 24px;
+  order: 1;
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg-primary);
+}
+
+.vd-toolbox-resizer {
+  position: absolute;
+  z-index: 3;
+}
+
+.vd-toolbox-resizer-docked {
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.vd-toolbox-resizer-right {
+  left: -3px;
+}
+
+.vd-toolbox-resizer-left {
+  right: -3px;
+}
+
+.vd-toolbox-resizer-float {
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(135deg, transparent 0 50%, color-mix(in srgb, var(--text-secondary) 45%, transparent) 50% 60%, transparent 60% 100%);
+}
+
+.vd-canvas-area:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.vd-ruler-corner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 24px;
+  height: 24px;
+  border-right: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  z-index: 4;
+}
+
+.vd-ruler {
+  position: absolute;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  z-index: 3;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+.vd-ruler-top {
+  left: 24px;
+  right: 0;
+  top: 0;
+  height: 24px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.vd-ruler-left {
+  left: 0;
+  top: 24px;
+  bottom: 0;
+  width: 24px;
+  border-right: 1px solid var(--border-color);
+}
+
+.vd-ruler-tick {
+  position: absolute;
+  z-index: 2;
+}
+
+.vd-ruler-selection {
+  position: absolute;
+  z-index: 1;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.vd-ruler-selection-x {
+  left: var(--vd-ruler-selection-start, 0px);
+  top: 0;
+  width: var(--vd-ruler-selection-size, 0px);
+  height: 100%;
+}
+
+.vd-ruler-selection-y {
+  left: 0;
+  top: var(--vd-ruler-selection-start, 0px);
+  width: 100%;
+  height: var(--vd-ruler-selection-size, 0px);
+}
+
+.vd-ruler-cursor {
+  position: absolute;
+  z-index: 3;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-secondary) 45%, transparent);
+}
+
+.vd-ruler-cursor-x {
+  left: var(--vd-ruler-cursor-pos, 0px);
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.vd-ruler-cursor-y {
+  left: 0;
+  right: 0;
+  top: var(--vd-ruler-cursor-pos, 0px);
+  height: 1px;
+}
+
+.vd-ruler-tick-x {
+  left: var(--vd-ruler-tick-pos, 0px);
+  bottom: 0;
+  height: 6px;
+  width: 1px;
+  background: color-mix(in srgb, var(--text-primary) 28%, transparent);
+}
+
+.vd-ruler-tick-y {
+  top: var(--vd-ruler-tick-pos, 0px);
+  right: 0;
+  width: 6px;
+  height: 1px;
+  background: color-mix(in srgb, var(--text-primary) 28%, transparent);
+}
+
+.vd-ruler-tick.major {
+  background: color-mix(in srgb, var(--text-primary) 48%, transparent);
+}
+
+.vd-ruler-tick-x.mid {
+  height: 10px;
+}
+
+.vd-ruler-tick-x.major {
+  height: 14px;
+}
+
+.vd-ruler-tick-y.mid {
+  width: 10px;
+}
+
+.vd-ruler-tick-y.major {
+  width: 14px;
+}
+
+.vd-ruler-label {
+  position: absolute;
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1;
+}
+
+.vd-ruler-tick-x .vd-ruler-label {
+  left: 3px;
+  top: 1px;
+}
+
+.vd-ruler-tick-y .vd-ruler-label {
+  left: 2px;
+  top: 2px;
+  transform: rotate(-90deg);
+  transform-origin: left top;
+}
+
+.vd-canvas-scroll {
+  position: absolute;
+  left: 24px;
+  top: 24px;
+  right: 0;
+  bottom: 0;
+  overflow: scroll;
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--text-primary) 8%, transparent) 1px, transparent 1px),
     linear-gradient(color-mix(in srgb, var(--text-primary) 8%, transparent) 1px, transparent 1px);
   background-size: 16px 16px;
+}
+
+.vd-canvas-scroll.vd-canvas-scroll-pan-ready {
+  cursor: grab;
+}
+
+.vd-canvas-scroll.vd-canvas-scroll-pan-active {
+  cursor: grabbing;
+}
+
+.vd-canvas-workspace {
   position: relative;
-  min-height: 0;
-  min-width: 0;
+  width: var(--vd-workspace-width, 0px);
+  height: var(--vd-workspace-height, 0px);
+}
+
+.vd-zoom-indicator {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 5;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+  pointer-events: none;
+}
+
+.vd-form-zoom-shell {
+  position: absolute;
+  left: var(--vd-shell-left, 0px);
+  top: var(--vd-shell-top, 0px);
+  width: var(--vd-shell-width, auto);
+  height: var(--vd-shell-height, auto);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
 }
 
 /* 窗口外壳 */
 .vd-form-wrapper {
   display: flex;
   flex-direction: column;
+  transform: scale(var(--vd-zoom, 1));
+  transform-origin: top left;
   box-shadow: 0 2px 12px rgba(15, 23, 42, 0.2), 0 0 0 1px var(--vd-form-border, #9ca3af);
-  align-self: flex-start;
   position: relative;
   border-radius: 8px;
   overflow: visible;
@@ -340,6 +595,19 @@
   background: var(--text-accent);
 }
 
+.vd-marquee-selection {
+  position: absolute;
+  left: var(--vd-marquee-left, 0px);
+  top: var(--vd-marquee-top, 0px);
+  width: var(--vd-marquee-width, 0px);
+  height: var(--vd-marquee-height, 0px);
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  pointer-events: none;
+  z-index: 9500;
+}
+
 /* 控件容器 */
 .vd-control {
   position: absolute;
@@ -371,10 +639,10 @@
 }
 
 .vd-preview-input {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
+  background: var(--vd-preview-bg, #ffffff);
+  border: 1px solid var(--vd-preview-border, var(--border-color));
   padding: 2px 4px;
-  color: var(--text-primary);
+  color: var(--vd-preview-text, var(--text-primary));
 }
 
 .vd-preview-label {
@@ -514,21 +782,9 @@
   outline-offset: 1px;
 }
 
-/* 控件名标注（设计时显示） */
-.vd-control-name {
-  position: absolute;
-  left: 0;
-  bottom: -14px;
-  font-size: 9px;
-  color: var(--accent);
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-.vd-control:hover .vd-control-name,
-.vd-control-selected .vd-control-name {
-  opacity: 1;
+.vd-control-hovered {
+  outline: 1px solid color-mix(in srgb, var(--accent) 82%, var(--text-primary));
+  outline-offset: 1px;
 }
 
 /* 缩放句柄 */

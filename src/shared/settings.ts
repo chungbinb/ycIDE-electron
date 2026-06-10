@@ -1,4 +1,5 @@
 import type { AICustomModelConfig, AISupportedModel } from './ai'
+import { DEFAULT_LIBRARY_STORE_INDEX_URL } from './library-store'
 
 /** 系统设置 */
 
@@ -39,6 +40,22 @@ export interface IDESettings {
   aiGlmApiKey: string
   /** 自定义模型列表 */
   aiCustomModels: AICustomModelConfig[]
+  /** 支持库在线索引地址 */
+  libraryStoreIndexUrl: string
+  androidSdkPath: string
+  androidGradlePath: string
+  androidAdbPath: string
+  androidGradlePluginVersion: string
+  androidCompileSdk: number
+  androidMinSdk: number
+  androidTargetSdk: number
+  androidPackagePrefix: string
+  androidEmulatorKind: 'ldplayer' | 'android-studio' | 'custom'
+  androidEmulatorExePath: string
+  androidEmulatorLaunchArgs: string
+  androidAdbConnectAddress: string
+  androidAdbDeviceId: string
+  androidAutoStartEmulator: boolean
 }
 
 export const DEFAULT_IDE_SETTINGS: IDESettings = {
@@ -60,6 +77,21 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   aiDeepseekApiKey: '',
   aiGlmApiKey: '',
   aiCustomModels: [],
+  libraryStoreIndexUrl: DEFAULT_LIBRARY_STORE_INDEX_URL,
+  androidSdkPath: '',
+  androidGradlePath: '',
+  androidAdbPath: '',
+  androidGradlePluginVersion: '8.5.2',
+  androidCompileSdk: 35,
+  androidMinSdk: 23,
+  androidTargetSdk: 35,
+  androidPackagePrefix: 'com.ycide.app',
+  androidEmulatorKind: 'ldplayer',
+  androidEmulatorExePath: '',
+  androidEmulatorLaunchArgs: '',
+  androidAdbConnectAddress: '',
+  androidAdbDeviceId: '',
+  androidAutoStartEmulator: false,
 }
 
 export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettings {
@@ -98,6 +130,23 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
     aiDeepseekApiKey: resolveSecret(raw.aiDeepseekApiKey, d.aiDeepseekApiKey),
     aiGlmApiKey: resolveSecret(raw.aiGlmApiKey, d.aiGlmApiKey),
     aiCustomModels: resolveCustomModels(raw.aiCustomModels),
+    libraryStoreIndexUrl: resolveUrl(raw.libraryStoreIndexUrl, d.libraryStoreIndexUrl),
+    androidSdkPath: resolvePath(raw.androidSdkPath, d.androidSdkPath),
+    androidGradlePath: resolvePath(raw.androidGradlePath, d.androidGradlePath),
+    androidAdbPath: resolvePath(raw.androidAdbPath, d.androidAdbPath),
+    androidGradlePluginVersion: resolveText(raw.androidGradlePluginVersion, d.androidGradlePluginVersion),
+    androidCompileSdk: clampInt(raw.androidCompileSdk, 23, 99, d.androidCompileSdk),
+    androidMinSdk: clampInt(raw.androidMinSdk, 21, 99, d.androidMinSdk),
+    androidTargetSdk: clampInt(raw.androidTargetSdk, 23, 99, d.androidTargetSdk),
+    androidPackagePrefix: resolvePackagePrefix(raw.androidPackagePrefix, d.androidPackagePrefix),
+    androidEmulatorKind: resolveAndroidEmulatorKind(raw.androidEmulatorKind, d.androidEmulatorKind),
+    androidEmulatorExePath: resolvePath(raw.androidEmulatorExePath, d.androidEmulatorExePath),
+    androidEmulatorLaunchArgs: resolveText(raw.androidEmulatorLaunchArgs, d.androidEmulatorLaunchArgs),
+    androidAdbConnectAddress: resolveText(raw.androidAdbConnectAddress, d.androidAdbConnectAddress),
+    androidAdbDeviceId: resolveText(raw.androidAdbDeviceId, d.androidAdbDeviceId),
+    androidAutoStartEmulator: typeof raw.androidAutoStartEmulator === 'boolean'
+      ? raw.androidAutoStartEmulator
+      : d.androidAutoStartEmulator,
   }
 }
 
@@ -115,6 +164,38 @@ function resolveAIModel(value: unknown, fallback: AISupportedModel): AISupported
 function resolveSecret(value: unknown, fallback: string): string {
   if (typeof value !== 'string') return fallback
   return value.trim()
+}
+
+function resolveText(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  return value.trim()
+}
+
+function resolvePath(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  return value.trim()
+}
+
+function resolvePackagePrefix(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.]/g, '')
+    .replace(/\.+/g, '.')
+    .replace(/^\.|\.$/g, '')
+  return normalized.includes('.') ? normalized : fallback
+}
+
+function resolveAndroidEmulatorKind(value: unknown, fallback: IDESettings['androidEmulatorKind']): IDESettings['androidEmulatorKind'] {
+  if (value === 'ldplayer' || value === 'android-studio' || value === 'custom') return value
+  return fallback
+}
+
+function resolveUrl(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const trimmed = value.trim()
+  return trimmed || fallback
 }
 
 function resolveCustomModels(value: unknown): AICustomModelConfig[] {

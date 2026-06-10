@@ -1,0 +1,21 @@
+{
+  "version": "1.0",
+  "description": "spec 支持库编译期命令映射（最小可用后端）。",
+  "commandBindings": [
+    {
+      "library": "spec",
+      "commandEnglishName": "spec.Trace",
+      "emitBuilder": "outputDebugText"
+    },
+    {
+      "library": "spec",
+      "commandEnglishName": "spec.Verify",
+      "emitBuilder": "check"
+    },
+    {
+      "library": "spec",
+      "commandEnglishName": "spec.Delay",
+      "emit": "Sleep({0});"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+此处为组件图标,如果你要添加,请按照icon.json内的格式进行配置
+如果你不会json，请勿修改！
+
+文件目录说明：
+	BlueIcons				 // 蓝色主题组件图标目录
+	DarkIcons				 // 深色主题组件图标目录
+	WhiteIcons			 // 浅色主题组件图标目录
+	icon.json				 // 图标配置JSON文件
+
+图标配置JSON文件说明：
+	{
+		"eName": "chklistbox",	 // 该组件在支持库所对应的英文名称
+		"cName": "选择列表框",	 // 该组件在支持库所对应的中文名称
+		"iCons": "CheckboxList_16x.png"// 该组件所在组件图标目录的文件名称 (区分大小写)
+	}
