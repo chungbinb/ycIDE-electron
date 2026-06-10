@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState, memo } from 'react'
 import './StatusBar.css'
 
 interface StatusBarProps {
@@ -109,4 +109,5 @@ function StatusBar({
   )
 }
 
-export default StatusBar
+// memo: App 重渲染时若 props 未变则跳过本组件渲染
+export default memo(StatusBar)

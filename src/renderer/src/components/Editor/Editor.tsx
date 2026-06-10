@@ -2601,6 +2601,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       {/* 标签页 */}
       <div
         className="editor-tabs"
+        role="tablist"
         aria-label="打开的文件"
         onContextMenu={(e) => handleTabContextMenu(e, activeTabId)}
       >
