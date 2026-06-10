@@ -465,12 +465,19 @@ bool queryWindowsVersion(DWORD& major, DWORD& minor) {
 int krnln_msg_box_impl(const char* text, int buttons, const char* title, void* parentWindow) {
   const char* safeText = text ? text : "";
   const char* safeTitle = (title && title[0] != '\0') ? title : "信息框";
+  // 代码生成对省略的"父窗口"参数会传入空字符串指针等非窗口值，
+  // 直接交给 MessageBoxA 会因句柄无效而静默失败，必须先校验。
   HWND owner = reinterpret_cast<HWND>(parentWindow);
+  if (owner && !IsWindow(owner)) owner = nullptr;
+  if (!owner) owner = GetActiveWindow();
 
   UINT style = static_cast<UINT>(buttons);
   if (style == 0) style = MB_OK | MB_ICONINFORMATION;
 
-  int result = MessageBoxA(owner, safeText, safeTitle, style);
+  // 入参为 UTF-8，走宽字符 API，避免中文在 ANSI 代码页下乱码
+  std::wstring wideText = utf8ToWide(safeText);
+  std::wstring wideTitle = utf8ToWide(safeTitle);
+  int result = MessageBoxW(owner, wideText.c_str(), wideTitle.c_str(), style);
   return result > 0 ? result : 0;
 }
 

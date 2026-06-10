@@ -1172,6 +1172,37 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   caret-color: var(--table-text, var(--syntax-operator, #d4d4d4));
 }
 
+/* 参数行内联编辑：与代码行一致，宽度随内容自适应，只显示光标不显示输入框 */
+.eyc-param-inline-edit-sizing {
+  min-width: 1ch;
+}
+.eyc-param-inline-edit-sizing .eyc-inline-edit-measure {
+  line-height: 20px;
+}
+.eyc-param-inline-edit-sizing .eyc-param-val-input {
+  grid-area: 1 / 1;
+  width: auto;
+  flex: none;
+  min-width: 0;
+}
+/* 压制全局无障碍焦点环（global.css 的 :focus-visible outline），与代码行输入框一致只显示光标 */
+.eyc-param-val-input:focus,
+.eyc-param-val-input:focus-visible {
+  background: transparent;
+  border: none;
+  outline: none;
+  box-shadow: none;
+}
+
+/* 参数行的嵌套表达式 +/- 折叠按钮：与命令行折叠一致，定位到行号右侧的 gutter 区域 */
+.eyc-param-expr-fold {
+  position: absolute;
+  left: calc(54px - var(--eyc-param-expand-padding-left, 0px));
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+}
+
 .eyc-block-content {
   flex: 1;
   min-width: 0;
