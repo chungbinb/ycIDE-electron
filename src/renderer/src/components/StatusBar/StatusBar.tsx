@@ -103,7 +103,7 @@ function StatusBar({
           <span className="statusbar-item">行 {cursorLine}, 列 {cursorColumn}</span>
         )}
         {docType && <span className="statusbar-item">{docType}</span>}
-        <span className="statusbar-item">ycIDE v0.0.3-beta.56</span>
+        <span className="statusbar-item">ycIDE v0.0.3-beta.57</span>
       </div>
     </footer>
   )
