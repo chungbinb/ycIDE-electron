@@ -3498,7 +3498,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             if (i === editCell.lineIndex) { result.push(dissolvedMainLine); continue }
             if (deleteSet.has(i)) continue
             if (unindentSet.has(i)) {
-              let ln = nl[i]
+              const ln = nl[i]
               const lead = ln.match(/^ */)?.[0] || ''
               const drop = Math.min(4, lead.length)
               result.push(ln.slice(drop))
@@ -3747,7 +3747,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const ln = parsedLines[lineIndex]
     if (!ln || (ln.type !== 'resource' && ln.type !== 'constant')) return
     const resourceName = (ln.fields[0] || '').trim()
-    let resourceFile = unquote((ln.fields[1] || '').trim())
+    const resourceFile = unquote((ln.fields[1] || '').trim())
     if (!resourceFile) {
       const imported = await attachResourceFileToLine(lineIndex)
       if (!imported) return
@@ -4984,7 +4984,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
     if (action === 'newSubprogram') {
       setEditorContextMenu(null)
-      ref && typeof ref !== 'function' && ref.current?.insertSubroutine?.()
+      if (ref && typeof ref !== 'function') {
+        ref.current?.insertSubroutine?.()
+      }
       return
     }
     if (action === 'undo') {

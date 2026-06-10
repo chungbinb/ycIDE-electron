@@ -69,7 +69,7 @@ function findOutOfRangeInt64Literals(line: string): Array<{ literal: string; col
     const ch = masked[i]
     if (!isDigit(ch) && ch !== '-') continue
 
-    let start = i
+    const start = i
     let j = i
     if (masked[j] === '-') {
       if (j + 1 >= masked.length || !isDigit(masked[j + 1])) continue

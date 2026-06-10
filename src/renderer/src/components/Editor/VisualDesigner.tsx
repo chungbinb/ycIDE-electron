@@ -824,7 +824,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const maxW = Math.max(...selected.map(c => c.width))
     const maxH = Math.max(...selected.map(c => c.height))
 
-    let updated = form.controls.map(c => {
+    const updated = form.controls.map(c => {
       if (!ids.has(c.id)) return c
       switch (alignAction) {
         case 'align-left': return { ...c, left: minLeft }

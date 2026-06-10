@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quality:
+    name: 类型检查 / Lint / 单测 / 契约测试
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: 单元测试 (vitest)
+        run: npm run test:unit
+
+      - name: 编辑器契约测试
+        run: npm run test:contract:editor:all
+
+      # 注意：test:migration（库清单基线）依赖仓库未跟踪的本地目录（支持库源码/ 等），只能本地运行
+      - name: 迁移测试（编码 / x64，基于 fixtures）
+        run: |
+          npm run test:migration:encoding
+          npm run test:migration:x64
+
+  e2e:
+    name: E2E 冒烟测试（手动触发）
+    runs-on: windows-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 冒烟测试
+        run: npm run test:ui:smoke
+
+      - name: 上传失败截图
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: test-results/
+          retention-days: 7
