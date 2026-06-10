@@ -1,4 +1,4 @@
-const path = require('node:path')
+﻿const path = require('node:path')
 const { _electron: electron, expect } = require('@playwright/test')
 
 function getAppRoot() {
@@ -30,7 +30,7 @@ async function openThemeSettings(window) {
     return
   }
   await window.getByRole('menuitem', { name: '工具(T)' }).click()
-  await window.getByRole('menuitem', { name: '系统配置(O)' }).click()
+  await window.getByRole('menuitem', { name: '系统设置(S)' }).click()
   await expect(dialog).toBeVisible()
 }
 

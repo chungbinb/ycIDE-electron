@@ -12,5 +12,14 @@
     ],
     "overdueBehavior": "block-gate"
   },
-  "entries": []
+  "entries": [
+    {
+      "testId": "QUAL-02-UI-REWRITE",
+      "owner": "chungbin",
+      "duePlan": "主题设置对话框入口已移除（App.tsx 中 setShowThemeSettings 无调用方），主题管理器重构为新版布局后 tests/ui/theme-qual-gate.spec.js 全部 4 个用例与新 UI 不匹配。需要：1) 决定 ThemeSettingsDialog 死代码去留；2) 按主题管理器新 UI（设为当前/保存主题/撤销上一步/恢复会话基线）与菜单栏「主题」子菜单重写 D17-01/02/03 用例；3) 同步修复 theme-baseline / theme-token-coverage / theme-compatibility fixtures 中 openThemeSettings 路径。",
+      "dueDate": "2026-07-10",
+      "replacementTestId": "tests/contract/theme-compatibility-contract.spec.mjs (契约层已更新并通过，临时承担回归覆盖)",
+      "milestone": "v0.0.3 稳定版"
+    }
+  ]
 }

@@ -1,4 +1,4 @@
-const fs = require('node:fs')
+﻿const fs = require('node:fs')
 const path = require('node:path')
 const { _electron: electron, expect } = require('@playwright/test')
 
@@ -29,7 +29,7 @@ async function openThemeSettings(window) {
   const dialog = window.locator('.theme-settings-dialog')
   if (await dialog.isVisible().catch(() => false)) return
   await window.getByRole('menuitem', { name: '工具(T)' }).click()
-  await window.getByRole('menuitem', { name: '系统配置(O)' }).click()
+  await window.getByRole('menuitem', { name: '系统设置(S)' }).click()
   await expect(dialog).toBeVisible()
 }
 

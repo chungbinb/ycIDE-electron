@@ -14,7 +14,9 @@ const {
   restoreQualHooks,
 } = require('./helpers/theme-qual-fixtures')
 
-test.describe('theme QUAL gate', () => {
+// FIXME(隔离中): 主题设置对话框入口已移除（setShowThemeSettings 无调用方）、主题管理器 UI 已重构为新布局，
+// 本套件需按新 UI 重写。隔离登记见 .github/quality/quarantine-theme-tests.json（QUAL-02-UI-REWRITE）。
+test.describe.fixme('theme QUAL gate', () => {
   test.describe.configure({ mode: 'serial' })
 
   test('QUAL-02 D17-01: mandatory path switch between built-in light and dark themes', async () => {

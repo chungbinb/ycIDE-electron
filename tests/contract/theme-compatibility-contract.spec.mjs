@@ -8,6 +8,7 @@ const editorPath = path.resolve(process.cwd(), 'src/renderer/src/components/Edit
 const tableEditorPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/EycTableEditor.tsx')
 const tableEditorCssPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/EycTableEditor.css')
 const themeDialogPath = path.resolve(process.cwd(), 'src/renderer/src/components/ThemeSettingsDialog/ThemeSettingsDialog.tsx')
+const interactionHandlersPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/useEditorInteractionHandlers.ts')
 
 test('QUAL-01 contract: App theme switch path still routes through handleThemeSelect -> applyTheme', () => {
   const source = fs.readFileSync(appPath, 'utf-8')
@@ -20,14 +21,18 @@ test('QUAL-01 contract: Editor receives currentTheme + themeTokenValues from App
   const appSource = fs.readFileSync(appPath, 'utf-8')
   const editorSource = fs.readFileSync(editorPath, 'utf-8')
   assert.match(appSource, /currentTheme=\{currentTheme\}\s*themeTokenValues=\{themeTokenValues\}/)
-  assert.match(editorSource, /activeTab\.language === 'eyc'[\s\S]*<EycTableEditor/)
+  // eyc 文档判定已抽为 isEycSourceLanguage 辅助函数（覆盖 eyc/egv/ecs/edt/ell/erc）
+  assert.match(editorSource, /isEycSourceLanguage\(activeTab\.language\)[\s\S]*<EycTableEditor/)
   assert.match(editorSource, /theme=\{monacoThemeId\}/)
 })
 
 test('QUAL-01 contract: table editor still exposes edit/selection hooks through line and cell handlers', () => {
   const source = fs.readFileSync(tableEditorPath, 'utf-8')
-  assert.match(source, /onMouseDown=\{\(e\) => handleLineMouseDown\(e, blk\.lineIndex\)\}/)
-  assert.match(source, /startEditCell\(row\.lineIndex, ci, cell\.text, cell\.fieldIdx, cell\.sliceField\)/)
+  const interactionSource = fs.readFileSync(interactionHandlersPath, 'utf-8')
+  // 行/单元格交互已抽到 useEditorInteractionHandlers，EycTableEditor 仍持有处理函数本体
+  assert.match(source, /const handleLineMouseDown = useCallback\(\(e: React\.MouseEvent, lineIndex: number\)/)
+  assert.match(interactionSource, /handleLineMouseDown\(e, lineIndex\)/)
+  assert.match(source, /startEditCell\(action\.lineIndex, action\.cellIndex, action\.text, action\.fieldIdx, action\.sliceField\)/)
   assert.match(source, /className=\{`eyc-cell-input/)
 })
 

@@ -318,6 +318,10 @@ function sha256Buffer(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex')
 }
 
+// 解压限额：防止恶意构造的 zip 炸弹耗尽磁盘/内存
+const MAX_ZIP_ENTRIES = 5000
+const MAX_ZIP_TOTAL_BYTES = 200 * 1024 * 1024
+
 function assertSafeZipEntry(entryName: string): string {
   const normalized = normalize(entryName.replace(/\\/g, '/')).replace(/\\/g, '/')
   if (!normalized || normalized === '.' || isAbsolute(normalized) || normalized.startsWith('../') || normalized.includes('/../')) {
@@ -417,13 +421,23 @@ class LibraryManager {
       mkdirSync(tempRoot, { recursive: true })
       const zip = new AdmZip(buffer)
       const files: string[] = []
-      for (const zipEntry of zip.getEntries()) {
+      let totalExtractedBytes = 0
+      const entries = zip.getEntries()
+      if (entries.length > MAX_ZIP_ENTRIES) {
+        throw new Error(`zip 条目过多（${entries.length} > ${MAX_ZIP_ENTRIES}），疑似恶意压缩包`)
+      }
+      for (const zipEntry of entries) {
         if (zipEntry.isDirectory) continue
         const relativePath = assertSafeZipEntry(zipEntry.entryName)
         const outputPath = resolve(tempRoot, relativePath)
         if (!outputPath.startsWith(resolve(tempRoot))) throw new Error(`zip 内含越界路径: ${zipEntry.entryName}`)
+        const data = zipEntry.getData()
+        totalExtractedBytes += data.length
+        if (totalExtractedBytes > MAX_ZIP_TOTAL_BYTES) {
+          throw new Error(`zip 解压总大小超过限制（${Math.round(MAX_ZIP_TOTAL_BYTES / 1024 / 1024)}MB），疑似恶意压缩包`)
+        }
         mkdirSync(dirname(outputPath), { recursive: true })
-        writeFileSync(outputPath, zipEntry.getData())
+        writeFileSync(outputPath, data)
         files.push(relativePath)
       }
       if (!files.some(file => file.toLowerCase().endsWith('.ycmd.json'))) {
