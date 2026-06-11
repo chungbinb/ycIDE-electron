@@ -4315,6 +4315,27 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         if (targetLine != null) {
           startEditLine(targetLine)
           focusInlineInputAt(navAction.keepHorizontalPos)
+          return
+        }
+        if (direction === -1) {
+          // 已到顶部：进入文档最上方的可编辑处——程序集名表格单元格
+          const asmLine = latestLines.findIndex(l => l.replace(/[\r\t]/g, '').trim().startsWith('.程序集 '))
+          if (asmLine >= 0) {
+            const rest = latestLines[asmLine].replace(/[\r\t]/g, '').trim().slice('.程序集 '.length)
+            const name = splitCSV(rest)[0] || ''
+            startEditCell(asmLine, 0, name, 0, false)
+            return
+          }
+        }
+        // 已是最后一行（或顶部无程序集行）：停留在当前行，不让输入焦点消失
+        const stayLine = resolveVisibleCodeLineTarget(
+          Math.min(Math.max(currentLineIndex, 0), latestLines.length - 1),
+          -direction as -1 | 1,
+          latestLines.length,
+        )
+        if (stayLine != null) {
+          startEditLine(stayLine)
+          focusInlineInputAt(navAction.keepHorizontalPos)
         }
         return
       }
@@ -4336,7 +4357,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         }
       }
     }, 0)
-  }, [commit, focusInlineInputAt, resolveVisibleCodeLineTarget, startEditLine])
+  }, [commit, focusInlineInputAt, resolveVisibleCodeLineTarget, startEditCell, startEditLine])
 
   const applyEmptyCodeLineDelete = useCallback((params: {
     action: EmptyCodeLineDeleteAction
