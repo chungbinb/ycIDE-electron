@@ -8,7 +8,8 @@ export function splitCSV(text: string): string[] {
     const ch = text[i]
     if (inQ) { cur += ch; if (ch === '"' || ch === '\u201d') inQ = false; continue }
     if (ch === '"' || ch === '\u201c') { inQ = true; cur += ch; continue }
-    if (ch === ',' && i + 1 < text.length && text[i + 1] === ' ') {
+    // \u884c\u5c3e\u88f8\u9017\u53f7\u4e5f\u89c6\u4e3a\u5206\u9694\u7b26\uff0c\u907f\u514d\u201c\u540d\u79f0,\u201d\u88ab\u5e76\u5165\u5b57\u6bb5\uff08\u5982 .\u6307\u9488\u547d\u4ee4 \u540d\u79f0,\uff09
+    if (ch === ',' && (i + 1 === text.length || text[i + 1] === ' ')) {
       result.push(cur); cur = ''; i++; continue
     }
     cur += ch

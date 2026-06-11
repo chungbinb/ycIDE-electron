@@ -17,6 +17,11 @@ describe('splitCSV', () => {
   it('空字符串返回单个空字段', () => {
     expect(splitCSV('')).toEqual([''])
   })
+
+  it('行尾裸逗号视为分隔符，不并入字段', () => {
+    expect(splitCSV('指针命令1,')).toEqual(['指针命令1', ''])
+    expect(splitCSV('a, b,')).toEqual(['a', 'b', ''])
+  })
 })
 
 describe('unquote', () => {
@@ -99,5 +104,12 @@ describe('buildBlocks（指针命令表格）', () => {
     const tbl = blocks.find(b => b.kind === 'table' && b.tableType === 'ptrcmd')
     const dataRow = tbl!.rows.find(r => !r.isHeader && r.cells[0]?.text === '调用回调')
     expect(dataRow!.cells[2].text).toBe('√')
+  })
+
+  it('行尾带裸逗号的旧声明行名称不带逗号（回归：新建指针命令显示“指针命令1,”）', () => {
+    const blocks = buildBlocks('.版本 2\n.指针命令 指针命令1,\n')
+    const tbl = blocks.find(b => b.kind === 'table' && b.tableType === 'ptrcmd')
+    const dataRow = tbl!.rows.find(r => !r.isHeader)
+    expect(dataRow!.cells[0].text).toBe('指针命令1')
   })
 })

@@ -338,7 +338,7 @@ export function splitDebugRenderableText(text: string): Array<{ text: string; to
 const DECL_PREFIXES = [
   '.程序集变量 ', '.程序集 ', '.子程序 ', '.局部变量 ',
   '.全局变量 ', '.常量 ', '.资源 ', '.数据类型 ', '.DLL命令 ',
-  '.图片 ', '.声音 ', '.参数 ', '.成员 ',
+  '.指针命令 ', '.图片 ', '.声音 ', '.参数 ', '.成员 ',
 ]
 
 export function rebuildLineField(rawLine: string, fieldIdx: number, newValue: string, isSlice: boolean): string {

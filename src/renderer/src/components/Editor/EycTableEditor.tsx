@@ -5371,7 +5371,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       let num = 1
       while (existingNames.has(baseName + num)) num++
       const declLine = isPtr
-        ? declPrefix + baseName + num + ', '
+        ? declPrefix + baseName + num
         : declPrefix + baseName + num + ', , "", ""'
 
       // 去除末尾空行后追加，使声明块之间保持一个空行

@@ -3580,7 +3580,7 @@ function App(): React.JSX.Element {
         let n = 1
         while (new RegExp('^\\.指针命令\\s+指针命令' + n + '(?:,|\\s|$)', 'm').test(baseContent)) n++
         const ptrName = '指针命令' + n
-        const appendLine = '.指针命令 ' + ptrName + ', '
+        const appendLine = '.指针命令 ' + ptrName
         const content = baseContent.trimEnd() + '\n' + appendLine + '\n\n'
 
         if (!existingFiles.includes(dllFileName)) {
