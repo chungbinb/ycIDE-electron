@@ -5343,12 +5343,53 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })
   }, [editorContextMenu?.lineIndex, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted, onChange, onRouteDeclarationPaste, pushUndo, sanitizePastedTextForCurrent, shouldUseNativeInputPaste])
 
-  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
+  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
     if (action === 'newSubprogram') {
       setEditorContextMenu(null)
       if (ref && typeof ref !== 'function') {
         ref.current?.insertSubroutine?.()
       }
+      return
+    }
+    if (action === 'newDllCommand' || action === 'newPtrCommand') {
+      setEditorContextMenu(null)
+      const isPtr = action === 'newPtrCommand'
+      const declPrefix = isPtr ? '.指针命令 ' : '.DLL命令 '
+      const baseName = isPtr ? '指针命令' : 'DLL命令'
+      const baseText = prevRef.current
+      const curLines = baseText.split('\n')
+
+      // 收集已有命令名，生成唯一名称
+      const existingNames = new Set<string>()
+      for (const ln of curLines) {
+        const t = ln.replace(/[\r\t]/g, '').trim()
+        if (t.startsWith(declPrefix)) {
+          const name = (splitCSV(t.slice(declPrefix.length))[0] || '').trim()
+          if (name) existingNames.add(name)
+        }
+      }
+      let num = 1
+      while (existingNames.has(baseName + num)) num++
+      const declLine = isPtr
+        ? declPrefix + baseName + num + ', '
+        : declPrefix + baseName + num + ', , "", ""'
+
+      // 去除末尾空行后追加，使声明块之间保持一个空行
+      let end = curLines.length
+      while (end > 0 && curLines[end - 1].replace(/[\r\t]/g, '').trim() === '') end--
+      const nl = [...curLines.slice(0, end), '', declLine, '']
+      pushUndo(baseText)
+      applyTextChange(nl.join('\n'))
+
+      const newLineIndex = nl.length - 2
+      lastFocusedLine.current = newLineIndex
+      window.setTimeout(() => {
+        const row = wrapperRef.current?.querySelector<HTMLElement>(`tr.eyc-data-row[data-line-index="${newLineIndex}"]`)
+        if (!row) return
+        row.scrollIntoView({ block: 'center' })
+        row.classList.add('highlight-flash')
+        window.setTimeout(() => row.classList.remove('highlight-flash'), 900)
+      }, 80)
       return
     }
     if (action === 'undo') {
@@ -5437,7 +5478,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setSelectedLines(all)
     dragAnchor.current = 0
     setEditorContextMenu(null)
-  }, [applyLineCommentState, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine])
+  }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine])
 
   const canUndoContextAction = undoStack.current.length > 0
   const canRedoContextAction = redoStack.current.length > 0
@@ -5453,7 +5494,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const key = (event.key || '').toLowerCase()
       if (key === 'n') {
         event.preventDefault()
-        applyEditorContextAction('newSubprogram')
+        applyEditorContextAction(docLanguage === 'ell' ? 'newDllCommand' : 'newSubprogram')
+        return
+      }
+      if (key === 'z' && docLanguage === 'ell') {
+        event.preventDefault()
+        applyEditorContextAction('newPtrCommand')
         return
       }
       if (key === 'u') {
@@ -5518,7 +5564,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [applyEditorContextAction, canCutContextAction, canRedoContextAction, canUndoContextAction, contextMenuCanPaste, editorContextMenu, hasCopySelection])
+  }, [applyEditorContextAction, canCutContextAction, canRedoContextAction, canUndoContextAction, contextMenuCanPaste, docLanguage, editorContextMenu, hasCopySelection])
 
   const navigateToSubprogramInternal = useCallback((subName: string, fallbackLine?: number, preferredHeaderIndex?: number) => {
     const navSeq = ++subNavSeqRef.current
@@ -7389,10 +7435,21 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
-          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newSubprogram')}>
-            <span className="eyc-editor-context-menu-item-label">N.新子程序</span>
-            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
-          </button>
+          {docLanguage === 'ell' ? (
+            <>
+              <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newDllCommand')}>
+                <span className="eyc-editor-context-menu-item-label">N.新DLL命令</span>
+              </button>
+              <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newPtrCommand')}>
+                <span className="eyc-editor-context-menu-item-label">Z.新指针命令</span>
+              </button>
+            </>
+          ) : (
+            <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newSubprogram')}>
+              <span className="eyc-editor-context-menu-item-label">N.新子程序</span>
+              <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
+            </button>
+          )}
           <div className="eyc-editor-context-menu-sep" />
           <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('undo')} disabled={!canUndoContextAction}>
             <span className="eyc-editor-context-menu-item-label">U.撤销</span>
