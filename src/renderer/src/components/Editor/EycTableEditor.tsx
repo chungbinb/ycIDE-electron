@@ -1523,6 +1523,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const isCallable = isCodeLineEdit && (
       commandPool.some(c => c.name === item.name)
       || userSubNamesRef.current.has(item.name)
+      // 项目类的公开方法（对象.方法）同样可调用
+      || (item.isMember && item.category === '方法')
     )
     const leadingAfter = after.match(/^\s*/) ? (after.match(/^\s*/)?.[0] || '') : ''
     const afterNext = after.slice(leadingAfter.length, leadingAfter.length + 1)
