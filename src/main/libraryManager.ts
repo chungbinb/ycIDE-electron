@@ -190,13 +190,13 @@ const CORE_LIBRARY_FILE_NAME = 'krnln'
 const CORE_LIBRARY_GUID = 'D09F2340818511D396F6AE4C17150413'
 
 const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
-  'impl/linux.cpp': '1ab71de6a48d439a685199c99f61203b736447e10568b618dcdde7214db0d3d4',
-  'impl/macos.mm': '3053240e3b75909dfddc22673d1a0f281bbcac4971d94a7fb6adefc096942029',
-  'impl/windows.cpp': '1ab71de6a48d439a685199c99f61203b736447e10568b618dcdde7214db0d3d4',
-  'krnln.commands.ycmd.json': '8fbe0fd59cbd4913c22ac6551beb7b612cebd55f37b13f3c976c63bb2ccb5b87',
+  'impl/linux.cpp': '088edd74d09dac6c9e70da4feed932e3e0d4aceba36b6aab5d9fb152077aef34',
+  'impl/macos.mm': '798149470018bf45a3e996d82db1db41f473f6a6aca2fd3badf7b8ad1538b4ac',
+  'impl/windows.cpp': 'd5bfd1198cb4eb01c09ee8187a96d261d31e7dcf68837cefb75dc7f5b32bb050',
+  'krnln.commands.ycmd.json': '839e75869b95f651eeec794e711e313fa39a424ff0542b6d8d3cec89b94c45cd',
   'krnln.constants.json': '8183767cf86c0348054a810511b2639bdfe7636c7efeacf096ecb8bfbf4a6fa0',
-  'krnln.library.json': '0b9deb735168f4e67da1ca8be74d937d764fafc0559d973c72b545cbf391868d',
-  'window-units.json': '82a9b8e0a052d4293f828ecabbea55f6357cfcc8db8516f486fc2073efdd14b8',
+  'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
+  'window-units.json': '8c7c46b56ae9218b1345d59e0f6f635a935c5e8c63a478c706e1b2edc4ec1145',
 }
 
 const DEFAULT_PROTOCOL_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [

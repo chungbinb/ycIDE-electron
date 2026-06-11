@@ -26,7 +26,7 @@ export function getCmdIconClass(category: string): string {
   if (cat.includes('事件')) return 'eyc-ac-icon-event'
   if (cat.includes('属性')) return 'eyc-ac-icon-prop'
   if (cat.includes('全局变量')) return 'eyc-ac-icon-field'
-  if (cat.includes('dll')) return 'eyc-ac-icon-dll'
+  if (cat.includes('dll') || cat.includes('指针命令')) return 'eyc-ac-icon-dll'
   if (cat.includes('资源')) return 'eyc-ac-icon-resource'
   if (cat.includes('常量')) return 'eyc-ac-icon-const'
   if (cat.includes('数据') || cat.includes('类型')) return 'eyc-ac-icon-type'

@@ -8,7 +8,8 @@ export function splitCSV(text: string): string[] {
     const ch = text[i]
     if (inQ) { cur += ch; if (ch === '"' || ch === '\u201d') inQ = false; continue }
     if (ch === '"' || ch === '\u201c') { inQ = true; cur += ch; continue }
-    if (ch === ',' && i + 1 < text.length && text[i + 1] === ' ') {
+    // \u884c\u5c3e\u88f8\u9017\u53f7\u4e5f\u89c6\u4e3a\u5206\u9694\u7b26\uff0c\u907f\u514d\u201c\u540d\u79f0,\u201d\u88ab\u5e76\u5165\u5b57\u6bb5\uff08\u5982 .\u6307\u9488\u547d\u4ee4 \u540d\u79f0,\uff09
+    if (ch === ',' && (i + 1 === text.length || text[i + 1] === ' ')) {
       result.push(cur); cur = ''; i++; continue
     }
     cur += ch
@@ -51,6 +52,7 @@ export function parseLines(text: string): ParsedLine[] {
       ['globalVar', '.全局变量 '], ['constant', '.常量 '],
       ['resource', '.资源 '],
       ['dataType', '.数据类型 '], ['dll', '.DLL命令 '],
+      ['ptrCmd', '.指针命令 '],
       ['image', '.图片 '], ['sound', '.声音 '],
     ]
     for (const [dt, pf] of decls) {
@@ -381,6 +383,26 @@ export function buildBlocks(text: string, isClassModule = false, isResourceTable
       pushRow(i, [{ text: libFile || '', cls: libFile ? 'eAPIcolor' : '', colSpan: 5, fieldIdx: 2 }])
       pushHdrRow(i, [{ text: '在DLL库中对应命令名:', cls: 'eHeadercolor', colSpan: 5 }])
       pushRow(i, [{ text: cmdName || '', cls: cmdName ? 'eAPIcolor' : '', colSpan: 5, fieldIdx: 3 }])
+      addHdr(['参数名', '类 型', '传址', '数组', '备 注 '], i)
+      he = 4; continue
+    }
+
+    if (ln.type === 'ptrCmd') {
+      flush()
+      tbl = { kind: 'table', tableType: 'ptrcmd', rows: [], lineIndex: i }
+      tbl.rows.push({ lineIndex: i, isHeader: true, cells: [
+        { text: '指针命令名', cls: 'eHeadercolor' },
+        { text: '返回值类型', cls: 'eHeadercolor' },
+        { text: '公开', cls: 'eHeadercolor' },
+        { text: '备 注', cls: 'eHeadercolor', colSpan: 2 },
+      ] })
+      pushRow(i, [
+        { text: f[0] || '', cls: 'eProcolor', fieldIdx: 0 },
+        { text: f[1] || '\u00A0', cls: 'eTypecolor', fieldIdx: 1 },
+        { text: f[2] === '公开' ? '√' : '\u00A0', cls: 'eTickcolor', align: 'center' },
+        { text: f.length > 3 ? f.slice(3).join(', ') : '', cls: 'Remarkscolor', fieldIdx: 3, sliceField: true, colSpan: 2 },
+      ])
+      pushHdrRow(i, [{ text: '调用时第一个参数固定传入函数地址（长整数型），其后才是下列参数:', cls: 'eHeadercolor', colSpan: 5 }])
       addHdr(['参数名', '类 型', '传址', '数组', '备 注 '], i)
       he = 4; continue
     }

@@ -107,6 +107,7 @@ function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasWo
       { label: '常量(C)', action: 'insert:constant', disabled: np },
       { label: '自定义数据类型(T)', action: 'insert:dataType', disabled: np },
       { label: 'DLL命令(D)', action: 'insert:dllCmd', disabled: np },
+      { label: '指针命令(P)', action: 'insert:ptrCmd', disabled: np },
       { label: '', divider: true },
       { label: '类模块(L)', action: 'insert:classModule', disabled: np },
       { label: '程序集(M)', action: 'insert:module', disabled: np },

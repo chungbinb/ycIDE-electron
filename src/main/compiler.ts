@@ -136,6 +136,8 @@ interface ProjectDllCommandDef {
   dllFileName: string
   entryName: string
   params: ProjectDllParamDef[]
+  // .指针命令：不绑定 DLL 导出，调用时第一个实参为函数地址（长整数型），按声明签名间接调用
+  isIndirect?: boolean
 }
 
 interface LibraryConstantDef extends ConstantDef {
@@ -234,7 +236,7 @@ interface TranspileCacheFile {
   entries: Record<string, TranspileCacheEntry>
 }
 
-const TRANSPILE_CACHE_VERSION = 2
+const TRANSPILE_CACHE_VERSION = 4
 
 interface BuildArtifactCacheFile {
   version: number
@@ -1426,6 +1428,26 @@ function splitDeclParts(text: string): string[] {
   return text.split(/[\uFF0C,]/).map(s => s.trim())
 }
 
+// \u5265\u79BB\u4EE3\u7801\u884C\u7684\u884C\u5C3E\u5355\u5F15\u53F7\u6CE8\u91CA\uFF08\u5FFD\u7565\u53CC\u5F15\u53F7\u5B57\u7B26\u4E32\u5185\u7684 '\uFF09\u3002
+// \u6574\u884C\u6CE8\u91CA\uFF08\u4EE5 ' \u5F00\u5934\uFF09\u539F\u6837\u4FDD\u7559\uFF0C\u7531\u8C03\u7528\u65B9\u6309\u6CE8\u91CA\u884C\u5904\u7406\u3002
+function stripTrailingEycComment(line: string): string {
+  if (!line || line.startsWith("'")) return line
+  let inQuote = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (inQuote) {
+      if (ch === '"' || ch === '\u201D') inQuote = false
+      continue
+    }
+    if (ch === '"' || ch === '\u201C') {
+      inQuote = true
+      continue
+    }
+    if (ch === "'") return line.slice(0, i).trimEnd()
+  }
+  return line
+}
+
 function unquoteDeclValue(text: string): string {
   const trimmed = (text || '').trim()
   if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith('\u201c') && trimmed.endsWith('\u201d'))) {
@@ -1570,6 +1592,16 @@ function collectUsedLibraryFileNames(project: ProjectInfo, editorFiles?: Map<str
           const rhsResolved = commandMap.get(rhsCall.name)
           if (rhsResolved?.libraryFileName) used.add(rhsResolved.libraryFileName)
         }
+      }
+
+      // 嵌套在实参中的命令调用：例如 a ＝ 外部命令(指针到长整数(地址), 0)
+      // 顶层命令名识别不到这类调用，会漏标支持库导致链接缺符号
+      const codeLine = stripTrailingEycComment(line)
+      const nestedCallRe = /([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)\s*[（(]/g
+      let nestedMatch: RegExpExecArray | null
+      while ((nestedMatch = nestedCallRe.exec(codeLine)) !== null) {
+        const nestedResolved = commandMap.get(nestedMatch[1])
+        if (nestedResolved?.libraryFileName) used.add(nestedResolved.libraryFileName)
       }
 
       const callableLine = line.startsWith('.') ? line.substring(1).trim() : line
@@ -1788,10 +1820,12 @@ function buildCommandSignatureMap(projectDllCommands: ProjectDllCommandDef[] = [
   }
 
   for (const dllCmd of projectDllCommands) {
+    // 指针命令调用时第一个实参为函数地址，签名中体现为一个隐式必填参数
+    const implicitParams = dllCmd.isIndirect ? [{ optional: false }] : []
     map.set(dllCmd.name, {
       name: dllCmd.name,
       englishName: '',
-      params: dllCmd.params.map(param => ({ optional: !!param.optional })),
+      params: [...implicitParams, ...dllCmd.params.map(param => ({ optional: !!param.optional }))],
       source: 'projectDll',
       libraryFileName: dllCmd.dllFileName,
     })
@@ -1926,7 +1960,7 @@ function parseProjectDataTypes(content: string): ProjectDataTypeDef[] {
       continue
     }
 
-    if (line.startsWith('.子程序') || line.startsWith('.程序集') || line.startsWith('.DLL命令')) {
+    if (line.startsWith('.子程序') || line.startsWith('.程序集') || line.startsWith('.DLL命令') || line.startsWith('.指针命令')) {
       regexCurrent = null
     }
   }
@@ -1959,7 +1993,7 @@ function parseProjectDataTypes(content: string): ProjectDataTypeDef[] {
       continue
     }
 
-    if (line.startsWith('.子程序 ') || line.startsWith('.程序集 ') || line.startsWith('.DLL命令 ')) {
+    if (line.startsWith('.子程序 ') || line.startsWith('.程序集 ') || line.startsWith('.DLL命令 ') || line.startsWith('.指针命令 ')) {
       current = null
     }
   }
@@ -2011,6 +2045,31 @@ function parseProjectDllCommands(content: string): ProjectDllCommandDef[] {
           dllFileName: unquoteDeclValue(parts[2] || ''),
           entryName: unquoteDeclValue(parts[3] || '') || name,
           params: [],
+        }
+        result.set(name, current)
+      }
+      continue
+    }
+
+    if (line.startsWith('.指针命令 ')) {
+      const parts = splitDeclParts(line.substring('.指针命令 '.length))
+      const name = (parts[0] || '').trim()
+      if (!name) {
+        current = null
+        continue
+      }
+
+      const existing = result.get(name)
+      if (existing) {
+        current = existing
+      } else {
+        current = {
+          name,
+          returnType: (parts[1] || '').trim(),
+          dllFileName: '',
+          entryName: name,
+          params: [],
+          isIndirect: true,
         }
         result.set(name, current)
       }
@@ -2190,6 +2249,7 @@ function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Ma
         line.startsWith('.成员 ') ||
         line.startsWith('.支持库 ') ||
         line.startsWith('.DLL命令 ') ||
+        line.startsWith('.指针命令 ') ||
         line.startsWith('.子程序 ')
       ) {
         continue
@@ -3066,6 +3126,32 @@ function generateProjectDllWrapperCode(projectDllCommands: ProjectDllCommandDef[
     const rawEntryName = dllCmd.entryName || dllCmd.name
     const entryName = escapeCString(rawEntryName.startsWith('@') ? rawEntryName.slice(1) : rawEntryName)
     const defaultReturn = getProjectDllDefaultReturn(dllCmd.returnType)
+
+    if (dllCmd.isIndirect) {
+      // 指针命令：第一个实参为函数地址，按声明签名间接调用，无需 LoadLibrary/GetProcAddress
+      const indirectWrapperParams = wrapperParams === 'void' ? 'long long __yc_fnptr' : `long long __yc_fnptr, ${wrapperParams}`
+      result += `typedef ${procReturnType} (WINAPI *YC_EXT_PFN_${symbolBase})(${procParams});\n`
+      result += `static ${wrapperReturnType} ${dllCmd.name}(${indirectWrapperParams}) {\n`
+      result += `    YC_EXT_PFN_${symbolBase} __yc_fn = (YC_EXT_PFN_${symbolBase})(intptr_t)__yc_fnptr;\n`
+      if (wrapperReturnType === 'void') {
+        result += `    if (!__yc_fn) { yc_runtime_report_dll_error(L"指针调用", L"${escapeCString(dllCmd.name)}", "${entryName}", 0); return; }\n`
+        result += `    __yc_fn(${callArgs});\n`
+      } else {
+        result += `    if (!__yc_fn) { yc_runtime_report_dll_error(L"指针调用", L"${escapeCString(dllCmd.name)}", "${entryName}", 0); return ${defaultReturn}; }\n`
+        if (wrapperReturnType === 'wchar_t*' && procReturnType === 'const char*') {
+          result += `    const char* __yc_ret = __yc_fn(${callArgs});\n`
+          result += `    if (!__yc_ret) {\n`
+          result += `        yc_runtime_report_dll_text_result(L"${escapeCString(dllCmd.name)}", "${entryName}");\n`
+          result += '        return yc_empty_text();\n'
+          result += '    }\n'
+          result += '    return yc_utf8_to_wide(__yc_ret);\n'
+        } else {
+          result += `    return __yc_fn(${callArgs});\n`
+        }
+      }
+      result += '}\n\n'
+      continue
+    }
 
     result += `typedef ${procReturnType} (WINAPI *YC_EXT_PFN_${symbolBase})(${procParams});\n`
     result += `static HMODULE g_ext_dll_mod_${symbolBase} = NULL;\n`
@@ -4262,8 +4348,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const rawLine = lines[lineIndex]
     pendingBreakpointLine = inSub && breakpointLines.has(lineIndex + 1) ? (lineIndex + 1) : null
-    // 剥离流程标记零宽字符（\u200C/\u200D/\u2060/\u200B）
-    const line = rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
+    // 剥离流程标记零宽字符（\u200C/\u200D/\u2060/\u200B）与行尾单引号注释
+    const line = stripTrailingEycComment(rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim())
     if (line === '') continue
 
     if (!inSub && line.startsWith('.程序集变量 ')) {

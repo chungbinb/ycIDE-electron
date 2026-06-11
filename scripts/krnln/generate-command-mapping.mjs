@@ -34,8 +34,9 @@ function parseSymbols(source) {
   const stubBlock = (source.match(blockRe) || [''])[0]
   const nonStubSource = source.replace(blockRe, '')
 
-  const symbolRe = /extern\s+"C"\s+[^\n]*\s+(krnln_[A-Za-z0-9_]+)\s*\(/g
-  const fnHeadRe = /extern\s+"C"\s+[^\n]*\s+(krnln_[A-Za-z0-9_]+)\s*\([^)]*\)\s*\{/g
+  // 注意不要使用可跨行的 \s+：否则会贪婪匹配进函数体，把首行调用的其他 krnln_ 符号误判为声明
+  const symbolRe = /extern[ \t]+"C"[ \t]+[^\n]*?\b(krnln_[A-Za-z0-9_]+)[ \t]*\(/g
+  const fnHeadRe = /extern[ \t]+"C"[ \t]+[^\n]*?\b(krnln_[A-Za-z0-9_]+)[ \t]*\([^)]*\)\s*\{/g
 
   const parseFunctionBodies = (text) => {
     const result = []

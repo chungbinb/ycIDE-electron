@@ -128,7 +128,7 @@ interface EycTableEditorProps {
   windowControlTypes?: Array<{ name: string; type: string }>
   windowUnits?: LibWindowUnit[]
   projectConstants?: Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>
-  projectDllCommands?: Array<{ name: string; returnType: string; description: string; params: CompletionParam[] }>
+  projectDllCommands?: Array<{ name: string; returnType: string; description: string; params: CompletionParam[]; isIndirect?: boolean }>
   projectDataTypes?: Array<{ name: string; fields: Array<{ name: string; type: string }> }>
   projectClassNames?: Array<{ name: string; methods?: Array<{ name: string; returnType: string; description: string; params: Array<{ name: string; type: string }> }> }>
   onClassNameRename?: (oldName: string, newName: string) => void
@@ -379,6 +379,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if (parsed.type === 'dll' && cellIndex === 2) {
         return rebuildLineField(rawLine, 4, (parsed.fields[4] || '').trim() === '公开' ? '' : '公开', false)
       }
+      if (parsed.type === 'ptrCmd' && cellIndex === 2) {
+        return rebuildLineField(rawLine, 2, (parsed.fields[2] || '').trim() === '公开' ? '' : '公开', false)
+      }
       if (parsed.type === 'sub' && cellIndex === 2) {
         return rebuildLineField(rawLine, 2, (parsed.fields[2] || '').trim() === '公开' ? '' : '公开', false)
       }
@@ -392,7 +395,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         return rebuildLineField(rawLine, 2, (parsed.fields[2] || '').trim() === '传址' ? '' : '传址', false)
       }
       if (parsed.type === 'subParam') {
-        if (tableType === 'dll') {
+        if (tableType === 'dll' || tableType === 'ptrcmd') {
           if (cellIndex === 2) return rebuildLineFlagField(rawLine, 2, '传址')
           if (cellIndex === 3) return rebuildLineFlagField(rawLine, 2, '数组')
           return null
@@ -3281,16 +3284,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const items: CompletionItem[] = []
     const seen = new Set<string>()
 
-    const addDll = (name: string, returnType: string, description: string, params: CompletionParam[]) => {
+    const addDll = (name: string, returnType: string, description: string, params: CompletionParam[], isIndirect = false) => {
       const nm = (name || '').trim()
       if (!nm || seen.has(nm)) return
       seen.add(nm)
+      const kindLabel = isIndirect ? '指针命令' : 'DLL命令'
       items.push({
         name: nm,
         englishName: '',
-        description: description || (returnType ? `DLL命令（返回：${returnType}）` : 'DLL命令'),
+        description: description || (returnType ? `${kindLabel}（返回：${returnType}）` : kindLabel),
         returnType: returnType || '',
-        category: 'DLL命令',
+        category: kindLabel,
         libraryName: '用户定义',
         isMember: false,
         ownerTypeName: '',
@@ -3305,8 +3309,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       })
     }
 
+    const ptrCmdImplicitParam = (): CompletionParam => ({
+      name: '函数地址',
+      type: '长整数型',
+      description: '要调用的函数指针地址（如 指针到长整数 从函数表中读出的值）',
+      optional: false,
+      isVariable: false,
+      isArray: false,
+    })
+
     // 当前文档内的 DLL 命令
-    const currentDocDllMap = new Map<string, { returnType: string; description: string; params: CompletionParam[] }>()
+    const currentDocDllMap = new Map<string, { returnType: string; description: string; params: CompletionParam[]; isIndirect?: boolean }>()
     let currentDllName = ''
     for (const ln of parsed) {
       if (ln.type === 'dll') {
@@ -3321,6 +3334,24 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             returnType: (ln.fields[1] || '').trim(),
             description: ln.fields.length > 5 ? ln.fields.slice(5).join(', ').trim() : '',
             params: [],
+          })
+        }
+        continue
+      }
+
+      if (ln.type === 'ptrCmd') {
+        const name = (ln.fields[0] || '').trim()
+        if (!name) {
+          currentDllName = ''
+          continue
+        }
+        currentDllName = name
+        if (!currentDocDllMap.has(name)) {
+          currentDocDllMap.set(name, {
+            returnType: (ln.fields[1] || '').trim(),
+            description: ln.fields.length > 3 ? ln.fields.slice(3).join(', ').trim() : '',
+            params: [ptrCmdImplicitParam()],
+            isIndirect: true,
           })
         }
         continue
@@ -3347,12 +3378,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     for (const [name, meta] of currentDocDllMap.entries()) {
-      addDll(name, meta.returnType, meta.description, meta.params)
+      addDll(name, meta.returnType, meta.description, meta.params, !!meta.isIndirect)
     }
 
     // 项目级 DLL 命令（来自 .ell 与其他已打开标签页）
     for (const c of projectDllCommands) {
-      addDll(c.name, c.returnType || '', c.description || '', c.params || [])
+      addDll(c.name, c.returnType || '', c.description || '', c.params || [], !!c.isIndirect)
     }
 
     return items
@@ -5312,12 +5343,53 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })
   }, [editorContextMenu?.lineIndex, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted, onChange, onRouteDeclarationPaste, pushUndo, sanitizePastedTextForCurrent, shouldUseNativeInputPaste])
 
-  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
+  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
     if (action === 'newSubprogram') {
       setEditorContextMenu(null)
       if (ref && typeof ref !== 'function') {
         ref.current?.insertSubroutine?.()
       }
+      return
+    }
+    if (action === 'newDllCommand' || action === 'newPtrCommand') {
+      setEditorContextMenu(null)
+      const isPtr = action === 'newPtrCommand'
+      const declPrefix = isPtr ? '.指针命令 ' : '.DLL命令 '
+      const baseName = isPtr ? '指针命令' : 'DLL命令'
+      const baseText = prevRef.current
+      const curLines = baseText.split('\n')
+
+      // 收集已有命令名，生成唯一名称
+      const existingNames = new Set<string>()
+      for (const ln of curLines) {
+        const t = ln.replace(/[\r\t]/g, '').trim()
+        if (t.startsWith(declPrefix)) {
+          const name = (splitCSV(t.slice(declPrefix.length))[0] || '').trim()
+          if (name) existingNames.add(name)
+        }
+      }
+      let num = 1
+      while (existingNames.has(baseName + num)) num++
+      const declLine = isPtr
+        ? declPrefix + baseName + num
+        : declPrefix + baseName + num + ', , "", ""'
+
+      // 去除末尾空行后追加，使声明块之间保持一个空行
+      let end = curLines.length
+      while (end > 0 && curLines[end - 1].replace(/[\r\t]/g, '').trim() === '') end--
+      const nl = [...curLines.slice(0, end), '', declLine, '']
+      pushUndo(baseText)
+      applyTextChange(nl.join('\n'))
+
+      const newLineIndex = nl.length - 2
+      lastFocusedLine.current = newLineIndex
+      window.setTimeout(() => {
+        const row = wrapperRef.current?.querySelector<HTMLElement>(`tr.eyc-data-row[data-line-index="${newLineIndex}"]`)
+        if (!row) return
+        row.scrollIntoView({ block: 'center' })
+        row.classList.add('highlight-flash')
+        window.setTimeout(() => row.classList.remove('highlight-flash'), 900)
+      }, 80)
       return
     }
     if (action === 'undo') {
@@ -5406,7 +5478,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setSelectedLines(all)
     dragAnchor.current = 0
     setEditorContextMenu(null)
-  }, [applyLineCommentState, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine])
+  }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine])
 
   const canUndoContextAction = undoStack.current.length > 0
   const canRedoContextAction = redoStack.current.length > 0
@@ -5422,7 +5494,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const key = (event.key || '').toLowerCase()
       if (key === 'n') {
         event.preventDefault()
-        applyEditorContextAction('newSubprogram')
+        applyEditorContextAction(docLanguage === 'ell' ? 'newDllCommand' : 'newSubprogram')
+        return
+      }
+      if (key === 'z' && docLanguage === 'ell') {
+        event.preventDefault()
+        applyEditorContextAction('newPtrCommand')
         return
       }
       if (key === 'u') {
@@ -5487,7 +5564,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [applyEditorContextAction, canCutContextAction, canRedoContextAction, canUndoContextAction, contextMenuCanPaste, editorContextMenu, hasCopySelection])
+  }, [applyEditorContextAction, canCutContextAction, canRedoContextAction, canUndoContextAction, contextMenuCanPaste, docLanguage, editorContextMenu, hasCopySelection])
 
   const navigateToSubprogramInternal = useCallback((subName: string, fallbackLine?: number, preferredHeaderIndex?: number) => {
     const navSeq = ++subNavSeqRef.current
@@ -6888,8 +6965,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 </span>
               )}
               </div>
-              {/* 展开的参数详情 */}
-              {lineCmd && isExpanded && (() => {
+              {/* 展开的参数详情（赋值行优先走“被赋值的变量/用作赋予的值”结构） */}
+              {lineCmd && !assignDetail && isExpanded && (() => {
                 const argVals = parseCallArgs(blk.codeLine || '')
                 // 计算代码行前导空格数，用于参数面板缩进
                 const codeLine = (blk.codeLine || '').replace(FLOW_AUTO_TAG, '')
@@ -6999,7 +7076,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                   </div>
                 )
               })()}
-              {!lineCmd && assignDetail && isExpanded && (() => {
+              {assignDetail && isExpanded && (() => {
                 const codeLine = (blk.codeLine || '').replace(FLOW_AUTO_TAG, '')
                 const leadingSpaces = codeLine.length - codeLine.replace(/^ +/, '').length
                 const baseLeft = 80 + 8
@@ -7358,10 +7435,21 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
-          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newSubprogram')}>
-            <span className="eyc-editor-context-menu-item-label">N.新子程序</span>
-            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
-          </button>
+          {docLanguage === 'ell' ? (
+            <>
+              <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newDllCommand')}>
+                <span className="eyc-editor-context-menu-item-label">N.新DLL命令</span>
+              </button>
+              <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newPtrCommand')}>
+                <span className="eyc-editor-context-menu-item-label">Z.新指针命令</span>
+              </button>
+            </>
+          ) : (
+            <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newSubprogram')}>
+              <span className="eyc-editor-context-menu-item-label">N.新子程序</span>
+              <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
+            </button>
+          )}
           <div className="eyc-editor-context-menu-sep" />
           <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('undo')} disabled={!canUndoContextAction}>
             <span className="eyc-editor-context-menu-item-label">U.撤销</span>

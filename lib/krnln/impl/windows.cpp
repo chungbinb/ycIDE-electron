@@ -1787,6 +1787,12 @@ extern "C" int krnln_p2int(long long dataPtr) {
   return *ptr;
 }
 
+extern "C" long long krnln_p2int64(long long dataPtr) {
+  if (dataPtr == 0) return 0;
+  const long long* ptr = reinterpret_cast<const long long*>(static_cast<intptr_t>(dataPtr));
+  return *ptr;
+}
+
 extern "C" float krnln_p2float(long long dataPtr) {
   if (dataPtr == 0) return 0.0f;
   const float* ptr = reinterpret_cast<const float*>(static_cast<intptr_t>(dataPtr));

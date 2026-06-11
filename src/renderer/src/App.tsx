@@ -449,6 +449,7 @@ function normalizeProjectPathForCompare(path: string): string {
 }
 
 const DLL_DECL_PREFIX = '.DLL\u547D\u4EE4 '
+const PTRCMD_DECL_PREFIX = '.\u6307\u9488\u547D\u4EE4 '
 const PARAM_DECL_PREFIX = '.\u53C2\u6570 '
 const FLAG_OPTIONAL = '\u53EF\u7A7A'
 const FLAG_BYREF = '\u4F20\u5740'
@@ -463,6 +464,21 @@ type ProjectDllCommandHint = {
   returnType: string
   description: string
   params: CommandDetail['params']
+  // .指针命令：通过函数地址间接调用
+  isIndirect?: boolean
+}
+
+const PTRCMD_CATEGORY = '指针命令'
+
+function ptrCmdImplicitHintParam(): CommandDetail['params'][number] {
+  return {
+    name: '函数地址',
+    type: '长整数型',
+    description: '要调用的函数指针地址（如 指针到长整数 从函数表中读出的值）',
+    optional: false,
+    isVariable: false,
+    isArray: false,
+  }
 }
 
 function splitDeclCsv(text: string): string[] {
@@ -541,6 +557,27 @@ function parseProjectDllCommands(content: string, out: Map<string, ProjectDllCom
       continue
     }
 
+    if (line.startsWith(PTRCMD_DECL_PREFIX)) {
+      const fields = splitDeclCsv(line.slice(PTRCMD_DECL_PREFIX.length))
+      const name = normalizeLookupCommandName(fields[0] || '')
+      if (!name) {
+        currentName = ''
+        continue
+      }
+
+      if (!out.has(name) || overwrite) {
+        out.set(name, {
+          name,
+          returnType: (fields[1] || '').trim(),
+          description: unquoteDeclField(fields.length > 3 ? fields.slice(3).join(',').trim() : ''),
+          params: [ptrCmdImplicitHintParam()],
+          isIndirect: true,
+        })
+      }
+      currentName = name
+      continue
+    }
+
     if (line.startsWith(PARAM_DECL_PREFIX)) {
       if (!currentName) continue
       const target = out.get(currentName)
@@ -586,6 +623,26 @@ function parseProjectDllCommandsByParsedLines(content: string, out: Map<string, 
           returnType: (ln.fields[1] || '').trim(),
           description: unquoteDeclField(ln.fields.length > 5 ? ln.fields.slice(5).join(',').trim() : ''),
           params: [],
+        })
+      }
+      currentName = name
+      continue
+    }
+
+    if (ln.type === 'ptrCmd') {
+      const name = normalizeLookupCommandName((ln.fields[0] || '').trim())
+      if (!name) {
+        currentName = ''
+        continue
+      }
+
+      if (!out.has(name) || overwrite) {
+        out.set(name, {
+          name,
+          returnType: (ln.fields[1] || '').trim(),
+          description: unquoteDeclField(ln.fields.length > 3 ? ln.fields.slice(3).join(',').trim() : ''),
+          params: [ptrCmdImplicitHintParam()],
+          isIndirect: true,
         })
       }
       currentName = name
@@ -656,12 +713,13 @@ async function findProjectDllDetail(
   const dll = dllMap.get(lookupName)
   if (!dll) return null
 
+  const descBase = dll.isIndirect ? PTRCMD_CATEGORY : DLL_DESC_BASE
   return {
     name: dll.name,
     englishName: '',
-    description: dll.description || (dll.returnType ? `${DLL_DESC_BASE}\uFF08\u8FD4\u56DE\uFF1A${dll.returnType}\uFF09` : DLL_DESC_BASE),
+    description: dll.description || (dll.returnType ? `${descBase}\uFF08\u8FD4\u56DE\uFF1A${dll.returnType}\uFF09` : descBase),
     returnType: dll.returnType || '',
-    category: CATEGORY_DLL,
+    category: dll.isIndirect ? PTRCMD_CATEGORY : CATEGORY_DLL,
     libraryName: LIB_CURRENT_PROJECT,
     params: dll.params,
   }
@@ -2466,7 +2524,7 @@ function App(): React.JSX.Element {
   const extractDllCommandNodes = useCallback((content: string, fileName: string): TreeNode[] => {
     const nodes: TreeNode[] = []
     const lines = (content || '').replace(/\r\n/g, '\n').split('\n')
-    const re = /^\s*\.DLL命令\s+([^,\s]+)/
+    const re = /^\s*\.(?:DLL命令|指针命令)\s+([^,\s]+)/
     for (let i = 0; i < lines.length; i++) {
       const m = re.exec(lines[i])
       if (!m) continue
@@ -3504,6 +3562,44 @@ function App(): React.JSX.Element {
         editorRef.current?.upsertFile({ id: filePath, label: stripFileExtension(dllFileName), language: 'ell', value: content, savedValue: content, filePath })
         break
       }
+      case 'insert:ptrCmd':
+      {
+        const dir = currentProjectDirRef.current
+        if (!dir) break
+        const existingFiles = projectTree[0]?.children
+          ?.find(c => c.id === '_cat_dllcmds')?.children?.map(c => c.id) || []
+        const dllFileName = 'DLL命令.ell'
+        const filePath = joinPath(dir, dllFileName)
+
+        // 优先使用编辑器中的最新内容（含未保存修改），再回退到磁盘内容
+        const editorFiles = editorRef.current?.getEditorFiles()
+        const fromEditor = editorFiles?.[dllFileName]
+        const fromDisk = fromEditor === undefined ? await window.api?.project?.readFile(filePath) : undefined
+        const baseContent = (fromEditor ?? fromDisk ?? '.版本 2\n\n').replace(/\r\n/g, '\n')
+
+        let n = 1
+        while (new RegExp('^\\.指针命令\\s+指针命令' + n + '(?:,|\\s|$)', 'm').test(baseContent)) n++
+        const ptrName = '指针命令' + n
+        const appendLine = '.指针命令 ' + ptrName
+        const content = baseContent.trimEnd() + '\n' + appendLine + '\n\n'
+
+        if (!existingFiles.includes(dllFileName)) {
+          await window.api?.project?.addFile(dir, dllFileName, 'ELL', content)
+          setProjectTree(prev => prev.map(root => ({
+            ...root,
+            children: root.children?.map(cat =>
+              cat.id === '_cat_dllcmds'
+                ? { ...cat, children: [...(cat.children || []), { id: dllFileName, label: stripFileExtension(dllFileName), type: 'module' as const, children: extractDllCommandNodes(content, dllFileName), expanded: false }] }
+                : cat
+            )
+          })))
+        } else {
+          await window.api?.file?.save(filePath, content)
+        }
+
+        editorRef.current?.upsertFile({ id: filePath, label: stripFileExtension(dllFileName), language: 'ell', value: content, savedValue: content, filePath })
+        break
+      }
       case 'insert:window':
       {
         const dir = currentProjectDirRef.current
@@ -4098,7 +4194,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.3-beta.58（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.3-beta.59（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
