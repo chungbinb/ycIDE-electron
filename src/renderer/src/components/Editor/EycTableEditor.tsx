@@ -6965,8 +6965,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 </span>
               )}
               </div>
-              {/* 展开的参数详情 */}
-              {lineCmd && isExpanded && (() => {
+              {/* 展开的参数详情（赋值行优先走“被赋值的变量/用作赋予的值”结构） */}
+              {lineCmd && !assignDetail && isExpanded && (() => {
                 const argVals = parseCallArgs(blk.codeLine || '')
                 // 计算代码行前导空格数，用于参数面板缩进
                 const codeLine = (blk.codeLine || '').replace(FLOW_AUTO_TAG, '')
@@ -7076,7 +7076,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                   </div>
                 )
               })()}
-              {!lineCmd && assignDetail && isExpanded && (() => {
+              {assignDetail && isExpanded && (() => {
                 const codeLine = (blk.codeLine || '').replace(FLOW_AUTO_TAG, '')
                 const leadingSpaces = codeLine.length - codeLine.replace(/^ +/, '').length
                 const baseLeft = 80 + 8
