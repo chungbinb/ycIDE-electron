@@ -79,6 +79,8 @@ const api = {
     importEFile: (request: EProjectImportRequest) => ipcRenderer.invoke('project:importEFile', request) as Promise<EProjectImportResult>,
     addFile: (projectDir: string, fileName: string, fileType: string, content: string) =>
       ipcRenderer.invoke('project:addFile', projectDir, fileName, fileType, content) as Promise<string>,
+    removeFile: (projectDir: string, fileName: string) =>
+      ipcRenderer.invoke('project:removeFile', projectDir, fileName) as Promise<boolean>,
     addResources: (projectDir: string) =>
       ipcRenderer.invoke('project:addResources', projectDir) as Promise<string[]>,
     importResourceFile: (projectDir: string) =>

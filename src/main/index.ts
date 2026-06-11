@@ -1669,6 +1669,33 @@ app.whenReady().then(() => {
     return filePath
   })
 
+  // 从项目移除文件：删除 .epp 中的 File 行，并把文件移入回收站（失败则直接删除）
+  ipcMain.handle('project:removeFile', async (_event, projectDir: string, fileName: string) => {
+    const filePath = join(projectDir, fileName)
+    const eppFiles = readdirSync(projectDir).filter(f => f.endsWith('.epp'))
+    if (eppFiles.length > 0) {
+      const eppPath = join(projectDir, eppFiles[0])
+      const eppContent = readFileSync(eppPath, 'utf-8')
+      const escapedFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const lineRe = new RegExp(`^File=[^|]+\\|${escapedFileName}\\|\\d+$`)
+      const nextContent = eppContent
+        .split(/\r?\n/)
+        .filter(line => !lineRe.test(line.trim()))
+        .join('\n')
+      if (nextContent !== eppContent) {
+        writeFileSync(eppPath, nextContent.endsWith('\n') ? nextContent : nextContent + '\n', 'utf-8')
+      }
+    }
+    if (existsSync(filePath)) {
+      try {
+        await shell.trashItem(filePath)
+      } catch {
+        try { unlinkSync(filePath) } catch { /* 文件可能被占用，忽略 */ }
+      }
+    }
+    return true
+  })
+
   // 导入资源文件到项目目录并写入 .epp
   ipcMain.handle('project:addResources', async (_event, projectDir: string) => {
     const win = BrowserWindow.getFocusedWindow()

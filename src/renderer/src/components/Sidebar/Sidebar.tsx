@@ -120,7 +120,11 @@ interface SidebarProps {
   onLibraryChange?: () => void
   /** 支持库树选中项提示回调（写入全局提示面板） */
   onLibraryHint?: (hint: { title: string; lines: string[] }) => void
+  /** 项目树节点右键操作（程序集分类/程序集/类模块） */
+  onProjectNodeAction?: (action: ProjectNodeAction, node: { id: string; label: string }) => void
 }
+
+export type ProjectNodeAction = 'newAssembly' | 'newClassModule' | 'newSub' | 'deleteModule'
 
 interface LibItem {
   name: string
@@ -171,6 +175,7 @@ function TreeItem({
   onFocusItem,
   modifiedFileKeys,
   onProjectContextMenu,
+  onNodeContextMenu,
 }: {
   node: TreeNode
   depth?: number
@@ -180,6 +185,7 @@ function TreeItem({
   onFocusItem?: (id: string) => void
   modifiedFileKeys?: Set<string>
   onProjectContextMenu?: (event: React.MouseEvent<HTMLElement>, projectDir: string, projectName: string) => void
+  onNodeContextMenu?: (event: React.MouseEvent<HTMLElement>, node: TreeNode) => void
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(node.expanded ?? false)
   const hasChildren = node.children && node.children.length > 0
@@ -246,10 +252,13 @@ function TreeItem({
         })}
         onClick={() => hasChildren && setExpanded(!expanded)}
         onContextMenu={(event) => {
-          if (!isProjectRoot || !node.projectDir) return
-          event.preventDefault()
-          event.stopPropagation()
-          onProjectContextMenu?.(event, node.projectDir, node.label)
+          if (isProjectRoot && node.projectDir) {
+            event.preventDefault()
+            event.stopPropagation()
+            onProjectContextMenu?.(event, node.projectDir, node.label)
+            return
+          }
+          onNodeContextMenu?.(event, node)
         }}
         onDoubleClick={() => {
           if (isFileNode && onOpenFile) {
@@ -336,6 +345,7 @@ function TreeItem({
               onFocusItem={onFocusItem}
               modifiedFileKeys={modifiedFileKeys}
               onProjectContextMenu={onProjectContextMenu}
+              onNodeContextMenu={onNodeContextMenu}
             />
           ))}
         </ul>
@@ -1592,7 +1602,7 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
   )
 }
 
-function Sidebar({ width, onResize, placement = 'left', selection, activeTab, onTabChange, onSelectControl, onPropertyChange, projectTree, onOpenFile, activeFileId, projectDir, openTabs = [], onEventNavigate, onSaveProject, onCloseProject, onLibraryChange, onLibraryHint }: SidebarProps): React.JSX.Element {
+function Sidebar({ width, onResize, placement = 'left', selection, activeTab, onTabChange, onSelectControl, onPropertyChange, projectTree, onOpenFile, activeFileId, projectDir, openTabs = [], onEventNavigate, onSaveProject, onCloseProject, onLibraryChange, onLibraryHint, onProjectNodeAction }: SidebarProps): React.JSX.Element {
   const SIDEBAR_MIN_WIDTH = 150
   const SIDEBAR_MAX_WIDTH = 500
   const SIDEBAR_RESIZE_STEP = 16
@@ -1736,6 +1746,7 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
   })
   const [tabsContextMenu, setTabsContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [projectContextMenu, setProjectContextMenu] = useState<{ x: number; y: number; projectDir: string; projectName: string } | null>(null)
+  const [nodeContextMenu, setNodeContextMenu] = useState<{ x: number; y: number; nodeId: string; nodeLabel: string; kind: 'category' | 'module'; isClassModule: boolean } | null>(null)
 
   const modifiedFileKeys = useMemo(() => {
     const keys = new Set<string>()
@@ -1840,6 +1851,22 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
     }
   }, [projectContextMenu])
 
+  useEffect(() => {
+    if (!nodeContextMenu) return
+    const close = (): void => setNodeContextMenu(null)
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('contextmenu', close)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('contextmenu', close)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [nodeContextMenu])
+
   const handleTabsContextMenu = useCallback((event: React.MouseEvent<HTMLElement>) => {
     event.preventDefault()
     event.stopPropagation()
@@ -1863,6 +1890,33 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
       projectName: targetProjectName,
     })
   }, [])
+
+  // 程序集分类/程序集/类模块节点的右键菜单
+  const handleNodeContextMenu = useCallback((event: React.MouseEvent<HTMLElement>, node: TreeNode) => {
+    if (!onProjectNodeAction) return
+    const isSourcesCategory = node.type === 'folder' && node.id === '_cat_sources'
+    const isSourceModule = node.type === 'module' && /\.(eyc|ecc)$/i.test(node.id)
+    if (!isSourcesCategory && !isSourceModule) return
+    event.preventDefault()
+    event.stopPropagation()
+    const menuWidth = 240
+    const menuX = Math.min(event.clientX, window.innerWidth - menuWidth - 8)
+    setNodeContextMenu({
+      x: Math.max(0, menuX),
+      y: event.clientY,
+      nodeId: node.id,
+      nodeLabel: node.label,
+      kind: isSourcesCategory ? 'category' : 'module',
+      isClassModule: /\.ecc$/i.test(node.id),
+    })
+  }, [onProjectNodeAction])
+
+  const fireNodeAction = useCallback((action: ProjectNodeAction) => {
+    if (nodeContextMenu) {
+      onProjectNodeAction?.(action, { id: nodeContextMenu.nodeId, label: nodeContextMenu.nodeLabel })
+    }
+    setNodeContextMenu(null)
+  }, [nodeContextMenu, onProjectNodeAction])
 
   const tabsNode = (
     <div
@@ -1977,6 +2031,7 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
                     onFocusItem={setFocusedProjectItemId}
                     modifiedFileKeys={modifiedFileKeys}
                     onProjectContextMenu={handleProjectContextMenu}
+                    onNodeContextMenu={handleNodeContextMenu}
                   />
                 ))}
               </ul>
@@ -2092,6 +2147,74 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
           >
             关闭该项目（{projectContextMenu.projectName}）
           </button>
+        </div>
+      )}
+      {nodeContextMenu && (
+        <div
+          className="sidebar-tabs-context-menu"
+          ref={(element) => setCssVars(element, {
+            '--sidebar-menu-x': `${nodeContextMenu.x}px`,
+            '--sidebar-menu-y': `${nodeContextMenu.y}px`,
+          })}
+          role="menu"
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {nodeContextMenu.kind === 'category' ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                className="sidebar-tabs-context-menu-item"
+                onClick={() => fireNodeAction('newAssembly')}
+              >
+                新建程序集
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="sidebar-tabs-context-menu-item"
+                onClick={() => fireNodeAction('newClassModule')}
+              >
+                新建类模块
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                className="sidebar-tabs-context-menu-item"
+                onClick={() => fireNodeAction('newSub')}
+              >
+                新建子程序（{nodeContextMenu.nodeLabel}）
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="sidebar-tabs-context-menu-item"
+                onClick={() => fireNodeAction('newAssembly')}
+              >
+                新建程序集
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="sidebar-tabs-context-menu-item"
+                onClick={() => fireNodeAction('newClassModule')}
+              >
+                新建类模块
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="sidebar-tabs-context-menu-item"
+                onClick={() => fireNodeAction('deleteModule')}
+              >
+                {nodeContextMenu.isClassModule ? `删除类（${nodeContextMenu.nodeLabel}）` : `删除程序集（${nodeContextMenu.nodeLabel}）`}
+              </button>
+            </>
+          )}
         </div>
       )}
       <div

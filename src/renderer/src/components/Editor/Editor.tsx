@@ -264,6 +264,7 @@ export interface EditorHandle {
   saveProject: (projectDir: string) => void
   closeActiveTab: () => void
   closeProjectTabs: (projectDir: string) => void
+  closeFileTab: (fileIdOrPath: string) => void
   clearAllTabs: () => void
   hasModifiedTabs: () => boolean
   editorAction: (action: string) => void
@@ -1258,6 +1259,22 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     saveProject: saveProjectFiles,
     closeActiveTab: closeActiveFile,
     closeProjectTabs,
+    closeFileTab: (fileIdOrPath: string) => {
+      const normalize = (text: string): string => (text || '').replace(/\//g, '\\').toLowerCase()
+      const target = normalize(fileIdOrPath)
+      if (!target) return
+      setTabs(prev => {
+        const filtered = prev.filter(t => normalize(t.id) !== target && normalize(t.filePath || '') !== target)
+        if (filtered.length === prev.length) return prev
+        onOpenTabsChange?.(filtered)
+        if (filtered.length === 0) {
+          setActiveTabId(null)
+        } else if (activeTabId && !filtered.some(t => t.id === activeTabId)) {
+          setActiveTabId(filtered[0].id)
+        }
+        return filtered
+      })
+    },
     clearAllTabs,
     hasModifiedTabs: () => tabs.some(t => isTabModified(t)),
     editorAction: (action: string) => {
