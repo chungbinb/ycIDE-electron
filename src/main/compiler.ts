@@ -236,7 +236,7 @@ interface TranspileCacheFile {
   entries: Record<string, TranspileCacheEntry>
 }
 
-const TRANSPILE_CACHE_VERSION = 3
+const TRANSPILE_CACHE_VERSION = 4
 
 interface BuildArtifactCacheFile {
   version: number
@@ -1428,6 +1428,26 @@ function splitDeclParts(text: string): string[] {
   return text.split(/[\uFF0C,]/).map(s => s.trim())
 }
 
+// \u5265\u79BB\u4EE3\u7801\u884C\u7684\u884C\u5C3E\u5355\u5F15\u53F7\u6CE8\u91CA\uFF08\u5FFD\u7565\u53CC\u5F15\u53F7\u5B57\u7B26\u4E32\u5185\u7684 '\uFF09\u3002
+// \u6574\u884C\u6CE8\u91CA\uFF08\u4EE5 ' \u5F00\u5934\uFF09\u539F\u6837\u4FDD\u7559\uFF0C\u7531\u8C03\u7528\u65B9\u6309\u6CE8\u91CA\u884C\u5904\u7406\u3002
+function stripTrailingEycComment(line: string): string {
+  if (!line || line.startsWith("'")) return line
+  let inQuote = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (inQuote) {
+      if (ch === '"' || ch === '\u201D') inQuote = false
+      continue
+    }
+    if (ch === '"' || ch === '\u201C') {
+      inQuote = true
+      continue
+    }
+    if (ch === "'") return line.slice(0, i).trimEnd()
+  }
+  return line
+}
+
 function unquoteDeclValue(text: string): string {
   const trimmed = (text || '').trim()
   if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith('\u201c') && trimmed.endsWith('\u201d'))) {
@@ -1572,6 +1592,16 @@ function collectUsedLibraryFileNames(project: ProjectInfo, editorFiles?: Map<str
           const rhsResolved = commandMap.get(rhsCall.name)
           if (rhsResolved?.libraryFileName) used.add(rhsResolved.libraryFileName)
         }
+      }
+
+      // 嵌套在实参中的命令调用：例如 a ＝ 外部命令(指针到长整数(地址), 0)
+      // 顶层命令名识别不到这类调用，会漏标支持库导致链接缺符号
+      const codeLine = stripTrailingEycComment(line)
+      const nestedCallRe = /([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)\s*[（(]/g
+      let nestedMatch: RegExpExecArray | null
+      while ((nestedMatch = nestedCallRe.exec(codeLine)) !== null) {
+        const nestedResolved = commandMap.get(nestedMatch[1])
+        if (nestedResolved?.libraryFileName) used.add(nestedResolved.libraryFileName)
       }
 
       const callableLine = line.startsWith('.') ? line.substring(1).trim() : line
@@ -4318,8 +4348,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const rawLine = lines[lineIndex]
     pendingBreakpointLine = inSub && breakpointLines.has(lineIndex + 1) ? (lineIndex + 1) : null
-    // 剥离流程标记零宽字符（\u200C/\u200D/\u2060/\u200B）
-    const line = rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
+    // 剥离流程标记零宽字符（\u200C/\u200D/\u2060/\u200B）与行尾单引号注释
+    const line = stripTrailingEycComment(rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim())
     if (line === '') continue
 
     if (!inSub && line.startsWith('.程序集变量 ')) {
