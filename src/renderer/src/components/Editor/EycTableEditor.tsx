@@ -128,7 +128,7 @@ interface EycTableEditorProps {
   windowControlTypes?: Array<{ name: string; type: string }>
   windowUnits?: LibWindowUnit[]
   projectConstants?: Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>
-  projectDllCommands?: Array<{ name: string; returnType: string; description: string; params: CompletionParam[] }>
+  projectDllCommands?: Array<{ name: string; returnType: string; description: string; params: CompletionParam[]; isIndirect?: boolean }>
   projectDataTypes?: Array<{ name: string; fields: Array<{ name: string; type: string }> }>
   projectClassNames?: Array<{ name: string; methods?: Array<{ name: string; returnType: string; description: string; params: Array<{ name: string; type: string }> }> }>
   onClassNameRename?: (oldName: string, newName: string) => void
@@ -379,6 +379,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if (parsed.type === 'dll' && cellIndex === 2) {
         return rebuildLineField(rawLine, 4, (parsed.fields[4] || '').trim() === '公开' ? '' : '公开', false)
       }
+      if (parsed.type === 'ptrCmd' && cellIndex === 2) {
+        return rebuildLineField(rawLine, 2, (parsed.fields[2] || '').trim() === '公开' ? '' : '公开', false)
+      }
       if (parsed.type === 'sub' && cellIndex === 2) {
         return rebuildLineField(rawLine, 2, (parsed.fields[2] || '').trim() === '公开' ? '' : '公开', false)
       }
@@ -392,7 +395,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         return rebuildLineField(rawLine, 2, (parsed.fields[2] || '').trim() === '传址' ? '' : '传址', false)
       }
       if (parsed.type === 'subParam') {
-        if (tableType === 'dll') {
+        if (tableType === 'dll' || tableType === 'ptrcmd') {
           if (cellIndex === 2) return rebuildLineFlagField(rawLine, 2, '传址')
           if (cellIndex === 3) return rebuildLineFlagField(rawLine, 2, '数组')
           return null
@@ -3281,16 +3284,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const items: CompletionItem[] = []
     const seen = new Set<string>()
 
-    const addDll = (name: string, returnType: string, description: string, params: CompletionParam[]) => {
+    const addDll = (name: string, returnType: string, description: string, params: CompletionParam[], isIndirect = false) => {
       const nm = (name || '').trim()
       if (!nm || seen.has(nm)) return
       seen.add(nm)
+      const kindLabel = isIndirect ? '指针命令' : 'DLL命令'
       items.push({
         name: nm,
         englishName: '',
-        description: description || (returnType ? `DLL命令（返回：${returnType}）` : 'DLL命令'),
+        description: description || (returnType ? `${kindLabel}（返回：${returnType}）` : kindLabel),
         returnType: returnType || '',
-        category: 'DLL命令',
+        category: kindLabel,
         libraryName: '用户定义',
         isMember: false,
         ownerTypeName: '',
@@ -3305,8 +3309,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       })
     }
 
+    const ptrCmdImplicitParam = (): CompletionParam => ({
+      name: '函数地址',
+      type: '长整数型',
+      description: '要调用的函数指针地址（如 指针到长整数 从函数表中读出的值）',
+      optional: false,
+      isVariable: false,
+      isArray: false,
+    })
+
     // 当前文档内的 DLL 命令
-    const currentDocDllMap = new Map<string, { returnType: string; description: string; params: CompletionParam[] }>()
+    const currentDocDllMap = new Map<string, { returnType: string; description: string; params: CompletionParam[]; isIndirect?: boolean }>()
     let currentDllName = ''
     for (const ln of parsed) {
       if (ln.type === 'dll') {
@@ -3321,6 +3334,24 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             returnType: (ln.fields[1] || '').trim(),
             description: ln.fields.length > 5 ? ln.fields.slice(5).join(', ').trim() : '',
             params: [],
+          })
+        }
+        continue
+      }
+
+      if (ln.type === 'ptrCmd') {
+        const name = (ln.fields[0] || '').trim()
+        if (!name) {
+          currentDllName = ''
+          continue
+        }
+        currentDllName = name
+        if (!currentDocDllMap.has(name)) {
+          currentDocDllMap.set(name, {
+            returnType: (ln.fields[1] || '').trim(),
+            description: ln.fields.length > 3 ? ln.fields.slice(3).join(', ').trim() : '',
+            params: [ptrCmdImplicitParam()],
+            isIndirect: true,
           })
         }
         continue
@@ -3347,12 +3378,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     for (const [name, meta] of currentDocDllMap.entries()) {
-      addDll(name, meta.returnType, meta.description, meta.params)
+      addDll(name, meta.returnType, meta.description, meta.params, !!meta.isIndirect)
     }
 
     // 项目级 DLL 命令（来自 .ell 与其他已打开标签页）
     for (const c of projectDllCommands) {
-      addDll(c.name, c.returnType || '', c.description || '', c.params || [])
+      addDll(c.name, c.returnType || '', c.description || '', c.params || [], !!c.isIndirect)
     }
 
     return items

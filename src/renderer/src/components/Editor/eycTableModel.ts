@@ -1,7 +1,7 @@
 export type DeclType =
   | 'assembly' | 'assemblyVar' | 'sub' | 'subParam' | 'localVar'
   | 'globalVar' | 'constant' | 'dataType' | 'dataTypeMember'
-  | 'dll' | 'image' | 'sound' | 'resource'
+  | 'dll' | 'ptrCmd' | 'image' | 'sound' | 'resource'
 
 export interface ParsedLine {
   type: DeclType | 'version' | 'supportLib' | 'blank' | 'comment' | 'code'

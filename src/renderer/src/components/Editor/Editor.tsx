@@ -43,7 +43,7 @@ function registerEycLanguage(monaco: Monaco): void {
     declarations: [
       '版本', '支持库', '程序集', '子程序', '局部变量', '参数',
       '全局变量', '程序集变量', '常量', '数据类型', '自定义数据类型',
-      'DLL命令', '模块引用',
+      'DLL命令', '指针命令', '模块引用',
     ],
 
     // 数据类型
@@ -344,6 +344,8 @@ interface ProjectDllCommand {
   returnType: string
   description: string
   params: ProjectDllParam[]
+  // .指针命令：通过函数地址间接调用，第一个参数固定为函数地址
+  isIndirect?: boolean
 }
 
 type RoutedDeclLanguage = 'ell' | 'egv' | 'ecs' | 'edt'
@@ -1656,6 +1658,33 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
               returnType: (fields[1] || '').trim(),
               description: fields.length > 5 ? fields.slice(5).join(', ').trim() : '',
               params: [],
+            })
+          }
+          current = out.get(name) || null
+          continue
+        }
+
+        if (t.startsWith('.指针命令 ')) {
+          const fields = splitCSV(t.slice('.指针命令 '.length))
+          const name = (fields[0] || '').trim()
+          if (!name) {
+            current = null
+            continue
+          }
+          if (!out.has(name)) {
+            out.set(name, {
+              name,
+              returnType: (fields[1] || '').trim(),
+              description: fields.length > 3 ? fields.slice(3).join(', ').trim() : '',
+              params: [{
+                name: '函数地址',
+                type: '长整数型',
+                description: '要调用的函数指针地址（如 指针到长整数 从函数表中读出的值）',
+                optional: false,
+                isVariable: false,
+                isArray: false,
+              }],
+              isIndirect: true,
             })
           }
           current = out.get(name) || null

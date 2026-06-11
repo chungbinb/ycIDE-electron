@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitCSV, unquote, inferResourceTypeByFileName, parseLines } from '@/components/Editor/eycBlocks'
+import { splitCSV, unquote, inferResourceTypeByFileName, parseLines, buildBlocks } from '@/components/Editor/eycBlocks'
 
 describe('splitCSV', () => {
   it('按「逗号+空格」分隔字段', () => {
@@ -68,5 +68,36 @@ describe('parseLines', () => {
   it('其余行视为代码行', () => {
     const lines = parseLines('输出调试文本 ("ok")')
     expect(lines[0].type).toBe('code')
+  })
+
+  it('识别 DLL命令 与 指针命令 声明行', () => {
+    const lines = parseLines('.DLL命令 取API, 长整数型, "sciter.dll", "SciterAPI"\n.指针命令 Sciter取版本, 整数型, 公开, 取主版本号\n')
+    expect(lines[0].type).toBe('dll')
+    expect(lines[0].fields).toEqual(['取API', '长整数型', '"sciter.dll"', '"SciterAPI"'])
+    expect(lines[1].type).toBe('ptrCmd')
+    expect(lines[1].fields).toEqual(['Sciter取版本', '整数型', '公开', '取主版本号'])
+  })
+})
+
+describe('buildBlocks（指针命令表格）', () => {
+  it('指针命令生成独立表格并携带参数行', () => {
+    const text = '.版本 2\n.指针命令 Sciter取版本, 整数型, , 备注文字\n    .参数 主版本, 逻辑型\n'
+    const blocks = buildBlocks(text)
+    const tbl = blocks.find(b => b.kind === 'table' && b.tableType === 'ptrcmd')
+    expect(tbl).toBeTruthy()
+    const dataRow = tbl!.rows.find(r => !r.isHeader && r.cells[0]?.text === 'Sciter取版本')
+    expect(dataRow).toBeTruthy()
+    expect(dataRow!.cells[1].text).toBe('整数型')
+    expect(dataRow!.cells[3].text).toBe('备注文字')
+    const paramRow = tbl!.rows.find(r => !r.isHeader && r.cells[0]?.text === '主版本')
+    expect(paramRow).toBeTruthy()
+    expect(paramRow!.cells[1].text).toBe('逻辑型')
+  })
+
+  it('指针命令的公开标记渲染为勾选', () => {
+    const blocks = buildBlocks('.指针命令 调用回调, , 公开\n')
+    const tbl = blocks.find(b => b.kind === 'table' && b.tableType === 'ptrcmd')
+    const dataRow = tbl!.rows.find(r => !r.isHeader && r.cells[0]?.text === '调用回调')
+    expect(dataRow!.cells[2].text).toBe('√')
   })
 })

@@ -1027,6 +1027,7 @@ function setupNativeMenu(): void {
         actionItem('常量', 'insert:constant'),
         actionItem('自定义数据类型', 'insert:dataType'),
         actionItem('DLL命令', 'insert:dllCmd'),
+        actionItem('指针命令', 'insert:ptrCmd'),
         { type: 'separator' },
         actionItem('类模块', 'insert:classModule'),
         actionItem('程序集', 'insert:module'),

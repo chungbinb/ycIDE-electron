@@ -1759,6 +1759,24 @@
       ]
     },
     {
+      "commandId": "krnln.p2int64",
+      "displayName": "指针到长整数",
+      "summary": "返回指定内存指针所指向地址处的一个长整数(INT64)，可用于从函数指针表（如 DLL 返回的接口结构）中读取函数地址，注意调用本命令前一定要确保所提供的内存地址段真实有效。本命令为高级命令。",
+      "params": [
+        {
+          "name": "内存数据指针",
+          "type": "长整数型",
+          "optional": false,
+          "description": "。本参数提供指向一个内存地址的指针值。"
+        }
+      ],
+      "returnType": "长整数型",
+      "category": "字节集操作",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    },
+    {
       "commandId": "krnln.p2float",
       "displayName": "指针到小数",
       "summary": "返回指定内存指针所指向地址处的一个小数(FLOAT)，注意调用本命令前一定要确保所提供的内存地址段真实有效。本命令为高级命令。",
