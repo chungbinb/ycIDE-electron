@@ -264,6 +264,7 @@ export interface EditorHandle {
   saveProject: (projectDir: string) => void
   closeActiveTab: () => void
   closeProjectTabs: (projectDir: string) => void
+  closeFileTab: (fileIdOrPath: string) => void
   clearAllTabs: () => void
   hasModifiedTabs: () => boolean
   editorAction: (action: string) => void
@@ -421,7 +422,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const [projectConstants, setProjectConstants] = useState<Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>>([])
   const [projectDllCommands, setProjectDllCommands] = useState<ProjectDllCommand[]>([])
   const [projectDataTypes, setProjectDataTypes] = useState<Array<{ name: string; fields: Array<{ name: string; type: string }> }>>([])
-  const [projectClassNames, setProjectClassNames] = useState<Array<{ name: string }>>([])
+  const [projectClassNames, setProjectClassNames] = useState<Array<{ name: string; methods?: Array<{ name: string; returnType: string; description: string; params: Array<{ name: string; type: string }> }> }>>([])
   const [externalChangePrompt, setExternalChangePrompt] = useState<{
     tabId: string
     filePath: string
@@ -1258,6 +1259,22 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     saveProject: saveProjectFiles,
     closeActiveTab: closeActiveFile,
     closeProjectTabs,
+    closeFileTab: (fileIdOrPath: string) => {
+      const normalize = (text: string): string => (text || '').replace(/\//g, '\\').toLowerCase()
+      const target = normalize(fileIdOrPath)
+      if (!target) return
+      setTabs(prev => {
+        const filtered = prev.filter(t => normalize(t.id) !== target && normalize(t.filePath || '') !== target)
+        if (filtered.length === prev.length) return prev
+        onOpenTabsChange?.(filtered)
+        if (filtered.length === 0) {
+          setActiveTabId(null)
+        } else if (activeTabId && !filtered.some(t => t.id === activeTabId)) {
+          setActiveTabId(filtered[0].id)
+        }
+        return filtered
+      })
+    },
     clearAllTabs,
     hasModifiedTabs: () => tabs.some(t => isTabModified(t)),
     editorAction: (action: string) => {
@@ -1843,16 +1860,45 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     return () => { cancelled = true }
   }, [projectDir, tabs])
 
-  // 收集项目内类名（.ecc + 已打开标签页），用于类模块继承补全
+  // 收集项目内类名与公开方法（.ecc + 已打开标签页），用于类模块继承补全与成员补全
   useEffect(() => {
     let cancelled = false
 
-    const parseClassNames = (content: string, out: Set<string>) => {
-      const re = /^\s*\.程序集\s+([^,\s]+)/gm
-      let m: RegExpExecArray | null
-      while ((m = re.exec(content)) !== null) {
-        const name = (m[1] || '').trim()
-        if (name) out.add(name)
+    type ClassMethodInfo = { name: string; returnType: string; description: string; params: Array<{ name: string; type: string }> }
+
+    const parseClassModules = (content: string, out: Map<string, ClassMethodInfo[]>) => {
+      const lines = content.replace(/\r\n/g, '\n').split('\n')
+      let currentClass = ''
+      let currentMethod: ClassMethodInfo | null = null
+      for (const rawLine of lines) {
+        const t = rawLine.replace(/[\r\t]/g, '').trim()
+        const asmMatch = /^\.程序集\s+(.+)$/.exec(t)
+        if (asmMatch) {
+          currentClass = (asmMatch[1].split(/[,，]/)[0] || '').trim()
+          if (currentClass && !out.has(currentClass)) out.set(currentClass, [])
+          currentMethod = null
+          continue
+        }
+        const subMatch = /^\.子程序\s+(.+)$/.exec(t)
+        if (subMatch) {
+          const fields = subMatch[1].split(/[,，]/).map(f => f.trim())
+          const subName = fields[0] || ''
+          const isPublic = (fields[2] || '').includes('公开')
+          currentMethod = null
+          if (subName && currentClass && isPublic) {
+            currentMethod = { name: subName, returnType: fields[1] || '', description: fields[3] || '', params: [] }
+            out.get(currentClass)!.push(currentMethod)
+          }
+          continue
+        }
+        const paramMatch = /^\.参数\s+(.+)$/.exec(t)
+        if (paramMatch && currentMethod) {
+          const fields = paramMatch[1].split(/[,，]/).map(f => f.trim())
+          if (fields[0]) currentMethod.params.push({ name: fields[0], type: fields[1] || '' })
+          continue
+        }
+        // 离开声明区（局部变量行不中断参数收集语境，但其后不会再有 .参数）
+        if (t && !t.startsWith('.局部变量')) currentMethod = null
       }
     }
 
@@ -1862,12 +1908,14 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         return
       }
 
-      const names = new Set<string>()
+      const classMap = new Map<string, Array<{ name: string; returnType: string; description: string; params: Array<{ name: string; type: string }> }>>()
 
       // 优先使用已打开标签页中的最新内容（含未保存修改）
+      // 注意：类模块标签页的 label 是类名（不带扩展名），必须按 filePath 判断
       for (const t of tabs) {
-        if (t.label.toLowerCase().endsWith('.ecc') && t.value) {
-          parseClassNames(eycToYiFormat(t.value), names)
+        const tabFileName = (t.filePath || t.label || '').toLowerCase()
+        if (tabFileName.endsWith('.ecc') && t.value) {
+          parseClassModules(eycToYiFormat(t.value), classMap)
         }
       }
 
@@ -1880,12 +1928,12 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
           const fp = projectDir + '\\' + f
           if (openedPaths.has(fp)) continue
           const content = await window.api?.project?.readFile(fp)
-          if (content) parseClassNames(content, names)
+          if (content) parseClassModules(content, classMap)
         }
       }
 
       if (!cancelled) {
-        setProjectClassNames([...names].map(name => ({ name })))
+        setProjectClassNames([...classMap].map(([name, methods]) => ({ name, methods })))
       }
     })()
 

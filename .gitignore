@@ -27,3 +27,6 @@ resources/Visual Studio 2022 Image Library/
 
 # Compiler toolchains are local assets and should not be versioned
 compiler/
+
+# 本地编辑器行为验证框架（组件复现 + Playwright 回归脚本），不入库
+.tmp-harness/

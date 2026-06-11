@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import TitleBar from './components/TitleBar/TitleBar'
 import Toolbar from './components/Toolbar/Toolbar'
 import Sidebar from './components/Sidebar/Sidebar'
-import type { TreeNode } from './components/Sidebar/Sidebar'
+import type { TreeNode, ProjectNodeAction } from './components/Sidebar/Sidebar'
 import Icon from './components/Icon/Icon'
 import Editor, { type EditorTab, type EditorHandle, type DiffLineInfo } from './components/Editor/Editor'
 import OutputPanel, { type OutputMessage, type CommandDetail, type FileProblem, type DebugPauseState } from './components/OutputPanel/OutputPanel'
@@ -3640,6 +3640,91 @@ function App(): React.JSX.Element {
     }
   }, [openProjectByEppPath, openWorkspaceFolderByPath, openFileByPath, extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, applyTheme, handleCompile, handleCompileRun, handleStop, handleAppClose, joinPath, projectTree, refreshProjectTree, toggleBreakpoint, cursorLine, cursorSourceLine, isProjectWorkspace, currentProjectDir, breakpointsByFile, targetArch, continueDebugRun, getBaseName, runEProjectImport])
 
+  // 项目树节点右键操作：新建程序集/类模块/子程序、删除程序集或类模块
+  const handleProjectNodeAction = useCallback(async (action: ProjectNodeAction, node: { id: string; label: string }) => {
+    const dir = currentProjectDirRef.current
+    if (!dir) return
+
+    if (action === 'newAssembly') { void handleMenuAction('insert:module'); return }
+    if (action === 'newClassModule') { void handleMenuAction('insert:classModule'); return }
+
+    const fileName = node.id
+    const filePath = joinPath(dir, fileName)
+    const editorFiles = editorRef.current?.getEditorFiles()
+    const readProjectFile = async (fn: string): Promise<string> => {
+      const liveContent = editorFiles?.[fn]
+      if (liveContent !== undefined) return liveContent
+      return ((await window.api?.project?.readFile(joinPath(dir, fn))) || '')
+    }
+
+    if (action === 'newSub') {
+      // 打开（或激活）该源文件，再在其中插入子程序
+      const content = (await readProjectFile(fileName)).replace(/\r\n/g, '\n')
+      editorRef.current?.openFile({ id: filePath, label: node.label || stripFileExtension(fileName), language: 'eyc', value: content, savedValue: content, filePath })
+      setTimeout(() => editorRef.current?.insertDeclaration(), 150)
+      return
+    }
+
+    if (action === 'deleteModule') {
+      const isClassModule = /\.ecc$/i.test(fileName)
+      const kindLabel = isClassModule ? '类' : '程序集'
+
+      // 窗口对应的源码程序集不允许从此入口删除（与窗口共生）
+      const windowNames = (projectTree[0]?.children?.find(c => c.id === '_cat_windows')?.children || [])
+        .map(w => stripFileExtension(w.id))
+      if (windowNames.includes(stripFileExtension(fileName))) {
+        window.alert(`“${node.label}”是窗口对应的程序集，不能单独删除。`)
+        return
+      }
+
+      // 引用检查：程序集/类名与公开子程序名是否出现在其它源文件中
+      const selfContent = await readProjectFile(fileName)
+      const names = new Set<string>()
+      if (node.label) names.add(node.label)
+      const asmName = extractAssemblyLabel(selfContent)
+      if (asmName) names.add(asmName)
+      for (const m of selfContent.matchAll(/^\.子程序\s+([^,\s，]+)/gm)) {
+        const subName = (m[1] || '').trim()
+        if (subName && !subName.startsWith('_')) names.add(subName)
+      }
+
+      const checkedCategories = new Set(['_cat_sources', '_cat_globals', '_cat_datatypes', '_cat_dllcmds', '_cat_constants'])
+      const otherFileIds = (projectTree[0]?.children || [])
+        .filter(cat => checkedCategories.has(cat.id))
+        .flatMap(cat => (cat.children || []).map(child => child.id))
+        .filter(id => id !== fileName)
+
+      const escapeReg = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      let referencedIn = ''
+      outer: for (const otherId of otherFileIds) {
+        const content = await readProjectFile(otherId)
+        if (!content) continue
+        for (const nm of names) {
+          if (new RegExp(`(^|[^一-龥A-Za-z0-9_])${escapeReg(nm)}($|[^一-龥A-Za-z0-9_])`, 'm').test(content)) {
+            referencedIn = otherId
+            break outer
+          }
+        }
+      }
+
+      if (referencedIn) {
+        const ok = window.confirm(`${kindLabel}“${node.label}”已被其它代码引用（${referencedIn}），确定要删除吗？\n删除后引用处可能编译报错，文件将移入回收站。`)
+        if (!ok) return
+      }
+
+      await window.api?.project?.removeFile?.(dir, fileName)
+      editorRef.current?.closeFileTab(filePath)
+      setProjectTree(prev => prev.map(root => ({
+        ...root,
+        children: root.children?.map(cat =>
+          cat.id === '_cat_sources'
+            ? { ...cat, children: (cat.children || []).filter(c => c.id !== fileName) }
+            : cat
+        ),
+      })))
+    }
+  }, [handleMenuAction, joinPath, projectTree])
+
   useEffect(() => {
     const handleNativeMenuAction = (action: unknown) => {
       if (typeof action !== 'string') return
@@ -4013,7 +4098,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.3-beta.56（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.3-beta.58（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -5110,7 +5195,7 @@ function App(): React.JSX.Element {
           <div className="app-workspace">
             <div className={`app-side${activityBarSide === 'right' ? ' app-side-right' : ''}`}>
               {!sidebarCollapsed && (
-                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} openTabs={openEditorTabs} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onSaveProject={handleSaveSingleProject} onCloseProject={(projectDir) => { void handleCloseSingleProject(projectDir) }} onLibraryChange={handleLibraryChange} onLibraryHint={handleLibraryHint} />
+                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} openTabs={openEditorTabs} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onSaveProject={handleSaveSingleProject} onCloseProject={(projectDir) => { void handleCloseSingleProject(projectDir) }} onLibraryChange={handleLibraryChange} onLibraryHint={handleLibraryHint} onProjectNodeAction={(action, node) => { void handleProjectNodeAction(action, node) }} />
               )}
               <div className="app-main">
                 <Editor

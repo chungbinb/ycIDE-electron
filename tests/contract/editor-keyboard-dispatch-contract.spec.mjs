@@ -65,7 +65,7 @@ test('keyboard dispatcher contract: cross-line arrow navigation refocuses inline
 
   assert.match(source, /const\s+focusInlineInputAt\s*=\s*useCallback\(\(position:\s*number\s*\|\s*'end'\)\s*=>\s*\{[\s\S]*?input\.focus\(\{\s*preventScroll:\s*true\s*\}\)[\s\S]*?input\.setSelectionRange\(pos,\s*pos\)/)
 
-  const navBlockMatch = source.match(/const\s+applyCodeLineNavigation\s*=\s*useCallback\(\(navAction:\s*CodeLineNavigationAction\)\s*=>\s*\{[\s\S]*?\n\s*\},\s*\[commit,\s*focusInlineInputAt,\s*resolveVisibleCodeLineTarget,\s*startEditLine\]\)/)
+  const navBlockMatch = source.match(/const\s+applyCodeLineNavigation\s*=\s*useCallback\(\(navAction:\s*CodeLineNavigationAction\)\s*=>\s*\{[\s\S]*?\n\s*\},\s*\[commit,\s*focusInlineInputAt,\s*resolveVisibleCodeLineTarget,\s*startEditCell,\s*startEditLine\]\)/)
   assert.ok(navBlockMatch, 'applyCodeLineNavigation should depend on visible target resolution')
   const navBlock = navBlockMatch[0]
 
@@ -164,6 +164,15 @@ test('keyboard dispatcher contract: expanded param rows support nested expressio
   assert.match(source, /eyc-param-expr-fold/)
   // 参数行输入采用与代码行一致的内联无缝编辑
   assert.match(source, /eyc-param-inline-edit-sizing/)
+})
+
+test('keyboard dispatcher contract: arrow navigation clamps at document boundaries', () => {
+  const source = fs.readFileSync(tableEditorTsxPath, 'utf-8')
+
+  // 顶部越界：进入程序集名表格单元格；底部越界：停留在当前行，焦点不消失
+  assert.match(source, /if\s*\(direction === -1\)\s*\{[\s\S]{0,500}?startsWith\('\.程序集 '\)/)
+  assert.match(source, /startEditCell\(asmLine,\s*0,\s*name,\s*0,\s*false\)/)
+  assert.match(source, /const\s+stayLine\s*=\s*resolveVisibleCodeLineTarget\(/)
 })
 
 test('keyboard dispatcher contract: param input suppresses global focus ring', () => {

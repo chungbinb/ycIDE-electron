@@ -130,7 +130,7 @@ interface EycTableEditorProps {
   projectConstants?: Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>
   projectDllCommands?: Array<{ name: string; returnType: string; description: string; params: CompletionParam[] }>
   projectDataTypes?: Array<{ name: string; fields: Array<{ name: string; type: string }> }>
-  projectClassNames?: Array<{ name: string }>
+  projectClassNames?: Array<{ name: string; methods?: Array<{ name: string; returnType: string; description: string; params: Array<{ name: string; type: string }> }> }>
   onClassNameRename?: (oldName: string, newName: string) => void
   onChange: (value: string) => void
   onCommandClick?: (commandName: string, paramIndex?: number) => void
@@ -1402,6 +1402,37 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
   }, [acIndex, acVisible])
 
+  // 项目类名 → 公开方法补全项（用于 对象.方法 成员补全）
+  const classMethodMap = useMemo(() => {
+    const map = new Map<string, CompletionItem[]>()
+    for (const cls of projectClassNames) {
+      if (!cls.methods || cls.methods.length === 0) continue
+      map.set(cls.name, cls.methods.map(m => ({
+        name: m.name,
+        englishName: '',
+        description: m.description || `类 ${cls.name} 的公开方法`,
+        returnType: m.returnType || '',
+        category: '方法',
+        libraryName: '用户定义',
+        isMember: true,
+        ownerTypeName: cls.name,
+        params: m.params.map(p => ({ name: p.name, type: p.type, description: '', optional: false, isVariable: false, isArray: false })),
+      })))
+    }
+    return map
+  }, [projectClassNames])
+
+  // 按方法名查找项目类的公开方法（支持 对象.方法 形式，取最后一段）
+  const findProjectClassMethodByName = useCallback((rawName: string): CompletionItem | null => {
+    const name = (rawName || '').trim().replace(/^.*[.。．]/, '')
+    if (!name) return null
+    for (const methods of classMethodMap.values()) {
+      const hit = methods.find(m => m.name === name)
+      if (hit) return hit
+    }
+    return null
+  }, [classMethodMap])
+
   /** 根据光标位置的"词"更新补全列表 */
   const updateCompletion = useCallback((val: string, cursorPos: number) => {
     if (!editCell) { setAcVisible(false); return }
@@ -1451,6 +1482,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         windowControlTypeMap,
         windowUnits,
         customDataTypeFieldMap,
+        classMethodMap,
         memberCommands: memberCommandsRef.current,
         allCommands: allCommandsRef.current,
       },
@@ -1481,7 +1513,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setAcItems(matches)
     setAcIndex(0)
     setAcVisible(true)
-  }, [editCell, canUseTypeCompletion, canUseClassNameCompletion, userVarTypeMap, windowControlTypeMap, windowUnits, customDataTypeFieldMap])
+  }, [editCell, canUseTypeCompletion, canUseClassNameCompletion, userVarTypeMap, windowControlTypeMap, windowUnits, customDataTypeFieldMap, classMethodMap])
 
   /** 应用补全项：替换当前输入词为命令名 */
   const applyCompletion = useCallback((displayItem: AcDisplayItem) => {
@@ -1502,6 +1534,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const isCallable = isCodeLineEdit && (
       commandPool.some(c => c.name === item.name)
       || userSubNamesRef.current.has(item.name)
+      // 项目类的公开方法（对象.方法）同样可调用
+      || (item.isMember && item.category === '方法')
     )
     const leadingAfter = after.match(/^\s*/) ? (after.match(/^\s*/)?.[0] || '') : ''
     const afterNext = after.slice(leadingAfter.length, leadingAfter.length + 1)
@@ -1591,6 +1625,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       void err({ source: 'flow-paste-fallback', message: stage, extra: payload })
     }
   }, [isFlowPasteDebugEnabled])
+
+  /** 编辑 判断开始 行时输入值以"判断"别名显示，写回源码前还原真实关键字 */
+  const restoreJudgeStartAlias = useCallback((val: string): string => {
+    if (!shouldAliasJudgeStartInTableMode || wasFlowKwRef.current !== '判断开始') return val
+    return val.replace(/^(\s*\.?)判断(?![一-龥A-Za-z0-9_])/, '$1判断开始')
+  }, [shouldAliasJudgeStartInTableMode])
 
   const normalizeFlowCommandName = useCallback((raw: string): string => {
     const trimmed = (raw || '').trim()
@@ -2645,7 +2685,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   useEffect(() => {
     codeRenderMetaCacheRef.current.clear()
-  }, [visibleBlocks])
+  }, [visibleBlocks, classMethodMap])
 
   const getCodeRenderMeta = useCallback((blockIndex: number, blk: RenderBlock) => {
     const codeLineRaw = blk.codeLine || ''
@@ -2658,12 +2698,21 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     let lineCmd: CompletionItem | null = null
     if (!blk.isVirtual) {
       for (const span of spans) {
-        if (span.cls !== 'funccolor' && span.cls !== 'comecolor') continue
-        const candidate = allCommandsRef.current.find(c => c.name === span.text)
-          || dllCompletionItemsRef.current.find(c => c.name === span.text)
-        if (candidate && candidate.params.length > 0) {
-          lineCmd = candidate
-          break
+        if (span.cls === 'funccolor' || span.cls === 'comecolor') {
+          const candidate = allCommandsRef.current.find(c => c.name === span.text)
+            || dllCompletionItemsRef.current.find(c => c.name === span.text)
+          if (candidate && candidate.params.length > 0) {
+            lineCmd = candidate
+            break
+          }
+        }
+        // 对象.方法（项目类公开方法）同样支持参数展开
+        if (span.cls === 'funccolor' || span.cls === 'cometwolr') {
+          const clsMethod = findProjectClassMethodByName(span.text)
+          if (clsMethod && clsMethod.params.length > 0) {
+            lineCmd = clsMethod
+            break
+          }
         }
       }
     }
@@ -3586,6 +3635,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         setEditCell(null)
         return
       }
+      // 判断开始 行编辑值以"判断"别名显示，进入格式化前还原真实关键字
+      effectiveVal = restoreJudgeStartAlias(effectiveVal)
       // formatCommandLine 会为流程命令额外加4空格，若 flowIndent 已包含流程缩进则需减去以避免翻倍
       let baseIndent = flowIndentRef.current
       const trimmedCmd = effectiveVal.trim()
@@ -4103,6 +4154,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         wasFlowOrigIndentRef.current = wasFlowStartRef.current ? (origLineText.match(/^ */)?.[0] || '') : ''
       }
     }
+    // 表格模式下 判断开始 以别名"判断"进入编辑态（与非编辑显示一致），提交/实时写回时还原
+    if (shouldAliasJudgeStartInTableMode && wasFlowKwRef.current === '判断开始') {
+      text = text.replace(/^(\s*\.?)判断开始/, '$1判断')
+    }
     if (!skipPushUndo) pushUndo(latestText)
     setSelectedLines(new Set())
     lastFocusedLine.current = li
@@ -4172,7 +4227,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         wrapper.scrollTop = prevScrollTop
       }
     }, 0)
-  }, [currentText, pushUndo, flowLines])
+  }, [currentText, pushUndo, flowLines, shouldAliasJudgeStartInTableMode])
+
+  // 同一行内按住拖动（行未聚焦）：进入该行编辑态并选中拖动范围内的文本
+  beginLineTextSelectRef.current = (li, isVirtual, anchorX, headX) => {
+    const lineEl = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${li}"] .eyc-code-line`)
+    if (!lineEl) return
+    startEditLine(li, headX, lineEl.getBoundingClientRect().left, isVirtual, false, anchorX)
+  }
 
   // 同一行内按住拖动（行未聚焦）：进入该行编辑态并选中拖动范围内的文本
   beginLineTextSelectRef.current = (li, isVirtual, anchorX, headX) => {
@@ -4315,6 +4377,27 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         if (targetLine != null) {
           startEditLine(targetLine)
           focusInlineInputAt(navAction.keepHorizontalPos)
+          return
+        }
+        if (direction === -1) {
+          // 已到顶部：进入文档最上方的可编辑处——程序集名表格单元格
+          const asmLine = latestLines.findIndex(l => l.replace(/[\r\t]/g, '').trim().startsWith('.程序集 '))
+          if (asmLine >= 0) {
+            const rest = latestLines[asmLine].replace(/[\r\t]/g, '').trim().slice('.程序集 '.length)
+            const name = splitCSV(rest)[0] || ''
+            startEditCell(asmLine, 0, name, 0, false)
+            return
+          }
+        }
+        // 已是最后一行（或顶部无程序集行）：停留在当前行，不让输入焦点消失
+        const stayLine = resolveVisibleCodeLineTarget(
+          Math.min(Math.max(currentLineIndex, 0), latestLines.length - 1),
+          -direction as -1 | 1,
+          latestLines.length,
+        )
+        if (stayLine != null) {
+          startEditLine(stayLine)
+          focusInlineInputAt(navAction.keepHorizontalPos)
         }
         return
       }
@@ -4336,7 +4419,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         }
       }
     }, 0)
-  }, [commit, focusInlineInputAt, resolveVisibleCodeLineTarget, startEditLine])
+  }, [commit, focusInlineInputAt, resolveVisibleCodeLineTarget, startEditCell, startEditLine])
 
   const applyEmptyCodeLineDelete = useCallback((params: {
     action: EmptyCodeLineDeleteAction
@@ -5556,18 +5639,6 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       while (existingNames.has('子程序' + num)) num++
       const newName = '子程序' + num
 
-      // 收集已有局部变量名，生成不重复的默认名称：局_变量N
-      const existingLocalVarNames = new Set<string>()
-      for (const ln of curLines) {
-        const t = ln.replace(/[\r\t]/g, '').trim()
-        if (!t.startsWith('.局部变量 ')) continue
-        const localName = (splitCSV(t.slice('.局部变量 '.length))[0] || '').trim()
-        if (localName) existingLocalVarNames.add(localName)
-      }
-      let localNum = 1
-      while (existingLocalVarNames.has('局_变量' + localNum)) localNum++
-      const newLocalVarName = '局_变量' + localNum
-
       let insertAt: number
 
       if (focusLi < 0) {
@@ -5596,13 +5667,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
 
       const nl = [...curLines]
-      // 统一为“真实空行 + 子程序声明 + 默认局部变量 + 真实空普通行”。
-      nl.splice(insertAt, 0, '', '.子程序 ' + newName + ', , , ', '.局部变量 ' + newLocalVarName + ', 整数型', '')
+      // 统一为“真实空行 + 子程序声明 + 真实空普通行”，不再自动附带默认局部变量。
+      nl.splice(insertAt, 0, '', '.子程序 ' + newName + ', , , ', '')
       const nt = nl.join('\n')
       applyTextChange(nt)
 
       const newSubLineIndex = insertAt + 1
-      const firstCodeLineIndex = insertAt + 3
+      const firstCodeLineIndex = insertAt + 2
       lastFocusedLine.current = newSubLineIndex
       const focusFirstCodeLine = (): void => {
         startEditLine(firstCodeLineIndex, undefined, undefined, undefined, true)
@@ -5845,9 +5916,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const cmd = allCommandsRef.current.find(c => c.name === s.text) || dllCompletionItemsRef.current.find(c => c.name === s.text)
         if (cmd && cmd.params.length > 0) return cmd
       }
+      // 对象.方法（项目类公开方法）同样支持参数展开
+      if (s.cls === 'funccolor' || s.cls === 'cometwolr') {
+        const clsMethod = findProjectClassMethodByName(s.text)
+        if (clsMethod && clsMethod.params.length > 0) return clsMethod
+      }
     }
     return null
-  }, [validCommandNames])
+  }, [validCommandNames, findProjectClassMethodByName])
 
   const findCommandCallWithParams = useCallback((expr: string): { cmd: CompletionItem; args: string[] } | null => {
     const normalized = (expr || '').trim()
@@ -5856,11 +5932,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (!head) return null
     const cmdName = (head[1] || '').trim()
     if (!cmdName) return null
-    const cmd = allCommandsRef.current.find(c => c.name === cmdName) || dllCompletionItemsRef.current.find(c => c.name === cmdName)
+    const cmd = allCommandsRef.current.find(c => c.name === cmdName)
+      || dllCompletionItemsRef.current.find(c => c.name === cmdName)
+      || ((cmdName.includes('.') || cmdName.includes('。') || cmdName.includes('．')) ? findProjectClassMethodByName(cmdName) : null)
     if (!cmd || cmd.params.length === 0) return null
     const args = parseCallArgs(normalized)
     return { cmd, args }
-  }, [])
+  }, [findProjectClassMethodByName])
 
   const findTopLevelAdditiveParts = useCallback((expr: string): { left: string; right: string } | null => {
     const normalized = (expr || '').trim()
@@ -6122,7 +6200,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     if (editCell.cellIndex < 0) {
       if (editCell.isVirtual) return
-      const nl = [...lines]; nl[editCell.lineIndex] = flowIndentRef.current + flowMarkRef.current + val
+      // 判断开始 行编辑值以"判断"别名显示，实时写回源码前还原真实关键字
+      const nl = [...lines]; nl[editCell.lineIndex] = flowIndentRef.current + flowMarkRef.current + restoreJudgeStartAlias(val)
       const nt = nl.join('\n')
       applyTextChange(nt)
       return
@@ -6136,7 +6215,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const nl = [...lines]; nl[editCell.lineIndex] = newLine
     const nt = nl.join('\n')
     applyTextChange(nt)
-  }, [applyTextChange, editCell, lines, replaceCallArg, parseAssignmentLineParts])
+  }, [applyTextChange, editCell, lines, replaceCallArg, parseAssignmentLineParts, restoreJudgeStartAlias])
 
   // 输入高频（尤其长按退格）时将文档同步节流到固定频率，降低全量重算导致的卡顿。
   const scheduleLiveUpdate = useCallback((val: string) => {
@@ -6528,6 +6607,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                       onChange={e => {
                                         const raw = e.target.value
                                         const rawPos = e.target.selectionStart ?? raw.length
+                                        // IME 组合期间不改写 value、不更新补全弹窗，否则输入法组合会被取消（候选框闪退）
+                                        if ((e.nativeEvent as InputEvent).isComposing) {
+                                          setEditVal(raw)
+                                          scheduleLiveUpdate(raw)
+                                          return
+                                        }
                                         let v = raw
                                         // 数据类型单元格禁止空格（类型名不含空格，防止粘贴/IME 串入多个类型）
                                         if (editCell && editCell.cellIndex >= 0
@@ -6541,6 +6626,23 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                         const pos = v === raw ? rawPos : raw.slice(0, rawPos).replace(/\s+/g, '').length
                                         if (v !== raw) pendingInputCaretRef.current = pos
                                         updateCompletion(v, pos)
+                                      }}
+                                      onCompositionStart={() => setAcVisible(false)}
+                                      onCompositionEnd={e => {
+                                        // 组合提交后统一做空格清理并恢复补全弹窗
+                                        const raw = e.currentTarget.value
+                                        let v = raw
+                                        if (editCell && editCell.cellIndex >= 0
+                                          && canUseTypeCompletion(editCell.lineIndex, editCell.fieldIdx)
+                                          && /\s/.test(v)) {
+                                          v = v.replace(/\s+/g, '')
+                                        }
+                                        if (v !== raw) {
+                                          setEditVal(v)
+                                          scheduleLiveUpdate(v)
+                                          pendingInputCaretRef.current = v.length
+                                        }
+                                        updateCompletion(v, v === raw ? (e.currentTarget.selectionStart ?? v.length) : v.length)
                                       }}
                                       onBlur={() => {
                                         // Enter 切换到下一单元时，旧 input 的 blur 不能再提交。
@@ -6654,6 +6756,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                       onChange={e => {
                         const raw = e.target.value
                         const rawPos = e.target.selectionStart ?? raw.length
+                        // IME 组合期间不做任何值改写/光标干预/弹窗更新，否则输入法组合会被取消（候选框闪退）
+                        if ((e.nativeEvent as InputEvent).isComposing) {
+                          setEditVal(raw)
+                          scheduleLiveUpdate(raw)
+                          return
+                        }
                         const old = editVal
                         const insertedLen = raw.length - old.length
                         const insertAt = rawPos - insertedLen
@@ -6706,6 +6814,20 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                         // 导致后续字符落到行尾（括号外）；用归一化后的前缀长度恢复光标。
                         const pos = v === raw ? rawPos : normalizeCodeLineInput(raw.slice(0, rawPos)).length
                         if (v !== raw) pendingInputCaretRef.current = pos
+                        updateCompletion(v, pos)
+                      }}
+                      onCompositionStart={() => setAcVisible(false)}
+                      onCompositionEnd={e => {
+                        // 组合提交后补跑归一化（组合期间跳过了所有改写），并恢复补全弹窗
+                        const raw = e.currentTarget.value
+                        const rawPos = e.currentTarget.selectionStart ?? raw.length
+                        const v = normalizeCodeLineInput(raw)
+                        const pos = v === raw ? rawPos : normalizeCodeLineInput(raw.slice(0, rawPos)).length
+                        if (v !== raw) {
+                          setEditVal(v)
+                          scheduleLiveUpdate(v)
+                          pendingInputCaretRef.current = pos
+                        }
                         updateCompletion(v, pos)
                       }}
                       onBlur={() => {
