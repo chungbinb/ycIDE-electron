@@ -29,6 +29,7 @@ export function buildMemberCompletionSource(params: {
   windowControlTypeMap: Map<string, string>
   windowUnits: LibWindowUnit[]
   customDataTypeFieldMap: Map<string, Array<{ name: string; type: string }>>
+  classMethodMap?: Map<string, CompletionItem[]>
   memberCommands: CompletionItem[]
   allCommands: CompletionItem[]
 }): CompletionItem[] | null {
@@ -40,6 +41,7 @@ export function buildMemberCompletionSource(params: {
     windowControlTypeMap,
     windowUnits,
     customDataTypeFieldMap,
+    classMethodMap,
     memberCommands,
     allCommands,
   } = params
@@ -98,6 +100,12 @@ export function buildMemberCompletionSource(params: {
     }
   }
 
+  // 变量类型为项目类模块时，补全该类的公开方法
+  const rawMappedType = (mappedType || '').trim()
+  const classMembers = classMethodMap
+    ? (classMethodMap.get(rawMappedType) || classMethodMap.get(typeName) || [])
+    : []
+
   const customMembers = (customDataTypeFieldMap.get(typeName) || []).map(field =>
     toMemberItem(
       field.name,
@@ -122,7 +130,7 @@ export function buildMemberCompletionSource(params: {
     .filter(c => WINDOW_METHOD_WHITELIST.has((c.name || '').trim()))
     .filter(c => !((c.category || '').includes('事件')))
 
-  const merged = [...customMembers, ...unitMembers, ...commandMembers, ...windowMethods]
+  const merged = [...classMembers, ...customMembers, ...unitMembers, ...commandMembers, ...windowMethods]
   const seen = new Set<string>()
   return merged.filter(item => {
     const key = `${item.category}:${item.name}`
@@ -150,6 +158,7 @@ export function selectCompletionSourceList(params: {
     windowControlTypeMap: Map<string, string>
     windowUnits: LibWindowUnit[]
     customDataTypeFieldMap: Map<string, Array<{ name: string; type: string }>>
+    classMethodMap?: Map<string, CompletionItem[]>
     memberCommands: CompletionItem[]
     allCommands: CompletionItem[]
   }

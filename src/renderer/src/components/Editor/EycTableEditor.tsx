@@ -130,7 +130,7 @@ interface EycTableEditorProps {
   projectConstants?: Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>
   projectDllCommands?: Array<{ name: string; returnType: string; description: string; params: CompletionParam[] }>
   projectDataTypes?: Array<{ name: string; fields: Array<{ name: string; type: string }> }>
-  projectClassNames?: Array<{ name: string }>
+  projectClassNames?: Array<{ name: string; methods?: Array<{ name: string; returnType: string; description: string; params: Array<{ name: string; type: string }> }> }>
   onClassNameRename?: (oldName: string, newName: string) => void
   onChange: (value: string) => void
   onCommandClick?: (commandName: string, paramIndex?: number) => void
@@ -1402,6 +1402,26 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
   }, [acIndex, acVisible])
 
+  // 项目类名 → 公开方法补全项（用于 对象.方法 成员补全）
+  const classMethodMap = useMemo(() => {
+    const map = new Map<string, CompletionItem[]>()
+    for (const cls of projectClassNames) {
+      if (!cls.methods || cls.methods.length === 0) continue
+      map.set(cls.name, cls.methods.map(m => ({
+        name: m.name,
+        englishName: '',
+        description: m.description || `类 ${cls.name} 的公开方法`,
+        returnType: m.returnType || '',
+        category: '方法',
+        libraryName: '用户定义',
+        isMember: true,
+        ownerTypeName: cls.name,
+        params: m.params.map(p => ({ name: p.name, type: p.type, description: '', optional: false, isVariable: false, isArray: false })),
+      })))
+    }
+    return map
+  }, [projectClassNames])
+
   /** 根据光标位置的"词"更新补全列表 */
   const updateCompletion = useCallback((val: string, cursorPos: number) => {
     if (!editCell) { setAcVisible(false); return }
@@ -1451,6 +1471,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         windowControlTypeMap,
         windowUnits,
         customDataTypeFieldMap,
+        classMethodMap,
         memberCommands: memberCommandsRef.current,
         allCommands: allCommandsRef.current,
       },
@@ -1481,7 +1502,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setAcItems(matches)
     setAcIndex(0)
     setAcVisible(true)
-  }, [editCell, canUseTypeCompletion, canUseClassNameCompletion, userVarTypeMap, windowControlTypeMap, windowUnits, customDataTypeFieldMap])
+  }, [editCell, canUseTypeCompletion, canUseClassNameCompletion, userVarTypeMap, windowControlTypeMap, windowUnits, customDataTypeFieldMap, classMethodMap])
 
   /** 应用补全项：替换当前输入词为命令名 */
   const applyCompletion = useCallback((displayItem: AcDisplayItem) => {
