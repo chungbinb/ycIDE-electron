@@ -6560,6 +6560,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                       onChange={e => {
                                         const raw = e.target.value
                                         const rawPos = e.target.selectionStart ?? raw.length
+                                        // IME 组合期间不改写 value、不更新补全弹窗，否则输入法组合会被取消（候选框闪退）
+                                        if ((e.nativeEvent as InputEvent).isComposing) {
+                                          setEditVal(raw)
+                                          scheduleLiveUpdate(raw)
+                                          return
+                                        }
                                         let v = raw
                                         // 数据类型单元格禁止空格（类型名不含空格，防止粘贴/IME 串入多个类型）
                                         if (editCell && editCell.cellIndex >= 0
@@ -6573,6 +6579,23 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                         const pos = v === raw ? rawPos : raw.slice(0, rawPos).replace(/\s+/g, '').length
                                         if (v !== raw) pendingInputCaretRef.current = pos
                                         updateCompletion(v, pos)
+                                      }}
+                                      onCompositionStart={() => setAcVisible(false)}
+                                      onCompositionEnd={e => {
+                                        // 组合提交后统一做空格清理并恢复补全弹窗
+                                        const raw = e.currentTarget.value
+                                        let v = raw
+                                        if (editCell && editCell.cellIndex >= 0
+                                          && canUseTypeCompletion(editCell.lineIndex, editCell.fieldIdx)
+                                          && /\s/.test(v)) {
+                                          v = v.replace(/\s+/g, '')
+                                        }
+                                        if (v !== raw) {
+                                          setEditVal(v)
+                                          scheduleLiveUpdate(v)
+                                          pendingInputCaretRef.current = v.length
+                                        }
+                                        updateCompletion(v, v === raw ? (e.currentTarget.selectionStart ?? v.length) : v.length)
                                       }}
                                       onBlur={() => {
                                         // Enter 切换到下一单元时，旧 input 的 blur 不能再提交。
@@ -6686,6 +6709,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                       onChange={e => {
                         const raw = e.target.value
                         const rawPos = e.target.selectionStart ?? raw.length
+                        // IME 组合期间不做任何值改写/光标干预/弹窗更新，否则输入法组合会被取消（候选框闪退）
+                        if ((e.nativeEvent as InputEvent).isComposing) {
+                          setEditVal(raw)
+                          scheduleLiveUpdate(raw)
+                          return
+                        }
                         const old = editVal
                         const insertedLen = raw.length - old.length
                         const insertAt = rawPos - insertedLen
@@ -6738,6 +6767,20 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                         // 导致后续字符落到行尾（括号外）；用归一化后的前缀长度恢复光标。
                         const pos = v === raw ? rawPos : normalizeCodeLineInput(raw.slice(0, rawPos)).length
                         if (v !== raw) pendingInputCaretRef.current = pos
+                        updateCompletion(v, pos)
+                      }}
+                      onCompositionStart={() => setAcVisible(false)}
+                      onCompositionEnd={e => {
+                        // 组合提交后补跑归一化（组合期间跳过了所有改写），并恢复补全弹窗
+                        const raw = e.currentTarget.value
+                        const rawPos = e.currentTarget.selectionStart ?? raw.length
+                        const v = normalizeCodeLineInput(raw)
+                        const pos = v === raw ? rawPos : normalizeCodeLineInput(raw.slice(0, rawPos)).length
+                        if (v !== raw) {
+                          setEditVal(v)
+                          scheduleLiveUpdate(v)
+                          pendingInputCaretRef.current = pos
+                        }
                         updateCompletion(v, pos)
                       }}
                       onBlur={() => {
