@@ -46,7 +46,7 @@ export function buildMemberCompletionSource(params: {
     allCommands,
   } = params
 
-  let objEnd = wordStart - 1
+  const objEnd = wordStart - 1
   let objStart = objEnd
   while (objStart > 0 && /[\u4e00-\u9fa5A-Za-z0-9_]/.test(val[objStart - 1])) objStart--
   const objName = val.slice(objStart, objEnd)

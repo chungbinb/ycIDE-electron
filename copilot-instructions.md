@@ -22,8 +22,6 @@ The current focus is a brownfield conversion effort: convert GBK-encoded librari
 ## Languages
 - TypeScript - Main app code across Electron main, preload, and renderer in `src/main/*.ts`, `src/preload/index.ts`, and `src/renderer/src/**/*.tsx`.
 - JavaScript - Test/config scripts in `playwright.config.js` and `tests/ui/electron-start.spec.js`.
-- PowerShell - Repo automation script in `do_convert.ps1`.
-- Python - Repo conversion utility in `convert_commobj.py`.
 ## Runtime
 - Node.js runtime for Electron app/tooling (local detected: `v24.13.0` via `node -v`).
 - Electron runtime for packaged desktop app from `electron` dependency in `package.json`.

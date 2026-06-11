@@ -248,13 +248,13 @@ interface IconProps {
 }
 
 export default function Icon({ name, size = 16, className = '', title, preserveOriginalColors = false, colorMode }: IconProps): React.JSX.Element | null {
-  const raw = ICON_MAP[name]
-  if (!raw) return null
-  const effectiveMode: IconColorMode = colorMode ?? (preserveOriginalColors ? 'original' : 'themed')
+  // Hook 必须无条件调用（图标名缺失时也一样），提前返回放在所有 Hook 之后。
   const iconRef = useRef<HTMLSpanElement>(null)
+  const raw = ICON_MAP[name]
+  const effectiveMode: IconColorMode = colorMode ?? (preserveOriginalColors ? 'original' : 'themed')
   const cacheKey = `${name}_${effectiveMode}`
-  let processedSvg = _svgCache.get(cacheKey)
-  if (!processedSvg) {
+  let processedSvg = raw ? _svgCache.get(cacheKey) : undefined
+  if (raw && !processedSvg) {
     switch (effectiveMode) {
       case 'original':
         processedSvg = scopeSvgStyles(stripSvgTitle(raw), name)
@@ -274,6 +274,8 @@ export default function Icon({ name, size = 16, className = '', title, preserveO
     iconRef.current.style.width = `${size}px`
     iconRef.current.style.height = `${size}px`
   }, [size])
+
+  if (!raw || !processedSvg) return null
 
   return (
     <span

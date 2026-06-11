@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useRef, useState, memo } from 'react'
 import './OutputPanel.css'
 
 export interface OutputMessage {
@@ -161,6 +161,9 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
   useEffect(() => {
     if (activeTab !== 'terminal') return
     const frame = window.requestAnimationFrame(() => {
+      // 焦点仍在标签栏内说明用户在用方向键导航标签，此时抢占焦点会让键盘无法越过“终端”标签
+      const focused = document.activeElement
+      if (focused instanceof HTMLElement && focused.closest('.output-tabs')) return
       terminalRef.current?.focus()
     })
     return () => window.cancelAnimationFrame(frame)
@@ -456,7 +459,8 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
             id={`output-tab-${tab.id}`}
             className={`output-tab ${activeTab === tab.id ? 'active' : ''}`}
             role="tab"
-            aria-controls={`output-panel-${tab.id}`}
+            aria-selected={activeTab === tab.id}
+            aria-controls={activeTab === tab.id ? `output-panel-${tab.id}` : undefined}
             tabIndex={activeTab === tab.id ? 0 : -1}
             onClick={() => setActiveTab(tab.id)}
             onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
@@ -484,6 +488,9 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
         role="separator"
         aria-label="调整输出面板高度"
         aria-orientation="horizontal"
+        aria-valuenow={Math.round(height)}
+        aria-valuemin={OUTPUT_MIN_HEIGHT}
+        aria-valuemax={OUTPUT_MAX_HEIGHT}
         tabIndex={0}
       />
       {tabsPlacement === 'top' && toolbarNode}
@@ -765,4 +772,5 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
   )
 }
 
-export default OutputPanel
+// memo: App 重渲染时若 props 未变则跳过本组件渲染
+export default memo(OutputPanel)

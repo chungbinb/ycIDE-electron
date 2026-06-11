@@ -1921,6 +1921,8 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
   const tabsNode = (
     <div
       className={`sidebar-tabs ${tabsPlacement === 'top' ? 'sidebar-tabs-top' : 'sidebar-tabs-bottom'}`}
+      role="tablist"
+      aria-label="侧边栏面板"
       onContextMenu={handleTabsContextMenu}
     >
       {sidebarTabs.map((tab, index) => (
@@ -1929,6 +1931,8 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
           ref={(element) => { sidebarTabRefs.current[index] = element }}
           id={`sidebar-tab-${tab.id}`}
           className={`sidebar-tab ${activeTab === tab.id ? 'active' : ''}`}
+          role="tab"
+          aria-selected={activeTab === tab.id}
           tabIndex={activeTab === tab.id ? 0 : -1}
           onClick={() => onTabChange(tab.id)}
           onKeyDown={(event) => handleSidebarTabKeyDown(event, tab.id)}
@@ -2224,6 +2228,9 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
         role="separator"
         aria-label="调整侧栏宽度"
         aria-orientation="vertical"
+        aria-valuenow={Math.round(width)}
+        aria-valuemin={SIDEBAR_MIN_WIDTH}
+        aria-valuemax={SIDEBAR_MAX_WIDTH}
         tabIndex={0}
       />
     </aside>

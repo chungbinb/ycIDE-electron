@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell, screen, type BrowserWindowConstructorOptions, type MenuItemConstructorOptions } from 'electron'
 import { join, dirname, basename, extname } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync, unlinkSync, rmSync } from 'fs'
+import { readFile as readFileAsync, writeFile as writeFileAsync, readdir as readdirAsync, stat as statAsync } from 'fs/promises'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import iconv from 'iconv-lite'
 import { libraryManager } from './libraryManager'
@@ -40,6 +41,7 @@ import type { AIChatRequest, AIChatWithToolsRequest, AIEditRequest } from '../sh
 import { runAIChat, runAIChatStream, runAIChatWithTools, runAIEdit, runAIEditStream } from './ai-assistant'
 import type { EProjectImportRequest, OpenProjectSelectionResult, OpenWorkspaceFolderSelectionResult } from '../shared/eprojectImport'
 import { getEProjectImportTarget, importEProjectFile } from './eproject/importService'
+import { initPathGuard, authorizeRoot, validatePath } from './security/pathGuard'
 
 const isDev = !app.isPackaged
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
@@ -834,7 +836,8 @@ function createWindow(): void {
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      // preload 仅使用 contextBridge/ipcRenderer，可在沙箱内运行
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
     }
@@ -892,7 +895,7 @@ function createWindow(): void {
           titleBarStyle: 'hidden',
           title: '主题管理器 - ycIDE',
           webPreferences: {
-            sandbox: false,
+            sandbox: true,
             contextIsolation: true,
             nodeIntegration: false,
           },
@@ -1106,6 +1109,17 @@ app.whenReady().then(() => {
     }
   }
 
+  // IPC 路径白名单：静态根 + 用户经对话框选择的目录（持久化在 userData）
+  initPathGuard(
+    [
+      app.getPath('userData'),
+      join(app.getPath('documents'), 'ycIDE Projects'),
+      getThemesDirPath(),
+      app.getPath('temp'),
+    ],
+    join(app.getPath('userData'), 'authorized-roots.json'),
+  )
+
   ensureBuiltinThemeFiles()
   setupNativeMenu()
 
@@ -1146,7 +1160,11 @@ app.whenReady().then(() => {
   ipcMain.on('window:maximize', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (win) {
-      win.isMaximized() ? win.unmaximize() : win.maximize()
+      if (win.isMaximized()) {
+        win.unmaximize()
+      } else {
+        win.maximize()
+      }
     }
   })
   ipcMain.on('window:close', (event) => {
@@ -1229,16 +1247,17 @@ app.whenReady().then(() => {
       properties: ['openDirectory'],
     })
     if (result.canceled || result.filePaths.length === 0) return null
+    authorizeRoot(result.filePaths[0])
     return result.filePaths[0]
   })
 
   ipcMain.handle('project:checkCreateTarget', (_event, info: { name: string; path: string }) => {
-    const projectDir = join(info.path, info.name)
+    const projectDir = join(validatePath(info.path), info.name)
     return { projectDir, exists: existsSync(projectDir) }
   })
 
   ipcMain.handle('project:create', (_event, info: { name: string; path: string; type: string; platform: string; overwrite?: boolean }) => {
-    const projectDir = join(info.path, info.name)
+    const projectDir = join(validatePath(info.path), info.name)
     if (existsSync(projectDir)) {
       if (!info.overwrite) {
         return { status: 'exists', projectDir }
@@ -1312,15 +1331,19 @@ app.whenReady().then(() => {
     return { status: 'created', projectDir, eppPath }
   })
 
-  ipcMain.handle('project:readFile', (_event, filePath: string) => {
-    if (!existsSync(filePath)) return null
-    return readFileSync(filePath, 'utf-8')
+  ipcMain.handle('project:readFile', async (_event, filePath: string) => {
+    const safePath = validatePath(filePath)
+    try {
+      return await readFileAsync(safePath, 'utf-8')
+    } catch {
+      return null
+    }
   })
 
-  ipcMain.handle('project:readFileWithEncoding', (_event, filePath: string, preferredEncoding?: string) => {
-    if (!existsSync(filePath)) return null
+  ipcMain.handle('project:readFileWithEncoding', async (_event, filePath: string, preferredEncoding?: string) => {
+    const safePath = validatePath(filePath)
     try {
-      const buffer = readFileSync(filePath)
+      const buffer = await readFileAsync(safePath)
       const hasUtf8Bom = buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF
       const hasUtf16LeBom = buffer.length >= 2 && buffer[0] === 0xFF && buffer[1] === 0xFE
       const hasUtf16BeBom = buffer.length >= 2 && buffer[0] === 0xFE && buffer[1] === 0xFF
@@ -1339,9 +1362,10 @@ app.whenReady().then(() => {
   })
 
   // 解析 epp 项目文件，返回项目信息和关联文件列表
-  ipcMain.handle('project:parseEpp', (_event, eppPath: string) => {
-    if (!existsSync(eppPath)) return null
-    const content = readFileSync(eppPath, 'utf-8')
+  ipcMain.handle('project:parseEpp', async (_event, eppPath: string) => {
+    const safeEppPath = validatePath(eppPath)
+    if (!existsSync(safeEppPath)) return null
+    const content = await readFileAsync(safeEppPath, 'utf-8')
     const lines = content.split('\n').map(l => l.trim())
     const info: Record<string, string> = {}
     const files: Array<{ type: string; fileName: string; flag: number }> = []
@@ -1363,38 +1387,39 @@ app.whenReady().then(() => {
         }
       }
     }
-    const projectDir = join(eppPath, '..')
+    const projectDir = join(safeEppPath, '..')
     return { projectName: info['ProjectName'] || '', outputType: info['OutputType'] || '', platform: info['Platform'] || '', files, projectDir }
   })
 
   // 更新项目文件中的平台架构
-  ipcMain.handle('project:updatePlatform', (_event, projectDir: string, platform: string) => {
-    const files = readdirSync(projectDir)
+  ipcMain.handle('project:updatePlatform', async (_event, projectDir: string, platform: string) => {
+    const safeDir = validatePath(projectDir)
+    const files = await readdirAsync(safeDir)
     const eppFile = files.find(f => f.endsWith('.epp'))
     if (!eppFile) return
-    const eppPath = join(projectDir, eppFile)
-    let content = readFileSync(eppPath, 'utf-8')
+    const eppPath = join(safeDir, eppFile)
+    let content = await readFileAsync(eppPath, 'utf-8')
     if (content.match(/^Platform=.*/m)) {
       content = content.replace(/^Platform=.*/m, `Platform=${platform}`)
     } else {
       // 在 OutputType 行之后插入
       content = content.replace(/^(OutputType=.*)$/m, `$1\nPlatform=${platform}`)
     }
-    writeFileSync(eppPath, content, 'utf-8')
+    await writeFileAsync(eppPath, content, 'utf-8')
   })
 
   // 保存打开的标签页会话到项目目录
-  ipcMain.handle('project:saveOpenTabs', (_event, projectDir: string, session: { openTabs: string[]; activeTabPath?: string }) => {
-    const sessionPath = join(projectDir, '.ycide-session.json')
-    writeFileSync(sessionPath, JSON.stringify({ openTabs: session.openTabs || [], activeTabPath: session.activeTabPath || undefined }, null, 2), 'utf-8')
+  ipcMain.handle('project:saveOpenTabs', async (_event, projectDir: string, session: { openTabs: string[]; activeTabPath?: string }) => {
+    const sessionPath = join(validatePath(projectDir), '.ycide-session.json')
+    await writeFileAsync(sessionPath, JSON.stringify({ openTabs: session.openTabs || [], activeTabPath: session.activeTabPath || undefined }, null, 2), 'utf-8')
   })
 
   // 读取保存的标签页会话（兼容旧格式：string[]）
-  ipcMain.handle('project:loadOpenTabs', (_event, projectDir: string) => {
-    const sessionPath = join(projectDir, '.ycide-session.json')
+  ipcMain.handle('project:loadOpenTabs', async (_event, projectDir: string) => {
+    const sessionPath = join(validatePath(projectDir), '.ycide-session.json')
     if (!existsSync(sessionPath)) return { openTabs: [] }
     try {
-      const data = JSON.parse(readFileSync(sessionPath, 'utf-8'))
+      const data = JSON.parse(await readFileAsync(sessionPath, 'utf-8'))
       if (Array.isArray(data)) {
         return { openTabs: data }
       }
@@ -1421,6 +1446,7 @@ app.whenReady().then(() => {
     })
     if (result.canceled || result.filePaths.length === 0) return { status: 'canceled' }
     const selectedPath = result.filePaths[0]
+    authorizeRoot(selectedPath, 'file')
     const selectedExt = extname(selectedPath).toLowerCase()
     if (selectedExt === '.epp') return { status: 'epp', eppPath: selectedPath }
     const target = getEProjectImportTarget(selectedPath)
@@ -1437,6 +1463,7 @@ app.whenReady().then(() => {
     if (result.canceled || result.filePaths.length === 0) return { status: 'canceled' }
 
     const folderPath = result.filePaths[0]
+    authorizeRoot(folderPath)
     try {
       const entries = readdirSync(folderPath)
       const eppFileName = entries.find(name => extname(name).toLowerCase() === '.epp')
@@ -1462,6 +1489,7 @@ app.whenReady().then(() => {
       properties: ['openFile'],
     })
     if (result.canceled || result.filePaths.length === 0) return null
+    authorizeRoot(result.filePaths[0], 'file')
     return result.filePaths[0]
   })
 
@@ -1473,22 +1501,24 @@ app.whenReady().then(() => {
       defaultPath: typeof defaultPath === 'string' && defaultPath.trim() ? defaultPath.trim() : undefined,
     })
     if (result.canceled || !result.filePath) return null
+    authorizeRoot(result.filePath, 'file')
     return result.filePath
   })
 
-  ipcMain.handle('file:save', (_event, filePath: string, content: string, encoding?: string) => {
+  ipcMain.handle('file:save', async (_event, filePath: string, content: string, encoding?: string) => {
+    const safePath = validatePath(filePath)
     const output = encodeTextByEncoding(content, encoding)
-    writeFileSync(filePath, output)
+    await writeFileAsync(safePath, output)
     return true
   })
 
   // 读取目录内容
-  ipcMain.handle('file:readDir', (_event, dirPath: string) => {
-    if (!existsSync(dirPath)) return null
+  ipcMain.handle('file:readDir', async (_event, dirPath: string) => {
+    const safeDir = validatePath(dirPath)
     try {
-      const stat = statSync(dirPath)
-      if (!stat.isDirectory()) return null
-      return readdirSync(dirPath)
+      const dirStat = await statAsync(safeDir)
+      if (!dirStat.isDirectory()) return null
+      return await readdirAsync(safeDir)
     } catch {
       return null
     }
@@ -1540,6 +1570,7 @@ app.whenReady().then(() => {
 
   // 窗口重命名：重命名文件、更新 .epp、更新所有 .eyc 内容引用
   ipcMain.handle('project:renameWindow', (_event, projectDir: string, oldName: string, newName: string, openEycPaths: string[]) => {
+    projectDir = validatePath(projectDir)
     const oldEfw = join(projectDir, oldName + '.efw')
     const newEfw = join(projectDir, newName + '.efw')
     const oldEyc = join(projectDir, oldName + '.eyc')
@@ -1603,6 +1634,7 @@ app.whenReady().then(() => {
 
   // 类模块重命名：重命名 .ecc、更新 .epp、更新项目源码中的类名引用
   ipcMain.handle('project:renameClassModule', (_event, projectDir: string, oldFileName: string, newFileName: string, oldClassName: string, newClassName: string, openSourcePaths: string[]) => {
+    projectDir = validatePath(projectDir)
     const oldClassPath = join(projectDir, oldFileName)
     const newClassPath = join(projectDir, newFileName)
     const openSet = new Set(openSourcePaths.map(p => p.toLowerCase()))
@@ -1651,6 +1683,10 @@ app.whenReady().then(() => {
 
   // 向项目添加文件（创建文件 + 更新 .epp）
   ipcMain.handle('project:addFile', (_event, projectDir: string, fileName: string, fileType: string, content: string) => {
+    projectDir = validatePath(projectDir)
+    if (fileName.includes('/') || fileName.includes('\\') || fileName.includes('..')) {
+      throw new Error('无效的文件名。')
+    }
     const filePath = join(projectDir, fileName)
     writeFileSync(filePath, content, 'utf-8')
     // 更新 .epp 文件
@@ -1698,6 +1734,7 @@ app.whenReady().then(() => {
 
   // 导入资源文件到项目目录并写入 .epp
   ipcMain.handle('project:addResources', async (_event, projectDir: string) => {
+    projectDir = validatePath(projectDir)
     const win = BrowserWindow.getFocusedWindow()
     if (!win || !existsSync(projectDir)) return []
 
@@ -1796,9 +1833,13 @@ app.whenReady().then(() => {
 
   // 替换项目中的现有资源文件内容（保持资源文件名不变）
   ipcMain.handle('project:replaceResourceFile', async (_event, projectDir: string, targetFileName: string) => {
+    projectDir = validatePath(projectDir)
     const win = BrowserWindow.getFocusedWindow()
     if (!win || !existsSync(projectDir) || !targetFileName) {
       return { success: false as const, canceled: false as const, message: '无效参数' }
+    }
+    if (targetFileName.includes('/') || targetFileName.includes('\\') || targetFileName.includes('..')) {
+      return { success: false as const, canceled: false as const, message: '无效的资源文件名' }
     }
 
     const targetPath = (() => {
@@ -1827,6 +1868,7 @@ app.whenReady().then(() => {
 
   // 导入单个资源文件到项目目录（不改资源表），返回导入后的文件名
   ipcMain.handle('project:importResourceFile', async (_event, projectDir: string) => {
+    projectDir = validatePath(projectDir)
     const win = BrowserWindow.getFocusedWindow()
     if (!win || !existsSync(projectDir)) {
       return { success: false as const, canceled: false as const, message: '无效参数' }
@@ -1880,9 +1922,13 @@ app.whenReady().then(() => {
   })
 
   // 获取资源预览数据（可选 base64），避免渲染进程直接 file:// 读取失败
-  ipcMain.handle('project:getResourcePreviewData', (_event, projectDir: string, fileName: string, withContent = true) => {
+  ipcMain.handle('project:getResourcePreviewData', async (_event, projectDir: string, fileName: string, withContent = true) => {
     if (!projectDir || !fileName) {
       return { success: false as const, message: '无效参数' }
+    }
+    projectDir = validatePath(projectDir)
+    if (fileName.includes('/') || fileName.includes('\\') || fileName.includes('..')) {
+      return { success: false as const, message: '无效的资源文件名' }
     }
 
     const filePath = (() => {
@@ -1925,7 +1971,8 @@ app.whenReady().then(() => {
     }
 
     try {
-      const buf = readFileSync(filePath)
+      // 大资源文件读取 + base64 编码走异步，避免阻塞主进程
+      const buf = await readFileAsync(filePath)
       return {
         success: true as const,
         mime,

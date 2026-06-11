@@ -930,7 +930,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             if (t.language === 'eyc') {
               if (t.filePath) openEycPaths.push(t.filePath)
               if (t.value.includes(oldName)) {
-                let newValue = applyWindowRenameToContent(t.value, oldName, newName, !!oldEycPath && !!t.filePath && t.filePath === oldEycPath)
+                const newValue = applyWindowRenameToContent(t.value, oldName, newName, !!oldEycPath && !!t.filePath && t.filePath === oldEycPath)
                 // 若是当前窗口关联的 .eyc 标签页，同时更新路径
                 if (oldEycPath && t.filePath === oldEycPath && newEycPath) {
                   return { ...t, id: newEycPath, label: resolveEycTabLabel(newEycPath, newValue), filePath: newEycPath, value: newValue }
@@ -2649,6 +2649,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       {/* 标签页 */}
       <div
         className="editor-tabs"
+        role="tablist"
         aria-label="打开的文件"
         onContextMenu={(e) => handleTabContextMenu(e, activeTabId)}
       >

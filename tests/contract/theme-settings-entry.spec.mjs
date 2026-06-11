@@ -33,8 +33,8 @@ test('theme settings syntax group exposes fine-grained Monaco token classes', ()
 
 test('theme settings table/header group exposes full table token set', () => {
   const source = fs.readFileSync(tokenMetaPath, 'utf-8')
-  assert.match(source, /表格背景/)
-  assert.match(source, /表格文本/)
+  assert.match(source, /编辑器背景/)
+  assert.match(source, /编辑器文本/)
   assert.match(source, /表格边框/)
   assert.match(source, /表头背景/)
   assert.match(source, /表头文本/)

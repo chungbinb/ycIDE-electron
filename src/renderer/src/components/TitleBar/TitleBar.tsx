@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+﻿import { useState, useRef, useEffect, useCallback, memo } from 'react'
 import './TitleBar.css'
 import { getPrimaryModifierLabel, getQuitShortcutLabel, getRedoShortcutLabel, isMacOSPlatform, type RuntimePlatform } from '../../utils/shortcuts'
 import ycideLogo from '../../assets/icons/YcideLogo.svg'
@@ -321,4 +321,5 @@ function TitleBar({ onMenuAction, onWindowClose, runtimePlatform = 'windows', ha
   )
 }
 
-export default TitleBar
+// memo: App 重渲染时若 props 未变则跳过本组件渲染
+export default memo(TitleBar)

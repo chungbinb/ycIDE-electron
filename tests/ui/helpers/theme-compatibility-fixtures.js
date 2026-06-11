@@ -1,58 +1,31 @@
 const fs = require('node:fs')
 const path = require('node:path')
-const { _electron: electron, expect } = require('@playwright/test')
-
-function getAppRoot() {
-  return path.resolve(__dirname, '..', '..', '..')
-}
-
-async function launchApp(appRoot) {
-  const electronApp = await electron.launch({
-    args: [appRoot],
-    cwd: appRoot,
-    env: {
-      ...process.env,
-      CI: '1',
-    },
-  })
-  const window = await electronApp.firstWindow()
-  await window.waitForLoadState('domcontentloaded')
-  await expect(window.locator('.titlebar')).toBeVisible()
-  return { electronApp, window }
-}
-
-async function closeApp(app) {
-  await app.electronApp.close()
-}
-
-async function openThemeSettings(window) {
-  const dialog = window.locator('.theme-settings-dialog')
-  if (await dialog.isVisible().catch(() => false)) return
-  await window.getByRole('menuitem', { name: '工具(T)' }).click()
-  await window.getByRole('menuitem', { name: '系统配置(O)' }).click()
-  await expect(dialog).toBeVisible()
-}
-
-async function closeThemeSettings(window) {
-  const dialog = window.locator('.theme-settings-dialog')
-  if (!(await dialog.isVisible().catch(() => false))) return
-  await dialog.locator('.theme-settings-close').click()
-  await expect(dialog).toBeHidden()
-}
+const { expect } = require('@playwright/test')
+const {
+  getAppRoot,
+  launchApp,
+  closeApp,
+  findThemeManagerPage,
+  openThemeManager,
+  switchThemeFromMenu,
+  themeListItem,
+  setColorTokenByLabel,
+  getThemeList,
+  deleteThemesNotIn,
+} = require('./theme-token-coverage-fixtures')
 
 async function chooseThemeFromTitlebar(window, themeId) {
-  await closeThemeSettings(window)
-  await window.getByRole('menuitem', { name: '查看(V)' }).click()
-  const themeMenu = window.getByRole('menuitem', { name: '主题' })
-  await themeMenu.hover()
-  if (!(await window.getByRole('menuitem', { name: themeId }).isVisible().catch(() => false))) {
-    await themeMenu.click()
-  }
-  await window.getByRole('menuitem', { name: themeId }).click()
+  await switchThemeFromMenu(window, themeId)
+}
+
+async function closeThemeManager(app) {
+  const page = await findThemeManagerPage(app)
+  if (!page) return
+  await page.getByRole('button', { name: '关闭主题管理器' }).click()
+  await expect.poll(async () => (await findThemeManagerPage(app)) === null).toBe(true)
 }
 
 async function createCompatibilityProject(window, projectName) {
-  await closeThemeSettings(window)
   const appRoot = getAppRoot()
   const workspaceRoot = path.join(appRoot, 'test-results', 'theme-compatibility-workspace')
   fs.mkdirSync(workspaceRoot, { recursive: true })
@@ -66,31 +39,46 @@ async function createCompatibilityProject(window, projectName) {
   const inputs = dialog.locator('input[type=text]')
   await inputs.nth(0).fill(projectName)
   await inputs.nth(1).fill(targetRoot)
-  await dialog.getByRole('button', { name: '确定' }).click()
-  await expect(window.locator('.editor-tab')).toHaveCount(1)
+  await dialog.getByRole('button', { name: '确认创建项目' }).click()
+  await expect(window.locator('.editor-tab').first()).toBeVisible()
 
+  // 新建窗口程序项目默认打开可视化设计器；表格编辑器需双击程序集节点打开。
   await window.locator('.sidebar-tab').filter({ hasText: '项目' }).click()
-  const eycNode = window.locator('.tree-item').filter({ hasText: /\.eyc$/ }).first()
-  await expect(eycNode).toBeVisible()
-  await eycNode.dblclick()
+  const assemblyNode = window.locator('.tree-item').filter({ hasText: '窗口程序集' }).first()
+  await expect(assemblyNode).toBeVisible()
+  await assemblyNode.dblclick()
   await expect(window.locator('.eyc-table-editor')).toBeVisible()
 }
 
-async function setColorTokenByLabel(window, label, value) {
-  const input = window.getByLabel(label)
-  await input.fill((value || '').toLowerCase())
-  await input.press('Enter')
-}
+// 通过主题管理器创建指定名称的自定义主题：
+// 编辑内置主题令牌会自动生成“-副本”主题，保存后经右键菜单重命名为期望名称。
+async function createCustomTheme(app, themeName) {
+  await switchThemeFromMenu(app.window, '默认深色')
+  await expect.poll(async () => app.window.evaluate(async () => (await window.api.theme.getCurrent())?.effectiveThemeId || '')).toBe('默认深色')
 
-async function createCustomTheme(window, themeName) {
-  await openThemeSettings(window)
-  await setColorTokenByLabel(window, '基础文本/背景-主文本', '#33ccaa')
-  await window.getByLabel('自定义主题名称').fill(themeName)
-  await window.getByRole('button', { name: '保存为自定义主题' }).click()
-  const customThemeRadio = window.getByRole('radio', { name: themeName })
-  await expect(customThemeRadio).toBeVisible()
-  await expect(customThemeRadio).toHaveAttribute('aria-checked', 'true')
-  await closeThemeSettings(window)
+  const manager = await openThemeManager(app)
+  const before = await getThemeList(app.window)
+  await setColorTokenByLabel(manager, '基础文本/背景-主文本', '#33ccaa')
+
+  let copyName = ''
+  await expect.poll(async () => {
+    const list = await getThemeList(app.window)
+    copyName = list.find((id) => !before.includes(id)) || ''
+    return copyName
+  }).not.toBe('')
+
+  await themeListItem(manager, copyName).first().click()
+  await manager.getByRole('button', { name: '保存主题' }).click()
+  await expect(manager.locator('.theme-manager-feedback')).toContainText('已保存')
+
+  await themeListItem(manager, copyName).first().click({ button: 'right' })
+  await expect(manager.locator('.theme-manager-context-menu')).toBeVisible()
+  await manager.getByRole('button', { name: '重命名', exact: true }).click()
+  const renameInput = manager.locator('.theme-manager-list-rename-input')
+  await renameInput.fill(themeName)
+  await renameInput.press('Enter')
+  await expect(themeListItem(manager, themeName).first()).toBeVisible()
+  await closeThemeManager(app)
 }
 
 async function ensureThemeSelected(window, themeId) {
@@ -103,7 +91,7 @@ async function ensureThemeSelected(window, themeId) {
 
 async function startJitterSampling(window, scenarioPath) {
   await window.evaluate((scenario) => {
-    const selectors = ['.titlebar', '.sidebar', '.editor-tabs', '.theme-settings-dialog']
+    const selectors = ['.titlebar', '.sidebar', '.editor-tabs']
     const initial = {}
     const max = {}
     for (const selector of selectors) {
@@ -236,7 +224,6 @@ async function runInteractionProbe(window, stateLabel, marker) {
 }
 
 async function runThemeTransitionScenario(window, { scenarioPath, targetThemeId, markerSeed }) {
-  await closeThemeSettings(window)
   await startJitterSampling(window, scenarioPath)
   await chooseThemeFromTitlebar(window, targetThemeId)
   await runInteractionProbe(window, 'transition-in-progress', markerSeed)
@@ -275,7 +262,8 @@ module.exports = {
   getAppRoot,
   launchApp,
   closeApp,
-  openThemeSettings,
+  openThemeManager,
+  closeThemeManager,
   setColorTokenByLabel,
   createCompatibilityProject,
   createCustomTheme,
@@ -283,4 +271,6 @@ module.exports = {
   chooseThemeFromTitlebar,
   runThemeTransitionScenario,
   assertJitterFailurePolicy,
+  getThemeList,
+  deleteThemesNotIn,
 }

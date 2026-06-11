@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, memo } from 'react'
 import './Toolbar.css'
 import Icon from '../Icon/Icon'
 import '../Icon/Icon.css'
@@ -256,4 +256,5 @@ function Toolbar({
   )
 }
 
-export default Toolbar
+// memo: App 重渲染时若 props 未变则跳过本组件渲染
+export default memo(Toolbar)

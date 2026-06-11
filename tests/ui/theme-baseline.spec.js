@@ -8,16 +8,17 @@ const {
   writeThemeConfig,
   createInvalidThemeConfig,
   chooseThemeFromTitlebar,
-  openThemeSettings,
-  chooseThemeFromSettings,
+  openThemeManager,
+  applyThemeFromManager,
+  waitForThemeManagerPage,
   readRootCssVar,
   THEME_IDS,
   ROOT_BG_PRIMARY,
 } = require('./helpers/theme-baseline-fixtures')
 
 // Requirement trace:
-// THME-01 -> title bar switch path
-// THME-02 -> settings persistence + invalid-config fallback/repair flow
+// THME-01 -> title bar switch path (查看 -> 主题 子菜单)
+// THME-02 -> manager persistence + invalid-config fallback/repair flow
 // THME-03 -> readable outcomes validated by 13-COVERAGE-CHECKLIST + 13-CONTRAST-LOG
 
 test.describe('theme baseline validation', () => {
@@ -38,14 +39,14 @@ test.describe('theme baseline validation', () => {
     }
   })
 
-  test('switches from settings entry and persists after restart', async () => {
+  test('switches from theme manager entry and persists after restart', async () => {
     const appRoot = path.resolve(__dirname, '..', '..')
 
     const first = await launchElectronApp(appRoot)
     try {
-      await openThemeSettings(first.window)
-      await chooseThemeFromSettings(first.window, THEME_IDS.light)
-      await expect(first.window.getByRole('radio', { name: THEME_IDS.light })).toHaveAttribute('aria-checked', 'true')
+      const manager = await openThemeManager(first)
+      await applyThemeFromManager(manager, THEME_IDS.light)
+      await expect.poll(async () => first.window.evaluate(async () => (await window.api.theme.getCurrent())?.effectiveThemeId || '')).toBe(THEME_IDS.light)
     } finally {
       await first.electronApp.close()
     }
@@ -73,8 +74,10 @@ test.describe('theme baseline validation', () => {
 
     const relaunched = await launchElectronApp(appRoot)
     try {
-      await expect(relaunched.window.locator('.theme-settings-dialog')).toBeVisible()
-      await expect(relaunched.window.getByRole('status')).toContainText('已回退到默认深色主题')
+      // repair_required 警告自动打开主题管理器弹窗，并在输出面板提示回退信息。
+      const manager = await waitForThemeManagerPage(relaunched)
+      await expect(manager.locator('.theme-manager-dialog')).toBeVisible()
+      await expect(relaunched.window.locator('.output-panel')).toContainText('已回退到默认深色主题')
 
       const current = await relaunched.window.evaluate(async () => window.api.theme.getCurrent())
       expect(current.selectedThemeId).toBe(THEME_IDS.dark)
@@ -84,17 +87,18 @@ test.describe('theme baseline validation', () => {
       expect(fallbackConfig.currentThemeId).toBe(THEME_IDS.dark)
       expect(fallbackConfig.retainedInvalidTheme?.themeId).toBe(THEME_IDS.invalid)
 
-      await chooseThemeFromSettings(relaunched.window, THEME_IDS.light)
+      await applyThemeFromManager(manager, THEME_IDS.light)
+      await expect.poll(async () => relaunched.window.evaluate(async () => (await window.api.theme.getCurrent())?.selectedThemeId || '')).toBe(THEME_IDS.light)
       const repaired = await relaunched.window.evaluate(async () => window.api.theme.getCurrent())
       expect(repaired.selectedThemeId).toBe(THEME_IDS.light)
       expect(repaired.effectiveThemeId).toBe(THEME_IDS.light)
-      await expect(relaunched.window.getByRole('status')).toHaveCount(0)
     } finally {
       await relaunched.electronApp.close()
     }
 
     const persistedConfig = JSON.parse(fs.readFileSync(getThemeConfigPath(userDataPath), 'utf-8'))
     expect(persistedConfig.currentThemeId).toBe(THEME_IDS.light)
-    expect(persistedConfig.retainedInvalidTheme).toBeNull()
+    // retainedInvalidTheme 仅在切换到同名主题（即修复该主题本身）时清除，切换到其他主题时保留。
+    expect(persistedConfig.retainedInvalidTheme?.themeId).toBe(THEME_IDS.invalid)
   })
 })

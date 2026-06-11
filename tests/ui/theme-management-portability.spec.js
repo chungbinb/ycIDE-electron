@@ -3,115 +3,110 @@ const {
   getAppRoot,
   launchApp,
   closeApp,
-  openThemeSettings,
+  openThemeManager,
+  switchThemeFromMenu,
+  themeListItem,
   setColorTokenByLabel,
+  acceptNextDialog,
+  deleteThemesNotIn,
+  getThemeList,
 } = require('./helpers/theme-token-coverage-fixtures')
 
-async function openThemeManager(window) {
-  const manager = window.locator('.theme-manager-dialog')
-  if (await manager.isVisible().catch(() => false)) return
-  const settingsDialog = window.locator('.theme-settings-dialog')
-  if (await settingsDialog.isVisible().catch(() => false)) {
-    await window.getByRole('button', { name: '主题管理器' }).click()
-    await expect(manager).toBeVisible()
-    return
-  }
-  await window.getByRole('menuitem', { name: '工具(T)' }).click()
-  await window.getByRole('menuitem', { name: '主题管理器(M)' }).click()
-  await expect(manager).toBeVisible()
+async function ensureBuiltinDark(app) {
+  await switchThemeFromMenu(app.window, '默认深色')
+  await expect.poll(async () => app.window.evaluate(async () => (await window.api.theme.getCurrent())?.effectiveThemeId || '')).toBe('默认深色')
+}
+
+// 编辑内置主题令牌触发“自动副本”，返回新生成的主题名。
+async function createDraftCopyTheme(app, manager) {
+  const before = await getThemeList(app.window)
+  await setColorTokenByLabel(manager, '基础文本/背景-主文本', '#123abc')
+  let copyName = ''
+  await expect.poll(async () => {
+    const list = await getThemeList(app.window)
+    copyName = list.find((id) => !before.includes(id)) || ''
+    return copyName
+  }).not.toBe('')
+  return copyName
+}
+
+async function openThemeContextMenu(manager, themeId) {
+  await themeListItem(manager, themeId).first().click({ button: 'right' })
+  await expect(manager.locator('.theme-manager-context-menu')).toBeVisible()
 }
 
 test.describe('theme management portability', () => {
   test.describe.configure({ mode: 'serial' })
 
-  test('MGMT-01 + D16-01/D16-02/D16-03/D16-04/D16-05: manager open create-from-current draft-indicator built-in-guard previous-builtin-fallback', async () => {
+  test('MGMT-01 + D16-01/D16-02/D16-03/D16-04/D16-05: manager open auto-copy draft-indicator built-in-guard previous-builtin-fallback', async () => {
     const app = await launchApp(getAppRoot())
+    const themesBefore = await getThemeList(app.window)
     try {
-      await openThemeSettings(app.window)
-      await setColorTokenByLabel(app.window, '基础文本/背景-主文本', '#123abc')
-      await expect(app.window.getByRole('button', { name: '撤销上一步' })).toBeEnabled()
+      await ensureBuiltinDark(app)
+      const manager = await openThemeManager(app)
+      await expect.poll(async () => manager.locator('.theme-manager-list-item').count()).toBeGreaterThan(1)
 
-      await app.window.getByRole('button', { name: '主题管理器' }).click()
-      const manager = app.window.locator('.theme-manager-dialog')
-      await expect(manager).toBeVisible()
-      await expect.poll(async () => app.window.locator('.theme-manager-list-item').count()).toBeGreaterThan(1)
-
-      const draftItem = app.window.locator('.theme-manager-list-item').filter({ hasText: '未保存草稿' }).first()
+      // D16-02: 未保存草稿标识（编辑内置主题自动生成可编辑副本草稿）
+      const copyName = await createDraftCopyTheme(app, manager)
+      const draftItem = manager.locator('.theme-manager-list-item').filter({ hasText: '未保存草稿' }).first()
       await expect(draftItem).toBeVisible()
       await draftItem.click()
-      await expect(app.window.locator('.theme-manager-detail-draft')).toContainText('未保存草稿')
+      await expect(manager.locator('.theme-manager-detail-draft')).toContainText('未保存草稿')
 
-      const themeName = `管理主题-${Date.now()}`
-      await app.window.getByLabel('从当前主题创建').fill(themeName)
-      await app.window.getByRole('button', { name: '从当前创建' }).click()
-      await expect(app.window.locator('.theme-manager-list-item').filter({ hasText: themeName })).toBeVisible()
+      // D16-04: 内置主题不可重命名/删除（右键菜单按钮禁用）
+      await openThemeContextMenu(manager, '默认深色')
+      await expect(manager.getByRole('button', { name: '重命名', exact: true })).toBeDisabled()
+      await expect(manager.getByRole('button', { name: '删除主题' })).toBeDisabled()
+      await manager.locator('.theme-manager-detail').click({ position: { x: 4, y: 4 } })
+      await expect(manager.locator('.theme-manager-context-menu')).toHaveCount(0)
 
-      await app.window.locator('.theme-manager-list-item', { hasText: '默认深色' }).first().click()
-      await expect(app.window.getByRole('button', { name: '重命名主题' })).toBeDisabled()
-      await expect(app.window.getByRole('button', { name: '删除主题' })).toBeDisabled()
+      // 保存草稿，设为当前后删除，验证 previous built-in 回退
+      await themeListItem(manager, copyName).first().click()
+      await manager.getByRole('button', { name: '保存主题' }).click()
+      await expect(manager.locator('.theme-manager-feedback')).toContainText('已保存')
+      await manager.getByRole('button', { name: '设为当前' }).click()
+      await expect.poll(async () => app.window.evaluate(async () => (await window.api.theme.getCurrent())?.effectiveThemeId || '')).toBe(copyName)
 
-      await app.window.locator('.theme-manager-list-item', { hasText: themeName }).first().click()
-      await app.window.getByLabel('删除确认名称').fill(themeName)
-      app.window.once('dialog', async (dialog) => {
-        await dialog.accept()
-      })
-      await app.window.getByRole('button', { name: '删除主题' }).click()
-      await expect(app.window.locator('.theme-manager-feedback')).toContainText('previous built-in')
+      await openThemeContextMenu(manager, copyName)
+      acceptNextDialog(app.window, `确定要删除主题"${copyName}"吗？此操作不可撤销。`)
+      await manager.getByRole('button', { name: '删除主题' }).click()
+      await expect(manager.locator('.theme-manager-feedback')).toContainText('previous built-in')
+      await expect.poll(async () => app.window.evaluate(async () => (await window.api.theme.getCurrent())?.effectiveThemeId || '')).toBe('默认深色')
     } finally {
+      await deleteThemesNotIn(app.window, themesBefore)
       await closeApp(app)
     }
   })
 
-  test('MGMT-01/MGMT-02 + D16-02/D16-06/D16-07/D16-08/D16-09/D16-10/D16-11/D16-12: manager crud active-rename-sync and export', async () => {
+  test('MGMT-01/MGMT-02 + D16-06..D16-12: manager rename duplicate-guard active-rename-sync and export', async () => {
     const app = await launchApp(getAppRoot())
+    const themesBefore = await getThemeList(app.window)
     try {
-      await openThemeSettings(app.window)
-      await openThemeManager(app.window)
+      await ensureBuiltinDark(app)
+      const manager = await openThemeManager(app)
+      const copyName = await createDraftCopyTheme(app, manager)
+      await themeListItem(manager, copyName).first().click()
+      await manager.getByRole('button', { name: '保存主题' }).click()
+      await expect(manager.locator('.theme-manager-feedback')).toContainText('已保存')
 
-      const themeA = `管理冲突A-${Date.now()}`
-      const themeB = `管理冲突B-${Date.now()}`
-      const themeRenamed = `${themeA}-已重命名`
-      await app.window.getByLabel('从当前主题创建').fill(themeA)
-      await app.window.getByRole('button', { name: '从当前创建' }).click()
-      await expect(app.window.locator('.theme-manager-list-item', { hasText: themeA })).toBeVisible()
+      // 重命名为已存在名称 -> 拒绝
+      await openThemeContextMenu(manager, copyName)
+      await manager.getByRole('button', { name: '重命名', exact: true }).click()
+      const renameInput = manager.locator('.theme-manager-list-rename-input')
+      await renameInput.fill('默认深色')
+      await renameInput.press('Enter')
+      await expect(manager.locator('.theme-manager-feedback')).toContainText('不可重复')
 
-      await app.window.getByLabel('从当前主题创建').fill(themeB)
-      await app.window.getByRole('button', { name: '从当前创建' }).click()
-      await expect(app.window.locator('.theme-manager-list-item', { hasText: themeB })).toBeVisible()
+      // 重命名成功，当前主题（持久化）同步为新名称
+      const themeRenamed = `${copyName}-已重命名`
+      await openThemeContextMenu(manager, copyName)
+      await manager.getByRole('button', { name: '重命名', exact: true }).click()
+      await renameInput.fill(themeRenamed)
+      await renameInput.press('Enter')
+      await expect(themeListItem(manager, themeRenamed).first()).toBeVisible()
+      await expect.poll(async () => app.window.evaluate(async () => (await window.api.theme.getCurrent())?.selectedThemeId || '')).toBe(themeRenamed)
 
-      await app.window.locator('.theme-manager-list-item', { hasText: themeA }).first().click()
-      await app.window.getByRole('button', { name: '设为当前' }).click()
-      await expect(app.window.locator('.theme-manager-list-item', { hasText: themeA }).first()).toContainText('当前')
-      await app.window.getByLabel('重命名主题名称').fill(themeB)
-      await app.window.getByRole('button', { name: '重命名主题' }).click()
-      await expect(app.window.locator('.theme-manager-feedback')).toContainText('已存在')
-      await app.window.getByLabel('重命名主题名称').fill(themeRenamed)
-      await app.window.getByRole('button', { name: '重命名主题' }).click()
-      const renamedItem = app.window.locator('.theme-manager-list-item', { hasText: themeRenamed }).first()
-      await expect(renamedItem).toBeVisible()
-      await expect(renamedItem).toContainText('当前')
-      await app.window.getByLabel('关闭主题管理器').click()
-      const settingsCurrentAfterRename = app.window.getByRole('radio', { name: themeRenamed })
-      await expect(settingsCurrentAfterRename).toHaveAttribute('aria-checked', 'true')
-
-      await app.window.getByRole('button', { name: '主题管理器' }).click()
-      await expect(app.window.locator('.theme-manager-dialog')).toBeVisible()
-      await app.window.locator('.theme-manager-list-item', { hasText: themeRenamed }).first().click()
-
-      await app.window.getByLabel('删除确认名称').fill(`${themeRenamed}-错误`)
-      app.window.once('dialog', async (dialog) => {
-        await dialog.accept()
-      })
-      await app.window.getByRole('button', { name: '删除主题' }).click()
-      await expect(app.window.locator('.theme-manager-feedback')).toContainText('确认名称不匹配')
-
-      await app.window.getByLabel('删除确认名称').fill(themeRenamed)
-      app.window.once('dialog', async (dialog) => {
-        await dialog.accept()
-      })
-      await app.window.getByRole('button', { name: '删除主题' }).click()
-      await expect(app.window.locator('.theme-manager-feedback')).toContainText('已删除')
-
+      // 导出（测试钩子安装于主窗口）
       await app.window.evaluate(() => {
         window.__themeExportCalls = []
         window.__ycideTestThemeExport = async (themeId) => {
@@ -126,14 +121,22 @@ test.describe('theme management portability', () => {
         window.__restoreThemeExport = () => { window.__ycideTestThemeExport = undefined }
       })
 
-      await app.window.locator('.theme-manager-list-item', { hasText: themeB }).first().click()
-      await app.window.getByRole('button', { name: '导出主题' }).click()
-      await expect(app.window.locator('.theme-manager-feedback')).toContainText(`${themeB}.ycide-theme.json`)
-      await expect.poll(async () => app.window.evaluate(() => window.__themeExportCalls || [])).toEqual([themeB])
+      await openThemeContextMenu(manager, themeRenamed)
+      await manager.getByRole('button', { name: '导出主题' }).click()
+      await expect(manager.locator('.theme-manager-feedback')).toContainText(`${themeRenamed}.ycide-theme.json`)
+      await expect.poll(async () => app.window.evaluate(() => window.__themeExportCalls || [])).toEqual([themeRenamed])
+
+      // 删除（当前主题被删除时回退 previous built-in）
+      await openThemeContextMenu(manager, themeRenamed)
+      acceptNextDialog(app.window, `确定要删除主题"${themeRenamed}"吗？此操作不可撤销。`)
+      await manager.getByRole('button', { name: '删除主题' }).click()
+      await expect(manager.locator('.theme-manager-feedback')).toContainText('已删除')
+      await expect.poll(async () => app.window.evaluate(async () => (await window.api.theme.getList()) || [])).not.toContain(themeRenamed)
     } finally {
       await app.window.evaluate(() => {
         if (window.__restoreThemeExport) window.__restoreThemeExport()
       }).catch(() => {})
+      await deleteThemesNotIn(app.window, themesBefore)
       await closeApp(app)
     }
   })
@@ -141,7 +144,8 @@ test.describe('theme management portability', () => {
   test('MGMT-03/MGMT-04 + D16-13/D16-14/D16-15: invalid import no-write and conflict overwrite-confirm keep-current', async () => {
     const app = await launchApp(getAppRoot())
     try {
-      await openThemeManager(app.window)
+      await ensureBuiltinDark(app)
+      const manager = await openThemeManager(app)
       const importedThemeName = `导入主题-${Date.now()}`
       await app.window.evaluate((themeName) => {
         window.__importPrepareStep = 0
@@ -214,24 +218,27 @@ test.describe('theme management portability', () => {
         }
       }, importedThemeName)
 
-      await app.window.getByRole('button', { name: '导入主题' }).click()
-      await expect(app.window.locator('.theme-manager-diagnostics')).toContainText('theme.colors')
-      await expect(app.window.getByRole('button', { name: '确认导入' })).toHaveCount(0)
+      await openThemeContextMenu(manager, '默认深色')
+      await manager.getByRole('button', { name: '导入主题' }).click()
+      await expect(manager.locator('.theme-manager-diagnostics')).toContainText('theme.colors')
+      await expect(manager.getByRole('button', { name: '确认导入' })).toHaveCount(0)
       await expect.poll(async () => app.window.evaluate(() => window.__importCommitCalls || [])).toHaveLength(0)
-      await app.window.getByRole('button', { name: '导入主题' }).click()
-      await expect(app.window.getByRole('button', { name: '确认导入' })).toBeDisabled()
-      await app.window.getByRole('radio', { name: '覆盖现有主题' }).click()
-      await expect(app.window.getByRole('button', { name: '确认导入' })).toBeDisabled()
-      await app.window.getByLabel('我确认覆盖现有主题').check()
-      await expect(app.window.getByRole('button', { name: '确认导入' })).toBeEnabled()
-      await app.window.getByRole('button', { name: '确认导入' }).click()
+
+      await openThemeContextMenu(manager, '默认深色')
+      await manager.getByRole('button', { name: '导入主题' }).click()
+      await expect(manager.getByRole('button', { name: '确认导入' })).toBeDisabled()
+      await manager.getByRole('radio', { name: '覆盖现有主题' }).click()
+      await expect(manager.getByRole('button', { name: '确认导入' })).toBeDisabled()
+      await manager.getByLabel('我确认覆盖现有主题').check()
+      await expect(manager.getByRole('button', { name: '确认导入' })).toBeEnabled()
+      await manager.getByRole('button', { name: '确认导入' }).click()
 
       await expect.poll(async () => app.window.evaluate(() => window.__importCommitCalls || [])).toHaveLength(1)
-      await expect(app.window.getByRole('button', { name: '立即切换' })).toBeVisible()
-      await expect(app.window.getByRole('button', { name: '保持当前' })).toBeVisible()
-      await app.window.getByRole('button', { name: '保持当前' }).click()
-      await expect(app.window.locator('.theme-manager-feedback')).toContainText('已导入')
-      await expect(app.window.locator('.theme-manager-list-item', { hasText: '默认深色' }).first()).toContainText('当前')
+      await expect(manager.getByRole('button', { name: '立即切换' })).toBeVisible()
+      await expect(manager.getByRole('button', { name: '保持当前' })).toBeVisible()
+      await manager.getByRole('button', { name: '保持当前' }).click()
+      await expect(manager.locator('.theme-manager-feedback')).toContainText('已导入')
+      await expect(themeListItem(manager, '默认深色').first()).toContainText('当前')
     } finally {
       await app.window.evaluate(() => {
         if (window.__restoreThemeImport) window.__restoreThemeImport()
@@ -240,10 +247,11 @@ test.describe('theme management portability', () => {
     }
   })
 
-  test('MGMT-03 + D16-16: import success switch-now activates selected imported theme', async () => {
+  test('MGMT-03 + D16-16: import success switch-now previews imported theme immediately', async () => {
     const app = await launchApp(getAppRoot())
     try {
-      await openThemeManager(app.window)
+      await ensureBuiltinDark(app)
+      const manager = await openThemeManager(app)
       await app.window.evaluate(() => {
         window.__importCommitCalls = []
         window.__ycideTestThemeImportPrepare = async () => ({
@@ -302,18 +310,21 @@ test.describe('theme management portability', () => {
         }
       })
 
-      await app.window.getByRole('button', { name: '导入主题' }).click()
-      await app.window.getByRole('radio', { name: '覆盖现有主题' }).click()
-      await app.window.getByLabel('我确认覆盖现有主题').check()
-      await app.window.getByRole('button', { name: '确认导入' }).click()
-      await expect(app.window.getByRole('button', { name: '立即切换' })).toBeVisible()
-      await app.window.getByRole('button', { name: '立即切换' }).click()
-      await expect(app.window.locator('.theme-manager-feedback')).toContainText('立即切换到“默认浅色”')
-      await expect(app.window.locator('.theme-manager-list-item', { hasText: '默认浅色' }).first()).toContainText('当前')
+      await openThemeContextMenu(manager, '默认深色')
+      await manager.getByRole('button', { name: '导入主题' }).click()
+      await manager.getByRole('radio', { name: '覆盖现有主题' }).click()
+      await manager.getByLabel('我确认覆盖现有主题').check()
+      await manager.getByRole('button', { name: '确认导入' }).click()
+      await expect(manager.getByRole('button', { name: '立即切换' })).toBeVisible()
+      await manager.getByRole('button', { name: '立即切换' }).click()
+      await expect(manager.locator('.theme-manager-feedback')).toContainText('立即切换到“默认浅色”')
+      // “立即切换”为预览切换：根令牌立即生效（提交为 mock，预览加载真实内置浅色主题文件）
+      await expect.poll(async () => app.window.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim().toLowerCase())).toBe('#f5f5f5')
     } finally {
       await app.window.evaluate(() => {
         if (window.__restoreThemeImport) window.__restoreThemeImport()
       }).catch(() => {})
+      await app.window.evaluate(async () => { await window.api.theme.setCurrent('默认深色') }).catch(() => {})
       await closeApp(app)
     }
   })

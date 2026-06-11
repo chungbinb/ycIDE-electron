@@ -168,7 +168,10 @@ function ThemeManager({
     setEditingThemeId(null)
     setEditingThemeName('')
     setDialogPosition(null)
-  }, [open, currentTheme, themes])
+    // 仅在打开时重置一次：themes/currentTheme 变化（导入、重命名等）不应清空
+    // 导入确认/立即切换面板与操作反馈；列表变化后的选中项兜底由下方 effect 处理。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   useEffect(() => {
     if (!themeContextMenu) return

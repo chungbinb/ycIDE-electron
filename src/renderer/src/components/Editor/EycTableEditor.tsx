@@ -3778,7 +3778,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             if (i === editCell.lineIndex) { result.push(...dissolvedReplacementLines); continue }
             if (deleteSet.has(i)) continue
             if (unindentSet.has(i)) {
-              let ln = nl[i]
+              const ln = nl[i]
               const lead = ln.match(/^ */)?.[0] || ''
               const drop = Math.min(4, lead.length)
               result.push(ln.slice(drop))
@@ -4027,7 +4027,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const ln = parsedLines[lineIndex]
     if (!ln || (ln.type !== 'resource' && ln.type !== 'constant')) return
     const resourceName = (ln.fields[0] || '').trim()
-    let resourceFile = unquote((ln.fields[1] || '').trim())
+    const resourceFile = unquote((ln.fields[1] || '').trim())
     if (!resourceFile) {
       const imported = await attachResourceFileToLine(lineIndex)
       if (!imported) return
@@ -4228,6 +4228,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
     }, 0)
   }, [currentText, pushUndo, flowLines, shouldAliasJudgeStartInTableMode])
+
+  // 同一行内按住拖动（行未聚焦）：进入该行编辑态并选中拖动范围内的文本
+  beginLineTextSelectRef.current = (li, isVirtual, anchorX, headX) => {
+    const lineEl = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${li}"] .eyc-code-line`)
+    if (!lineEl) return
+    startEditLine(li, headX, lineEl.getBoundingClientRect().left, isVirtual, false, anchorX)
+  }
 
   // 同一行内按住拖动（行未聚焦）：进入该行编辑态并选中拖动范围内的文本
   beginLineTextSelectRef.current = (li, isVirtual, anchorX, headX) => {
@@ -5308,7 +5315,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
     if (action === 'newSubprogram') {
       setEditorContextMenu(null)
-      ref && typeof ref !== 'function' && ref.current?.insertSubroutine?.()
+      if (ref && typeof ref !== 'function') {
+        ref.current?.insertSubroutine?.()
+      }
       return
     }
     if (action === 'undo') {
