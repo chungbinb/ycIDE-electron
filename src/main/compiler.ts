@@ -101,6 +101,15 @@ interface SubprogramDef {
   name: string
   params: Array<{ name: string; type: string }>
   isClassModule: boolean
+  returnType: string
+  isPublic: boolean
+  className: string // 所属类模块的类名（非类模块为空字符串）
+}
+
+interface ProjectClassModuleDef {
+  className: string
+  fileName: string
+  memberVars: Array<{ name: string; type: string }>
 }
 
 interface ProjectDataTypeFieldDef {
@@ -242,12 +251,14 @@ interface ProjectCompileMetadata {
   subprograms: SubprogramDef[]
   dataTypes: ProjectDataTypeDef[]
   dllCommands: ProjectDllCommandDef[]
+  classModules: ProjectClassModuleDef[]
 }
 
 let compileProtocolCache: LoadedCompileProtocols | null = null
 let compileProtocolCacheSignature = ''
 let projectCompileMetadataCache: { fingerprint: string; metadata: ProjectCompileMetadata } | null = null
 let activeProjectCustomTypeNames: Set<string> = new Set()
+let activeProjectClassNames: Set<string> = new Set()
 
 // 正在运行的进程
 let runningProcess: ChildProcess | null = null
@@ -1387,6 +1398,7 @@ function parseWindowFile(efwPath: string): WindowFileInfo {
 // 易语言数据类型 → C 类型
 function mapTypeToCType(type: string): string {
   const trimmed = (type || '').trim()
+  if (activeProjectClassNames.has(trimmed)) return trimmed
   if (activeProjectCustomTypeNames.has(trimmed)) return `struct ${trimmed}`
   if (trimmed.includes('指针') || trimmed.includes('ptr') || trimmed.includes('PTR')) return 'intptr_t'
   const map: Record<string, string> = {
@@ -1399,6 +1411,7 @@ function mapTypeToCType(type: string): string {
 
 function getTypeDefaultInitializer(type: string): string {
   const trimmed = (type || '').trim()
+  if (activeProjectClassNames.has(trimmed)) return '{}'
   if (activeProjectCustomTypeNames.has(trimmed)) return '{}'
   const cType = mapTypeToCType(trimmed)
   if (cType === 'wchar_t*') return 'NULL'
@@ -1797,6 +1810,8 @@ function collectProjectSubprogramDefs(project: ProjectInfo, editorFiles?: Map<st
     const content = editorContent || (existsSync(sourcePath) ? readFileSync(sourcePath, 'utf-8') : '')
     if (!content) continue
 
+    const isClassFile = /\.ecc$/i.test(f.fileName)
+    let currentClassName = ''
     let currentSub: SubprogramDef | null = null
     for (const rawLine of content.split('\n')) {
       const line = rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
@@ -1807,16 +1822,21 @@ function collectProjectSubprogramDefs(project: ProjectInfo, editorFiles?: Map<st
           currentSub = null
           continue
         }
-        if (!seen.has(name)) {
+        // 类方法以 类名::方法名 去重，不同类可以有同名方法（如 _初始化/_销毁）
+        const dedupeKey = isClassFile ? `${currentClassName}::${name}` : name
+        if (!seen.has(dedupeKey)) {
           currentSub = {
             name,
             params: [],
-            isClassModule: /\.ecc$/i.test(f.fileName),
+            isClassModule: isClassFile,
+            returnType: (parts[1] || '').trim(),
+            isPublic: (parts[2] || '').includes('公开'),
+            className: isClassFile ? currentClassName : '',
           }
           result.push(currentSub)
-          seen.add(name)
+          seen.add(dedupeKey)
         } else {
-          currentSub = result.find(sub => sub.name === name) || null
+          currentSub = result.find(sub => sub.name === name && sub.className === (isClassFile ? currentClassName : '')) || null
         }
         continue
       }
@@ -1827,8 +1847,50 @@ function collectProjectSubprogramDefs(project: ProjectInfo, editorFiles?: Map<st
         if (paramName) currentSub.params.push({ name: paramName, type: paramType })
         continue
       }
-      if (line.startsWith('.程序集 ') || line.startsWith('.版本 ') || line.startsWith('.全局变量 ') || line.startsWith('.程序集变量 ')) {
+      if (line.startsWith('.程序集 ')) {
+        if (isClassFile) {
+          currentClassName = (splitDeclParts(line.substring(5))[0] || '').trim()
+        }
         currentSub = null
+        continue
+      }
+      if (line.startsWith('.版本 ') || line.startsWith('.全局变量 ') || line.startsWith('.程序集变量 ')) {
+        currentSub = null
+      }
+    }
+  }
+  return result
+}
+
+// 收集项目类模块（.ecc）的类名与成员变量（程序集变量）
+function collectProjectClassModules(project: ProjectInfo, editorFiles?: Map<string, string>): ProjectClassModuleDef[] {
+  const result: ProjectClassModuleDef[] = []
+  const seen = new Set<string>()
+  for (const f of project.files) {
+    if (f.type !== 'EYC' || !/\.ecc$/i.test(f.fileName)) continue
+    const sourcePath = join(project.projectDir, f.fileName)
+    const editorContent = editorFiles?.get(f.fileName)
+    const content = editorContent || (existsSync(sourcePath) ? readFileSync(sourcePath, 'utf-8') : '')
+    if (!content) continue
+
+    let current: ProjectClassModuleDef | null = null
+    for (const rawLine of content.split('\n')) {
+      const line = rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
+      if (line.startsWith('.程序集 ')) {
+        const className = (splitDeclParts(line.substring(5))[0] || '').trim()
+        if (className && !seen.has(className)) {
+          current = { className, fileName: f.fileName, memberVars: [] }
+          result.push(current)
+          seen.add(className)
+        } else {
+          current = result.find(c => c.className === className) || null
+        }
+        continue
+      }
+      if (line.startsWith('.程序集变量 ') && current) {
+        const parts = splitDeclParts(line.substring(6))
+        const varName = (parts[0] || '').trim()
+        if (varName) current.memberVars.push({ name: varName, type: (parts[1] || '整数型').trim() })
       }
     }
   }
@@ -2046,6 +2108,7 @@ function resolveProjectCompileMetadata(project: ProjectInfo, editorFiles?: Map<s
     subprograms: collectProjectSubprogramDefs(project, editorFiles),
     dataTypes: collectProjectDataTypes(project, editorFiles),
     dllCommands: collectProjectDllCommands(project, editorFiles),
+    classModules: collectProjectClassModules(project, editorFiles),
   }
   projectCompileMetadataCache = { fingerprint, metadata }
   return metadata
@@ -3054,11 +3117,19 @@ function generateProjectDllWrapperCode(projectDllCommands: ProjectDllCommandDef[
 // .eyc 转 C 代码转译器
 // 将易语言源代码中的子程序转译成 C 函数
 // 命令识别基于已加载的支持库，支持第三方支持库扩展
-function transpileEycContent(eycContent: string, fileName: string, projectGlobals: GlobalVarDef[] = [], projectConstants: ConstantDef[] = [], projectResources: ProjectResourceEntry[] = [], libraryConstants: LibraryConstantDef[] = [], projectSubprograms: SubprogramDef[] = [], projectDataTypes: ProjectDataTypeDef[] = [], projectDllCommands: ProjectDllCommandDef[] = [], debugBuild = false, breakpoints: Record<string, number[]> = {}, targetPlatform: TargetPlatform = 'windows'): string {
+function transpileEycContent(eycContent: string, fileName: string, projectGlobals: GlobalVarDef[] = [], projectConstants: ConstantDef[] = [], projectResources: ProjectResourceEntry[] = [], libraryConstants: LibraryConstantDef[] = [], projectSubprograms: SubprogramDef[] = [], projectDataTypes: ProjectDataTypeDef[] = [], projectDllCommands: ProjectDllCommandDef[] = [], debugBuild = false, breakpoints: Record<string, number[]> = {}, targetPlatform: TargetPlatform = 'windows', projectClassModules: ProjectClassModuleDef[] = []): string {
   // 从已加载的支持库构建命令查找表
   const commandMap = buildCommandMap(targetPlatform)
   const isClassModuleSource = /\.ecc$/i.test(fileName)
-  const directCallables: DirectCallableNames = new Set(projectSubprograms.map(sub => sub.name))
+  // 类方法不能按裸名跨文件直接调用；类模块自身文件内允许调用本类方法（C++ 成员调用）
+  const ownClassNames = new Set(
+    isClassModuleSource ? projectClassModules.filter(c => c.fileName === fileName).map(c => c.className) : [],
+  )
+  const directCallables: DirectCallableNames = new Set(
+    projectSubprograms
+      .filter(sub => !sub.isClassModule || ownClassNames.has(sub.className))
+      .map(sub => sub.name),
+  )
   for (const dllCmd of projectDllCommands) directCallables.add(dllCmd.name)
 
   const lines = eycContent.split('\n')
@@ -4009,6 +4080,36 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     result += generateProjectDllWrapperCode(projectDllCommands)
   }
 
+  // ---- 项目类模块：struct 声明（成员变量 + 方法签名），方法体在各自类模块 cpp 中定义 ----
+  const classMethodsByName = new Map<string, SubprogramDef[]>()
+  for (const sub of projectSubprograms) {
+    if (!sub.isClassModule || !sub.className) continue
+    const list = classMethodsByName.get(sub.className) || []
+    list.push(sub)
+    classMethodsByName.set(sub.className, list)
+  }
+  const buildMethodSignature = (params: Array<{ name: string; type: string }>): string => {
+    if (params.length === 0) return 'void'
+    return params.map(p => `${mapTypeToCType(p.type)} ${p.name}`).join(', ')
+  }
+  const methodReturnC = (returnType: string): string => (returnType ? mapTypeToCType(returnType) : 'void')
+  if (projectClassModules.length > 0) {
+    result += '/* 项目类模块声明 */\n'
+    for (const cls of projectClassModules) {
+      result += `struct ${cls.className} {\n`
+      for (const mv of cls.memberVars) {
+        result += `    ${mapTypeToCType(mv.type)} ${mv.name} = ${getTypeDefaultInitializer(mv.type)};\n`
+      }
+      result += `    ${cls.className}();\n`
+      result += `    ~${cls.className}();\n`
+      for (const m of classMethodsByName.get(cls.className) || []) {
+        result += `    ${methodReturnC(m.returnType)} ${m.name}(${buildMethodSignature(m.params)});\n`
+      }
+      result += '};\n'
+      result += `static wchar_t* yc_value_to_text(const ${cls.className}&) { return (wchar_t*)L"<${cls.className}>"; }\n\n`
+    }
+  }
+
   const externalSubprograms = projectSubprograms.filter(sub => !sub.isClassModule)
   if (externalSubprograms.length > 0) {
     result += '/* 项目子程序前置声明 */\n'
@@ -4016,7 +4117,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       const params = sub.params.length === 0
         ? 'void'
         : sub.params.map(p => `${mapTypeToCType(p.type)} ${p.name}`).join(', ')
-      result += `extern void ${sub.name}(${params});\n`
+      result += `extern ${methodReturnC(sub.returnType)} ${sub.name}(${params});\n`
     }
     result += '\n'
   }
@@ -4068,6 +4169,9 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   const assemblyVars: Array<{ name: string; type: string }> = []
   let inSub = false
   let subName = ''
+  let subReturnType = ''
+  let currentClassName = ''
+  const localClassSubNames = new Set<string>()
   let subParams: Array<{ name: string; type: string }> = []
   let subBody = ''
   let blockIndent = 1
@@ -4079,6 +4183,20 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   const buildSubSignature = (_name: string, params: Array<{ name: string; type: string }>): string => {
     if (params.length === 0) return 'void'
     return params.map(p => `${mapTypeToCType(p.type)} ${p.name}`).join(', ')
+  }
+
+  const flushCurrentSub = (): void => {
+    const retC = subReturnType ? mapTypeToCType(subReturnType) : 'void'
+    // 有返回值的子程序补默认返回，避免控制流落出函数末尾
+    const tailReturn = subReturnType ? `    return ${getTypeDefaultInitializer(subReturnType)};\n` : ''
+    if (isClassModuleSource && currentClassName) {
+      // 类模块子程序输出为成员函数定义
+      result += `${retC} ${currentClassName}::${subName}(${buildSubSignature(subName, subParams)}) {\n${subBody}${tailReturn}}\n\n`
+      localClassSubNames.add(subName)
+    } else {
+      const storage = isClassModuleSource ? 'static ' : ''
+      result += `${storage}${retC} ${subName}(${buildSubSignature(subName, subParams)}) {\n${subBody}${tailReturn}}\n\n`
+    }
   }
 
   const appendSubLine = (code: string) => {
@@ -4153,21 +4271,30 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       const varName = parts[0] || 'assemblyVar'
       assemblyVars.push({ name: varName, type: parts[1] || '整数型' })
       const varType = parts[1] || '整数型'
-      result += `static ${mapTypeToCType(varType)} ${varName};\n`
+      if (!isClassModuleSource) {
+        result += `static ${mapTypeToCType(varType)} ${varName};\n`
+      }
       continue
     }
 
-    if (line.startsWith('.版本') || line.startsWith('.程序集 ')) continue
+    if (line.startsWith('.程序集 ')) {
+      if (isClassModuleSource) {
+        currentClassName = (splitDeclParts(line.substring(5))[0] || '').trim()
+      }
+      continue
+    }
+
+    if (line.startsWith('.版本')) continue
 
     if (line.startsWith('.子程序 ')) {
       // 如果之前有子程序，先输出
       if (inSub && subName) {
         assertSubFlowClosed(lineIndex + 1)
-        const storage = isClassModuleSource ? 'static ' : ''
-        result += `${storage}void ${subName}(${buildSubSignature(subName, subParams)}) {\n${subBody}}\n\n`
+        flushCurrentSub()
       }
       const parts = line.substring(4).split(',').map(s => s.trim())
       subName = parts[0] || 'unnamed'
+      subReturnType = (parts[1] || '').trim()
       subParams = []
       subBody = ''
       blockIndent = 1
@@ -4327,7 +4454,12 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         }
 
         if (flowName === '返回') {
-          emitSubLine('return;')
+          const retArg = (flowCall?.args?.[0] || '').trim()
+          if (retArg && subReturnType) {
+            emitSubLine(`return ${formatArgForC(retArg, commandMap, directCallables)};`)
+          } else {
+            emitSubLine('return;')
+          }
           continue
         }
 
@@ -4434,8 +4566,15 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   // 输出最后一个子程序
   if (inSub && subName) {
     assertSubFlowClosed(lines.length)
-    const storage = isClassModuleSource ? 'static ' : ''
-    result += `${storage}void ${subName}(${buildSubSignature(subName, subParams)}) {\n${subBody}}\n\n`
+    flushCurrentSub()
+  }
+
+  // 类模块：构造/析构函数定义（自动调用 _初始化/_销毁）
+  if (isClassModuleSource && currentClassName) {
+    const hasInit = localClassSubNames.has('_初始化')
+    const hasDestroy = localClassSubNames.has('_销毁')
+    result += `${currentClassName}::${currentClassName}() {${hasInit ? ' _初始化();' : ''} }\n`
+    result += `${currentClassName}::~${currentClassName}() {${hasDestroy ? ' _销毁();' : ''} }\n\n`
   }
 
   return result
@@ -4484,7 +4623,9 @@ function generateMainC(
   const projectSubprograms = projectMeta.subprograms
   const projectDataTypes = projectMeta.dataTypes
   const projectDllCommands = projectMeta.dllCommands
+  const projectClassModules = projectMeta.classModules
   activeProjectCustomTypeNames = new Set(projectDataTypes.map(dt => dt.name))
+  activeProjectClassNames = new Set(projectClassModules.map(c => c.className))
   const librariesForBuild = linkedLibraries || libraryManager.getLoadedLibraryFiles()
   const usedLibraryNames = new Set(librariesForBuild.map(l => l.name))
   const libraryConstants = collectLibraryConstants(usedLibraryNames)
@@ -4500,6 +4641,7 @@ function generateMainC(
     subprograms: projectSubprograms,
     dataTypes: projectDataTypes,
     dllCommands: projectDllCommands,
+    classModules: projectClassModules,
     libraryConstants,
   })).digest('hex')
 
@@ -4548,6 +4690,7 @@ function generateMainC(
       debugBuild,
       breakpoints,
       targetPlatform,
+      projectClassModules,
     )
     writeFileSync(cFilePath, cCode, 'utf-8')
     additionalCFiles.push(cFilePath)
@@ -5246,6 +5389,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
   const startTime = Date.now()
   activeProjectCustomTypeNames = new Set()
+  activeProjectClassNames = new Set()
 
   try {
     // 查找 .epp 文件
