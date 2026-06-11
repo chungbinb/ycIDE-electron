@@ -1882,8 +1882,10 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       const names = new Set<string>()
 
       // 优先使用已打开标签页中的最新内容（含未保存修改）
+      // 注意：类模块标签页的 label 是类名（不带扩展名），必须按 filePath 判断
       for (const t of tabs) {
-        if (t.label.toLowerCase().endsWith('.ecc') && t.value) {
+        const tabFileName = (t.filePath || t.label || '').toLowerCase()
+        if (tabFileName.endsWith('.ecc') && t.value) {
           parseClassNames(eycToYiFormat(t.value), names)
         }
       }
