@@ -1721,7 +1721,7 @@
       "params": [
         {
           "name": "内存数据指针",
-          "type": "整数型",
+          "type": "长整数型",
           "optional": false,
           "description": "。本参数提供指向一个内存地址的指针值。"
         },
@@ -1746,7 +1746,7 @@
       "params": [
         {
           "name": "内存数据指针",
-          "type": "整数型",
+          "type": "长整数型",
           "optional": false,
           "description": "。本参数提供指向一个内存地址的指针值。"
         }
@@ -1783,7 +1783,7 @@
       "params": [
         {
           "name": "内存数据指针",
-          "type": "整数型",
+          "type": "长整数型",
           "optional": false,
           "description": "。本参数提供指向一个内存地址的指针值。"
         }
@@ -1802,7 +1802,7 @@
       "params": [
         {
           "name": "内存数据指针",
-          "type": "整数型",
+          "type": "长整数型",
           "optional": false,
           "description": "。本参数提供指向一个内存地址的指针值。"
         }
@@ -3709,7 +3709,7 @@
       "params": [
         {
           "name": "内存文本指针",
-          "type": "整数型",
+          "type": "长整数型",
           "optional": false,
           "description": "。本参数提供指向一个以零字符结束的文本串内存指针值。"
         }
