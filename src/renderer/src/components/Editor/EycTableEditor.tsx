@@ -5587,18 +5587,6 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       while (existingNames.has('子程序' + num)) num++
       const newName = '子程序' + num
 
-      // 收集已有局部变量名，生成不重复的默认名称：局_变量N
-      const existingLocalVarNames = new Set<string>()
-      for (const ln of curLines) {
-        const t = ln.replace(/[\r\t]/g, '').trim()
-        if (!t.startsWith('.局部变量 ')) continue
-        const localName = (splitCSV(t.slice('.局部变量 '.length))[0] || '').trim()
-        if (localName) existingLocalVarNames.add(localName)
-      }
-      let localNum = 1
-      while (existingLocalVarNames.has('局_变量' + localNum)) localNum++
-      const newLocalVarName = '局_变量' + localNum
-
       let insertAt: number
 
       if (focusLi < 0) {
@@ -5627,13 +5615,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
 
       const nl = [...curLines]
-      // 统一为“真实空行 + 子程序声明 + 默认局部变量 + 真实空普通行”。
-      nl.splice(insertAt, 0, '', '.子程序 ' + newName + ', , , ', '.局部变量 ' + newLocalVarName + ', 整数型', '')
+      // 统一为“真实空行 + 子程序声明 + 真实空普通行”，不再自动附带默认局部变量。
+      nl.splice(insertAt, 0, '', '.子程序 ' + newName + ', , , ', '')
       const nt = nl.join('\n')
       applyTextChange(nt)
 
       const newSubLineIndex = insertAt + 1
-      const firstCodeLineIndex = insertAt + 3
+      const firstCodeLineIndex = insertAt + 2
       lastFocusedLine.current = newSubLineIndex
       const focusFirstCodeLine = (): void => {
         startEditLine(firstCodeLineIndex, undefined, undefined, undefined, true)
