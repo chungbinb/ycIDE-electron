@@ -1592,6 +1592,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
   }, [isFlowPasteDebugEnabled])
 
+  /** 编辑 判断开始 行时输入值以"判断"别名显示，写回源码前还原真实关键字 */
+  const restoreJudgeStartAlias = useCallback((val: string): string => {
+    if (!shouldAliasJudgeStartInTableMode || wasFlowKwRef.current !== '判断开始') return val
+    return val.replace(/^(\s*\.?)判断(?![一-龥A-Za-z0-9_])/, '$1判断开始')
+  }, [shouldAliasJudgeStartInTableMode])
+
   const normalizeFlowCommandName = useCallback((raw: string): string => {
     const trimmed = (raw || '').trim()
     if (!trimmed) return ''
@@ -3586,6 +3592,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         setEditCell(null)
         return
       }
+      // 判断开始 行编辑值以"判断"别名显示，进入格式化前还原真实关键字
+      effectiveVal = restoreJudgeStartAlias(effectiveVal)
       // formatCommandLine 会为流程命令额外加4空格，若 flowIndent 已包含流程缩进则需减去以避免翻倍
       let baseIndent = flowIndentRef.current
       const trimmedCmd = effectiveVal.trim()
@@ -4103,6 +4111,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         wasFlowOrigIndentRef.current = wasFlowStartRef.current ? (origLineText.match(/^ */)?.[0] || '') : ''
       }
     }
+    // 表格模式下 判断开始 以别名"判断"进入编辑态（与非编辑显示一致），提交/实时写回时还原
+    if (shouldAliasJudgeStartInTableMode && wasFlowKwRef.current === '判断开始') {
+      text = text.replace(/^(\s*\.?)判断开始/, '$1判断')
+    }
     if (!skipPushUndo) pushUndo(latestText)
     setSelectedLines(new Set())
     lastFocusedLine.current = li
@@ -4172,7 +4184,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         wrapper.scrollTop = prevScrollTop
       }
     }, 0)
-  }, [currentText, pushUndo, flowLines])
+  }, [currentText, pushUndo, flowLines, shouldAliasJudgeStartInTableMode])
 
   // 同一行内按住拖动（行未聚焦）：进入该行编辑态并选中拖动范围内的文本
   beginLineTextSelectRef.current = (li, isVirtual, anchorX, headX) => {
@@ -6141,7 +6153,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     if (editCell.cellIndex < 0) {
       if (editCell.isVirtual) return
-      const nl = [...lines]; nl[editCell.lineIndex] = flowIndentRef.current + flowMarkRef.current + val
+      // 判断开始 行编辑值以"判断"别名显示，实时写回源码前还原真实关键字
+      const nl = [...lines]; nl[editCell.lineIndex] = flowIndentRef.current + flowMarkRef.current + restoreJudgeStartAlias(val)
       const nt = nl.join('\n')
       applyTextChange(nt)
       return
@@ -6155,7 +6168,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const nl = [...lines]; nl[editCell.lineIndex] = newLine
     const nt = nl.join('\n')
     applyTextChange(nt)
-  }, [applyTextChange, editCell, lines, replaceCallArg, parseAssignmentLineParts])
+  }, [applyTextChange, editCell, lines, replaceCallArg, parseAssignmentLineParts, restoreJudgeStartAlias])
 
   // 输入高频（尤其长按退格）时将文档同步节流到固定频率，降低全量重算导致的卡顿。
   const scheduleLiveUpdate = useCallback((val: string) => {
