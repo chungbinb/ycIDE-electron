@@ -1422,6 +1422,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return map
   }, [projectClassNames])
 
+  // 按方法名查找项目类的公开方法（支持 对象.方法 形式，取最后一段）
+  const findProjectClassMethodByName = useCallback((rawName: string): CompletionItem | null => {
+    const name = (rawName || '').trim().replace(/^.*[.。．]/, '')
+    if (!name) return null
+    for (const methods of classMethodMap.values()) {
+      const hit = methods.find(m => m.name === name)
+      if (hit) return hit
+    }
+    return null
+  }, [classMethodMap])
+
   /** 根据光标位置的"词"更新补全列表 */
   const updateCompletion = useCallback((val: string, cursorPos: number) => {
     if (!editCell) { setAcVisible(false); return }
@@ -2674,7 +2685,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   useEffect(() => {
     codeRenderMetaCacheRef.current.clear()
-  }, [visibleBlocks])
+  }, [visibleBlocks, classMethodMap])
 
   const getCodeRenderMeta = useCallback((blockIndex: number, blk: RenderBlock) => {
     const codeLineRaw = blk.codeLine || ''
@@ -2687,12 +2698,21 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     let lineCmd: CompletionItem | null = null
     if (!blk.isVirtual) {
       for (const span of spans) {
-        if (span.cls !== 'funccolor' && span.cls !== 'comecolor') continue
-        const candidate = allCommandsRef.current.find(c => c.name === span.text)
-          || dllCompletionItemsRef.current.find(c => c.name === span.text)
-        if (candidate && candidate.params.length > 0) {
-          lineCmd = candidate
-          break
+        if (span.cls === 'funccolor' || span.cls === 'comecolor') {
+          const candidate = allCommandsRef.current.find(c => c.name === span.text)
+            || dllCompletionItemsRef.current.find(c => c.name === span.text)
+          if (candidate && candidate.params.length > 0) {
+            lineCmd = candidate
+            break
+          }
+        }
+        // 对象.方法（项目类公开方法）同样支持参数展开
+        if (span.cls === 'funccolor' || span.cls === 'cometwolr') {
+          const clsMethod = findProjectClassMethodByName(span.text)
+          if (clsMethod && clsMethod.params.length > 0) {
+            lineCmd = clsMethod
+            break
+          }
         }
       }
     }
@@ -5887,9 +5907,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const cmd = allCommandsRef.current.find(c => c.name === s.text) || dllCompletionItemsRef.current.find(c => c.name === s.text)
         if (cmd && cmd.params.length > 0) return cmd
       }
+      // 对象.方法（项目类公开方法）同样支持参数展开
+      if (s.cls === 'funccolor' || s.cls === 'cometwolr') {
+        const clsMethod = findProjectClassMethodByName(s.text)
+        if (clsMethod && clsMethod.params.length > 0) return clsMethod
+      }
     }
     return null
-  }, [validCommandNames])
+  }, [validCommandNames, findProjectClassMethodByName])
 
   const findCommandCallWithParams = useCallback((expr: string): { cmd: CompletionItem; args: string[] } | null => {
     const normalized = (expr || '').trim()
@@ -5898,11 +5923,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (!head) return null
     const cmdName = (head[1] || '').trim()
     if (!cmdName) return null
-    const cmd = allCommandsRef.current.find(c => c.name === cmdName) || dllCompletionItemsRef.current.find(c => c.name === cmdName)
+    const cmd = allCommandsRef.current.find(c => c.name === cmdName)
+      || dllCompletionItemsRef.current.find(c => c.name === cmdName)
+      || ((cmdName.includes('.') || cmdName.includes('。') || cmdName.includes('．')) ? findProjectClassMethodByName(cmdName) : null)
     if (!cmd || cmd.params.length === 0) return null
     const args = parseCallArgs(normalized)
     return { cmd, args }
-  }, [])
+  }, [findProjectClassMethodByName])
 
   const findTopLevelAdditiveParts = useCallback((expr: string): { left: string; right: string } | null => {
     const normalized = (expr || '').trim()
