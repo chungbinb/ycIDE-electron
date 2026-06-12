@@ -1,19 +1,18 @@
-import { Fragment, useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react'
+import { Fragment, memo, useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react'
 import { eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
 import {
-  buildBlocks,
   inferResourceTypeByFileName,
   parseLines,
   splitCSV,
   unquote,
 } from './eycBlocks'
+import { getBlocksFlowModelCached } from './editorBlocksModelShared'
 import {
   FLOW_AUTO_COMPLETE,
   FLOW_AUTO_TAG,
   FLOW_KW,
   FLOW_LOOP_KW,
   FLOW_START,
-  computeFlowLines,
   extractFlowKw,
   getFlowStructureAround,
 } from './eycFlow'
@@ -310,6 +309,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const lineTextSelectDragRef = useRef<{ anchorX: number } | null>(null)
   // 指向"进入行编辑态并按拖动范围选中文本"的最新实现（startEditLine 定义在后，需经 ref 转发给 mouseup 监听）
   const beginLineTextSelectRef = useRef<(li: number, isVirtual: boolean | undefined, anchorX: number, headX: number) => void>(() => {})
+  // mousedown 乐观进入行编辑态的实现（同样经 ref 转发解决 startEditLine 定义顺序）
+  const startEditLineOnMouseDownRef = useRef<(li: number, isVirtual: boolean | undefined, clientX: number, target: EventTarget | null) => void>(() => {})
+  // mousedown 已乐观进入编辑的行号，click 阶段据此跳过重复 startEditLine
+  const optimisticLineEditRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!editorContextMenu) return
@@ -575,7 +578,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const maxScrollTop = Math.max(scrollHeight - wrapper.clientHeight, 1)
     const topRatio = Math.min(Math.max(wrapper.scrollTop / maxScrollTop, 0), 1)
     const bottomRatio = Math.min(Math.max((wrapper.scrollTop + wrapper.clientHeight) / scrollHeight, 0), 1)
-    const overscanLines = 220
+    // overscan 直接决定每次重渲染的行数（点击/输入的主线程开销大头是行虚拟 DOM 构建），
+    // 取视口典型高度（~40 行）的 2 倍冗余，滚动窗口更新由 rAF 驱动足以跟上。
+    const overscanLines = 80
     const quantizeStep = 32
     const rawStart = Math.max(0, Math.floor(topRatio * maxLineIndex) - overscanLines)
     const rawEnd = Math.min(maxLineIndex, Math.ceil(bottomRatio * maxLineIndex) + overscanLines)
@@ -835,6 +840,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if ((e.target as HTMLElement).classList.contains('eyc-cmd-clickable')) return
 
     e.preventDefault()
+    optimisticLineEditRef.current = null
     // 如果有活跃编辑，先提交当前编辑（含自动补全上屏）
     if (editCellRef.current) {
       commitRef.current()
@@ -851,6 +857,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       // 普通单击不立即标记行选中，避免蓝色闪烁；只有实际拖动时才设置
       if (opts?.textSelectable) {
         lineTextDragCandidateRef.current = { lineIndex, isVirtual: opts.isVirtual }
+        // 左键按下即乐观进入编辑态：与上面 commit 的 setState 合并为同一渲染批次
+        // （click 阶段再进入要多一整轮渲染，且要等到 mouseup 之后才开始）。
+        // 拖动转行多选时由 mousemove 路径清除编辑态。
+        if (e.button === 0) {
+          startEditLineOnMouseDownRef.current(lineIndex, opts.isVirtual, e.clientX, e.target)
+          optimisticLineEditRef.current = lineIndex
+        }
       }
     }
     isDragging.current = true
@@ -1186,6 +1199,29 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const acWordStartRef = useRef(0) // 当前补全词在 editVal 中的起始位置
   const acPrefixRef = useRef('')
   const acListRef = useRef<HTMLDivElement>(null)
+  const acContainerRef = useRef<HTMLDivElement | null>(null)
+  const acWordLeftOffsetRef = useRef(0) // 当前补全词起点相对输入框左缘的像素偏移
+
+  // 弹窗打开期间逐帧跟踪输入框位置：输出面板开合动画、滚动、提交收起参数面板等
+  // 都会在弹窗定位之后移动行布局，固定坐标会漂移，必须持续吸附到输入框当前位置。
+  // rect 是 zoom 放大后的视口坐标，写入 fixed 坐标前同样要除以 eycScale 反向补偿。
+  useEffect(() => {
+    if (!acVisible) return
+    const safeScale = Math.max(eycScale, 0.01)
+    let raf = 0
+    const track = (): void => {
+      const input = inputRef.current
+      const container = acContainerRef.current
+      if (input && container) {
+        const rect = input.getBoundingClientRect()
+        container.style.setProperty('--eyc-ac-left', `${(rect.left + acWordLeftOffsetRef.current) / safeScale}px`)
+        container.style.setProperty('--eyc-ac-top', `${(rect.bottom + 2) / safeScale}px`)
+      }
+      raf = window.requestAnimationFrame(track)
+    }
+    raf = window.requestAnimationFrame(track)
+    return () => window.cancelAnimationFrame(raf)
+  }, [acVisible, eycScale])
   // 用 ref 跟踪最新值，以便在 useCallback 闭包中访问（避免依赖项膨胀）
   const editCellRef = useRef(editCell)
   editCellRef.current = editCell
@@ -1508,15 +1544,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     const matches = paginateCompletionDisplayItems(fullMatches, AC_PAGE_SIZE)
 
-    // 计算弹窗位置
+    // 计算弹窗位置（词首像素偏移记入 ref，供弹窗打开期间的位置跟踪复用）
     if (inputRef.current) {
-      setAcPos(computeCompletionPopupPosition(inputRef.current, val, wordStart))
+      const popupPos = computeCompletionPopupPosition(inputRef.current, val, wordStart, eycScale)
+      acWordLeftOffsetRef.current = popupPos.leftOffset
+      setAcPos({ left: popupPos.left, top: popupPos.top })
     }
 
     setAcItems(matches)
     setAcIndex(0)
     setAcVisible(true)
-  }, [editCell, canUseTypeCompletion, canUseClassNameCompletion, userVarTypeMap, windowControlTypeMap, windowUnits, customDataTypeFieldMap, classMethodMap])
+  }, [editCell, canUseTypeCompletion, canUseClassNameCompletion, userVarTypeMap, windowControlTypeMap, windowUnits, customDataTypeFieldMap, classMethodMap, eycScale])
 
   /** 应用补全项：替换当前输入词为命令名 */
   const applyCompletion = useCallback((displayItem: AcDisplayItem) => {
@@ -1968,15 +2006,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (linesForNormalize.length === 0) return text
     if (linesForNormalize.length > 1200) return text
 
-    let flowMap = new Map<number, FlowSegment[]>()
-    try {
-      const normalizeBlocks = buildBlocks(text, isClassModule, isResourceTableDoc)
-      flowMap = computeFlowLines(normalizeBlocks).map
-    } catch {
-      // ignore parse/flow errors and fallback to conservative line-based normalization
-    }
-
-    let changed = false
+    // 先做廉价的候选行筛选，全文都无需处理时直接跳过昂贵的全量解析
+    const candidateIndexes: number[] = []
     for (let i = 0; i < linesForNormalize.length; i++) {
       const line = linesForNormalize[i]
       if (!/^[ \t]+/.test(line)) continue
@@ -1985,8 +2016,22 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if (!trimmed) continue
       if (trimmed.startsWith('.')) continue
       if (trimmed.startsWith("'")) continue
+      candidateIndexes.push(i)
+    }
+    if (candidateIndexes.length === 0) return text
+
+    let flowMap = new Map<number, FlowSegment[]>()
+    try {
+      flowMap = getBlocksFlowModelCached(text, isClassModule, isResourceTableDoc).flowMap
+    } catch {
+      // ignore parse/flow errors and fallback to conservative line-based normalization
+    }
+
+    let changed = false
+    for (const i of candidateIndexes) {
       if ((flowMap.get(i)?.length || 0) > 0) continue
 
+      const line = linesForNormalize[i]
       const deindented = line.replace(/^[ \t]+/, '')
       if (deindented !== line) {
         linesForNormalize[i] = deindented
@@ -2702,8 +2747,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (!blk.isVirtual) {
       for (const span of spans) {
         if (span.cls === 'funccolor' || span.cls === 'comecolor') {
-          const candidate = allCommandsRef.current.find(c => c.name === span.text)
-            || dllCompletionItemsRef.current.find(c => c.name === span.text)
+          // 判断结构首行源码关键字为 判断开始，按 判断 命令查找参数（显示别名一致）
+          const lookupName = span.text === '判断开始' ? '判断' : span.text
+          const candidate = allCommandsRef.current.find(c => c.name === lookupName)
+            || dllCompletionItemsRef.current.find(c => c.name === lookupName)
           if (candidate && candidate.params.length > 0) {
             lineCmd = candidate
             break
@@ -2779,6 +2826,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       | { kind: 'table'; cells: MiniTableCell[]; lineIndex: number; marker: MiniMarker }
       | { kind: 'code'; spans: Array<{ text: string; cls: string }>; lineIndex: number; marker: MiniMarker }
       | { kind: 'deleted'; marker: 'deleted' }
+    // 先收集不着色的行描述，待采样出最终展示的 ≤260 行后再 colorize，
+    // 避免每次文本变化都对全文档所有代码行做语法着色。
+    type MiniSourceRow =
+      | { kind: 'table'; cells: MiniTableCell[]; lineIndex: number; marker: MiniMarker }
+      | { kind: 'code'; codeText: string; lineIndex: number; marker: MiniMarker }
+      | { kind: 'deleted'; marker: 'deleted' }
 
     if (!shouldShowMinimapPreview) return []
 
@@ -2789,7 +2842,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return 'none'
     }
 
-    const sourceRows: MiniRow[] = []
+    const sourceRows: MiniSourceRow[] = []
     for (const blk of visibleBlocks) {
       if (blk.kind === 'table') {
         for (const row of blk.rows) {
@@ -2814,21 +2867,31 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const codeText = (blk.codeLine || '')
         .replace(FLOW_AUTO_TAG, '')
         .replace(/\u200B/g, '')
-      const spans = colorize(codeText)
+      sourceRows.push({
+        kind: 'code',
+        lineIndex: blk.lineIndex,
+        marker: resolveMarker(blk.lineIndex),
+        codeText,
+      })
+      if (diffDeletedAfterLines.has(blk.lineIndex)) {
+        sourceRows.push({ kind: 'deleted', marker: 'deleted' })
+      }
+    }
+
+    const toMiniRow = (row: MiniSourceRow): MiniRow => {
+      if (row.kind !== 'code') return row
+      const spans = colorize(row.codeText)
       const displaySpans = spans.map(s => {
         if (shouldAliasJudgeStartInTableMode && s.cls === 'comecolor' && s.text === '判断开始') {
           return { ...s, text: '判断' }
         }
         return s
       })
-      sourceRows.push({
+      return {
         kind: 'code',
-        lineIndex: blk.lineIndex,
-        marker: resolveMarker(blk.lineIndex),
+        lineIndex: row.lineIndex,
+        marker: row.marker,
         spans: displaySpans.length > 0 ? displaySpans.map(s => ({ text: s.text || ' ', cls: s.cls || '' })) : [{ text: ' ', cls: '' }],
-      })
-      if (diffDeletedAfterLines.has(blk.lineIndex)) {
-        sourceRows.push({ kind: 'deleted', marker: 'deleted' })
       }
     }
 
@@ -2837,9 +2900,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return Array.from({ length: count }, (_, i) => {
       const start = Math.floor((i * total) / count)
       const end = Math.max(start + 1, Math.floor(((i + 1) * total) / count))
-      const bucket = sourceRows.slice(start, end)
       const mid = Math.min(Math.max(Math.floor((start + end) / 2), 0), total - 1)
-      return sourceRows[mid] || { kind: 'code' as const, lineIndex: -1, marker: 'none' as const, spans: [{ text: ' ', cls: '' }] }
+      const src = sourceRows[mid]
+      return src ? toMiniRow(src) : { kind: 'code' as const, lineIndex: -1, marker: 'none' as const, spans: [{ text: ' ', cls: '' }] }
     })
   }, [visibleBlocks, diffDeletedAfterLines, lineMarkerTypeMap, shouldShowMinimapPreview])
 
@@ -3731,6 +3794,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const currentIndentLen = mainLine.length - mainLine.trimStart().length
         const remainingLines = collectRemainingLinesInCurrentScope(lines, afterIdx, currentIndentLen)
         extraLines = removeDuplicateFlowAutoEndings(extraLines, remainingLines)
+        // 结构后若紧跟非空行（如外层循环的结束行），补一个普通空行，
+        // 否则光标无法落在结构之后、回车只能进入结构内部分支
+        if (extraLines.length > 0) {
+          const followingLine = afterIdx < lines.length ? lines[afterIdx] : null
+          if (followingLine === null || followingLine.replace(/[\r\t]/g, '').trim() !== '') {
+            extraLines = [...extraLines, '']
+          }
+        }
       }
       debugFlowPaste('commit:main-line-result', {
         lineIndex: editCell.lineIndex,
@@ -4155,8 +4226,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const origLineText = latestLines[li] || ''
       const origFlowKw = extractFlowKw(origLineText)
       // 若 commit 刚修改了文本但尚未重渲染，flowLines 可能过时，需重新计算
-      const currentFlowLines = (latestText === currentText) ? flowLines : computeFlowLines(buildBlocks(latestText, isClassModule, isResourceTableDoc))
-      const segs = currentFlowLines.map.get(li) || []
+      const currentFlowMap = (latestText === currentText) ? flowLines.map : getBlocksFlowModelCached(latestText, isClassModule, isResourceTableDoc).flowMap
+      const segs = currentFlowMap.get(li) || []
       if (segs.length > 0) {
         const lineMaxDepth = Math.max(...segs.map(s => s.depth)) + 1
         const stripCount = lineMaxDepth * 4
@@ -4190,7 +4261,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       text = text.replace(/^(\s*\.?)判断开始/, '$1判断')
     }
     if (!skipPushUndo) pushUndo(latestText)
-    setSelectedLines(new Set())
+    setSelectedLines(prev => (prev.size === 0 ? prev : new Set()))
     lastFocusedLine.current = li
     flowIndentRef.current = flowIndent
     codeLineEditOrigValRef.current = text
@@ -4208,8 +4279,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if (clientX !== undefined && containerLeft !== undefined) {
         // 减去流程线段占用的宽度，使光标定位到输入框内正确位置
         let segWidth = 0
-        const currentFlowLines2 = (latestText === currentText) ? flowLines : computeFlowLines(buildBlocks(latestText, isClassModule, isResourceTableDoc))
-        const segs2 = currentFlowLines2.map.get(li) || []
+        const currentFlowMap2 = (latestText === currentText) ? flowLines.map : getBlocksFlowModelCached(latestText, isClassModule, isResourceTableDoc).flowMap
+        const segs2 = currentFlowMap2.get(li) || []
         if (segs2.length > 0) {
           const lineMaxDepth2 = Math.max(...segs2.map(s => s.depth)) + 1
           // 每个流程段宽度为 4ch，用 canvas 测量实际像素宽度
@@ -4273,6 +4344,31 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (!lineEl) return
     startEditLine(li, headX, lineEl.getBoundingClientRect().left, isVirtual, false, anchorX)
   }
+
+  startEditLineOnMouseDownRef.current = (li, isVirtual, clientX, target) => {
+    const closest = target instanceof HTMLElement ? target.closest<HTMLElement>('.eyc-code-line') : null
+    const lineEl = closest || wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${li}"] .eyc-code-line`)
+    if (!lineEl) return
+    // 命令提示联动必须在 mousedown 做：进入编辑态后 input 覆盖该行，
+    // click 事件的 target 变成 INPUT，handleCodeLineClick 会提前返回拿不到原始 token
+    const rawCode = isVirtual ? '' : ((prevRef.current.split('\n')[li] || '').replace(FLOW_AUTO_TAG, ''))
+    const cmdName = findCommandNameFromClickTarget(target, rawCode)
+    if (cmdName) {
+      const ownerAssembly = findOwnerAssemblyName(li)
+      const hintName = userSubNamesRef.current.has(cmdName) ? `__SUB__:${cmdName}:${ownerAssembly}` : cmdName
+      onCommandClick?.(hintName)
+    }
+    startEditLine(li, clientX, lineEl.getBoundingClientRect().left, isVirtual)
+  }
+
+  // click 阶段查验 mousedown 是否已乐观进入该行编辑态；命中则消费标记并跳过重复进入
+  const consumeOptimisticLineEdit = useCallback((lineIndex: number): boolean => {
+    if (optimisticLineEditRef.current !== lineIndex) return false
+    optimisticLineEditRef.current = null
+    // 拖动转多选等路径会清掉编辑态，此时不视为已处理，让 click 走原路径兜底
+    const state = editCellRef.current
+    return !!state && state.lineIndex === lineIndex && state.cellIndex === -1
+  }, [])
 
   const suppressInlineBlurCommit = (durationMs = 250): void => {
     suppressBlurCommitUntilRef.current = Date.now() + durationMs
@@ -4600,7 +4696,15 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (flowMarkRef.current) {
       const markerChar = flowMarkRef.current.trimStart().charAt(0)
       const markerIndent = flowMarkRef.current.slice(0, flowMarkRef.current.length - 1)
-      const preferJudgeBranchHere = commandName === '判断'
+      // 仅当标记行确实处于判断结构内时，键入“判断”才视为新增分支；
+      // 在循环/如果 等其他结构体内键入“判断”应展开为完整判断结构
+      const markerStructureKw = (() => {
+        const around = getFlowStructureAround(nl, editCellState.lineIndex)
+        if (!around) return null
+        return extractFlowKw(nl[around.cmdLine] || '')
+      })()
+      const isJudgeStructureMarker = markerStructureKw === '判断开始' || markerStructureKw === '判断'
+      const preferJudgeBranchHere = commandName === '判断' && isJudgeStructureMarker
       if (preferJudgeBranchHere) {
         const trimmedInput = editVal.trim()
         const parenRange = getOuterParenRange(trimmedInput)
@@ -4615,7 +4719,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         commitGuardRef.current = true
         return true
       }
-      if (markerChar === '\u2060' && commandName === '判断') {
+      if (markerChar === '\u2060' && commandName === '判断' && isJudgeStructureMarker) {
         const trimmedInput = editVal.trim()
         const parenRange = getOuterParenRange(trimmedInput)
         const argText = parenRange ? trimmedInput.slice(parenRange.start + 1, parenRange.end).trim() : ''
@@ -6384,6 +6488,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     findOwnerAssemblyName,
     onCommandClick,
     startEditLine,
+    consumeOptimisticLineEdit,
     tryToggleTableBooleanCell,
     isResourceTableDoc,
     handleTableCellHint,
@@ -7323,10 +7428,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       {acVisible && acItems.length > 0 && (
         <div
           className="eyc-ac-container"
-          ref={(element) => setCssVars(element, {
-            '--eyc-ac-left': `${acPos.left}px`,
-            '--eyc-ac-top': `${acPos.top}px`,
-          })}
+          ref={(element) => {
+            acContainerRef.current = element
+            setCssVars(element, {
+              '--eyc-ac-left': `${acPos.left}px`,
+              '--eyc-ac-top': `${acPos.top}px`,
+            })
+          }}
           onMouseDown={e => e.preventDefault()}
         >
           <div className="eyc-ac-popup" ref={acListRef}>
@@ -7517,4 +7625,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   )
 })
 
-export default EycTableEditor
+// memo 隔离父组件（App 状态栏 Ln/Col、命令提示面板等顶层状态）重渲染的级联：
+// 每次点击/移动光标都会触发 App setState，未隔离时编辑器整表虚拟 DOM 会被连带重建。
+// 前提：所有非原始类型 props 必须引用稳定（调用处禁止内联 || [] 兜底与内联箭头回调）。
+export default memo(EycTableEditor)

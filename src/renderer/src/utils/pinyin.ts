@@ -241,6 +241,36 @@ function matchFromCoverage(input: string, iPos: number, chars: string[], cPos: n
   return -1
 }
 
+// 候选名 → 拼音首字母串缓存（补全打分会在每次按键时对全部候选调用）
+const initialsCache = new Map<string, string>()
+
+function getInitials(name: string): string {
+  let cached = initialsCache.get(name)
+  if (cached === undefined) {
+    cached = [...name].map(getCharInitial).join('')
+    initialsCache.set(name, cached)
+  }
+  return cached
+}
+
+/**
+ * 拼音/混合匹配（mixedMatchCoverage / pinyinMatchCoverage）都从 cmdName 的
+ * 第一个字符开始锚定匹配，先用 O(1) 首字符预检淘汰不可能命中的候选，
+ * 避免对每个候选做 DFS。
+ */
+function canPinyinAnchorAtStart(lowerInput: string, cmdName: string): boolean {
+  const f = lowerInput[0]
+  const firstCp = cmdName.codePointAt(0)
+  if (firstCp === undefined) return false
+  const first = String.fromCodePoint(firstCp)
+  if (/[a-z]/.test(f)) {
+    const py = getCharPinyin(first)
+    if (py) return py[0] === f
+    return first.toLowerCase() === f
+  }
+  return first === f || first.toLowerCase() === f
+}
+
 /**
  * 计算匹配得分，用于排序（分数越高越靠前）
  */
@@ -253,26 +283,30 @@ export function matchScore(input: string, cmdName: string, cmdEnglishName: strin
   if (cmdName.startsWith(input)) return 90
   if (cmdName.includes(input)) return 80
 
-  // 拼音匹配（中优先级）
-  const initials = [...cmdName].map(getCharInitial).join('')
-  if (initials === lower) return 70
-  if (initials.startsWith(lower)) return 65
-
-  const mixedConsumed = mixedMatchCoverage(lower, cmdName)
-  if (mixedConsumed > 0) {
-    const targetLen = [...cmdName].length
-    if (mixedConsumed >= targetLen) return 69
-    if (mixedConsumed / targetLen >= 0.5) return 60
-    return 54
+  // 拼音匹配（中优先级）。首字母串仅由 a-z 组成，输入不含小写字母时不可能命中。
+  if (/[a-z]/.test(lower)) {
+    const initials = getInitials(cmdName)
+    if (initials === lower) return 70
+    if (initials.startsWith(lower)) return 65
   }
 
-  if (/^[a-z]+$/.test(lower)) {
-    const targetLen = [...cmdName].length
-    const consumed = pinyinMatchCoverage(lower, cmdName)
-    if (consumed > 0) {
-      if (consumed >= targetLen) return 68
-      if (consumed / targetLen >= 0.5) return 58
-      return 52
+  if (canPinyinAnchorAtStart(lower, cmdName)) {
+    const mixedConsumed = mixedMatchCoverage(lower, cmdName)
+    if (mixedConsumed > 0) {
+      const targetLen = [...cmdName].length
+      if (mixedConsumed >= targetLen) return 69
+      if (mixedConsumed / targetLen >= 0.5) return 60
+      return 54
+    }
+
+    if (/^[a-z]+$/.test(lower)) {
+      const targetLen = [...cmdName].length
+      const consumed = pinyinMatchCoverage(lower, cmdName)
+      if (consumed > 0) {
+        if (consumed >= targetLen) return 68
+        if (consumed / targetLen >= 0.5) return 58
+        return 52
+      }
     }
   }
 

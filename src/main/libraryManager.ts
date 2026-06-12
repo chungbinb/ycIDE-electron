@@ -74,6 +74,7 @@ export interface LibraryWindowUnitProperty {
   typeName: string
   isReadOnly: boolean
   pickOptions: string[]
+  defaultValue?: string | number | boolean
 }
 
 export interface LibraryWindowUnitEventArg {
@@ -99,7 +100,11 @@ export interface LibraryWindowUnit {
   properties: LibraryWindowUnitProperty[]
   events: LibraryWindowUnitEvent[]
   libraryName: string
+  /** 组件箱分类（设计器工具箱分组显示），缺省归"通用Win32" */
+  toolboxCategory: string
 }
+
+export const DEFAULT_TOOLBOX_CATEGORY = '通用Win32'
 
 export interface LibraryInfo {
   name: string
@@ -159,6 +164,7 @@ interface LibraryProtocolControlBinding {
   unitEnglishName: string
   className: string
   style: string
+  toolboxCategory: string
 }
 
 interface LibraryProtocolEventBinding {
@@ -196,7 +202,7 @@ const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
   'krnln.commands.ycmd.json': '839e75869b95f651eeec794e711e313fa39a424ff0542b6d8d3cec89b94c45cd',
   'krnln.constants.json': '8183767cf86c0348054a810511b2639bdfe7636c7efeacf096ecb8bfbf4a6fa0',
   'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
-  'window-units.json': '8c7c46b56ae9218b1345d59e0f6f635a935c5e8c63a478c706e1b2edc4ec1145',
+  'window-units.json': '9f018a430c8dc9c32cd3ab27412cf69cb0762a88fce394545016fe225cee5bd9',
 }
 
 const DEFAULT_PROTOCOL_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [
@@ -655,6 +661,9 @@ class LibraryManager {
         pickOptions: Array.isArray(item.pickOptions)
           ? item.pickOptions.filter((entry): entry is string => typeof entry === 'string')
           : [],
+        ...(typeof item.defaultValue === 'string' || typeof item.defaultValue === 'number' || typeof item.defaultValue === 'boolean'
+          ? { defaultValue: item.defaultValue }
+          : {}),
       }))
       .filter(item => item.name.length > 0)
   }
@@ -697,6 +706,9 @@ class LibraryManager {
         properties: mergeWithFixedCommonProperties(this.parseWindowUnitProperties(item.properties)),
         events: this.parseWindowUnitEvents(item.events),
         libraryName,
+        toolboxCategory: typeof item.toolboxCategory === 'string' && item.toolboxCategory.trim()
+          ? item.toolboxCategory.trim()
+          : DEFAULT_TOOLBOX_CATEGORY,
       }))
       .filter(item => item.name.length > 0)
   }
@@ -710,6 +722,7 @@ class LibraryManager {
         unitEnglishName: typeof item.unitEnglishName === 'string' ? item.unitEnglishName.trim() : '',
         className: typeof item.className === 'string' ? item.className.trim() : '',
         style: typeof item.style === 'string' ? item.style.trim() : '',
+        toolboxCategory: typeof item.toolboxCategory === 'string' ? item.toolboxCategory.trim() : '',
       }))
       .filter(item => item.unit.length > 0)
   }
@@ -751,6 +764,7 @@ class LibraryManager {
       iconFileName: '',
       properties: mergeWithFixedCommonProperties(DEFAULT_PROTOCOL_UNIT_PROPERTIES),
       events: eventMap.get(control.unit) ?? [],
+      toolboxCategory: control.toolboxCategory || DEFAULT_TOOLBOX_CATEGORY,
       libraryName,
     }))
   }

@@ -236,7 +236,7 @@ interface TranspileCacheFile {
   entries: Record<string, TranspileCacheEntry>
 }
 
-const TRANSPILE_CACHE_VERSION = 4
+const TRANSPILE_CACHE_VERSION = 7
 
 interface BuildArtifactCacheFile {
   version: number
@@ -1356,6 +1356,117 @@ function resolveControlStyle(ctrlType: string, unit: LibWindowUnit | undefined, 
   return getWin32Style(ctrlType)
 }
 
+// 控件初始文本：编辑框类的空内容不能回退到控件名（空编辑框应显示为空），
+// 浏览框的窗口文本承载初始地址；按钮/标签等标题类控件保留回退控件名的行为
+function resolveControlInitialText(
+  c: { type?: string; text?: string; name?: string },
+  props: Record<string, unknown>,
+): string {
+  const fromProps = props['标题'] || props['内容'] || props['文本'] || props['地址'] || props['title'] || props['text']
+  const noNameFallback = c.type === '编辑框' || c.type === '超级编辑框' || c.type === '文本框' || c.type === 'Edit' || c.type === 'TextBox'
+    || c.type === '浏览框' || c.type === 'WebView' || c.type === '网页编辑框' || c.type === 'WebEdit'
+  const fallbackName = noNameFallback ? '' : (c.name || '')
+  return String(fromProps || c.text || fallbackName || '')
+}
+
+// 设计器属性值容错读取：属性面板存布尔/数字，但手工编辑的 .efw 可能是 '真'/'假'/数字字符串
+function readBoolProp(value: unknown, def: boolean): boolean {
+  if (value === undefined || value === null) return def
+  if (typeof value === 'boolean') return value
+  if (value === '真' || value === 'true' || value === 1) return true
+  if (value === '假' || value === 'false' || value === 0) return false
+  return def
+}
+
+function readIntProp(value: unknown, def: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value)
+  if (typeof value === 'string' && /^-?\d+$/.test(value.trim())) return Number.parseInt(value.trim(), 10)
+  return def
+}
+
+interface EditControlCodegen {
+  exStyle: string
+  style: string
+  postCreateLines: string[]
+  colorEntry: { textColor: number; backColor: number } | null
+  needsInputFilter: boolean
+}
+
+// 标准 EDIT 控件不走 WCM_SETPROP 协议（Win32 原生类忽略 WM_APP+1），
+// 编辑框属性必须在创建时落成样式位，创建后用 EM_* 消息补齐动态属性。
+// 各属性默认值必须与 lib/krnln/window-units.json 编辑框定义中的 defaultValue 保持一致。
+function buildStdEditCodegen(extraProps: Record<string, unknown>): EditControlCodegen {
+  const border = readIntProp(extraProps['边框'], 2)
+  const multiline = readBoolProp(extraProps['是否允许多行'], false)
+  const scroll = readIntProp(extraProps['滚动条'], 0)
+  const align = readIntProp(extraProps['对齐方式'], 0)
+  const inputMode = readIntProp(extraProps['输入方式'], 0)
+  const caseConvert = readIntProp(extraProps['转换方式'], 0)
+  const hideSelection = readBoolProp(extraProps['隐藏选择'], true)
+  const tabStop = readBoolProp(extraProps['可停留焦点'], true)
+  const maxLen = readIntProp(extraProps['最大允许长度'], 0)
+  const selStart = readIntProp(extraProps['起始选择位置'], 0)
+  const selLength = readIntProp(extraProps['被选择字符数'], 0)
+  const spinMode = readIntProp(extraProps['调节器方式'], 0)
+  const spinMin = readIntProp(extraProps['调节器底限值'], 0)
+  const spinMax = readIntProp(extraProps['调节器上限值'], 100)
+  const passwordChar = String(extraProps['密码遮盖字符'] ?? '*')
+  const textColor = readIntProp(extraProps['文本颜色'], 0)
+  const backColor = readIntProp(extraProps['背景颜色'], 0xffffff)
+
+  const parts = ['WS_CHILD']
+  if (tabStop) parts.push('WS_TABSTOP')
+  if (multiline) {
+    parts.push('ES_MULTILINE', 'ES_AUTOVSCROLL', 'ES_WANTRETURN')
+  } else {
+    parts.push('ES_AUTOHSCROLL')
+  }
+  if (scroll === 1 || scroll === 3) parts.push('WS_HSCROLL')
+  if (scroll === 2 || scroll === 3) parts.push('WS_VSCROLL')
+  if (align === 1) parts.push('ES_CENTER')
+  else if (align === 2) parts.push('ES_RIGHT')
+  // 输入方式：0通常 1只读文本 2密码输入 3整数文本 4小数文本 5字节 6短整数 7整数 8长整数 9小数 10双精度 11日期时间
+  if (inputMode === 1) parts.push('ES_READONLY')
+  if (inputMode === 2) parts.push('ES_PASSWORD')
+  if (caseConvert === 1) parts.push('ES_UPPERCASE')
+  else if (caseConvert === 2) parts.push('ES_LOWERCASE')
+  if (!hideSelection) parts.push('ES_NOHIDESEL')
+  if (border === 1) parts.push('WS_BORDER')
+
+  const postCreateLines: string[] = []
+  if (maxLen > 0) {
+    postCreateLines.push(`SendMessage(hCtrl, EM_LIMITTEXT, ${maxLen}, 0);`)
+  }
+  if (inputMode === 2) {
+    const maskCodePoint = passwordChar.codePointAt(0) ?? 42
+    if (maskCodePoint !== 42) {
+      postCreateLines.push(`SendMessage(hCtrl, EM_SETPASSWORDCHAR, ${maskCodePoint}, 0);`)
+    }
+  }
+  const needsInputFilter = inputMode >= 3 && inputMode <= 11
+  if (needsInputFilter) {
+    postCreateLines.push(`SetWindowSubclass(hCtrl, YcEditInputFilterProc, 1, (DWORD_PTR)${inputMode});`)
+  }
+  if (selStart > 0 || selLength > 0) {
+    postCreateLines.push(`SendMessage(hCtrl, EM_SETSEL, ${Math.max(selStart, 0)}, ${Math.max(selStart, 0) + Math.max(selLength, 0)});`)
+  }
+  if (spinMode === 1) {
+    postCreateLines.push(
+      '{ HWND hSpin = CreateWindowExW(0, L"msctls_updown32", L"", WS_CHILD | WS_VISIBLE | UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS | UDS_NOTHOUSANDS, 0, 0, 0, 0, hWndParent, NULL, g_hInstance, NULL);'
+      + ' SendMessage(hSpin, UDM_SETBUDDY, (WPARAM)hCtrl, 0);'
+      + ` SendMessage(hSpin, UDM_SETRANGE32, (WPARAM)${spinMin}, (LPARAM)${spinMax}); }`,
+    )
+  }
+
+  return {
+    exStyle: border === 2 ? 'WS_EX_CLIENTEDGE' : '0',
+    style: parts.join(' | '),
+    postCreateLines,
+    colorEntry: (textColor !== 0 || backColor !== 0xffffff) ? { textColor, backColor } : null,
+    needsInputFilter,
+  }
+}
+
 // 解析窗口文件
 function parseWindowFile(efwPath: string): WindowFileInfo {
   const defaultFormName = basename(efwPath, '.efw') || '_启动窗口'
@@ -1386,7 +1497,7 @@ function parseWindowFile(efwPath: string): WindowFileInfo {
           y: c.y ?? c.top ?? 0,
           width: c.width ?? 80,
           height: c.height ?? 24,
-          text: props['标题'] || props['内容'] || props['文本'] || props['title'] || props['text'] || c.text || c.name || '',
+          text: resolveControlInitialText(c, props),
           visible: c.visible ?? true,
           disabled: c.enabled === false || props['禁止'] === true,
           extraProps: { ...props },
@@ -3626,8 +3737,16 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    return out;\n'
   result += '}\n\n'
 
+  // 轮转缓冲池：同一条调用语句的多个实参可能各自经过本函数转换，
+  // 单一共享缓冲会让后求值的实参覆盖先求值的（如 信息框 的提示信息与窗口标题变成同一文本）
+  result += 'static std::string& yc_c_str_slot(void) {\n'
+  result += '    static thread_local std::string slots[8];\n'
+  result += '    static thread_local unsigned slotIdx = 0;\n'
+  result += '    return slots[(slotIdx++) & 7u];\n'
+  result += '}\n\n'
+
   result += 'static const char* yc_wide_to_utf8(const wchar_t* s) {\n'
-  result += '    static thread_local std::string out;\n'
+  result += '    std::string& out = yc_c_str_slot();\n'
   result += '    out.clear();\n'
   result += '    if (!s) return out.c_str();\n'
   result += '    int n = WideCharToMultiByte(CP_UTF8, 0, s, -1, NULL, 0, NULL, NULL);\n'
@@ -3638,7 +3757,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '}\n\n'
 
   result += 'static const char* yc_bin_to_cstr(const YC_BIN& value) {\n'
-  result += '    static thread_local std::string out;\n'
+  result += '    std::string& out = yc_c_str_slot();\n'
   result += '    out.assign((const char*)value.data(), value.size());\n'
   result += '    return out.c_str();\n'
   result += '}\n\n'
@@ -4568,7 +4687,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         const rightRaw = assignMatch[2].trim()
 
         const propMatch = left.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*)\.([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*)$/)
-        const isTextProp = !!propMatch && (propMatch[2] === '内容' || propMatch[2] === '文本' || propMatch[2] === '标题' || propMatch[2].toLowerCase() === 'text')
+        // 地址 属性走窗口文本通道（浏览框 WM_SETTEXT 即导航）
+        const isTextProp = !!propMatch && (propMatch[2] === '内容' || propMatch[2] === '文本' || propMatch[2] === '标题' || propMatch[2] === '地址' || propMatch[2].toLowerCase() === 'text')
 
         const rhsCall = parseCommandCall(rightRaw)
         const rhsResolved = rhsCall ? commandMap.get(rhsCall.name) : undefined
@@ -4577,7 +4697,9 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
           if (exprGenerator) {
             const expr = exprGenerator(rhsCall.args || [], commandMap, directCallables)
             if (propMatch && isTextProp) {
-              emitSubLine(`yc_set_control_text(L"${escapeCString(propMatch[1])}", ${expr});`)
+              // 数值等非文本表达式赋给控件文本属性时自动转文本（与文本变量赋值的处理一致）
+              const textArg = isTextExpression(expr) ? expr : `yc_value_to_text(${expr})`
+              emitSubLine(`yc_set_control_text(L"${escapeCString(propMatch[1])}", ${textArg});`)
             } else {
               emitSubLine(`${left} = ${expr};`)
             }
@@ -4615,7 +4737,9 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
           const ctrlName = propMatch[1]
           const propName = propMatch[2]
           if (isTextProp) {
-            emitSubLine(`yc_set_control_text(L"${escapeCString(ctrlName)}", ${right});`)
+            // 数值等非文本表达式赋给控件文本属性时自动转文本（与文本变量赋值的处理一致）
+            const textArg = isTextExpression(right) ? right : `yc_value_to_text(${right})`
+            emitSubLine(`yc_set_control_text(L"${escapeCString(ctrlName)}", ${textArg});`)
             continue
           }
         }
@@ -4884,7 +5008,7 @@ function generateMainC(
                 type: c.type || '', name: c.name || '',
                 x: c.x ?? c.left ?? 0, y: c.y ?? c.top ?? 0,
                 width: c.width ?? 80, height: c.height ?? 24,
-                text: props['标题'] || props['内容'] || props['文本'] || c.text || c.name || '',
+                text: resolveControlInitialText(c, props),
                 visible: c.visible ?? true,
                 disabled: c.enabled === false || props['禁止'] === true,
                 extraProps: { ...props },
@@ -4899,6 +5023,13 @@ function generateMainC(
 
     const windowEventTarget = (winInfo.formName || defaultWindowFormName || '_启动窗口').trim() || '_启动窗口'
     const windowEventPrefix = `_${windowEventTarget}`
+
+    // 停留顺序决定控件创建顺序（Win32 Tab 焦点顺序 = 创建顺序），数值小者优先，相同时保持原序。
+    // 注意：必须在所有按 winInfo.controls 顺序生成代码（IDC 宏/创建/事件分发）之前排序，保证 ctrlId 一致。
+    winInfo.controls = winInfo.controls
+      .map((c, i) => ({ c, i }))
+      .sort((a, b) => (readIntProp(a.c.extraProps['停留顺序'], 0) - readIntProp(b.c.extraProps['停留顺序'], 0)) || (a.i - b.i))
+      .map(x => x.c)
 
     // 全局变量
     mainCode += 'static const wchar_t* g_szClassName = L"ycIDEWindowClass";\n'
@@ -4990,6 +5121,50 @@ function generateMainC(
       libNameToFileName.set(normalizeKey(lib.name), lib.name)
     }
 
+    // 编辑框颜色表：WM_CTLCOLOREDIT/WM_CTLCOLORSTATIC 按控件 ID 查表上色（只读编辑框走 STATIC 通道）
+    const editColorEntries: Array<{ idMacro: string; textColor: number; backColor: number }> = []
+    let anyEditNeedsInputFilter = false
+    {
+      for (const ctrl of winInfo.controls) {
+        const unitInfo = allUnits.find(u => u.name === ctrl.type || u.englishName === ctrl.type)
+        const libraryFileName = unitInfo ? (libNameToFileName.get(normalizeKey(unitInfo.libraryName)) || '') : ''
+        const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
+        if (className !== 'EDIT') continue
+        const editCodegenInfo = buildStdEditCodegen(ctrl.extraProps)
+        if (editCodegenInfo.colorEntry) {
+          editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...editCodegenInfo.colorEntry })
+        }
+        if (editCodegenInfo.needsInputFilter) anyEditNeedsInputFilter = true
+      }
+    }
+    if (anyEditNeedsInputFilter) {
+      // 输入方式 3~11 的字符过滤：整数/小数/日期时间等模式按字符集放行，其余字符蜂鸣拒绝
+      mainCode += '/* 编辑框输入方式字符过滤 */\n'
+      mainCode += 'static LRESULT CALLBACK YcEditInputFilterProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {\n'
+      mainCode += '    if (message == WM_CHAR) {\n'
+      mainCode += '        wchar_t ch = (wchar_t)wParam;\n'
+      mainCode += '        if (ch >= 0x20) {\n'
+      mainCode += '            int mode = (int)dwRefData;\n'
+      mainCode += '            int ok = (ch >= L\'0\' && ch <= L\'9\');\n'
+      mainCode += '            if (!ok && ch == L\'-\' && mode != 5) ok = 1;\n'
+      mainCode += '            if (!ok && ch == L\'.\' && (mode == 4 || mode == 9 || mode == 10 || mode == 11)) ok = 1;\n'
+      mainCode += '            if (!ok && mode == 11 && (ch == L\'/\' || ch == L\':\' || ch == L\' \')) ok = 1;\n'
+      mainCode += '            if (!ok) { MessageBeep(MB_OK); return 0; }\n'
+      mainCode += '        }\n'
+      mainCode += '    }\n'
+      mainCode += '    return DefSubclassProc(hWnd, message, wParam, lParam);\n'
+      mainCode += '}\n\n'
+    }
+    if (editColorEntries.length > 0) {
+      mainCode += '/* 编辑框自定义颜色表 */\n'
+      mainCode += 'typedef struct { int id; COLORREF textColor; COLORREF backColor; HBRUSH brush; } YcEditColorEntry;\n'
+      mainCode += 'static YcEditColorEntry g_ycEditColors[] = {\n'
+      for (const entry of editColorEntries) {
+        mainCode += `    { ${entry.idMacro}, (COLORREF)${entry.textColor}, (COLORREF)${entry.backColor}, NULL },\n`
+      }
+      mainCode += '};\n\n'
+    }
+
     // 创建控件函数
     mainCode += '/* 创建所有控件 */\n'
     mainCode += 'void CreateControls(HWND hWndParent) {\n'
@@ -5001,27 +5176,39 @@ function generateMainC(
       const unitInfo = allUnits.find(u => u.name === ctrl.type || u.englishName === ctrl.type)
       const libraryFileName = unitInfo ? (libNameToFileName.get(normalizeKey(unitInfo.libraryName)) || '') : ''
       const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
-      const baseStyle = resolveControlStyle(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
+      const isStdEdit = className === 'EDIT'
+      const editCodegen = isStdEdit ? buildStdEditCodegen(ctrl.extraProps) : null
+      const baseStyle = editCodegen ? editCodegen.style : resolveControlStyle(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
+      const exStyle = editCodegen ? editCodegen.exStyle : '0'
       const visFlag = ctrl.visible ? ' | WS_VISIBLE' : ''
       const disFlag = ctrl.disabled ? ' | WS_DISABLED' : ''
       const style = `${baseStyle}${visFlag}${disFlag}`
       const isEditLike =
         className === 'EDIT'
+        || className === 'YcWebView2Host'
+        || className === 'YcWebEdit'
         || ctrl.type === '编辑框'
         || ctrl.type === '超级编辑框'
         || ctrl.type === '文本框'
+        || ctrl.type === '浏览框'
+        || ctrl.type === '网页编辑框'
         || ctrl.type === 'Edit'
         || ctrl.type === 'TextBox'
       const text = isEditLike ? (ctrl.text || '') : (ctrl.text || ctrl.name)
-      mainCode += `    hCtrl = CreateWindowExW(0, L"${className}", L"${text}",\n`
+      mainCode += `    hCtrl = CreateWindowExW(${exStyle}, L"${className}", L"${text}",\n`
       mainCode += `        ${style},\n`
       mainCode += `        ${ctrl.x}, ${ctrl.y}, ${ctrl.width}, ${ctrl.height},\n`
       mainCode += `        hWndParent, (HMENU)${ctrlId++}, g_hInstance, NULL);\n`
       mainCode += '    SendMessage(hCtrl, WM_SETFONT, (WPARAM)hFont, TRUE);\n'
-      // 通用窗口组件属性：通过标准 WCM_SETPROP 协议 (WM_APP+1) 设置
-      // wParam = 属性在 FNE 元数据中的声明索引，lParam = 属性值
-      // 任何按此协议实现 WndProc 的第三方组件库均自动支持
-      if (unitInfo && Object.keys(ctrl.extraProps).length > 0) {
+      if (editCodegen) {
+        // 标准 EDIT：属性已落成创建样式，动态属性用 EM_* 消息补齐，不走 WCM_SETPROP
+        for (const line of editCodegen.postCreateLines) {
+          mainCode += `    ${line}\n`
+        }
+      } else if (unitInfo && Object.keys(ctrl.extraProps).length > 0) {
+        // 通用窗口组件属性：通过标准 WCM_SETPROP 协议 (WM_APP+1) 设置
+        // wParam = 属性在 FNE 元数据中的声明索引，lParam = 属性值
+        // 任何按此协议实现 WndProc 的第三方组件库均自动支持
         for (let pi = 0; pi < unitInfo.properties.length; pi++) {
           const prop = unitInfo.properties[pi]
           const value = ctrl.extraProps[prop.name]
@@ -5130,7 +5317,7 @@ function generateMainC(
     mainCode += '#define WEAK_FUNC __attribute__((weak))\n'
 
     // 兼容历史按钮事件命名
-    const isClickable = (t: string) => ['Button', '按钮', 'ycUI按钮'].includes(t)
+    const isClickable = (t: string) => ['Button', '按钮', 'ycUI按钮', '网页按钮', 'WebButton'].includes(t)
     const declaredHandlers = new Set<string>()
     for (const ctrl of winInfo.controls) {
       if (isClickable(ctrl.type)) {
@@ -5173,6 +5360,9 @@ function generateMainC(
     mainCode += 'LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {\n'
     mainCode += '    switch (message) {\n'
     mainCode += '    case WM_CREATE:\n'
+    // 创建完毕事件里会按名操作控件（yc_set_control_text 等依赖 g_hMainWnd），
+    // 此时 CreateWindowExW 尚未返回，必须先在这里完成赋值
+    mainCode += '        g_hMainWnd = hWnd;\n'
     mainCode += '        CreateControls(hWnd);\n'
     mainCode += `        ${windowEventPrefix}_创建完毕();\n`
     mainCode += '        break;\n'
@@ -5252,6 +5442,20 @@ function generateMainC(
     mainCode += '        }\n'
     mainCode += '        break;\n'
     mainCode += '    }\n'
+    if (editColorEntries.length > 0) {
+      mainCode += '    case WM_CTLCOLOREDIT:\n'
+      mainCode += '    case WM_CTLCOLORSTATIC: {\n'
+      mainCode += '        int colorCtrlId = GetDlgCtrlID((HWND)lParam);\n'
+      mainCode += '        for (size_t ci = 0; ci < sizeof(g_ycEditColors) / sizeof(g_ycEditColors[0]); ci++) {\n'
+      mainCode += '            if (g_ycEditColors[ci].id != colorCtrlId) continue;\n'
+      mainCode += '            SetTextColor((HDC)wParam, g_ycEditColors[ci].textColor);\n'
+      mainCode += '            SetBkColor((HDC)wParam, g_ycEditColors[ci].backColor);\n'
+      mainCode += '            if (!g_ycEditColors[ci].brush) g_ycEditColors[ci].brush = CreateSolidBrush(g_ycEditColors[ci].backColor);\n'
+      mainCode += '            return (LRESULT)g_ycEditColors[ci].brush;\n'
+      mainCode += '        }\n'
+      mainCode += '        break;\n'
+      mainCode += '    }\n'
+    }
     mainCode += '    case WM_PAINT: {\n'
     mainCode += '        PAINTSTRUCT ps;\n'
     mainCode += '        HDC hdc = BeginPaint(hWnd, &ps);\n'
@@ -5295,6 +5499,18 @@ function generateMainC(
     mainCode += '    return 0;\n'
     mainCode += '}\n\n'
 
+    // 源码型带窗口组件的支持库：注册函数前置声明
+    {
+      for (const lib of librariesForBuild) {
+        if (libraryManager.isCore(lib.name)) continue
+        const info = libraryManager.getLibInfo(lib.name)
+        if (!info || !info.windowUnits || info.windowUnits.length === 0) continue
+        if (/\.(?:c|cc|cpp|cxx|m|mm)$/i.test(lib.libraryPath) && /^[A-Za-z_][A-Za-z0-9_]*$/.test(lib.name)) {
+          mainCode += `extern "C" void ${lib.name}_register_window_units(HINSTANCE);\n`
+        }
+      }
+    }
+
     // WinMain
     mainCode += 'int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,\n'
     mainCode += '                   LPSTR lpCmdLine, int nCmdShow) {\n'
@@ -5310,14 +5526,22 @@ function generateMainC(
     mainCode += '    g_hInstance = hInstance;\n'
     mainCode += '    INITCOMMONCONTROLSEX icc = { sizeof(INITCOMMONCONTROLSEX), ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES | ICC_LISTVIEW_CLASSES | ICC_TREEVIEW_CLASSES | ICC_TAB_CLASSES };\n'
     mainCode += '    InitCommonControlsEx(&icc);\n'
-    // 初始化有窗口组件的支持库（按配置加载动态模块）
+    // 初始化有窗口组件的支持库：
+    // - 动态库形式：LoadLibraryW 触发其 DllMain 注册窗口类
+    // - 源码形式（impl/*.cpp 静态编译进来）：调用约定函数 <库名>_register_window_units(HINSTANCE)
     {
       for (const lib of librariesForBuild) {
         if (libraryManager.isCore(lib.name)) continue
         const info = libraryManager.getLibInfo(lib.name)
         if (!info || !info.windowUnits || info.windowUnits.length === 0) continue
-        const libraryPath = lib.libraryPath.replace(/\\/g, '\\\\')
-        mainCode += `    LoadLibraryW(L"${libraryPath}");\n`
+        if (/\.(?:c|cc|cpp|cxx|m|mm)$/i.test(lib.libraryPath)) {
+          if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(lib.name)) {
+            mainCode += `    ${lib.name}_register_window_units(hInstance);\n`
+          }
+        } else {
+          const libraryPath = lib.libraryPath.replace(/\\/g, '\\\\')
+          mainCode += `    LoadLibraryW(L"${libraryPath}");\n`
+        }
       }
     }
     mainCode += '    WNDCLASSEXW wcex;\n'
@@ -5687,9 +5911,9 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       sendMessage({ type: 'info', text: '项目类型: 控制台程序' })
     }
 
-    // 平台系统库
+    // 平台系统库（advapi32=注册表、ole32=COM 初始化，webview2 等支持库需要）
     if (targetPlatform === 'windows') {
-      args.push('-lkernel32', '-luser32', '-lgdi32', '-lcomctl32', '-loleaut32')
+      args.push('-lkernel32', '-luser32', '-lgdi32', '-lcomctl32', '-loleaut32', '-ladvapi32', '-lole32')
     }
 
     // ========== 支持库链接 ==========
@@ -5710,6 +5934,9 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
         args.push(staticLib, ...extraDeps)
         sendMessage({ type: 'info', text: `  ✓ ${lib.libName} (${lib.name}) - 静态链接: ${basename(staticLib)}` })
       } else if (/\.(?:c|cc|cpp|cxx|m|mm)$/i.test(lib.libraryPath)) {
+        // 库自带头文件目录（如 webview2 的 WebView2.h）
+        const libIncludeDir = join(dirname(lib.libraryPath), '..', 'include')
+        if (existsSync(libIncludeDir)) args.push(`-I${libIncludeDir}`)
         args.push(lib.libraryPath, ...extraDeps)
         sendMessage({ type: 'info', text: `  ${lib.libName} (${lib.name}) - platform source: ${basename(lib.libraryPath)}` })
       } else {

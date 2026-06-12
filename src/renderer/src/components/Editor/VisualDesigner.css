@@ -162,6 +162,30 @@
   grid-column: 1 / -1;
 }
 
+/* 置顶的组件分类下拉（与搜索框同样式风格） */
+.vd-toolbox-category {
+  padding: calc(4px * var(--vd-toolbox-scale)) calc(6px * var(--vd-toolbox-scale)) 0;
+  flex-shrink: 0;
+}
+
+.vd-toolbox-category-select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: calc(2px * var(--vd-toolbox-scale)) calc(4px * var(--vd-toolbox-scale));
+  font-size: calc(11px * var(--vd-toolbox-scale));
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-input, var(--bg-primary));
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+.vd-toolbox-category-select:focus {
+  border-color: var(--accent);
+}
+
 .vd-toolbox-icon-mode .vd-toolbox-list {
   display: flex;
   flex-wrap: wrap;
@@ -643,6 +667,23 @@
   border: 1px solid var(--vd-preview-border, var(--border-color));
   padding: 2px 4px;
   color: var(--vd-preview-text, var(--text-primary));
+  text-align: var(--vd-preview-align, left);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.vd-preview-input-multiline {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.vd-preview-input-borderless {
+  border-color: transparent;
+}
+
+.vd-preview-input-sunken {
+  border-style: inset;
+  border-width: 2px;
 }
 
 .vd-preview-label {
@@ -650,6 +691,76 @@
   align-items: center;
   color: var(--text-primary);
   background: transparent;
+}
+
+/* 网页按钮/网页编辑框预览：与 lib/webview2/impl/windows.cpp 的 HTML 模板样式一致，改动需双侧同步 */
+.vd-preview-webbutton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #4f8cff, #2f6fe0);
+  color: #fff;
+  font: 14px 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  user-select: none;
+  overflow: hidden;
+}
+
+.vd-preview-webedit {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  padding: 0 10px;
+  font: 14px 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  color: #1f2430;
+  background: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.vd-preview-webview {
+  position: relative;
+  background: #ffffff;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+/* 设计期网页所见即所得：iframe 只做展示，鼠标事件交给画布处理控件选择/拖拽 */
+.vd-preview-webview-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  pointer-events: none;
+  background: #ffffff;
+}
+
+.vd-preview-webview-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.vd-preview-webview-url {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-secondary, #252526) 85%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
 }
 
 .vd-preview-image {

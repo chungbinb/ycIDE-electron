@@ -1,0 +1,9 @@
+{
+  "guid": "7A2E94C1B6D34F08A5E1C9F2D7B30461",
+  "description": "WebView2 浏览器支持库：基于 Microsoft Edge WebView2 运行时的浏览框组件，设计期与运行期渲染一致。",
+  "author": "ycIDE",
+  "qq": "-",
+  "email": "-",
+  "homePage": "https://ycide.dev",
+  "otherInfo": "运行期通过注册表发现系统 Edge WebView2 运行时，无需分发 WebView2Loader.dll。"
+}

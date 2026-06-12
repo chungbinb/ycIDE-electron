@@ -481,6 +481,196 @@
           "typeName": "文本型",
           "isReadOnly": false,
           "pickOptions": []
+        },
+        {
+          "name": "边框",
+          "englishName": "border",
+          "description": "编辑框边框样式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": ["无边框", "单线边框", "凹入式"],
+          "defaultValue": 2
+        },
+        {
+          "name": "文本颜色",
+          "englishName": "textColor",
+          "description": "编辑框文本颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "背景颜色",
+          "englishName": "backColor",
+          "description": "编辑框背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "隐藏选择",
+          "englishName": "hideSelection",
+          "description": "失去焦点时是否隐藏文本选中状态。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": true
+        },
+        {
+          "name": "最大允许长度",
+          "englishName": "maxTextLength",
+          "description": "允许输入的最大字符数，0 为不限制。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "是否允许多行",
+          "englishName": "multiLine",
+          "description": "是否允许多行输入。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "滚动条",
+          "englishName": "scrollBars",
+          "description": "编辑框滚动条（通常配合多行使用）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": ["无", "横向滚动条", "纵向滚动条", "横向和纵向"],
+          "defaultValue": 0
+        },
+        {
+          "name": "对齐方式",
+          "englishName": "align",
+          "description": "文本对齐方式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": ["左对齐", "居中对齐", "右对齐"],
+          "defaultValue": 0
+        },
+        {
+          "name": "输入方式",
+          "englishName": "inputMode",
+          "description": "编辑框输入方式：只读、密码或限定输入内容类型。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": ["通常方式", "只读文本", "密码输入", "整数文本输入", "小数文本输入", "输入字节", "输入短整数", "输入整数", "输入长整数", "输入小数", "输入双精度小数", "输入日期时间"],
+          "defaultValue": 0
+        },
+        {
+          "name": "密码遮盖字符",
+          "englishName": "passwordChar",
+          "description": "密码方式下用于遮盖的字符。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": "*"
+        },
+        {
+          "name": "转换方式",
+          "englishName": "caseConvert",
+          "description": "输入字符的大小写转换方式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": ["无", "转换为大写", "转换为小写"],
+          "defaultValue": 0
+        },
+        {
+          "name": "调节器方式",
+          "englishName": "spinMode",
+          "description": "是否附加数值调节器（上下箭头）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": ["无调节器", "数值调节器"],
+          "defaultValue": 0
+        },
+        {
+          "name": "调节器底限值",
+          "englishName": "spinMin",
+          "description": "数值调节器允许的最小值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "调节器上限值",
+          "englishName": "spinMax",
+          "description": "数值调节器允许的最大值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 100
+        },
+        {
+          "name": "起始选择位置",
+          "englishName": "selStart",
+          "description": "初始选中文本的起始位置。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "被选择字符数",
+          "englishName": "selLength",
+          "description": "初始选中文本的字符数。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "可停留焦点",
+          "englishName": "tabStop",
+          "description": "Tab 键切换焦点时是否可停留。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": true
+        },
+        {
+          "name": "停留顺序",
+          "englishName": "tabOrder",
+          "description": "Tab 键焦点切换顺序，数值小者优先。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "备注",
+          "englishName": "comment",
+          "description": "设计期备注，仅供开发时参考。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
         }
       ],
       "events": [

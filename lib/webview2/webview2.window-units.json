@@ -1,0 +1,84 @@
+{
+  "version": "1.0",
+  "description": "WebView2 浏览器支持库窗口组件定义。",
+  "author": "ycIDE",
+  "windowUnits": [
+    {
+      "name": "浏览框",
+      "englishName": "WebView",
+      "description": "基于 Microsoft Edge WebView2 运行时的网页浏览框，设计期与运行期渲染一致。",
+      "className": "YcWebView2Host",
+      "style": "WS_CHILD | WS_TABSTOP",
+      "toolboxCategory": "WebView2",
+      "properties": [
+        {
+          "name": "地址",
+          "englishName": "url",
+          "description": "要加载的网页地址（http/https）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        }
+      ],
+      "events": []
+    },
+    {
+      "name": "网页按钮",
+      "englishName": "WebButton",
+      "description": "WebView2 渲染的现代风格按钮，设计期与运行期外观一致。",
+      "className": "YcWebButton",
+      "style": "WS_CHILD | WS_TABSTOP",
+      "toolboxCategory": "WebView2",
+      "properties": [
+        {
+          "name": "标题",
+          "englishName": "text",
+          "description": "按钮显示文本。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": []
+        }
+      ],
+      "events": [
+        {
+          "name": "被单击",
+          "description": "网页按钮被单击时触发。",
+          "args": [],
+          "channel": "WM_COMMAND",
+          "code": "BN_CLICKED"
+        }
+      ]
+    },
+    {
+      "name": "网页编辑框",
+      "englishName": "WebEdit",
+      "description": "WebView2 渲染的现代风格编辑框，设计期与运行期外观一致。",
+      "className": "YcWebEdit",
+      "style": "WS_CHILD | WS_TABSTOP",
+      "toolboxCategory": "WebView2",
+      "properties": [
+        {
+          "name": "内容",
+          "englishName": "text",
+          "description": "编辑框内容。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": []
+        }
+      ],
+      "events": [
+        {
+          "name": "内容被改变",
+          "description": "网页编辑框内容变化时触发。",
+          "args": [],
+          "channel": "WM_COMMAND",
+          "code": "EN_CHANGE"
+        }
+      ]
+    }
+  ]
+}

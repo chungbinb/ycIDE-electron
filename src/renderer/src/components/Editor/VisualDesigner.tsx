@@ -14,6 +14,7 @@ export interface LibUnitProperty {
   typeName: string
   isReadOnly: boolean
   pickOptions: string[]
+  defaultValue?: string | number | boolean
 }
 
 /** 窗口组件事件（来自支持库） */
@@ -32,6 +33,8 @@ export interface LibWindowUnit {
   iconFileName?: string
   properties: LibUnitProperty[]
   events: LibUnitEvent[]
+  /** 组件箱分类（工具箱分组显示），缺省"通用Win32" */
+  toolboxCategory?: string
 }
 
 /** 控件实例 */
@@ -113,6 +116,7 @@ const TOOLBOX_DOCK_MAX_WIDTH = 420
 const TOOLBOX_FLOAT_LIST_MIN_WIDTH = 130
 const TOOLBOX_FLOAT_MIN_HEIGHT = 220
 const TOOLBOX_STATE_STORAGE_KEY = 'ycide.visual-designer.toolbox-state.v1'
+const TOOLBOX_DEFAULT_CATEGORY = '通用Win32'
 
 function snap(v: number): number {
   return Math.round(v / GRID) * GRID
@@ -305,6 +309,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const [toolboxViewMode, setToolboxViewMode] = useState<'icon' | 'list'>('list')
   const [toolboxListMultiColumn, setToolboxListMultiColumn] = useState(false)
   const [toolboxSearch, setToolboxSearch] = useState('')
+  const [toolboxCategory, setToolboxCategory] = useState(TOOLBOX_DEFAULT_CATEGORY)
   const [toolboxPos, setToolboxPos] = useState({ x: 80, y: 40 })
   const [toolboxSize, setToolboxSize] = useState({ w: 160, h: 400 })
   const [alignGuides, setAlignGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] })
@@ -1381,18 +1386,60 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           </div>
         )
       case '编辑框':
-      case '超级编辑框':
+      case '超级编辑框': {
+        const props = ctrl.properties || {}
+        const isMultiline = props['是否允许多行'] === true || props['是否允许多行'] === '真'
+        const inputMode = Number(props['输入方式'] ?? 0)
+        const isPassword = inputMode === 2
+        const maskChar = String(props['密码遮盖字符'] ?? '*').charAt(0) || '*'
+        const align = Number(props['对齐方式'] ?? 0)
+        const borderMode = Number(props['边框'] ?? 2)
+        const displayText = isPassword ? maskChar.repeat((ctrl.text || '').length) : ctrl.text
         return (
           <div
-            className="vd-preview vd-preview-input"
+            className={`vd-preview vd-preview-input${isMultiline ? ' vd-preview-input-multiline' : ''}${borderMode === 0 ? ' vd-preview-input-borderless' : ''}${borderMode === 2 ? ' vd-preview-input-sunken' : ''}`}
             ref={(element) => setCssVars(element, {
               '--vd-preview-bg': readColorProperty(ctrl.properties, ['背景颜色', '背景色', '背景']) || '#ffffff',
               '--vd-preview-border': controlColors.border,
-              '--vd-preview-text': controlColors.text,
+              '--vd-preview-text': readColorProperty(ctrl.properties, ['文本颜色', '前景颜色', '前景色', '文字颜色']) || controlColors.text,
+              '--vd-preview-align': align === 1 ? 'center' : align === 2 ? 'right' : 'left',
             })}
           >
-            {ctrl.text}
+            {displayText}
           </div>
+        )
+      }
+      case '浏览框':
+      case 'WebView': {
+        const rawUrl = String(ctrl.properties?.['地址'] ?? ctrl.text ?? '').trim()
+        const previewUrl = rawUrl && /^https?:\/\//i.test(rawUrl) ? rawUrl : (rawUrl ? `https://${rawUrl}` : '')
+        return (
+          <div className="vd-preview vd-preview-webview">
+            {previewUrl ? (
+              <iframe
+                className="vd-preview-webview-frame"
+                src={previewUrl}
+                title={`${ctrl.name} 网页预览`}
+                sandbox="allow-scripts allow-same-origin allow-forms"
+              />
+            ) : (
+              <div className="vd-preview-webview-placeholder">浏览框：在属性面板设置“地址”后预览网页</div>
+            )}
+            {previewUrl && <div className="vd-preview-webview-url">{previewUrl}</div>}
+          </div>
+        )
+      }
+      case '网页按钮':
+      case 'WebButton':
+        // 样式与 lib/webview2/impl/windows.cpp buildButtonHtml 模板保持一致（所见即所得）
+        return (
+          <div className="vd-preview vd-preview-webbutton">{ctrl.text}</div>
+        )
+      case '网页编辑框':
+      case 'WebEdit':
+        // 样式与 lib/webview2/impl/windows.cpp buildEditHtml 模板保持一致（所见即所得）
+        return (
+          <div className="vd-preview vd-preview-webedit">{ctrl.text}</div>
         )
       case '标签':
         return (
@@ -1507,9 +1554,23 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const toolboxItems = windowUnits.length > 0
     ? windowUnits.filter(u => u.name !== '窗口') // 窗口自身不在工具箱中
     : [] // 如果没有加载支持库则为空
-  const filteredTools = toolboxSearch
-    ? toolboxItems.filter(u => u.name.includes(toolboxSearch) || u.englishName.toLowerCase().includes(toolboxSearch.toLowerCase()))
-    : toolboxItems
+  const resolveUnitCategory = (unit: LibWindowUnit): string => (unit.toolboxCategory || '').trim() || TOOLBOX_DEFAULT_CATEGORY
+  // 分类列表："通用Win32"固定最前，其余按出现顺序
+  const toolboxCategories = (() => {
+    const categories = [TOOLBOX_DEFAULT_CATEGORY]
+    for (const unit of toolboxItems) {
+      const category = resolveUnitCategory(unit)
+      if (!categories.includes(category)) categories.push(category)
+    }
+    return categories
+  })()
+  // 所选分类失效（如支持库被卸载）时回退默认分类
+  const activeToolboxCategory = toolboxCategories.includes(toolboxCategory) ? toolboxCategory : TOOLBOX_DEFAULT_CATEGORY
+  const filteredTools = toolboxItems.filter(unit => {
+    if (resolveUnitCategory(unit) !== activeToolboxCategory) return false
+    if (!toolboxSearch) return true
+    return unit.name.includes(toolboxSearch) || unit.englishName.toLowerCase().includes(toolboxSearch.toLowerCase())
+  })
   const isListMultiColumn = toolboxViewMode === 'list' && toolboxListMultiColumn
 
   useEffect(() => {
@@ -1527,6 +1588,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           posY?: number
           sizeW?: number
           sizeH?: number
+          category?: string
         }
         const parsedViewMode: 'icon' | 'list' = parsed.viewMode === 'icon' ? 'icon' : 'list'
         const minW = getToolboxMinWidth(parsedViewMode)
@@ -1541,6 +1603,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         setToolboxViewMode(parsedViewMode)
         if (typeof parsed.listMultiColumn === 'boolean') {
           setToolboxListMultiColumn(parsed.listMultiColumn)
+        }
+        if (typeof parsed.category === 'string' && parsed.category.trim()) {
+          setToolboxCategory(parsed.category.trim())
         }
 
         if (
@@ -1578,11 +1643,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         posY: toolboxPos.y,
         sizeW: toolboxSize.w,
         sizeH: toolboxSize.h,
+        category: toolboxCategory,
       }))
     } catch {
       // Ignore storage quota/security failures.
     }
-  }, [toolboxDockSide, toolboxDockWidth, toolboxFloat, toolboxListMultiColumn, toolboxPos.x, toolboxPos.y, toolboxSize.h, toolboxSize.w, toolboxStateReady, toolboxViewMode])
+  }, [toolboxCategory, toolboxDockSide, toolboxDockWidth, toolboxFloat, toolboxListMultiColumn, toolboxPos.x, toolboxPos.y, toolboxSize.h, toolboxSize.w, toolboxStateReady, toolboxViewMode])
 
   // 工具箱渲染
   const renderToolbox = (): React.JSX.Element => (
@@ -1642,6 +1708,18 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             onClick={toggleToolboxFloat}
           >{toolboxFloat ? '📌' : '🔓'}</button>
         </div>
+      </div>
+      <div className="vd-toolbox-category">
+        <select
+          className="vd-toolbox-category-select"
+          aria-label="组件分类"
+          value={activeToolboxCategory}
+          onChange={e => setToolboxCategory(e.target.value)}
+        >
+          {toolboxCategories.map(category => (
+            <option key={category} value={category}>{category}</option>
+          ))}
+        </select>
       </div>
       <div className="vd-toolbox-search">
         <input

@@ -364,6 +364,10 @@ type PendingSubNavigation =
   | { kind: 'navigate'; subName: string; fallbackLine?: number }
 const EDITOR_TAB_BAR_POS_KEY = 'ycide.editor.tabbar.position'
 
+// EycTableEditor 已用 memo 隔离重渲染，空值兜底必须用稳定引用，禁止内联 || []
+const EMPTY_BREAKPOINT_LINES: number[] = []
+const EMPTY_DEBUG_VARIABLES: Array<{ name: string; type: string; value: string }> = []
+
 function isEycSourceLanguage(language?: string): boolean {
   return language === 'eyc'
     || language === 'egv'
@@ -2643,9 +2647,9 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                 onProblemsChange={onProblemsChange}
                 onCursorChange={onCursorChange}
                 onRouteDeclarationPaste={handleRouteDeclarationPaste}
-                breakpointLines={breakpointsByFile[activeTab.label] || []}
+                breakpointLines={breakpointsByFile[activeTab.label] || EMPTY_BREAKPOINT_LINES}
                 debugSourceLine={debugLocation?.file === activeTab.label ? debugLocation.line : undefined}
-                debugVariables={debugLocation?.file === activeTab.label ? debugVariables : []}
+                debugVariables={debugLocation?.file === activeTab.label ? debugVariables : EMPTY_DEBUG_VARIABLES}
                 diffHighlightLines={eycDiffHighlightLines}
                 diffAddedLines={eycDiffAddedLines}
                 diffEditedLines={eycDiffEditedLines}
