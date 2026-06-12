@@ -33,6 +33,7 @@
     "krnln:mapping:check": "node scripts/krnln/generate-command-mapping.mjs",
     "libraries:package": "node scripts/package-libraries.mjs",
     "package:win": "electron-vite build && electron-builder --win",
+    "package:win:zip": "npm run package:win && node scripts/package-win-zip.mjs",
     "package:win:signed": "node scripts/security/package-win-signed.mjs",
     "package:mac": "electron-vite build && electron-builder --mac",
     "package:linux": "electron-vite build && electron-builder --linux",
