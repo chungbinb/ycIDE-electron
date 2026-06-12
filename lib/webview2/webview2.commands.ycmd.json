@@ -1,0 +1,23 @@
+{
+  "contractVersion": "1.0",
+  "library": "webview2",
+  "libraryDisplayName": "WebView2浏览器支持库",
+  "libraryVersion": "1.0",
+  "implementations": {
+    "windows": {
+      "entry": "impl/windows.cpp",
+      "language": "cpp"
+    }
+  },
+  "commands": [
+    {
+      "commandId": "webview2.RuntimeVersion",
+      "displayName": "取WebView2运行时版本",
+      "summary": "返回系统安装的 Microsoft Edge WebView2 运行时版本号，未安装时返回空文本。可用于运行前检测环境。",
+      "returnType": "文本型",
+      "category": "WebView2",
+      "supportedPlatforms": ["windows"],
+      "params": []
+    }
+  ]
+}

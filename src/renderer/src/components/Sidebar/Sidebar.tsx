@@ -1172,6 +1172,7 @@ function resolveFormPropValue(prop: LibUnitProperty, form: DesignForm): string |
 
 /** 根据属性类型返回默认值 */
 function getDefaultPropValue(prop: LibUnitProperty): string | number | boolean {
+  if (prop.defaultValue !== undefined) return prop.defaultValue
   if (prop.typeName === '逻辑型') return false
   if (prop.pickOptions.length > 0) return 0
   if (prop.typeName === '整数型' || prop.typeName === '小数型' || prop.typeName === '选择整数' || prop.typeName === '选择特定整数') return 0
@@ -1382,6 +1383,49 @@ function EditableTextCell({ value, onChange, ariaLabel = '文本' }: { value: st
   )
 }
 
+/** 常用颜色值的中文名（与易语言属性面板显示一致） */
+const COMMON_COLOR_NAMES: Record<number, string> = {
+  0x000000: '黑色',
+  0xffffff: '白色',
+  0x0000ff: '红色',
+  0x00ff00: '绿色',
+  0xff0000: '蓝色',
+  0x00ffff: '黄色',
+  0xffff00: '青色',
+  0xff00ff: '紫红色',
+  0x808080: '灰色',
+}
+
+/** 可编辑颜色属性单元格：色块点击弹出系统颜色选择器，存储值为 COLORREF（0xBBGGRR）整数 */
+function EditableColorCell({ value, onChange, ariaLabel = '颜色' }: { value: number; onChange: (v: number) => void; ariaLabel?: string }): React.JSX.Element {
+  const n = Number.isFinite(value) ? (Math.max(0, Math.trunc(value)) & 0xffffff) : 0
+  const r = n & 0xff
+  const g = (n >> 8) & 0xff
+  const b = (n >> 16) & 0xff
+  const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+  const label = COMMON_COLOR_NAMES[n] || hex.toUpperCase()
+  return (
+    <label className="prop-color-cell">
+      <input
+        className="prop-color-input"
+        type="color"
+        aria-label={buildEditableAriaLabel(ariaLabel, label)}
+        value={hex}
+        onChange={e => {
+          const v = e.target.value
+          const rr = Number.parseInt(v.slice(1, 3), 16)
+          const gg = Number.parseInt(v.slice(3, 5), 16)
+          const bb = Number.parseInt(v.slice(5, 7), 16)
+          if (Number.isFinite(rr) && Number.isFinite(gg) && Number.isFinite(bb)) {
+            onChange(rr | (gg << 8) | (bb << 16))
+          }
+        }}
+      />
+      <span className="prop-color-name">{label}</span>
+    </label>
+  )
+}
+
 /** 可编辑逻辑型属性单元格（下拉选择） */
 function EditableBoolCell({ value, onChange, ariaLabel = '布尔值' }: { value: boolean; onChange: (v: boolean) => void; ariaLabel?: string }): React.JSX.Element {
   return (
@@ -1423,8 +1467,12 @@ function renderEditableCell(prop: LibUnitProperty, val: string | number | boolea
   if (prop.typeName === '逻辑型') {
     return <EditableBoolCell value={!!val} ariaLabel={prop.name} onChange={v => onChange(v)} />
   }
-  // 整数型 / 小数型 / 颜色等数值类型
-  if (prop.typeName === '整数型' || prop.typeName === '小数型' || prop.typeName === '选择整数' || prop.typeName === '选择特定整数' || prop.typeName === '颜色' || prop.typeName === '颜色(透明)' || prop.typeName === '背景颜色') {
+  // 颜色类型 → 色块 + 系统颜色选择器
+  if (prop.typeName === '颜色' || prop.typeName === '颜色(透明)' || prop.typeName === '背景颜色') {
+    return <EditableColorCell value={typeof val === 'number' ? val : Number(val) || 0} ariaLabel={prop.name} onChange={v => onChange(v)} />
+  }
+  // 整数型 / 小数型等数值类型
+  if (prop.typeName === '整数型' || prop.typeName === '小数型' || prop.typeName === '选择整数' || prop.typeName === '选择特定整数') {
     return <EditableIntCell value={typeof val === 'number' ? val : 0} ariaLabel={prop.name} onChange={v => onChange(v)} />
   }
   // 文本型及其他 → 文本输入

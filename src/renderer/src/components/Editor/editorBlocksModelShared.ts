@@ -70,3 +70,41 @@ export function buildEditorBlocksModel(
     flowMapEntries: Array.from(flowLines.map.entries()),
   }
 }
+
+export interface BlocksFlowModel {
+  blocks: RenderBlock[]
+  flowMap: Map<number, FlowSegment[]>
+  flowMaxDepth: number
+}
+
+const BLOCKS_FLOW_CACHE_MAX = 4
+const blocksFlowCache: Array<{
+  text: string
+  isClassModule: boolean
+  isResourceTableDoc: boolean
+  model: BlocksFlowModel
+}> = []
+
+// 返回值在多个调用方间共享，blocks/flowMap 必须只读；需要改动时先拷贝。
+export function getBlocksFlowModelCached(
+  text: string,
+  isClassModule: boolean,
+  isResourceTableDoc: boolean,
+): BlocksFlowModel {
+  for (let i = 0; i < blocksFlowCache.length; i++) {
+    const entry = blocksFlowCache[i]
+    if (entry.text === text && entry.isClassModule === isClassModule && entry.isResourceTableDoc === isResourceTableDoc) {
+      if (i > 0) {
+        blocksFlowCache.splice(i, 1)
+        blocksFlowCache.unshift(entry)
+      }
+      return entry.model
+    }
+  }
+  const blocks = buildBlocks(text, isClassModule, isResourceTableDoc)
+  const flowLines = computeFlowLines(blocks)
+  const model: BlocksFlowModel = { blocks, flowMap: flowLines.map, flowMaxDepth: flowLines.maxDepth }
+  blocksFlowCache.unshift({ text, isClassModule, isResourceTableDoc, model })
+  if (blocksFlowCache.length > BLOCKS_FLOW_CACHE_MAX) blocksFlowCache.pop()
+  return model
+}

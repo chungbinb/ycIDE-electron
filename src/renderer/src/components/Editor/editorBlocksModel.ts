@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FlowSegment } from './eycFlow'
 import type { RenderBlock } from './eycTableModel'
 import {
-  buildEditorBlocksModel,
   buildHeadLineBlocks,
   buildLineBlocks,
+  getBlocksFlowModelCached,
   type EditorBlocksModelRequest,
   type EditorBlocksModelResponse,
 } from './editorBlocksModelShared'
@@ -51,11 +51,13 @@ export function useEditorBlocksModel(input: BlocksModelInput): BlocksModelState 
     return true
   }
   const buildFullState = (text: string, isClassModule: boolean, isResourceTableDoc: boolean): BlocksModelState => {
-    const model = buildEditorBlocksModel(text, isClassModule, isResourceTableDoc)
+    // 共享缓存返回的 blocks/flowMap 为只读共享引用，同一文本反复构建时保持引用稳定，
+    // 下游依赖 blocks 身份的 useMemo 可以直接跳过重算。
+    const model = getBlocksFlowModelCached(text, isClassModule, isResourceTableDoc)
     return {
       blocks: model.blocks,
       flowLines: {
-        map: new Map<number, FlowSegment[]>(model.flowMapEntries),
+        map: model.flowMap,
         maxDepth: model.flowMaxDepth,
       },
     }

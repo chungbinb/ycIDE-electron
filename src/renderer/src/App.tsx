@@ -1467,6 +1467,11 @@ function App(): React.JSX.Element {
     setCommandDetail(null)
   }, [])
 
+  // 必须保持引用稳定：EycTableEditor 已 memo，内联箭头会让其在 App 每次重渲染时被连带重渲染
+  const handleEditorCursorChange = useCallback((line: number, col: number, sourceLine?: number) => {
+    setCursorLine(line); setCursorColumn(col); setCursorSourceLine(sourceLine)
+  }, [])
+
   const handleLibraryHint = useCallback((hint: { title: string; lines: string[] }) => {
     setHighlightParamIndex(undefined)
     setCommandDetail({
@@ -4194,7 +4199,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.3-beta.59（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.3-beta.60（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -5308,7 +5313,7 @@ function App(): React.JSX.Element {
                   onCommandClick={handleCommandClick}
                   onCommandClear={handleCommandClear}
                   onProblemsChange={setFileProblems}
-                  onCursorChange={(line, col, sourceLine) => { setCursorLine(line); setCursorColumn(col); setCursorSourceLine(sourceLine) }}
+                  onCursorChange={handleEditorCursorChange}
                   onDocTypeChange={setDocType}
                   projectDir={currentProjectDir}
                   onProjectTreeRefresh={refreshProjectTree}

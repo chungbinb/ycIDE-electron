@@ -61,6 +61,7 @@ interface UseEditorInteractionHandlersParams {
   findOwnerAssemblyName: (lineIndex: number) => string
   onCommandClick?: (commandName: string) => void
   startEditLine: (li: number, clientX?: number, containerLeft?: number, isVirtual?: boolean, skipPushUndo?: boolean) => void
+  consumeOptimisticLineEdit?: (lineIndex: number) => boolean
   tryToggleTableBooleanCell: (tableType: string | undefined, lineIndex: number, cellIndex: number) => boolean
   isResourceTableDoc: boolean
   handleTableCellHint: (lineIndex: number, fieldIdx: number, text: string) => void
@@ -104,6 +105,7 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     findOwnerAssemblyName,
     onCommandClick,
     startEditLine,
+    consumeOptimisticLineEdit,
     tryToggleTableBooleanCell,
     isResourceTableDoc,
     handleTableCellHint,
@@ -343,7 +345,8 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
       wasDragSelectRef.current = false
       return
     }
-    setSelectedLines(new Set())
+    // 已为空时保持原引用，避免空 Set 新身份触发一轮无意义渲染
+    setSelectedLines(prev => (prev.size === 0 ? prev : new Set()))
 
     const rawCode = clickParams.codeLineRaw.replace(flowAutoTag, '')
     const cmdName = findCommandNameFromClickTarget(e.target, rawCode)
@@ -354,6 +357,9 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
       onCommandClick?.(hintName)
     }
 
+    // mousedown 已乐观进入该行编辑态时，click 不再重复进入（重复进入会多一整轮渲染）
+    if (consumeOptimisticLineEdit?.(clickParams.lineIndex)) return
+
     startEditLine(
       clickParams.lineIndex,
       e.clientX,
@@ -361,6 +367,7 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
       clickParams.isVirtual,
     )
   }, [
+    consumeOptimisticLineEdit,
     findCommandNameFromClickTarget,
     findOwnerAssemblyName,
     flowAutoTag,

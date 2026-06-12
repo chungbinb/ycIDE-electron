@@ -77,7 +77,7 @@ export function buildCompletionMatches(params: BuildCompletionMatchesParams): Ac
     }))
 }
 
-export function computeCompletionPopupPosition(input: HTMLInputElement, value: string, wordStart: number): { left: number; top: number } {
+export function computeCompletionPopupPosition(input: HTMLInputElement, value: string, wordStart: number, scale = 1): { left: number; top: number; leftOffset: number } {
   // 与输入框字体保持一致，估算到当前词起点的像素偏移。
   const rect = input.getBoundingClientRect()
   const canvas = document.createElement('canvas')
@@ -87,8 +87,12 @@ export function computeCompletionPopupPosition(input: HTMLInputElement, value: s
     ctx.font = getComputedStyle(input).font || '13px Consolas, "Microsoft YaHei", monospace'
     leftOffset = ctx.measureText(value.slice(0, wordStart)).width
   }
+  // 编辑器根节点用 zoom 缩放（eycScale），弹窗 fixed 坐标会被 zoom 再放大一次，
+  // 而 rect 已是放大后的视口坐标——写入前必须反向缩放补偿（同右键菜单的处理）。
+  const safeScale = Math.max(scale, 0.01)
   return {
-    left: rect.left + leftOffset,
-    top: rect.bottom + 2,
+    left: (rect.left + leftOffset) / safeScale,
+    top: (rect.bottom + 2) / safeScale,
+    leftOffset,
   }
 }
