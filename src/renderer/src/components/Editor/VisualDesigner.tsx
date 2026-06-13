@@ -694,6 +694,17 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     zoomTo(targetZoom)
     // 覆盖 zoomTo 的锚点保持滚动，改为居中
     pendingScrollRef.current = centerScroll
+    // 兜底：pendingScrollRef 由"工作区尺寸变化"的副作用消费，倍率变化很小时
+    // 工作区尺寸可能不变、副作用不触发，渲染后若仍未消费则直接应用居中滚动
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (pendingScrollRef.current !== centerScroll) return
+      pendingScrollRef.current = null
+      const hostNow = canvasAreaRef.current
+      if (!hostNow) return
+      hostNow.scrollLeft = centerScroll.left
+      hostNow.scrollTop = centerScroll.top
+      setScrollPos({ left: hostNow.scrollLeft, top: hostNow.scrollTop })
+    }))
   }, [visualFormWidth, visualFormHeight, zoomTo])
 
   // 缩放到适应窗口：窗体完整可见、尽量铺满画布可视区域，并居中显示
