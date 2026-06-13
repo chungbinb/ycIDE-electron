@@ -465,19 +465,128 @@
   height: var(--vd-workspace-height, 0px);
 }
 
-.vd-zoom-indicator {
+/* 右下角缩放控件：适应窗口按钮 + 1% 步进滑杆 + 倍率预设菜单 */
+.vd-zoom-control {
   position: absolute;
-  top: 10px;
   right: 14px;
-  z-index: 5;
-  padding: 2px 8px;
+  bottom: 14px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
   border-radius: 999px;
   border: 1px solid var(--border-color);
-  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
+}
+
+.vd-zoom-fit-btn,
+.vd-zoom-value-btn {
+  border: none;
+  background: transparent;
   color: var(--text-secondary);
   font-size: 11px;
   line-height: 18px;
-  pointer-events: none;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.vd-zoom-value-btn {
+  min-width: 42px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.vd-zoom-fit-btn:hover,
+.vd-zoom-value-btn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.vd-zoom-step-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 18px;
+  width: 18px;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.vd-zoom-step-btn:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.vd-zoom-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 110px;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.vd-zoom-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-secondary) 35%, transparent);
+}
+
+.vd-zoom-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+}
+
+.vd-zoom-slider:hover::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.vd-zoom-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  display: flex;
+  flex-direction: column;
+  min-width: 84px;
+  padding: 4px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  box-shadow: 0 4px 14px var(--menu-shadow, rgba(0, 0, 0, 0.4));
+}
+
+.vd-zoom-menu-item {
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 22px;
+  padding: 0 10px;
+  text-align: right;
+  cursor: pointer;
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vd-zoom-menu-item:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.vd-zoom-menu-item.active {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .vd-form-zoom-shell {

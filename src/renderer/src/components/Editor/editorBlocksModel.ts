@@ -62,13 +62,22 @@ export function useEditorBlocksModel(input: BlocksModelInput): BlocksModelState 
       },
     }
   }
-  const [state, setState] = useState<BlocksModelState>(() => ({
-    ...(canBuildSynchronously(input.text)
-      ? buildFullState(input.text, input.isClassModule, input.isResourceTableDoc)
-      : {
-          blocks: buildHeadLineBlocks(input.text, OPEN_PREVIEW_MAX_LINES),
-          flowLines: { map: new Map<number, FlowSegment[]>(), maxDepth: 0 },
-        }),
+  const canSync = canBuildSynchronously(input.text)
+
+  // 同步路径（≤1500 行 / ≤120KB）：用 useMemo 让 blocks 与 currentText 在同一渲染内更新。
+  // 关键：回车拆行/退格删行用 flushSync 强制状态同步落地后，新行的编辑 input 必须能在
+  // 同一次提交里挂载，才能同步聚焦——否则连按时旧 input 已卸载、新 input 未挂载的间隙里
+  // keydown 落到 body 上丢失（连按5次回车只生效2次）。getBlocksFlowModelCached 对同一文本
+  // 返回稳定引用，useMemo 不会破坏下游依赖 blocks 身份的优化。
+  const syncState = useMemo<BlocksModelState | null>(
+    () => (canSync ? buildFullState(input.text, input.isClassModule, input.isResourceTableDoc) : null),
+    [canSync, input.text, input.isClassModule, input.isResourceTableDoc],
+  )
+
+  // 异步/Worker 路径（大文件）：保留 useState + 后台计算 + 首屏头部预览。
+  const [asyncState, setAsyncState] = useState<BlocksModelState>(() => ({
+    blocks: buildHeadLineBlocks(input.text, OPEN_PREVIEW_MAX_LINES),
+    flowLines: { map: new Map<number, FlowSegment[]>(), maxDepth: 0 },
   }))
 
   const workerRef = useRef<Worker | null>(null)
@@ -90,7 +99,7 @@ export function useEditorBlocksModel(input: BlocksModelInput): BlocksModelState 
     const onMessage = (event: MessageEvent<EditorBlocksModelResponse>): void => {
       const message = event.data
       if (!message || message.id !== requestIdRef.current) return
-      setState({
+      setAsyncState({
         blocks: message.blocks,
         flowLines: {
           map: new Map<number, FlowSegment[]>(message.flowMapEntries || []),
@@ -108,6 +117,9 @@ export function useEditorBlocksModel(input: BlocksModelInput): BlocksModelState 
   }, [])
 
   useEffect(() => {
+    // 同步路径由 useMemo 负责，无需异步计算
+    if (canBuildSynchronously(normalized.text)) return
+
     const previousText = previousTextRef.current
     previousTextRef.current = normalized.text
 
@@ -121,18 +133,9 @@ export function useEditorBlocksModel(input: BlocksModelInput): BlocksModelState 
 
     const id = ++requestIdRef.current
 
-    if (canBuildSynchronously(normalized.text)) {
-      setState(buildFullState(
-        normalized.text,
-        normalized.isClassModule,
-        normalized.isResourceTableDoc,
-      ))
-      return
-    }
-
     if (shouldUseHeadPreview && !normalized.suppressHeadPreview) {
       const quickBlocks = buildHeadLineBlocks(normalized.text, OPEN_PREVIEW_MAX_LINES)
-      setState(prev => ({
+      setAsyncState(prev => ({
         blocks: quickBlocks,
         flowLines: prev.flowLines,
       }))
@@ -141,7 +144,7 @@ export function useEditorBlocksModel(input: BlocksModelInput): BlocksModelState 
     const worker = workerRef.current
 
     if (!worker) {
-      setState(buildFullState(
+      setAsyncState(buildFullState(
         normalized.text,
         normalized.isClassModule,
         normalized.isResourceTableDoc,
@@ -158,5 +161,5 @@ export function useEditorBlocksModel(input: BlocksModelInput): BlocksModelState 
     worker.postMessage(payload)
   }, [normalized])
 
-  return state
+  return canSync && syncState ? syncState : asyncState
 }
