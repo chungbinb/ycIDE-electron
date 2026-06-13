@@ -30,3 +30,6 @@ compiler/
 
 # 本地编辑器行为验证框架（组件复现 + Playwright 回归脚本），不入库
 .tmp-harness/
+
+# 本地流程验证临时目录，不入库
+.tmp-flow-verify/

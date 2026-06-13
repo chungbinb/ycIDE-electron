@@ -1,4 +1,5 @@
 import { Fragment, memo, useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react'
+import { flushSync } from 'react-dom'
 import { eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
 import {
   inferResourceTypeByFileName,
@@ -4635,6 +4636,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const { action, lineIndex, isVirtual } = params
     if (action.type === 'forbidden') return
 
+    // 用 prevRef.current（最新文本真相）而非 state 派生的 lines：连按退格删空行时
+    // React 尚未重渲染、闭包里的 lines 会过时导致多次删除互相覆盖、丢键。
+    const latestLines = prevRef.current.split('\n')
+
     const getSubAnchorInfoForLine = (ls: string[], targetLine: number): { anchorLine: number; ordinaryLines: number[] } | null => {
       if (targetLine < 0 || targetLine >= ls.length) return null
       let subStart = -1
@@ -4663,7 +4668,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     let deleteIndex = lineIndex
     let focusLineAfter = action.targetLine
-    const anchorInfo = getSubAnchorInfoForLine(lines, lineIndex)
+    const anchorInfo = getSubAnchorInfoForLine(latestLines, lineIndex)
     if (anchorInfo && anchorInfo.anchorLine === lineIndex) {
       const nextOrdinary = anchorInfo.ordinaryLines.find(i => i > lineIndex)
       if (nextOrdinary === undefined) {
@@ -4675,25 +4680,42 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     suppressInlineBlurCommit()
-    pushUndo(currentText)
-    const nl = [...lines]
+    pushUndo(prevRef.current)
+    const nl = [...latestLines]
     nl.splice(deleteIndex, 1)
     const nt = nl.join('\n')
-    applyTextChange(nt)
-    flowIndentRef.current = ''
+    const clampedLi = Math.max(0, Math.min(focusLineAfter, nl.length - 1))
+
+    // flushSync 强制删除 + 进入目标行编辑态同步落地：blocks 用 useMemo 同步派生后，
+    // 目标行的编辑 input 会在本次提交内挂载，从而可立即同步聚焦——消除连按退格时
+    // 旧 input 卸载、新 input 未聚焦的间隙丢键（此前连按5次只删1次）。
     flowMarkRef.current = ''
-    setTimeout(() => {
-      const latestLines = prevRef.current.split('\n')
-      if (latestLines.length === 0) {
+    flushSync(() => {
+      applyTextChange(nt)
+      flowIndentRef.current = ''
+      if (nl.length === 0) {
         setEditCell(null)
-        focusWrapper()
-        return
+      } else {
+        // applyTextChange 已同步写 prevRef.current=nt，startEditLine 读到最新文本；
+        // skipPushUndo=true 避免与上面的 pushUndo 重复入栈。
+        startEditLine(clampedLi, undefined, undefined, isVirtual, true)
       }
-      const clampedLi = Math.max(0, Math.min(focusLineAfter, latestLines.length - 1))
-      startEditLine(clampedLi, undefined, undefined, isVirtual, true)
+    })
+
+    if (nl.length === 0) {
+      focusWrapper()
+      return
+    }
+    // 目标行 input 已同步挂载，立即同步聚焦（不走 focusInlineInputAt 的 setTimeout 延迟）
+    const freshInput = inputRef.current
+    if (freshInput) {
+      try { freshInput.focus({ preventScroll: true }) } catch { freshInput.focus() }
+      const pos = action.preferPrevLine ? freshInput.value.length : 0
+      freshInput.setSelectionRange(pos, pos)
+    } else {
       focusInlineInputAt(action.preferPrevLine ? 'end' : 0)
-    }, 0)
-  }, [applyTextChange, currentText, focusInlineInputAt, focusWrapper, lines, pushUndo, startEditLine])
+    }
+  }, [applyTextChange, focusInlineInputAt, focusWrapper, pushUndo, startEditLine])
 
   const applyParenScopedAction = useCallback((params: {
     action: ParenScopedKeyAction
@@ -5016,50 +5038,69 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     afterText: string
   }) => {
     const { editCellState, beforeText, afterText } = params
-    const nl = [...lines]
+    // 用 prevRef.current（最新文本真相）而非 state 派生的 lines：连续快速按回车时
+    // React 尚未重渲染、闭包里的 lines 会过时，多次回车基于同一旧文本计算并互相覆盖
+    // （表现为"连按两次回车只新增一行"）。
+    const nl = prevRef.current.split('\n')
 
-    if (editCellState.isVirtual) {
-      nl.splice(editCellState.lineIndex + 1, 0, beforeText, afterText)
-      const nt = nl.join('\n')
-      applyTextChange(nt)
-      const newLi = editCellState.lineIndex + 2
-      beginCodeLineEdit(newLi, afterText)
+    // flushSync 强制本次状态同步落地：保证下一次按键事件的闭包（editCell/editVal/lines）
+    // 已刷新到最新，避免连按时事件竞争丢键。
+    flushSync(() => {
+      if (editCellState.isVirtual) {
+        nl.splice(editCellState.lineIndex + 1, 0, beforeText, afterText)
+        const nt = nl.join('\n')
+        applyTextChange(nt)
+        const newLi = editCellState.lineIndex + 2
+        beginCodeLineEdit(newLi, afterText)
+      } else {
+        const fi = flowIndentRef.current
+        const curSegs = flowLines.map.get(editCellState.lineIndex) || []
+        const hasFlowEnd = curSegs.some(s => s.type === 'end')
+        const newFi = hasFlowEnd && fi.length >= 4 ? fi.slice(0, fi.length - 4) : fi
+        const fmtBefore = afterText.trim() === '' ? formatCommandLine(fi + beforeText)[0].slice(fi.length) : beforeText
+        nl[editCellState.lineIndex] = fi + fmtBefore
+        nl.splice(editCellState.lineIndex + 1, 0, newFi + afterText)
+        const nt = nl.join('\n')
+        applyTextChange(nt)
+        const newLi = editCellState.lineIndex + 1
+        beginCodeLineEdit(newLi, afterText)
+        flowIndentRef.current = newFi
+        wasFlowStartRef.current = false
+      }
+    })
+
+    // flushSync 后新行 input 已同步挂载——立即同步聚焦并置光标到行首。
+    // 不能走 focusCodeInputAt（其内部 setTimeout(0) 延迟聚焦），否则连按回车时
+    // 旧 input 已卸载、新 input 尚未聚焦的间隙里，后续 keydown 会落到 body 上丢失
+    // （实测连按5次只有首尾2次到达 handler）。
+    const freshInput = inputRef.current
+    if (freshInput) {
+      try { freshInput.focus({ preventScroll: true }) } catch { freshInput.focus() }
+      freshInput.setSelectionRange(0, 0)
     } else {
-      const fi = flowIndentRef.current
-      const curSegs = flowLines.map.get(editCellState.lineIndex) || []
-      const hasFlowEnd = curSegs.some(s => s.type === 'end')
-      const newFi = hasFlowEnd && fi.length >= 4 ? fi.slice(0, fi.length - 4) : fi
-      const fmtBefore = afterText.trim() === '' ? formatCommandLine(fi + beforeText)[0].slice(fi.length) : beforeText
-      nl[editCellState.lineIndex] = fi + fmtBefore
-      nl.splice(editCellState.lineIndex + 1, 0, newFi + afterText)
-      const nt = nl.join('\n')
-      applyTextChange(nt)
-      const newLi = editCellState.lineIndex + 1
-      beginCodeLineEdit(newLi, afterText)
-      flowIndentRef.current = newFi
-      wasFlowStartRef.current = false
+      focusCodeInputAt(0)
     }
-
-    focusCodeInputAt(0)
-  }, [applyTextChange, beginCodeLineEdit, flowLines, focusCodeInputAt, formatCommandLine, lines])
+  }, [applyTextChange, beginCodeLineEdit, flowLines, focusCodeInputAt, formatCommandLine])
 
   const applyTableRowEnterInsert = useCallback((editCellState: EditState): boolean => {
     if (editCellState.cellIndex < 0 || editCellState.fieldIdx === undefined || editCellState.fieldIdx < 0) {
       return false
     }
 
+    // 用 prevRef.current（最新文本真相）派生行数组，避免连按时 state lines 过时
+    const latestLines = prevRef.current.split('\n')
     const li = editCellState.lineIndex
-    let rawLine = lines[li]
+    let rawLine = latestLines[li]
     rawLine = rebuildLineField(rawLine, editCellState.fieldIdx, editVal, editCellState.sliceField)
 
     const newLine = getTableRowInsertTemplate(rawLine)
     if (!newLine) return false
 
-    let nl = [...lines]
+    let nl = [...latestLines]
     nl[li] = rawLine
 
     if (editCellState.fieldIdx === 0) {
-      const origRaw = lines[li]
+      const origRaw = latestLines[li]
       const trimmedOrig = origRaw.replace(/[\r\t]/g, '').trim()
       nl = applyScopedVariableRename({
         lines: nl,
@@ -5087,7 +5128,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setEditVal('')
     setTimeout(() => { inputRef.current?.focus() }, 0)
     return true
-  }, [applyTextChange, editVal, isClassModule, lines, onClassNameRename])
+  }, [applyTextChange, editVal, isClassModule, onClassNameRename])
 
   const applyCustomPasteShortcut = useCallback((): boolean => {
     if (editCell && editCell.cellIndex === -1 && editCell.paramIdx === undefined) return false
