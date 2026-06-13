@@ -2249,13 +2249,90 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     suppressHeadPreview: !!editCell,
   })
 
-  const visibleBlocks = useMemo(() => {
-    return blocks.filter((blk) => {
-      if (blk.kind !== 'codeline' || !blk.codeLine) return true
-      const kw = extractFlowKw(blk.codeLine)
-      return !(kw && TABLE_MODE_HIDDEN_FLOW_COMMANDS.has(kw))
+  // ===== 子程序整体折叠（行号旁常驻 +/- 按钮，与代码行参数展开的 +/- 无关）=====
+  // 以子程序名为 key（文本编辑导致行号平移时折叠状态仍跟随该子程序）
+  const [collapsedSubNames, setCollapsedSubNames] = useState<Set<string>>(new Set())
+
+  // 每个子程序的折叠范围：声明行 → 下一个非局部变量表格块的前一行（或文末）
+  const subFoldRanges = useMemo(() => {
+    const ranges: Array<{ name: string; startLine: number; endLine: number }> = []
+    const docLines = currentText.split('\n')
+    for (let bi = 0; bi < blocks.length; bi++) {
+      const blk = blocks[bi]
+      if (blk.kind !== 'table' || blk.tableType !== 'sub') continue
+      const rawLine = (docLines[blk.lineIndex] || '').trim()
+      if (!rawLine.startsWith('.子程序')) continue
+      const name = (rawLine.slice('.子程序'.length).trim().split(/[,，]/)[0] || '').trim()
+      if (!name) continue
+      let endLine = docLines.length - 1
+      for (let bj = bi + 1; bj < blocks.length; bj++) {
+        const nextBlk = blocks[bj]
+        if (nextBlk.kind === 'table' && nextBlk.tableType !== 'localVar') {
+          endLine = nextBlk.lineIndex - 1
+          break
+        }
+      }
+      ranges.push({ name, startLine: blk.lineIndex, endLine })
+    }
+    return ranges
+  }, [blocks, currentText])
+
+  const subFoldNameByLine = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const range of subFoldRanges) map.set(range.startLine, range.name)
+    return map
+  }, [subFoldRanges])
+
+  const collapsedSubRanges = useMemo(
+    () => subFoldRanges.filter(range => collapsedSubNames.has(range.name)),
+    [subFoldRanges, collapsedSubNames],
+  )
+  const collapsedSubRangesRef = useRef(collapsedSubRanges)
+  collapsedSubRangesRef.current = collapsedSubRanges
+
+  const toggleSubFold = useCallback((name: string) => {
+    setCollapsedSubNames(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
     })
-  }, [blocks])
+  }, [])
+
+  // 编辑落在折叠范围内时自动展开该子程序（键盘导航/搜索跳转等路径兜底）
+  const expandSubContainingLine = useCallback((lineIndex: number) => {
+    const hit = collapsedSubRangesRef.current.find(range => lineIndex > range.startLine && lineIndex <= range.endLine)
+    if (hit) {
+      setCollapsedSubNames(prev => {
+        if (!prev.has(hit.name)) return prev
+        const next = new Set(prev)
+        next.delete(hit.name)
+        return next
+      })
+    }
+  }, [])
+
+  const visibleBlocks = useMemo(() => {
+    const result: RenderBlock[] = []
+    for (const blk of blocks) {
+      if (blk.kind === 'codeline' && blk.codeLine) {
+        const kw = extractFlowKw(blk.codeLine)
+        if (kw && TABLE_MODE_HIDDEN_FLOW_COMMANDS.has(kw)) continue
+      }
+      // 折叠的子程序：声明块只保留声明行（表头+子程序名行），范围内其余块全部隐藏
+      const owningRange = collapsedSubRanges.find(range => blk.lineIndex > range.startLine && blk.lineIndex <= range.endLine)
+      if (owningRange) continue
+      if (blk.kind === 'table' && blk.tableType === 'sub') {
+        const ownRange = collapsedSubRanges.find(range => range.startLine === blk.lineIndex)
+        if (ownRange) {
+          result.push({ ...blk, rows: blk.rows.filter(row => row.lineIndex === ownRange.startLine) })
+          continue
+        }
+      }
+      result.push(blk)
+    }
+    return result
+  }, [blocks, collapsedSubRanges])
 
   const visibleCodeLineIndexes = useMemo(() => {
     const indexes = new Set<number>()
@@ -4071,6 +4148,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   const startEditCell = useCallback((li: number, ci: number, cellText: string, fieldIdx?: number, sliceField?: boolean) => {
     if (fieldIdx === undefined) return // 无字段映射（tick 单元格等），不可编辑
+    expandSubContainingLine(li)
     setSelectedLines(new Set())
     pushUndo(prevRef.current)
     lastFocusedLine.current = li
@@ -4216,6 +4294,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   }, [projectDir, resourcePreview.visible, resourcePreview.resourceFile, resourcePreview.resourceType, resourcePreview.version])
 
   const startEditLine = useCallback((li: number, clientX?: number, containerLeft?: number, isVirtual?: boolean, skipPushUndo = false, selectAnchorClientX?: number) => {
+    expandSubContainingLine(li)
     // 使用 prevRef 获取最新行数据，防止 commit 修改文本后 React 尚未重渲染导致闭包中 lines 过时
     const latestText = prevRef.current
     const latestLines = latestText.split('\n')
@@ -4329,7 +4408,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         wrapper.scrollTop = prevScrollTop
       }
     }, 0)
-  }, [currentText, pushUndo, flowLines, shouldAliasJudgeStartInTableMode])
+  }, [currentText, pushUndo, flowLines, shouldAliasJudgeStartInTableMode, expandSubContainingLine])
 
   // 同一行内按住拖动（行未聚焦）：进入该行编辑态并选中拖动范围内的文本
   beginLineTextSelectRef.current = (li, isVirtual, anchorX, headX) => {
@@ -6702,7 +6781,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                 </>
                               )
                             })()}
-                            <span className="eyc-gutter-fold-area" />
+                            <span className="eyc-gutter-fold-area">
+                              {/* 子程序名行：常驻展开/收缩按钮（折叠整个子程序，与代码行参数展开 +/- 无关） */}
+                              {blk.tableType === 'sub' && !row.isHeader && subFoldNameByLine.has(row.lineIndex) && (
+                                <span
+                                  className="eyc-gutter-fold eyc-sub-fold"
+                                  role="button"
+                                  title={collapsedSubNames.has(subFoldNameByLine.get(row.lineIndex)!) ? '展开子程序' : '收缩子程序'}
+                                  onMouseDown={(e) => { e.stopPropagation(); e.preventDefault() }}
+                                  onClick={(e) => { e.stopPropagation(); toggleSubFold(subFoldNameByLine.get(row.lineIndex)!) }}
+                                >{collapsedSubNames.has(subFoldNameByLine.get(row.lineIndex)!) ? '+' : '−'}</span>
+                              )}
+                            </span>
                           </div>
                         )
                   ))}
