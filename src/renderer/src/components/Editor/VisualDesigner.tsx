@@ -667,18 +667,11 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     return () => document.removeEventListener('mousedown', onMouseDown, true)
   }, [zoomMenuOpen])
 
-  // 缩放到适应窗口：窗体完整可见、尽量铺满画布可视区域，并居中显示
-  const fitZoomToViewport = useCallback(() => {
+  // 缩放到指定倍率并把窗体居中显示（适应窗口/预设档位用；拖动条缩放不居中）
+  const zoomToCentered = useCallback((targetZoomRaw: number) => {
     const host = canvasAreaRef.current
     if (!host) return
-    const padding = 24
-    const availableWidth = Math.max(host.clientWidth - padding, 50)
-    const availableHeight = Math.max(host.clientHeight - padding, 50)
-    const fit = Math.min(
-      availableWidth / Math.max(visualFormWidth, 1),
-      availableHeight / Math.max(visualFormHeight + FORM_TITLEBAR_HEIGHT, 1),
-    )
-    const targetZoom = clamp(fit, MIN_ZOOM, MAX_ZOOM)
+    const targetZoom = clamp(targetZoomRaw, MIN_ZOOM, MAX_ZOOM)
     const currentZoom = zoomRef.current || 1
 
     // 窗体居中于工作区，滚动到工作区中心即窗体居中
@@ -692,7 +685,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     }
 
     if (Math.abs(targetZoom - currentZoom) < 1e-6) {
-      // 倍率已是适应值：直接居中滚动
+      // 倍率不变：直接居中滚动
       host.scrollLeft = centerScroll.left
       host.scrollTop = centerScroll.top
       setScrollPos({ left: host.scrollLeft, top: host.scrollTop })
@@ -702,6 +695,20 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     // 覆盖 zoomTo 的锚点保持滚动，改为居中
     pendingScrollRef.current = centerScroll
   }, [visualFormWidth, visualFormHeight, zoomTo])
+
+  // 缩放到适应窗口：窗体完整可见、尽量铺满画布可视区域，并居中显示
+  const fitZoomToViewport = useCallback(() => {
+    const host = canvasAreaRef.current
+    if (!host) return
+    const padding = 24
+    const availableWidth = Math.max(host.clientWidth - padding, 50)
+    const availableHeight = Math.max(host.clientHeight - padding, 50)
+    const fit = Math.min(
+      availableWidth / Math.max(visualFormWidth, 1),
+      availableHeight / Math.max(visualFormHeight + FORM_TITLEBAR_HEIGHT, 1),
+    )
+    zoomToCentered(fit)
+  }, [visualFormWidth, visualFormHeight, zoomToCentered])
 
   // 倍率预设：首项为实际最小倍率，其余固定档位（超出范围的剔除）
   const zoomPresetPercents = (() => {
@@ -2062,6 +2069,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             aria-label="缩放到适应窗口"
             onClick={fitZoomToViewport}
           >⛶</button>
+          <button
+            className="vd-zoom-step-btn"
+            title="缩小 10%"
+            aria-label="缩小 10%"
+            onClick={() => zoomTo((zoomRef.current || 1) - 0.1)}
+          >−</button>
           <input
             type="range"
             className="vd-zoom-slider"
@@ -2072,6 +2085,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             value={Math.round(zoom * 100)}
             onChange={e => zoomTo(Number(e.target.value) / 100)}
           />
+          <button
+            className="vd-zoom-step-btn"
+            title="放大 10%"
+            aria-label="放大 10%"
+            onClick={() => zoomTo((zoomRef.current || 1) + 0.1)}
+          >+</button>
           <button
             className="vd-zoom-value-btn"
             title="选择缩放倍率"
@@ -2086,7 +2105,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
                   key={percent}
                   role="menuitem"
                   className={`vd-zoom-menu-item${Math.round(zoom * 100) === percent ? ' active' : ''}`}
-                  onClick={() => { zoomTo(percent / 100); setZoomMenuOpen(false) }}
+                  onClick={() => { zoomToCentered(percent / 100); setZoomMenuOpen(false) }}
                 >{percent}%</button>
               ))}
             </div>
