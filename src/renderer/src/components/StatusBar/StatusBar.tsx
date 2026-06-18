@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState, memo } from 'react'
+import { useCursorPos } from '../../stores/cursorPosStore'
 import './StatusBar.css'
 
 interface StatusBarProps {
   onToggleOutput: () => void
   errorCount?: number
   warningCount?: number
-  cursorLine?: number
-  cursorColumn?: number
   docType?: string
   workspaceModeLabel?: string
   fileEncodingLabel?: string
@@ -14,12 +13,18 @@ interface StatusBarProps {
   onReopenWithEncoding?: (encoding: string) => void
 }
 
+// 光标行列独立小组件：只订阅 cursorPosStore，光标移动时仅本组件重渲染，
+// 不触动状态栏其余部分，更不会回涨到 App。
+function CursorPositionIndicator(): React.JSX.Element | null {
+  const { line, column } = useCursorPos()
+  if (line === undefined || column === undefined) return null
+  return <span className="statusbar-item">行 {line}, 列 {column}</span>
+}
+
 function StatusBar({
   onToggleOutput,
   errorCount = 0,
   warningCount = 0,
-  cursorLine,
-  cursorColumn,
   docType,
   workspaceModeLabel,
   fileEncodingLabel,
@@ -99,11 +104,9 @@ function StatusBar({
             )}
           </div>
         )}
-        {cursorLine !== undefined && cursorColumn !== undefined && (
-          <span className="statusbar-item">行 {cursorLine}, 列 {cursorColumn}</span>
-        )}
+        <CursorPositionIndicator />
         {docType && <span className="statusbar-item">{docType}</span>}
-        <span className="statusbar-item">ycIDE v0.0.3-beta.61</span>
+        <span className="statusbar-item">ycIDE v0.0.3-beta.62</span>
       </div>
     </footer>
   )

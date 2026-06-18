@@ -5,7 +5,9 @@ import { readFile as readFileAsync, writeFile as writeFileAsync, readdir as read
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import iconv from 'iconv-lite'
 import { libraryManager } from './libraryManager'
-import { compileProject, runExecutable, stopExecutable, isRunning, continueDebugExecutable } from './compiler'
+import { runExecutable, stopExecutable, isRunning, continueDebugExecutable, setCompilerHost } from './compiler'
+import { compileViaWorker } from './compileWorkerClient'
+import { setRuntimeEnv } from './runtimeEnv'
 import { buildAndRunAndroidProject, shouldRunAsAndroid } from './android-runner'
 import { normalizeRuntimePlatform } from '../shared/platform'
 import { getActionAccelerator } from '../shared/shortcut-config'
@@ -1093,6 +1095,41 @@ app.whenReady().then(() => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.ycide.app')
   }
+
+  // 注入运行环境与编译器宿主：必须在任何 libraryManager / compiler 调用之前。
+  // 这样这些模块不再直接依赖 electron，可在 worker_threads 中复用（worker 端会注入各自的实现）。
+  setRuntimeEnv({
+    appPath: app.getAppPath(),
+    isPackaged: app.isPackaged,
+    userDataPath: app.getPath('userData'),
+    appVersion: app.getVersion(),
+  })
+  setCompilerHost({
+    emitOutput: (msg) => {
+      BrowserWindow.getAllWindows().forEach(w => w.webContents.send('compiler:output', msg))
+    },
+    requestFocusIdeWindow: () => {
+      const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+      if (!win || win.isDestroyed()) return
+      if (win.isMinimized()) win.restore()
+      if (!win.isVisible()) win.show()
+      win.focus()
+      if (process.platform === 'win32') {
+        try {
+          win.moveTop()
+          win.setAlwaysOnTop(true)
+          win.setAlwaysOnTop(false)
+          win.focus()
+        } catch {
+          // ignore focus promotion failures
+        }
+      }
+    },
+    notifyProcessExit: (code) => {
+      BrowserWindow.getAllWindows().forEach(w => w.webContents.send('compiler:processExit', code))
+    },
+    openPathExternally: (targetPath) => shell.openPath(targetPath),
+  })
 
   if (ENABLE_RENDERER_FILE_LOG) {
     try {
@@ -2759,17 +2796,18 @@ app.whenReady().then(() => {
 
   // 编译器 IPC
   ipcMain.handle('compiler:compile', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string) => {
-    const editorFiles = editorFilesObj ? new Map(Object.entries(editorFilesObj)) : undefined
-    return compileProject({ projectDir, debug: true, arch, mode: 'compile' }, editorFiles)
+    // 编译走工作线程，避免阻塞主进程导致 IDE「停止响应」。
+    return compileViaWorker({ projectDir, debug: true, arch, mode: 'compile' }, editorFilesObj)
   })
 
   ipcMain.handle('compiler:run', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string, debugOptions?: { breakpoints?: Record<string, number[]> }) => {
-    const editorFiles = editorFilesObj ? new Map(Object.entries(editorFilesObj)) : undefined
     if (shouldRunAsAndroid(projectDir)) {
       const settings = readIDESettings()
+      const editorFiles = editorFilesObj ? new Map(Object.entries(editorFilesObj)) : undefined
       return buildAndRunAndroidProject(projectDir, settings, editorFiles)
     }
-    const result = await compileProject({ projectDir, debug: true, arch, mode: 'run', breakpoints: debugOptions?.breakpoints || {} }, editorFiles)
+    // 编译在工作线程完成（不卡界面）；运行 exe 仍在主进程（本就用子进程，不阻塞，且涉及调试交互）。
+    const result = await compileViaWorker({ projectDir, debug: true, arch, mode: 'run', breakpoints: debugOptions?.breakpoints || {} }, editorFilesObj)
     if (result.success && result.outputFile) {
       runExecutable(result.outputFile)
     }

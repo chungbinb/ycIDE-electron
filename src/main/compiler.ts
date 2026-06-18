@@ -1,10 +1,10 @@
 import { join, dirname, basename, extname } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, copyFileSync, rmSync } from 'fs'
 import { execFile, ChildProcess } from 'child_process'
-import { app, BrowserWindow, shell } from 'electron'
 import { tmpdir } from 'os'
 import { createHash } from 'crypto'
 import { libraryManager } from './libraryManager'
+import { getRuntimeEnv } from './runtimeEnv'
 import type { LibraryCommand as LibCommand, LibraryConstant as LibConstant, LibraryWindowUnit as LibWindowUnit } from './libraryManager'
 import { generateDebugRuntimeCode } from './debug-runtime'
 import { createCommandResolvers } from './compilerCommandResolvers'
@@ -267,29 +267,29 @@ let runningProcess: ChildProcess | null = null
 let runningDebugCmdFile: string | null = null
 let runningDebugResumeToken = 0
 
-// 发送编译消息到渲染进程
+// 编译器宿主：把"需要 Electron 主进程能力"的副作用（广播输出、聚焦窗口、回报进程退出、
+// 系统 Shell 打开）抽成回调，由宿主注入。主进程注入真实实现；worker 注入 postMessage 转发。
+export interface CompilerHost {
+  emitOutput: (msg: CompileMessage) => void
+  requestFocusIdeWindow: () => void
+  notifyProcessExit: (code: number | null) => void
+  // 返回空字符串表示成功，否则返回错误描述（对应 shell.openPath 的语义）。
+  openPathExternally: (targetPath: string) => Promise<string>
+}
+
+let compilerHost: CompilerHost | null = null
+
+export function setCompilerHost(host: CompilerHost): void {
+  compilerHost = host
+}
+
+// 发送编译消息到渲染进程（经宿主转发）
 function sendMessage(msg: CompileMessage): void {
-  BrowserWindow.getAllWindows().forEach(w => {
-    w.webContents.send('compiler:output', msg)
-  })
+  compilerHost?.emitOutput(msg)
 }
 
 function focusIdeWindow(): void {
-  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
-  if (!win || win.isDestroyed()) return
-  if (win.isMinimized()) win.restore()
-  if (!win.isVisible()) win.show()
-  win.focus()
-  if (process.platform === 'win32') {
-    try {
-      win.moveTop()
-      win.setAlwaysOnTop(true)
-      win.setAlwaysOnTop(false)
-      win.focus()
-    } catch {
-      // ignore focus promotion failures
-    }
-  }
+  compilerHost?.requestFocusIdeWindow()
 }
 
 function emitBufferedOutputChunk(
@@ -347,8 +347,9 @@ function localizeCompilerMessage(line: string): string {
 
 // 获取应用目录（开发模式下是项目根目录）
 function getAppDirectory(): string {
-  if (!app.isPackaged) {
-    return app.getAppPath()
+  const { isPackaged, appPath } = getRuntimeEnv()
+  if (!isPackaged) {
+    return appPath
   }
   return dirname(process.execPath)
 }
@@ -406,6 +407,13 @@ function buildZigTargetTriple(platform: TargetPlatform, arch: TargetArch): strin
   return 'x86_64-macos'
 }
 
+// 让出主进程事件循环：编译准备阶段是大量同步 fs/解析/哈希工作，全在主进程线程上跑，
+// 期间所有 IPC 被阻塞，整个 IDE 表现为「停止响应」。在各阶段之间让出一次，
+// 使主进程能处理渲染层的 IPC/重绘，避免界面冻结。
+function yieldToEventLoop(): Promise<void> {
+  return new Promise(resolve => setImmediate(resolve))
+}
+
 /** 耗时显示：超过 1 秒时附加人类可读单位，如 "5996 毫秒/5.9 秒"、"599600 毫秒/9 分钟 59.6 秒" */
 function formatElapsedDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) ms = 0
@@ -431,6 +439,94 @@ function formatElapsedDuration(ms: number): string {
     human = parts.join(' ')
   }
   return `${ms} 毫秒/${human}`
+}
+
+// ========== 编译诊断日志 ==========
+// 将每个编译动作及其耗时写入日志文件，便于排查“为什么编译慢”。
+// 输出区只保留友好简洁的进度提示，逐段计时只进日志文件，不污染输出区。
+interface CompileDiagLogger {
+  filePath: string
+  startTs: number
+  lastTs: number
+  lines: string[]
+}
+
+let activeCompileLog: CompileDiagLogger | null = null
+
+function pad2(n: number): string { return n < 10 ? '0' + n : String(n) }
+function pad3(n: number): string { return n < 10 ? '00' + n : (n < 100 ? '0' + n : String(n)) }
+
+function formatLogTimestamp(ms: number): string {
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} `
+    + `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${pad3(d.getMilliseconds())}`
+}
+
+// 把当前日志缓冲整体落盘。每段都落盘，万一编译卡死/崩溃，日志仍然完整可发。
+function persistCompileLog(): void {
+  const log = activeCompileLog
+  if (!log || !log.filePath) return
+  try {
+    writeFileSync(log.filePath, log.lines.join('\r\n') + '\r\n', 'utf-8')
+  } catch {
+    // 日志写入失败不影响编译本身。
+  }
+}
+
+// 开始一次编译诊断日志。日志写入项目 temp 目录，方便用户找到并发回排查。
+function startCompileLog(projectDir: string, projectName: string): string {
+  const now = Date.now()
+  let filePath = ''
+  try {
+    const logDir = join(projectDir, 'temp')
+    mkdirSync(logDir, { recursive: true })
+    filePath = join(logDir, '编译诊断日志.log')
+  } catch {
+    filePath = ''
+  }
+  activeCompileLog = { filePath, startTs: now, lastTs: now, lines: [] }
+  compileLogRaw('==================================================')
+  compileLogRaw(`编译诊断日志 - 项目: ${projectName}`)
+  compileLogRaw(`开始时间: ${formatLogTimestamp(now)}`)
+  compileLogRaw(`运行平台: ${process.platform} / ${process.arch}`)
+  compileLogRaw('格式: [+距开始ms] (本段ms)  动作')
+  compileLogRaw('==================================================')
+  persistCompileLog()
+  return filePath
+}
+
+// 写入一行原始文本（不带计时）。
+function compileLogRaw(text: string): void {
+  const log = activeCompileLog
+  if (!log) return
+  log.lines.push(text)
+}
+
+// 记录一个动作完成：自动计算距上一个标记的耗时（本段）与距开始的总耗时。
+function compileLogMark(label: string): void {
+  const log = activeCompileLog
+  if (!log) return
+  const now = Date.now()
+  const sinceStart = now - log.startTs
+  const sinceLast = now - log.lastTs
+  log.lastTs = now
+  log.lines.push(`[+${String(sinceStart).padStart(7)}ms] (本段 ${String(sinceLast).padStart(7)}ms)  ${label}`)
+  persistCompileLog()
+}
+
+// 结束日志：写入总耗时与结果，返回日志文件路径。
+function finishCompileLog(resultText: string): string {
+  const log = activeCompileLog
+  if (!log) return ''
+  const total = Date.now() - log.startTs
+  log.lines.push('--------------------------------------------------')
+  log.lines.push(`结束: ${resultText}`)
+  log.lines.push(`总耗时: ${formatElapsedDuration(total)}`)
+  log.lines.push('==================================================')
+  persistCompileLog()
+  const filePath = log.filePath
+  activeCompileLog = null
+  return filePath
 }
 
 function getBinaryFileName(projectName: string, outputType: string, platform: TargetPlatform): string {
@@ -1077,7 +1173,7 @@ function parseControlBindingsFromProtocol(content: string, libName: string): Nor
 }
 
 function loadCompileProtocols(): LoadedCompileProtocols {
-  const libs = libraryManager.getList().filter(l => l.loaded)
+  const libs = libraryManager.getCachedList().filter(l => l.loaded)
   const signatureParts: string[] = []
   for (const lib of libs) {
     const dir = (() => {
@@ -1726,7 +1822,7 @@ function collectUsedLibraryFileNames(project: ProjectInfo, editorFiles?: Map<str
 
   // 2) 分析窗口文件中的控件类型，映射到支持库
   const allUnits = libraryManager.getAllWindowUnits()
-  const loadedLibs = libraryManager.getList().filter(l => l.loaded)
+  const loadedLibs = libraryManager.getCachedList().filter(l => l.loaded)
   const libNameToFileName = new Map<string, string>()
   for (const lib of loadedLibs) {
     libNameToFileName.set(normalizeKey(lib.libName || ''), lib.name)
@@ -2267,18 +2363,29 @@ function buildProjectCompileMetadataFingerprint(project: ProjectInfo, editorFile
 
 function resolveProjectCompileMetadata(project: ProjectInfo, editorFiles?: Map<string, string>): ProjectCompileMetadata {
   const fingerprint = buildProjectCompileMetadataFingerprint(project, editorFiles)
+  compileLogMark('元数据: 计算项目指纹')
   if (projectCompileMetadataCache && projectCompileMetadataCache.fingerprint === fingerprint) {
+    compileLogMark('元数据: 命中缓存，直接复用')
     return projectCompileMetadataCache.metadata
   }
 
+  const globals = collectProjectGlobalVars(project, editorFiles)
+  compileLogMark('元数据: 收集全局变量')
+  const constants = collectProjectConstants(project, editorFiles)
+  compileLogMark('元数据: 收集常量')
+  const resources = collectProjectResourceEntries(project, editorFiles)
+  compileLogMark('元数据: 收集资源')
+  const subprograms = collectProjectSubprogramDefs(project, editorFiles)
+  compileLogMark('元数据: 收集子程序')
+  const dataTypes = collectProjectDataTypes(project, editorFiles)
+  compileLogMark('元数据: 收集数据类型')
+  const dllCommands = collectProjectDllCommands(project, editorFiles)
+  compileLogMark('元数据: 收集DLL/命令声明')
+  const classModules = collectProjectClassModules(project, editorFiles)
+  compileLogMark('元数据: 收集类模块')
+
   const metadata: ProjectCompileMetadata = {
-    globals: collectProjectGlobalVars(project, editorFiles),
-    constants: collectProjectConstants(project, editorFiles),
-    resources: collectProjectResourceEntries(project, editorFiles),
-    subprograms: collectProjectSubprogramDefs(project, editorFiles),
-    dataTypes: collectProjectDataTypes(project, editorFiles),
-    dllCommands: collectProjectDllCommands(project, editorFiles),
-    classModules: collectProjectClassModules(project, editorFiles),
+    globals, constants, resources, subprograms, dataTypes, dllCommands, classModules,
   }
   projectCompileMetadataCache = { fingerprint, metadata }
   return metadata
@@ -2287,8 +2394,10 @@ function resolveProjectCompileMetadata(project: ProjectInfo, editorFiles?: Map<s
 function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Map<string, string>, targetPlatform?: TargetPlatform): string[] {
   const errors: string[] = []
   const commandMap = buildCommandSignatureMap(collectProjectDllCommands(project, editorFiles), targetPlatform)
+  compileLogMark('  校验签名: buildCommandSignatureMap(含getAllCommands)')
   const subprogramNames = collectProjectSubprogramNames(project, editorFiles)
   const protocols = loadCompileProtocols()
+  compileLogMark('  校验签名: 收集子程序名/协议')
 
   const validateOne = (fileName: string, lineNo: number, call: { name: string; args: string[] } | null): void => {
     if (!call?.name) return
@@ -4819,6 +4928,7 @@ function generateMainC(
   })()
   const previousTranspileEntries = cacheFile?.entries || {}
   const nextTranspileEntries: Record<string, TranspileCacheEntry> = {}
+  compileLogMark('生成C++: 读取转换缓存')
 
   let mainCode = '/* 由 ycIDE 自动生成 */\n'
   mainCode += `/* 项目名称: ${project.projectName} */\n\n`
@@ -4839,7 +4949,9 @@ function generateMainC(
   const librariesForBuild = linkedLibraries || libraryManager.getLoadedLibraryFiles()
   const usedLibraryNames = new Set(librariesForBuild.map(l => l.name))
   const libraryConstants = collectLibraryConstants(usedLibraryNames)
+  compileLogMark('生成C++: 收集支持库常量')
   sendMessage({ type: 'info', text: `项目元数据分析完成 (${formatElapsedDuration(Date.now() - metadataStartTime)})` })
+  compileLogMark(`生成C++: 项目元数据分析完成(累计 ${Date.now() - metadataStartTime}ms)`)
 
   const transpileContextDigest = createHash('sha1').update(JSON.stringify({
     debugBuild,
@@ -4854,6 +4966,7 @@ function generateMainC(
     classModules: projectClassModules,
     libraryConstants,
   })).digest('hex')
+  compileLogMark('生成C++: 计算转换上下文指纹')
 
   const getBreakpointDigest = (fileName: string): string => {
     const points = breakpoints[fileName] || []
@@ -4883,6 +4996,7 @@ function generateMainC(
       additionalCFiles.push(cFilePath)
       nextTranspileEntries[fileName] = { fingerprint, cFileName }
       sendMessage({ type: 'info', text: `复用已转换文件: ${cFileName}` })
+      compileLogMark(`生成C++: 复用已转换文件 ${cFileName}`)
       return
     }
 
@@ -4906,6 +5020,7 @@ function generateMainC(
     additionalCFiles.push(cFilePath)
     nextTranspileEntries[fileName] = { fingerprint, cFileName }
     sendMessage({ type: 'info', text: `已生成: ${cFileName}` })
+    compileLogMark(`生成C++: 转换并写出 ${cFileName}`)
   }
 
   mainCode += '#define YC_SDT_BYTE 0x80000101u\n'
@@ -5109,17 +5224,19 @@ function generateMainC(
 
       transpileProjectFile(f.fileName, content, libraryConstants)
     }
+    compileLogMark('  组装: 二次转译 .eyc(前向声明)')
 
     const allUnits = libraryManager.getAllWindowUnits()
     const compileProtocols = loadCompileProtocols()
     const protocolBindings = compileProtocols.events
     const controlProtocolBindings = compileProtocols.controls
-    const loadedLibs = libraryManager.getList().filter(l => l.loaded)
+    const loadedLibs = libraryManager.getCachedList().filter(l => l.loaded)
     const libNameToFileName = new Map<string, string>()
     for (const lib of loadedLibs) {
       libNameToFileName.set(normalizeKey(lib.libName || ''), lib.name)
       libNameToFileName.set(normalizeKey(lib.name), lib.name)
     }
+    compileLogMark('  组装: getAllWindowUnits/loadCompileProtocols/getList')
 
     // 编辑框颜色表：WM_CTLCOLOREDIT/WM_CTLCOLORSTATIC 按控件 ID 查表上色（只读编辑框走 STATIC 通道）
     const editColorEntries: Array<{ idMacro: string; textColor: number; backColor: number }> = []
@@ -5677,6 +5794,8 @@ function generateMainC(
     mainCode += '}\n'
   }
 
+  compileLogMark('生成C++: 组装 main.cpp 入口代码')
+
   try {
     const cachePayload: TranspileCacheFile = {
       version: TRANSPILE_CACHE_VERSION,
@@ -5688,6 +5807,7 @@ function generateMainC(
   }
 
   writeFileSync(mainCPath, mainCode, 'utf-8')
+  compileLogMark('生成C++: 写出 main.cpp 与转换缓存')
   return additionalCFiles
 }
 
@@ -5719,6 +5839,11 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       return result
     }
 
+    startCompileLog(projectDir, project.projectName)
+    compileLogRaw(`项目目录: ${projectDir}`)
+    compileLogRaw(`文件数: ${project.files.length}, 输出类型: ${project.outputType}, 平台标记: ${project.platform}`)
+    compileLogMark('解析项目文件 .epp')
+
     const buildMode = options.mode || 'compile'
     const hostPlatform = getHostTargetPlatform()
     const hostArch = getHostTargetArch()
@@ -5729,6 +5854,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       sendMessage({ type: 'error', text: `错误: 目标平台 ${unsupportedProjectPlatform} 已可在项目中选择，但当前编译后端还没有实现移动端原生构建。` })
       result.errorCount++
       result.elapsedMs = Date.now() - startTime
+      finishCompileLog(`失败：目标平台 ${unsupportedProjectPlatform} 暂不支持`)
       return result
     }
 
@@ -5737,13 +5863,17 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       ? hostPlatform
       : (projectPlatform || hostPlatform)
 
+    await yieldToEventLoop()
     const signatureErrors = validateProjectCommandSignatures(project, editorFiles, targetPlatform)
+    compileLogMark('校验命令签名（遍历全部源文件）')
+    await yieldToEventLoop()
     if (signatureErrors.length > 0) {
       for (const message of signatureErrors) {
         sendMessage({ type: 'error', text: message })
       }
       result.errorCount += signatureErrors.length
       result.elapsedMs = Date.now() - startTime
+      finishCompileLog(`失败：命令签名校验未通过（${signatureErrors.length} 处）`)
       return result
     }
 
@@ -5771,21 +5901,28 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
         : '请确保 compiler/zig/zig存在'
       sendMessage({ type: 'error', text: `错误: 找不到 Zig 编译器\n${zigHint}` })
       result.errorCount++
+      finishCompileLog('失败：找不到 Zig 编译器')
       return result
     }
     sendMessage({ type: 'info', text: `编译器: ${zigPath}` })
+    compileLogMark(`查找 Zig 编译器: ${zigPath}`)
 
     // 准备目录
     const tempDir = join(projectDir, 'temp')
     const outputDir = join(projectDir, 'output', targetPlatform, targetArch)
     mkdirSync(tempDir, { recursive: true })
     mkdirSync(outputDir, { recursive: true })
+    compileLogMark('准备临时/输出目录')
 
     // ========== 支持库链接 ==========
     const loadedLibs = libraryManager.getLoadedLibraryFiles(targetPlatform)
+    compileLogMark('  收集支持库: getLoadedLibraryFiles')
     const usedLibraryNames = collectUsedLibraryFileNames(project, editorFiles)
+    compileLogMark('  收集支持库: collectUsedLibraryFileNames')
     const genericFallbackLibraryNames = collectGenericFallbackLibraryFileNames(project, editorFiles)
+    compileLogMark('  收集支持库: collectGenericFallbackLibraryFileNames')
     const libsToLink = loadedLibs.filter(l => usedLibraryNames.has(l.name))
+    compileLogMark(`收集支持库链接信息（已加载 ${loadedLibs.length} / 使用 ${libsToLink.length}）`)
     sendMessage({ type: 'info', text: '编译模式: 普通编译' })
 
     // 仅对“本次会静态链接”的支持库生成命令分发表引用，避免动态路径下出现未定义符号。
@@ -5797,7 +5934,11 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
     // 生成C++代码
     sendMessage({ type: 'info', text: '正在生成C++代码...' })
+    compileLogMark('开始生成C++代码')
+    await yieldToEventLoop()
     const additionalCFiles = generateMainC(project, tempDir, editorFiles, libsToLink, staticCmdDispatchLibs, !!options.debug, options.breakpoints || {}, targetPlatform)
+    compileLogMark('C++代码生成完成')
+    await yieldToEventLoop()
     const outputName = project.projectName
     const outputFileName = getBinaryFileName(outputName, project.outputType, targetPlatform)
     const outputBinary = join(outputDir, outputFileName)
@@ -5858,6 +5999,8 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       platformImplStamps,
       resourceStamps,
     })).digest('hex')
+    compileLogMark(`计算产物指纹（哈希 ${sourceStamps.length} 个源文件 / ${staticLibStamps.length} 个静态库 / ${resourceStamps.length} 项资源）`)
+    await yieldToEventLoop()
 
     const previousBuildCache = (() => {
       try {
@@ -5881,15 +6024,21 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       result.success = true
       result.outputFile = outputBinary
       result.elapsedMs = Date.now() - startTime
+      compileLogMark('命中产物缓存，跳过编译与链接')
       sendMessage({ type: 'success', text: `编译成功 (${formatElapsedDuration(result.elapsedMs)})` })
       sendMessage({ type: 'info', text: `输出文件: ${outputBinary}` })
+      const reuseLogPath = finishCompileLog('成功（复用上次产物，未重新编译）')
+      if (reuseLogPath) sendMessage({ type: 'info', text: `编译诊断日志: ${reuseLogPath}` })
       return result
     }
+    compileLogMark('读取上次产物缓存并比对指纹（未命中，需重新编译）')
 
     const resourceBuild = await compileProjectResources(project, targetPlatform, targetArch, tempDir, zigPath, editorFiles)
+    compileLogMark('编译资源(.erc/清单)')
     if (!resourceBuild.success) {
       result.errorCount++
       result.elapsedMs = Date.now() - startTime
+      finishCompileLog('失败：资源编译失败')
       return result
     }
     if (resourceBuild.objectFilePath) {
@@ -5964,6 +6113,8 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     }
 
     sendMessage({ type: 'info', text: '正在编译...' })
+    compileLogMark('准备链接参数，开始调用 zig c++')
+    compileLogRaw(`zig 命令行参数: c++ ${args.join(' ')}`)
 
     const commandSourceLocations = collectCommandSourceLocationsByLibrary(project, editorFiles)
     const unresolvedCmdLibReported = new Set<string>()
@@ -6019,10 +6170,14 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       })
     })
 
+    compileLogMark('zig c++ 编译与链接完成')
+
     if (!compileSuccess || !existsSync(outputBinary)) {
       sendMessage({ type: 'error', text: '编译失败!' })
       result.errorCount++
       result.elapsedMs = Date.now() - startTime
+      const failLogPath = finishCompileLog(`失败：编译/链接失败（${result.errorCount} 个错误）`)
+      if (failLogPath) sendMessage({ type: 'info', text: `编译诊断日志: ${failLogPath}` })
       return result
     }
 
@@ -6043,10 +6198,14 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
     sendMessage({ type: 'success', text: `编译成功 (${formatElapsedDuration(result.elapsedMs)})` })
     sendMessage({ type: 'info', text: `输出文件: ${outputBinary}` })
+    const okLogPath = finishCompileLog('成功（完整编译并链接）')
+    if (okLogPath) sendMessage({ type: 'info', text: `编译诊断日志: ${okLogPath}` })
 
   } catch (e) {
     sendMessage({ type: 'error', text: `编译异常: ${e instanceof Error ? e.message : String(e)}` })
     result.errorCount++
+    const exLogPath = finishCompileLog(`异常：${e instanceof Error ? e.message : String(e)}`)
+    if (exLogPath) sendMessage({ type: 'info', text: `编译诊断日志: ${exLogPath}` })
   }
 
   result.elapsedMs = Date.now() - startTime
@@ -6105,7 +6264,8 @@ export function runExecutable(exePath: string): boolean {
   }
 
   const fallbackOpenViaShell = (): void => {
-    void shell.openPath(exePath).then((result) => {
+    const openExternally = compilerHost?.openPathExternally ?? (async () => '宿主未提供系统打开能力')
+    void openExternally(exePath).then((result) => {
       if (result) {
         sendMessage({ type: 'error', text: `启动程序失败(回退启动也失败): ${result}` })
         return
@@ -6156,9 +6316,7 @@ export function runExecutable(exePath: string): boolean {
       } else {
         sendMessage({ type: 'warning', text: `程序已退出 (退出码: ${code})` })
       }
-      BrowserWindow.getAllWindows().forEach(w => {
-        w.webContents.send('compiler:processExit', code)
-      })
+      compilerHost?.notifyProcessExit(code)
     })
 
     proc.on('error', (err) => {

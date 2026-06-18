@@ -1,6 +1,6 @@
-import { app } from 'electron'
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { dirname, extname, join, relative } from 'path'
+import { getRuntimeEnv } from './runtimeEnv'
 
 export interface YcmdPlatformImplementation {
   entry: string
@@ -175,9 +175,10 @@ function inferCoreCommandCategory(commandId: string, displayName: string): strin
 }
 
 function getLibRootPath(): string {
-  const isDev = !app.isPackaged
+  const { isPackaged, appPath } = getRuntimeEnv()
+  const isDev = !isPackaged
   if (isDev) {
-    return join(app.getAppPath(), 'lib')
+    return join(appPath, 'lib')
   }
   return join(dirname(process.execPath), 'lib')
 }
@@ -298,23 +299,40 @@ function parseManifest(filePath: string): YcmdManifestItem {
   }
 }
 
-export function scanYcmdRegistry(customRootPath?: string): YcmdRegistryScanResult {
-  const rootPath = customRootPath || getLibRootPath()
-  const errors: string[] = []
+// ========== 扫描结果缓存 ==========
+// scanYcmdRegistry 会被编译与代码补全反复调用（一次编译里 6~10 次），
+// 而每次都全量读盘 + JSON.parse + 校验所有 .ycmd.json，开销极大（实测单次约 3 秒）。
+// 这里用“目录签名（文件 mtime/大小）”做缓存：库内容未变化时直接复用已解析结果，
+// 库增删/改动会让签名变化而自动失效；另加一个 TTL，让同一次编译内的连续调用
+// 连 stat（目录遍历）都省掉，彻底消除重复扫描。
+//
+// 注意 TTL 必须覆盖一整次编译/运行周期：慢盘（机械盘/移动盘/被杀软实时扫描的非系统盘）
+// 上一次目录遍历可达 ~2 秒，而编译里“校验命令签名 / 收集支持库 / 组装入口”三步各自都会
+// 触发一次扫描，彼此间隔常超过 1 秒。若 TTL 太短（曾为 1500ms），后两步会因 TTL 过期而
+// 重新全量遍历目录，等于一次编译扫了 3 遍盘——慢盘上直接吃掉 4~6 秒。
+// 库通过 IDE 增删改时 scan() 会主动调 invalidateYcmdRegistryCache()，因此长 TTL 不影响
+// 正确性；唯一被推迟的是“IDE 运行期间在磁盘上手改 .ycmd.json 且未触发重扫”这种罕见场景，
+// 最长 30 秒后也会自愈。
+interface ScanCacheEntry {
+  signature: string
+  checkedAt: number
+  result: YcmdRegistryScanResult
+}
 
-  if (!existsSync(rootPath)) {
-    return { rootPath, libraries: [], errors: ['lib 根目录不存在'] }
-  }
+const scanCacheByRoot = new Map<string, ScanCacheEntry>()
+// 同一根目录在该时间窗内的重复调用直接复用，连签名都不重算（编译/补全的连续调用场景）。
+const SCAN_SIGNATURE_TTL_MS = 30000
+// 已解析命令列表缓存，键为扫描结果对象本身（签名变化会产生新对象，旧缓存随之被 GC）。
+const ycmdCommandsCacheByScan = new WeakMap<YcmdRegistryScanResult, Map<string, YcmdResolvedCommand[]>>()
 
-  const libraries: YcmdLibraryItem[] = []
-  let children: string[] = []
-  try {
-    children = readdirSync(rootPath)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return { rootPath, libraries: [], errors: [`读取 lib 根目录失败: ${message}`] }
-  }
+/** 强制清空 ycmd 注册表缓存。库被显式重载时调用，确保立即生效。 */
+export function invalidateYcmdRegistryCache(): void {
+  scanCacheByRoot.clear()
+}
 
+// 收集某根目录下所有 .ycmd.json 文件清单，并按库分组（只列文件，不读内容）。
+function collectLibraryYcmdFiles(rootPath: string, children: string[]): Array<{ name: string; folderPath: string; files: string[] }> {
+  const libFolders: Array<{ name: string; folderPath: string; files: string[] }> = []
   for (const child of children) {
     const folderPath = join(rootPath, child)
     let isDir = false
@@ -325,13 +343,67 @@ export function scanYcmdRegistry(customRootPath?: string): YcmdRegistryScanResul
     }
     if (!isDir) continue
     if (child === 'x64' || child === 'x86') continue
-
     const ycmdFiles = collectYcmdFiles(folderPath)
     if (ycmdFiles.length === 0) continue
+    libFolders.push({ name: child, folderPath, files: ycmdFiles.slice().sort() })
+  }
+  return libFolders
+}
 
-    const manifests = ycmdFiles.map(file => parseManifest(file))
-    libraries.push({ name: child, folderPath, manifests })
+// 用所有 manifest 文件的“路径|大小|mtime”拼出轻量签名（只 stat，不读内容）。
+function computeScanSignature(libFolders: Array<{ files: string[] }>): string {
+  const parts: string[] = []
+  for (const lib of libFolders) {
+    for (const file of lib.files) {
+      try {
+        const st = statSync(file)
+        parts.push(`${file}|${st.size}|${Math.round(st.mtimeMs)}`)
+      } catch {
+        parts.push(`${file}|missing`)
+      }
+    }
+  }
+  return parts.join('\n')
+}
 
+export function scanYcmdRegistry(customRootPath?: string): YcmdRegistryScanResult {
+  const rootPath = customRootPath || getLibRootPath()
+
+  if (!existsSync(rootPath)) {
+    return { rootPath, libraries: [], errors: ['lib 根目录不存在'] }
+  }
+
+  const now = Date.now()
+  const cached = scanCacheByRoot.get(rootPath)
+  // TTL 窗口内：直接复用，连目录都不再 stat。
+  if (cached && now - cached.checkedAt < SCAN_SIGNATURE_TTL_MS) {
+    return cached.result
+  }
+
+  let children: string[] = []
+  try {
+    children = readdirSync(rootPath)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { rootPath, libraries: [], errors: [`读取 lib 根目录失败: ${message}`] }
+  }
+
+  // 轻量扫描：只列文件 + 算签名（不读内容）。
+  const libFolders = collectLibraryYcmdFiles(rootPath, children)
+  const signature = computeScanSignature(libFolders)
+
+  // 签名未变：内容没动，复用已解析结果，跳过全部读盘/解析。
+  if (cached && cached.signature === signature) {
+    cached.checkedAt = now
+    return cached.result
+  }
+
+  // 缓存未命中：真正读取并解析所有 manifest。
+  const libraries: YcmdLibraryItem[] = []
+  const errors: string[] = []
+  for (const lib of libFolders) {
+    const manifests = lib.files.map(file => parseManifest(file))
+    libraries.push({ name: lib.name, folderPath: lib.folderPath, manifests })
     for (const item of manifests) {
       if (!item.valid) {
         for (const detail of item.errors) {
@@ -341,7 +413,9 @@ export function scanYcmdRegistry(customRootPath?: string): YcmdRegistryScanResul
     }
   }
 
-  return { rootPath, libraries, errors }
+  const result: YcmdRegistryScanResult = { rootPath, libraries, errors }
+  scanCacheByRoot.set(rootPath, { signature, checkedAt: now, result })
+  return result
 }
 
 export function detectYcmdImplementationLanguage(filePath: string): string {
@@ -417,6 +491,18 @@ function mapCommandParams(params?: Array<{ name: string; type: string; optional?
 
 export function getYcmdCommands(customRootPath?: string, targetPlatform?: YcmdTargetPlatform): YcmdResolvedCommand[] {
   const scanResult = scanYcmdRegistry(customRootPath)
+
+  // 命令列表只依赖扫描结果与目标平台，按扫描结果对象缓存，避免每次重建数千条命令。
+  const platformKey = targetPlatform || ''
+  let byPlatform = ycmdCommandsCacheByScan.get(scanResult)
+  if (byPlatform) {
+    const hit = byPlatform.get(platformKey)
+    if (hit) return hit
+  } else {
+    byPlatform = new Map<string, YcmdResolvedCommand[]>()
+    ycmdCommandsCacheByScan.set(scanResult, byPlatform)
+  }
+
   const commands: YcmdResolvedCommand[] = []
 
   for (const lib of scanResult.libraries) {
@@ -493,5 +579,6 @@ export function getYcmdCommands(customRootPath?: string, targetPlatform?: YcmdTa
     }
   }
 
+  byPlatform.set(platformKey, commands)
   return commands
 }
