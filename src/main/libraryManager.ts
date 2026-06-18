@@ -2,12 +2,12 @@
  * 支持库管理器（ycmd 版）
  * 扫描 lib 目录中的 *.ycmd.json 清单，并补充窗口单元元数据。
  */
-import { app } from 'electron'
+import { getRuntimeEnv } from './runtimeEnv'
 import { createHash } from 'crypto'
 import AdmZip from 'adm-zip'
 import { dirname, isAbsolute, join, normalize, resolve } from 'path'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
-import { getYcmdCommands, scanYcmdRegistry, type YcmdResolvedCommand, type YcmdTargetPlatform } from './ycmd-registry'
+import { getYcmdCommands, scanYcmdRegistry, invalidateYcmdRegistryCache, type YcmdResolvedCommand, type YcmdTargetPlatform } from './ycmd-registry'
 import {
   STORE_PLATFORM_ORDER,
   type InstalledLibraryState,
@@ -346,20 +346,25 @@ function normalizeTargetPlatform(value?: string): YcmdTargetPlatform | undefined
 class LibraryManager {
   private libraries: LibraryItem[] = []
   private metadataCache = new Map<string, ParsedLibraryMetadata | null>()
+  // getAllCommands 把全部已加载库的命令映射成 LibraryCommand（krnln 等库各成百上千条）开销不小，
+  // 而一次编译里 buildCommandMap / buildCommandSignatureMap / collectUsed... 会调它 4+ 次，纯 CPU 重复劳动。
+  // 按目标平台缓存结果；库集合或 ycmd 注册表变更都唯一经过 scan()，在那里统一清空即可保证正确性。
+  private allCommandsCache = new Map<string, LibraryCommand[]>()
 
   private shouldEnforceCoreLibraryIntegrity(): boolean {
-    if (!app.isPackaged) return false
-    const version = (app.getVersion() || '').toLowerCase()
+    const { isPackaged, appVersion } = getRuntimeEnv()
+    if (!isPackaged) return false
+    const version = (appVersion || '').toLowerCase()
     // 仅在稳定正式版强制校验，开发/预发布阶段允许核心库频繁迭代。
     return !/(alpha|beta|rc|pre|preview|dev|canary)/.test(version)
   }
 
   private getConfigPath(): string {
-    return join(app.getPath('userData'), 'library-state.json')
+    return join(getRuntimeEnv().userDataPath, 'library-state.json')
   }
 
   private getInstalledRootPath(): string {
-    return join(app.getPath('userData'), 'libraries')
+    return join(getRuntimeEnv().userDataPath, 'libraries')
   }
 
   private getInstallStatePath(): string {
@@ -955,9 +960,10 @@ class LibraryManager {
   }
 
   getLibFolder(): string {
-    const isDev = !app.isPackaged
+    const { isPackaged, appPath } = getRuntimeEnv()
+    const isDev = !isPackaged
     if (isDev) {
-      return join(app.getAppPath(), 'lib')
+      return join(appPath, 'lib')
     }
     return join(dirname(process.execPath), 'lib')
   }
@@ -970,6 +976,9 @@ class LibraryManager {
     const libraryMap = new Map<string, LibraryItem>()
 
     this.metadataCache.clear()
+    this.allCommandsCache.clear()
+    // 库集合发生重扫时，强制刷新 ycmd 注册表缓存，确保新增/移除/更新立即生效。
+    invalidateYcmdRegistryCache()
 
     for (const root of roots) {
       if (!existsSync(root)) continue
@@ -1087,6 +1096,15 @@ class LibraryManager {
     return this.scan()
   }
 
+  // 返回当前已扫描的支持库列表，不触发重扫。编译热路径专用：
+  // getList() 每次都会 scan()（全量扫盘 + 清空 metadataCache/allCommandsCache + invalidateYcmdRegistryCache），
+  // 而一次编译里 loadCompileProtocols / collectUsedLibraryFileNames / 组装入口都会调它，
+  // 等于反复全量扫盘并把所有缓存炸掉。编译期库集合不会变（增删改都另走 scan()），用缓存列表即可。
+  getCachedList(): LibraryItem[] {
+    if (this.libraries.length === 0) this.scan()
+    return this.libraries
+  }
+
   private librarySupportsTargetPlatform(lib: LibraryItem, targetPlatform?: string): boolean {
     const platform = normalizeTargetPlatform(targetPlatform)
     if (!platform || lib.isCore) return true
@@ -1200,6 +1218,10 @@ class LibraryManager {
 
   getAllCommands(targetPlatform?: string): LibraryCommand[] {
     const platform = normalizeTargetPlatform(targetPlatform)
+    const cacheKey = platform || ''
+    const cached = this.allCommandsCache.get(cacheKey)
+    if (cached) return cached
+
     const loadedLibraries = this.getLoadedLibrariesForTarget(platform)
     const loadedYcmdCommands = loadedLibraries
       .flatMap(lib => getYcmdCommands(dirname(lib.filePath), platform).filter(cmd => cmd.libraryFileName === lib.name))
@@ -1209,7 +1231,9 @@ class LibraryManager {
     for (const command of commands) {
       if (!deduped.has(command.name)) deduped.set(command.name, command)
     }
-    return Array.from(deduped.values())
+    const result = Array.from(deduped.values())
+    this.allCommandsCache.set(cacheKey, result)
+    return result
   }
 
   getAllDataTypes(targetPlatform?: string): LibraryDataType[] {

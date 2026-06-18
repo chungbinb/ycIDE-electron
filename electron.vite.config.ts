@@ -7,7 +7,12 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        external: ['fsevents']
+        external: ['fsevents'],
+        // 主进程入口 + 编译工作线程入口，各自打包到 out/main/<name>.js
+        input: {
+          index: resolve('src/main/index.ts'),
+          'compile-worker': resolve('src/main/compile-worker.ts')
+        }
       }
     }
   },

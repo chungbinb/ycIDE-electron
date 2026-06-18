@@ -36,6 +36,7 @@ import { THEME_TOKEN_GROUPS, type FlowLineMode, type FlowLineMultiConfig, type T
 import { DEFAULT_IDE_SETTINGS, resolveIDESettings, type IDESettings } from '../../shared/settings'
 import { useUiLayoutStore } from './stores/uiLayoutStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { setCursorPos } from './stores/cursorPosStore'
 import type { AIChatMessage, AIChatTool, AIChatWithToolsResult, AIEditResult, AISupportedModel } from '../../shared/ai'
 import type { EProjectImportConflictAction } from '../../shared/eprojectImport'
 import './App.css'
@@ -816,9 +817,9 @@ function App(): React.JSX.Element {
   const [designProblems, setDesignProblems] = useState<FileProblem[]>([])
   const openTabsRef = useRef<EditorTab[]>([])
   const activeFileIdRef = useRef<string | null>(null)
-  const [cursorLine, setCursorLine] = useState<number | undefined>(undefined)
-  const [cursorSourceLine, setCursorSourceLine] = useState<number | undefined>(undefined)
-  const [cursorColumn, setCursorColumn] = useState<number | undefined>(undefined)
+  // 光标位置改用 ref + 独立 store（cursorPosStore），避免每次点击/按键都重渲染整个 App。
+  // ref 供键盘快捷键（断点/运行到光标）同步读取；状态栏 Ln/Col 通过 store 订阅。
+  const cursorRef = useRef<{ line?: number; sourceLine?: number; column?: number }>({})
   const [docType, setDocType] = useState('')
   const [isCompiling, setIsCompiling] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
@@ -1467,9 +1468,11 @@ function App(): React.JSX.Element {
     setCommandDetail(null)
   }, [])
 
-  // 必须保持引用稳定：EycTableEditor 已 memo，内联箭头会让其在 App 每次重渲染时被连带重渲染
+  // 必须保持引用稳定：EycTableEditor 已 memo，内联箭头会让其在 App 每次重渲染时被连带重渲染。
+  // 只更新 ref（供快捷键读取）+ 发布到 store（只让状态栏 Ln/Col 重渲染），不触发 App 重渲染。
   const handleEditorCursorChange = useCallback((line: number, col: number, sourceLine?: number) => {
-    setCursorLine(line); setCursorColumn(col); setCursorSourceLine(sourceLine)
+    cursorRef.current = { line, column: col, sourceLine }
+    setCursorPos(line, col)
   }, [])
 
   const handleLibraryHint = useCallback((hint: { title: string; lines: string[] }) => {
@@ -3284,18 +3287,18 @@ function App(): React.JSX.Element {
         handleStop()
         break
       case 'debug:toggleBreakpoint':
-        toggleBreakpoint(activeFileIdRef.current, cursorSourceLine ?? cursorLine)
+        toggleBreakpoint(activeFileIdRef.current, cursorRef.current.sourceLine ?? cursorRef.current.line)
         break
       case 'debug:clearBreakpoints':
         setBreakpointsByFile({})
         break
       case 'debug:runToCursor':
-        if (!isProjectWorkspace || !currentProjectDir || !(cursorSourceLine || cursorLine)) break
+        if (!isProjectWorkspace || !currentProjectDir || !(cursorRef.current.sourceLine || cursorRef.current.line)) break
         {
           const fileId = activeFileIdRef.current
           if (!fileId) break
           const fileKey = getBaseName(fileId)
-          const requestedLine = cursorSourceLine ?? cursorLine!
+          const requestedLine = (cursorRef.current.sourceLine ?? cursorRef.current.line)!
           const editorFiles = editorRef.current?.getEditorFiles?.() || {}
           const content = editorFiles[fileKey]
           const targetLine = (() => {
@@ -3739,7 +3742,7 @@ function App(): React.JSX.Element {
         }
         break
     }
-  }, [openProjectByEppPath, openWorkspaceFolderByPath, openFileByPath, extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, applyTheme, handleCompile, handleCompileRun, handleStop, handleAppClose, joinPath, projectTree, refreshProjectTree, toggleBreakpoint, cursorLine, cursorSourceLine, isProjectWorkspace, currentProjectDir, breakpointsByFile, targetArch, continueDebugRun, getBaseName, runEProjectImport])
+  }, [openProjectByEppPath, openWorkspaceFolderByPath, openFileByPath, extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, applyTheme, handleCompile, handleCompileRun, handleStop, handleAppClose, joinPath, projectTree, refreshProjectTree, toggleBreakpoint, isProjectWorkspace, currentProjectDir, breakpointsByFile, targetArch, continueDebugRun, getBaseName, runEProjectImport])
 
   // 项目树节点右键操作：新建程序集/类模块/子程序、删除程序集或类模块
   const handleProjectNodeAction = useCallback(async (action: ProjectNodeAction, node: { id: string; label: string }) => {
@@ -4199,7 +4202,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.3-beta.61（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.3-beta.62（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -5386,8 +5389,6 @@ function App(): React.JSX.Element {
         onToggleOutput={handleToggleOutput}
         errorCount={problemErrorCount}
         warningCount={problemWarningCount}
-        cursorLine={cursorLine}
-        cursorColumn={cursorColumn}
         docType={docType}
         workspaceModeLabel={workspaceModeLabel}
         fileEncodingLabel={activeFileEncodingLabel}
