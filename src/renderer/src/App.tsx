@@ -4,6 +4,7 @@ import TitleBar from './components/TitleBar/TitleBar'
 import Toolbar from './components/Toolbar/Toolbar'
 import Sidebar from './components/Sidebar/Sidebar'
 import type { TreeNode, ProjectNodeAction } from './components/Sidebar/Sidebar'
+import { computeUnusedSubNames } from './components/Sidebar/unusedSubUtils'
 import Icon from './components/Icon/Icon'
 import Editor, { type EditorTab, type EditorHandle, type DiffLineInfo } from './components/Editor/Editor'
 import OutputPanel, { type OutputMessage, type CommandDetail, type FileProblem, type DebugPauseState } from './components/OutputPanel/OutputPanel'
@@ -817,6 +818,9 @@ function App(): React.JSX.Element {
   const [designProblems, setDesignProblems] = useState<FileProblem[]>([])
   const openTabsRef = useRef<EditorTab[]>([])
   const activeFileIdRef = useRef<string | null>(null)
+  // 全项目源码内容缓存（fileName → 内容），供"未调用子程序"标记在编辑时增量重算。
+  // buildProjectTreeFromEpp 读盘时填充；handleOpenTabsChange 用标签页内存内容覆盖。
+  const projectSourceContentsRef = useRef<Map<string, string>>(new Map())
   // 光标位置改用 ref + 独立 store（cursorPosStore），避免每次点击/按键都重渲染整个 App。
   // ref 供键盘快捷键（断点/运行到光标）同步读取；状态栏 Ln/Col 通过 store 订阅。
   const cursorRef = useRef<{ line?: number; sourceLine?: number; column?: number }>({})
@@ -2449,7 +2453,7 @@ function App(): React.JSX.Element {
     setShowSettings(false)
   }, [handleSettingsSave])
 
-  const extractSubroutineNodes = useCallback((content: string, fileName: string): TreeNode[] => {
+  const extractSubroutineNodes = useCallback((content: string, fileName: string, unusedSubNames?: Set<string>): TreeNode[] => {
     const nodes: TreeNode[] = []
     const lines = (content || '').replace(/\r\n/g, '\n').split('\n')
     const re = /^\s*\.子程序\s+([^,\s]+)/
@@ -2464,6 +2468,7 @@ function App(): React.JSX.Element {
         type: 'sub',
         fileId: fileName,
         fileName,
+        unused: unusedSubNames?.has(subName) || undefined,
       })
     }
     return nodes
@@ -2579,14 +2584,23 @@ function App(): React.JSX.Element {
     const dllCmdFiles: TreeNode[] = []
     const resourceFiles: TreeNode[] = []
 
+    // 先读全部源码（.eyc/.ecc 同为 EYC 类型），做"未调用子程序"全项目判定；内容缓存供编辑时重算
+    const sourceContents = new Map<string, string>()
+    for (const f of files) {
+      if (f.type !== 'EYC') continue
+      const content = await window.api?.project?.readFile(joinPath(projectDir, f.fileName))
+      sourceContents.set(f.fileName, content || '')
+    }
+    projectSourceContentsRef.current = sourceContents
+    const unusedSubNames = computeUnusedSubNames(sourceContents.values())
+
     for (const f of files) {
       if (f.type === 'EFW') {
         windowFiles.push({ id: f.fileName, label: stripFileExtension(f.fileName), type: 'window' })
       } else if (f.type === 'EYC') {
-        const filePath = joinPath(projectDir, f.fileName)
-        const content = await window.api?.project?.readFile(filePath)
-        const subNodes = extractSubroutineNodes(content || '', f.fileName)
-        sourceFiles.push({ id: f.fileName, label: extractAssemblyLabel(content || '') || stripFileExtension(f.fileName), type: 'module', children: subNodes, expanded: false })
+        const content = sourceContents.get(f.fileName) || ''
+        const subNodes = extractSubroutineNodes(content, f.fileName, unusedSubNames)
+        sourceFiles.push({ id: f.fileName, label: extractAssemblyLabel(content) || stripFileExtension(f.fileName), type: 'module', children: subNodes, expanded: false })
       } else if (f.type === 'EGV') {
         const filePath = joinPath(projectDir, f.fileName)
         const content = await window.api?.project?.readFile(filePath)
@@ -2646,15 +2660,25 @@ function App(): React.JSX.Element {
     checkDesignProblems(tabs)
 
     // 用标签页内存内容即时回写项目树声明节点，避免“未保存编辑”下项目树信息滞后。
-    const liveSourceModules = new Map<string, { label: string; children: TreeNode[] }>()
+    // 同时以内存内容覆盖源码缓存后重算"未调用子程序"标记（分词判定，O(总源码量)）。
+    const liveContents = new Map<string, string>()
     for (const tab of tabs) {
       if (tab.language !== 'eyc') continue
       const fileName = (tab.filePath || tab.id || '').replace(/^.*[\\/]/, '')
       if (!fileName) continue
-      const content = tab.value || ''
+      liveContents.set(fileName, tab.value || '')
+    }
+    for (const [fileName, content] of liveContents) {
+      projectSourceContentsRef.current.set(fileName, content)
+    }
+    const liveUnusedSubNames = projectSourceContentsRef.current.size > 0
+      ? computeUnusedSubNames(projectSourceContentsRef.current.values())
+      : undefined
+    const liveSourceModules = new Map<string, { label: string; children: TreeNode[] }>()
+    for (const [fileName, content] of liveContents) {
       liveSourceModules.set(fileName, {
         label: extractAssemblyLabel(content) || stripFileExtension(fileName),
-        children: extractSubroutineNodes(content, fileName),
+        children: extractSubroutineNodes(content, fileName, liveUnusedSubNames),
       })
     }
 
@@ -2674,7 +2698,19 @@ function App(): React.JSX.Element {
                 ...cat,
                 children: modules.map(mod => {
                   const live = liveSourceModules.get(mod.id)
-                  if (!live) return mod
+                  if (!live) {
+                    // 未打开的模块：调用关系可能因当前编辑而变化，仅同步子程序节点的"未调用"标记
+                    if (!liveUnusedSubNames || !mod.children?.length) return mod
+                    let changed = false
+                    const nextChildren = mod.children.map(child => {
+                      if (child.type !== 'sub') return child
+                      const nextUnused = liveUnusedSubNames.has(child.label) || undefined
+                      if (nextUnused === child.unused) return child
+                      changed = true
+                      return { ...child, unused: nextUnused }
+                    })
+                    return changed ? { ...mod, children: nextChildren } : mod
+                  }
                   return {
                     ...mod,
                     label: live.label,
@@ -4202,7 +4238,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.3-beta.62（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.3-beta.63（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -4508,6 +4544,7 @@ function App(): React.JSX.Element {
         ...tab,
         value: nextContent,
         savedValue: tab.savedValue,
+        aiModified: true,
       })
     } else {
       const diskContent = await window.api?.project?.readFile(result.filePath)
@@ -4523,6 +4560,7 @@ function App(): React.JSX.Element {
         value: nextContent,
         savedValue: diskContent,
         filePath: result.filePath,
+        aiModified: true,
       })
     }
 
@@ -4550,6 +4588,7 @@ function App(): React.JSX.Element {
         ...tab,
         value: result.originalContent,
         savedValue: tab.savedValue,
+        aiModified: undefined,
       })
     } else {
       const diskContent = await window.api?.project?.readFile(result.filePath)
@@ -5330,6 +5369,7 @@ function App(): React.JSX.Element {
                   editorLineHeight={ideSettings.editorLineHeight}
                   editorFreezeSubTableHeader={ideSettings.editorFreezeSubTableHeader}
                   editorShowMinimapPreview={ideSettings.editorShowMinimapPreview}
+                  editorShowVarSummaryPanel={ideSettings.editorShowVarSummaryPanel}
                   targetPlatform={targetPlatform}
                   readFileForExternalCheck={readFileForExternalCheck}
                   resolveFileEncoding={resolveFileEncoding}
@@ -5368,6 +5408,7 @@ function App(): React.JSX.Element {
             activeFileLabel={activeAIFileLabel}
             problems={allProblems}
             placement={activityBarSide === 'right' ? 'left' : 'right'}
+            projectDir={currentProjectDir}
             ideContext={aiIdeContext}
             aiFontFamily={ideSettings.aiFontFamily}
             aiFontSize={ideSettings.aiFontSize}

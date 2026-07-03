@@ -28,6 +28,8 @@ export interface IDESettings {
   editorFreezeSubTableHeader: boolean
   /** 代码预览区（缩略图） */
   editorShowMinimapPreview: boolean
+  /** 编辑器右侧变量汇总面板 */
+  editorShowVarSummaryPanel: boolean
   /** AI 助手字体 */
   aiFontFamily: string
   /** AI 助手字号 (px) */
@@ -71,6 +73,7 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   editorLineHeight: 20,
   editorFreezeSubTableHeader: false,
   editorShowMinimapPreview: true,
+  editorShowVarSummaryPanel: true,
   aiFontFamily: '"Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif',
   aiFontSize: 13,
   aiModel: 'deepseek',
@@ -122,6 +125,9 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
     editorShowMinimapPreview: typeof raw.editorShowMinimapPreview === 'boolean'
       ? raw.editorShowMinimapPreview
       : d.editorShowMinimapPreview,
+    editorShowVarSummaryPanel: typeof raw.editorShowVarSummaryPanel === 'boolean'
+      ? raw.editorShowVarSummaryPanel
+      : d.editorShowVarSummaryPanel,
     aiFontFamily: typeof raw.aiFontFamily === 'string' && raw.aiFontFamily.trim()
       ? raw.aiFontFamily.trim()
       : d.aiFontFamily,

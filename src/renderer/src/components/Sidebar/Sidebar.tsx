@@ -112,7 +112,7 @@ interface SidebarProps {
   onOpenFile?: (fileId: string, fileName: string, targetLine?: number, targetType?: TreeNode['type'], targetLabel?: string) => void
   activeFileId?: string | null
   projectDir?: string
-  openTabs?: Array<{ id: string; filePath?: string; language: string; value: string; savedValue?: string; formData?: DesignForm }>
+  openTabs?: Array<{ id: string; filePath?: string; language: string; value: string; savedValue?: string; formData?: DesignForm; aiModified?: boolean }>
   onEventNavigate?: (selection: SelectionTarget, eventName: string, eventArgs: Array<{ name: string; description: string; dataType: string; isByRef: boolean }>) => void
   onSaveProject?: (projectDir: string) => void
   onCloseProject?: (projectDir: string) => void
@@ -145,6 +145,8 @@ export interface TreeNode {
   fileId?: string
   fileName?: string
   projectDir?: string
+  // 子程序节点：全项目内未被任何代码调用（事件处理/_前缀子程序不参与判定）
+  unused?: boolean
 }
 
 function resolveNodeFileKey(node: TreeNode): string {
@@ -174,6 +176,7 @@ function TreeItem({
   focusedItemId,
   onFocusItem,
   modifiedFileKeys,
+  aiModifiedFileKeys,
   onProjectContextMenu,
   onNodeContextMenu,
 }: {
@@ -184,6 +187,7 @@ function TreeItem({
   focusedItemId?: string | null
   onFocusItem?: (id: string) => void
   modifiedFileKeys?: Set<string>
+  aiModifiedFileKeys?: Set<string>
   onProjectContextMenu?: (event: React.MouseEvent<HTMLElement>, projectDir: string, projectName: string) => void
   onNodeContextMenu?: (event: React.MouseEvent<HTMLElement>, node: TreeNode) => void
 }): React.JSX.Element {
@@ -201,12 +205,14 @@ function TreeItem({
   const isModifiedFile = isFileNode && !!fileKey && !!modifiedFileKeys?.has(fileKey)
   const isModifiedCategory = node.type === 'folder' && depth > 0 && hasModifiedDescendant(node, modifiedFileKeys)
   const shouldShowModifiedDot = isModifiedFile || isModifiedCategory
+  // AI 修改的文件：圆点外包圆角矩形；分类聚合点不区分来源
+  const isAiModifiedFile = isModifiedFile && !!fileKey && !!aiModifiedFileKeys?.has(fileKey)
   const isProjectRoot = depth === 0 && node.type === 'folder' && !!node.projectDir
   const isRovingFocused = focusedItemId ? focusedItemId === node.id : depth === 0
   const childrenCount = node.children?.length || 0
   const treeItemAriaLabel = hasChildren
     ? `${TREE_TYPE_LABEL[node.type] || '节点'} ${node.label}，${expanded ? '已展开' : '已折叠'}，包含 ${childrenCount} 项`
-    : `${TREE_TYPE_LABEL[node.type] || '节点'} ${node.label}${isActiveLeaf ? '，当前已选中' : ''}`
+    : `${TREE_TYPE_LABEL[node.type] || '节点'} ${node.label}${node.unused ? '，未被调用' : ''}${isActiveLeaf ? '，当前已选中' : ''}`
 
   const focusAdjacentTreeItem = (currentItem: HTMLElement, direction: 'up' | 'down' | 'home' | 'end'): void => {
     const treeRoot = currentItem.closest('.tree')
@@ -329,8 +335,19 @@ function TreeItem({
         )}
         {!hasChildren && <span className="tree-arrow-placeholder" aria-hidden="true" />}
         <Icon preserveOriginalColors name={getTreeNodeIconName(node, expanded)} size={16} />
-        <span className="tree-label">{node.label}</span>
-        {shouldShowModifiedDot && <span className="tree-item-modified-dot" title="未保存更改" aria-label="未保存更改">●</span>}
+        <span
+          className={`tree-label${node.unused ? ' tree-label-unused' : ''}`}
+          title={node.unused ? '该子程序未被任何代码调用' : undefined}
+        >
+          {node.label}
+        </span>
+        {shouldShowModifiedDot && (
+          <span
+            className={`tree-item-modified-dot${isAiModifiedFile ? ' tree-item-modified-dot-ai' : ''}`}
+            title={isAiModifiedFile ? '未保存更改（AI 修改）' : '未保存更改'}
+            aria-label={isAiModifiedFile ? '未保存更改（AI 修改）' : '未保存更改'}
+          >●</span>
+        )}
       </div>
       {hasChildren && expanded && (
         <ul>
@@ -344,6 +361,7 @@ function TreeItem({
               focusedItemId={focusedItemId}
               onFocusItem={onFocusItem}
               modifiedFileKeys={modifiedFileKeys}
+              aiModifiedFileKeys={aiModifiedFileKeys}
               onProjectContextMenu={onProjectContextMenu}
               onNodeContextMenu={onNodeContextMenu}
             />
@@ -1796,8 +1814,9 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
   const [projectContextMenu, setProjectContextMenu] = useState<{ x: number; y: number; projectDir: string; projectName: string } | null>(null)
   const [nodeContextMenu, setNodeContextMenu] = useState<{ x: number; y: number; nodeId: string; nodeLabel: string; kind: 'category' | 'module'; isClassModule: boolean } | null>(null)
 
-  const modifiedFileKeys = useMemo(() => {
+  const { modifiedFileKeys, aiModifiedFileKeys } = useMemo(() => {
     const keys = new Set<string>()
+    const aiKeys = new Set<string>()
     for (const tab of openTabs) {
       if (typeof tab.savedValue !== 'string') continue
       const persistedValue = tab.language === 'efw' && tab.formData
@@ -1806,9 +1825,11 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
       if (persistedValue === tab.savedValue) continue
       const tabPath = tab.filePath || tab.id
       const fileKey = (tabPath || '').replace(/^.*[\\/]/, '').toLowerCase()
-      if (fileKey) keys.add(fileKey)
+      if (!fileKey) continue
+      keys.add(fileKey)
+      if (tab.aiModified) aiKeys.add(fileKey)
     }
-    return keys
+    return { modifiedFileKeys: keys, aiModifiedFileKeys: aiKeys }
   }, [openTabs])
   const eventSubsCacheRef = useRef<Map<string, Set<string>>>(new Map())
   const sidebarTabRefs = useRef<Array<HTMLButtonElement | null>>([])
@@ -2082,6 +2103,7 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
                     focusedItemId={focusedProjectItemId}
                     onFocusItem={setFocusedProjectItemId}
                     modifiedFileKeys={modifiedFileKeys}
+              aiModifiedFileKeys={aiModifiedFileKeys}
                     onProjectContextMenu={handleProjectContextMenu}
                     onNodeContextMenu={handleNodeContextMenu}
                   />

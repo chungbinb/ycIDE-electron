@@ -1473,6 +1473,22 @@ app.whenReady().then(() => {
     }
   })
 
+  // AI 聊天记录：按项目目录持久化到 .ycide-ai-chat.json（与标签会话分文件，互不覆盖）
+  ipcMain.handle('project:saveAiChat', async (_event, projectDir: string, payload: unknown) => {
+    const chatPath = join(validatePath(projectDir), '.ycide-ai-chat.json')
+    await writeFileAsync(chatPath, JSON.stringify(payload ?? {}), 'utf-8')
+  })
+
+  ipcMain.handle('project:loadAiChat', async (_event, projectDir: string) => {
+    const chatPath = join(validatePath(projectDir), '.ycide-ai-chat.json')
+    if (!existsSync(chatPath)) return null
+    try {
+      return JSON.parse(await readFileAsync(chatPath, 'utf-8'))
+    } catch {
+      return null
+    }
+  })
+
   // 打开项目文件对话框（支持 .epp/.e/.ec）
   ipcMain.handle('project:openEpp', async (): Promise<OpenProjectSelectionResult> => {
     const win = BrowserWindow.getFocusedWindow()

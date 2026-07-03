@@ -248,6 +248,7 @@ export interface EditorTab {
   savedValue: string  // 用于判断是否有未保存更改
   filePath?: string   // 实际文件路径
   formData?: DesignForm // 可视化设计器的窗口数据
+  aiModified?: boolean // 未保存更改来自 AI 编辑（人工再编辑即清除，回归人工修改样式）
 }
 
 export interface DiffLineInfo {
@@ -410,7 +411,7 @@ class EycEditorErrorBoundary extends Component<EycEditorErrorBoundaryProps, EycE
   }
 }
 
-const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }>; currentTheme?: string; themeTokenValues?: Record<string, string>; editorFontFamily?: string; editorFontSize?: number; editorLineHeight?: number; editorFreezeSubTableHeader?: boolean; editorShowMinimapPreview?: boolean; targetPlatform?: string; readFileForExternalCheck?: (filePath: string) => Promise<string | null>; resolveFileEncoding?: (filePath: string) => string | undefined }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [], currentTheme = '', themeTokenValues = {}, editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, editorFreezeSubTableHeader = false, editorShowMinimapPreview = true, targetPlatform = 'windows', readFileForExternalCheck, resolveFileEncoding }, ref) {
+const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }>; currentTheme?: string; themeTokenValues?: Record<string, string>; editorFontFamily?: string; editorFontSize?: number; editorLineHeight?: number; editorFreezeSubTableHeader?: boolean; editorShowMinimapPreview?: boolean; editorShowVarSummaryPanel?: boolean; targetPlatform?: string; readFileForExternalCheck?: (filePath: string) => Promise<string | null>; resolveFileEncoding?: (filePath: string) => string | undefined }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [], currentTheme = '', themeTokenValues = {}, editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, editorFreezeSubTableHeader = false, editorShowMinimapPreview = true, editorShowVarSummaryPanel = true, targetPlatform = 'windows', readFileForExternalCheck, resolveFileEncoding }, ref) {
   const [tabs, setTabs] = useState<EditorTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [tabBarPosition, setTabBarPosition] = useState<TabBarPosition>(() => {
@@ -443,6 +444,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const [eycDiffAddedLines, setEycDiffAddedLines] = useState<Set<number>>(new Set())
   const [eycDiffEditedLines, setEycDiffEditedLines] = useState<Set<number>>(new Set())
   const [eycDiffDeletedAfterLines, setEycDiffDeletedAfterLines] = useState<Set<number>>(new Set())
+  // 锚点行(0-based) → 被删除的原文，供表格编辑器在红色删除占位行里显示删了什么
+  const [eycDiffDeletedTextAfterLines, setEycDiffDeletedTextAfterLines] = useState<Map<number, string>>(new Map())
   const [windowUnits, setWindowUnits] = useState<LibWindowUnit[]>([])
   const pendingNavigateRef = useRef<PendingSubNavigation | null>(null)
   const tabsRef = useRef<EditorTab[]>([])
@@ -1388,6 +1391,19 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             for (const line of incomingDeletedAfter) mergedDeletedAfter.add(line)
             return mergedDeletedAfter
           })
+          // 记录各锚点被删除的原文（同锚点分多个 hunk 到达时拼接）
+          setEycDiffDeletedTextAfterLines(prev => {
+            const merged = new Map(prev)
+            for (const group of diffInfo.deletedGroups) {
+              const anchor = Math.max(group.afterLine - 1, 0)
+              if (!Number.isInteger(anchor) || anchor < 0) continue
+              const text = group.text || ''
+              if (!text) continue
+              const existing = merged.get(anchor)
+              merged.set(anchor, existing ? `${existing}\n${text}` : text)
+            }
+            return merged
+          })
           // 再据此计算 added 的最终集合：排除相邻 deletedAnchor 的行
           const promotedFromAdded = new Set<number>()
           setEycDiffAddedLines(prev => {
@@ -1431,6 +1447,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       setEycDiffAddedLines(new Set())
       setEycDiffEditedLines(new Set())
       setEycDiffDeletedAfterLines(new Set())
+      setEycDiffDeletedTextAfterLines(new Map())
     },
     insertDeclaration: () => {
       eycEditorRef.current?.insertSubroutine()
@@ -2238,7 +2255,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     if (value === undefined) return
     setTabs(prev => {
       const next = prev.map(t =>
-        t.id === activeTabId ? { ...t, value } : t
+        t.id === activeTabId ? { ...t, value, aiModified: undefined } : t
       )
       onOpenTabsChange?.(next)
       return next
@@ -2250,7 +2267,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     const internal = eycToInternalFormat(value)
     setTabs(prev => {
       const next = prev.map(t =>
-        t.id === activeTabId ? { ...t, value: internal } : t
+        t.id === activeTabId ? { ...t, value: internal, aiModified: undefined } : t
       )
       onOpenTabsChange?.(next)
       return next
@@ -2261,7 +2278,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const handleEycChange = useCallback((value: string) => {
     setTabs(prev => {
       const next = prev.map(t =>
-        t.id === activeTabId ? { ...t, value } : t
+        t.id === activeTabId ? { ...t, value, aiModified: undefined } : t
       )
       onOpenTabsChange?.(next)
       return next
@@ -2424,7 +2441,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const handleFormChange = useCallback((form: DesignForm) => {
     setTabs(prev => {
       const next = prev.map(t =>
-        t.id === activeTabId ? { ...t, formData: form } : t
+        t.id === activeTabId ? { ...t, formData: form, aiModified: undefined } : t
       )
       onOpenTabsChange?.(next)
       return next
@@ -2629,6 +2646,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                 editorLineHeight={editorLineHeight}
                 freezeSubTableHeader={editorFreezeSubTableHeader}
                 showMinimapPreview={editorShowMinimapPreview}
+                showVarSummaryPanel={editorShowVarSummaryPanel}
                 projectDir={projectDir}
                 targetPlatform={targetPlatform}
                 isClassModule={activeTab.label.toLowerCase().endsWith('.ecc')}
@@ -2654,6 +2672,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                 diffAddedLines={eycDiffAddedLines}
                 diffEditedLines={eycDiffEditedLines}
                 diffDeletedAfterLines={eycDiffDeletedAfterLines}
+                diffDeletedTextAfterLines={eycDiffDeletedTextAfterLines}
               />
             </EycEditorErrorBoundary>
           )
@@ -2700,7 +2719,10 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             </span>
             <span className={`editor-tab-label ${getTabLabelClass(tab.language)}`}>{tab.label}</span>
             {isModified(tab) && (
-              <span className="editor-tab-modified" title="未保存更改">●</span>
+              <span
+                className={`editor-tab-modified${tab.aiModified ? ' editor-tab-modified-ai' : ''}`}
+                title={tab.aiModified ? '未保存更改（AI 修改）' : '未保存更改'}
+              >●</span>
             )}
             <span
               className="editor-tab-close"

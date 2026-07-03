@@ -419,3 +419,19 @@
   -webkit-user-select: none;
   user-select: none;
 }
+
+/* 未被调用的子程序：名称淡化 */
+.tree-label-unused {
+  opacity: 0.62;
+}
+
+/* AI 修改产生的未保存更改：橙点外包圆角矩形（无框=人工编辑） */
+.tree-item-modified-dot-ai {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  border: 1px solid var(--warning, #f39c12);
+  border-radius: 4px;
+  line-height: 1.2;
+}
