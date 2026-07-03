@@ -145,6 +145,10 @@ interface EycTableEditorProps {
   diffAddedLines?: Set<number>
   diffEditedLines?: Set<number>
   diffDeletedAfterLines?: Set<number>
+  // 锚点行 → 被删除的原文（红色删除占位行内展示被删内容）
+  diffDeletedTextAfterLines?: Map<number, string>
+  // 右侧变量汇总面板总开关（系统设置），关闭时连收起细条也不渲染
+  showVarSummaryPanel?: boolean
 }
 
 export interface FileProblem {
@@ -164,6 +168,36 @@ interface EditState {
   exprPath?: number[] // 嵌套表达式行编辑：从顶层参数值出发的子节点路径（加法拆分 0/1 或子命令参数序号）
 }
 
+// ===== 右侧变量汇总面板 =====
+interface VarSummaryItem {
+  name: string
+  typeName: string
+  arrayText: string   // 数组说明（如"数组[601]"），非数组为空串
+  lineIndex: number
+  isParam?: boolean   // 子程序参数（与局部变量同组展示时标注）
+}
+
+interface VarSummaryGroup {
+  key: string
+  title: string
+  items: VarSummaryItem[]  // 已按搜索词过滤
+  total: number            // 过滤前总数
+  isCurrentSub?: boolean   // 光标所在子程序的组（高亮）
+}
+
+// 变量类型 → 图标配色类别（图标字符取类型名首字）
+const VAR_TYPE_ICON_CLASS: Record<string, string> = {
+  '整数型': 'int', '长整数型': 'int', '短整数型': 'int', '字节型': 'int',
+  '逻辑型': 'bool', '文本型': 'text', '字节集': 'bin',
+  '小数型': 'float', '双精度小数型': 'float', '日期时间型': 'date',
+  '子程序指针': 'ptr', '变体型': 'variant',
+}
+
+function varTypeIconOf(typeName: string): { char: string; cls: string } {
+  const t = (typeName || '').trim()
+  return { char: t.charAt(0) || '变', cls: VAR_TYPE_ICON_CLASS[t] || 'custom' }
+}
+
 interface ExprExpandItem {
   name: string
   value: string
@@ -181,7 +215,7 @@ const setCssVars = (element: HTMLElement | null, vars: Record<string, string>): 
 
 const TABLE_MODE_HIDDEN_FLOW_COMMANDS = new Set(['否则', '如果结束', '默认', '判断结束', '如果真结束'])
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>() }, ref) {
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>(), diffDeletedTextAfterLines, showVarSummaryPanel = true }, ref) {
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
@@ -2313,6 +2347,113 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
   }, [])
 
+  // ===== 右侧变量汇总面板（程序集变量/全局变量为全文件，参数/局部变量跟随光标所在子程序）=====
+  const [varPanelOpen, setVarPanelOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem('eyc-var-panel-open') !== '0' } catch { return true }
+  })
+  const [varPanelQuery, setVarPanelQuery] = useState('')
+  const [varPanelCollapsedGroups, setVarPanelCollapsedGroups] = useState<Set<string>>(new Set())
+
+  const toggleVarPanel = useCallback(() => {
+    setVarPanelOpen(prev => {
+      const next = !prev
+      try { localStorage.setItem('eyc-var-panel-open', next ? '1' : '0') } catch { /* ignore */ }
+      return next
+    })
+  }, [])
+
+  const toggleVarPanelGroup = useCallback((key: string) => {
+    setVarPanelCollapsedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  // 光标所在子程序（用于高亮对应分组）：优先编辑态行，其次行选择
+  const varPanelCurrentSub = useMemo(() => {
+    let cursorLine = editCell?.lineIndex ?? -1
+    if (cursorLine < 0 && selectedLines.size > 0) cursorLine = Math.min(...selectedLines)
+    if (cursorLine < 0) cursorLine = lastFocusedLine.current
+    if (cursorLine < 0) return null
+    return subFoldRanges.find(r => cursorLine >= r.startLine && cursorLine <= r.endLine) || null
+  }, [editCell, selectedLines, subFoldRanges])
+
+  const varPanelGroups = useMemo((): VarSummaryGroup[] => {
+    const query = varPanelQuery.trim().toLowerCase()
+    const matches = (it: VarSummaryItem): boolean =>
+      !query || it.name.toLowerCase().includes(query) || it.typeName.toLowerCase().includes(query)
+    const mkVar = (i: number, f: string[]): VarSummaryItem => {
+      const size = unquote((f[3] || '').trim())
+      return {
+        name: (f[0] || '').trim(),
+        typeName: (f[1] || '').trim() || '整数型',
+        arrayText: size ? `数组[${size}]` : '',
+        lineIndex: i,
+      }
+    }
+
+    const assemblyVars: VarSummaryItem[] = []
+    const globalVars: VarSummaryItem[] = []
+    // 全文件汇总：每个子程序一个分组（组内按声明顺序，参数天然在局部变量之前）
+    const varsBySub = new Map<string, VarSummaryItem[]>()
+    let subIdx = 0
+    for (let i = 0; i < parsedLines.length; i++) {
+      const ln = parsedLines[i]
+      if (!ln.fields[0]) continue
+      if (ln.type === 'assemblyVar') { assemblyVars.push(mkVar(i, ln.fields)); continue }
+      if (ln.type === 'globalVar') { globalVars.push(mkVar(i, ln.fields)); continue }
+      if (ln.type !== 'subParam' && ln.type !== 'localVar') continue
+      // subFoldRanges 按行号有序，游标推进定位所属子程序（整体 O(n)）
+      while (subIdx < subFoldRanges.length && i > subFoldRanges[subIdx].endLine) subIdx++
+      const sub = subFoldRanges[subIdx]
+      if (!sub || i < sub.startLine) continue  // DLL命令参数等不属于任何子程序
+      const item: VarSummaryItem = ln.type === 'subParam'
+        ? {
+            name: (ln.fields[0] || '').trim(),
+            typeName: (ln.fields[1] || '').trim() || '整数型',
+            arrayText: (ln.fields[2] || '').includes('数组') ? '数组' : '',
+            lineIndex: i,
+            isParam: true,
+          }
+        : mkVar(i, ln.fields)
+      const list = varsBySub.get(sub.name)
+      if (list) list.push(item)
+      else varsBySub.set(sub.name, [item])
+    }
+
+    const groups: VarSummaryGroup[] = []
+    if (globalVars.length > 0) {
+      groups.push({ key: 'global', title: '全局变量', items: globalVars.filter(matches), total: globalVars.length })
+    }
+    groups.push({ key: 'assembly', title: '程序集变量', items: assemblyVars.filter(matches), total: assemblyVars.length })
+    const seenSubNames = new Set<string>()
+    for (const range of subFoldRanges) {
+      if (seenSubNames.has(range.name)) continue  // 重名子程序：变量已并入首个同名组
+      seenSubNames.add(range.name)
+      const all = varsBySub.get(range.name)
+      if (!all || all.length === 0) continue  // 无变量的子程序不占面板
+      const items = all.filter(matches)
+      if (query && items.length === 0) continue  // 搜索时隐藏无匹配的子程序组
+      groups.push({
+        key: `sub:${range.name}`,
+        title: range.name,
+        items,
+        total: all.length,
+        isCurrentSub: varPanelCurrentSub?.name === range.name,
+      })
+    }
+    return groups
+  }, [parsedLines, subFoldRanges, varPanelCurrentSub, varPanelQuery])
+
+  const handleVarPanelItemClick = useCallback((lineIndex: number) => {
+    expandSubContainingLine(lineIndex)
+    setSelectedLines(new Set([lineIndex]))
+    // 折叠展开后目标行可能尚未渲染，下一拍再滚动定位
+    window.setTimeout(() => scrollToLineIndex(lineIndex, 'auto'), 0)
+  }, [expandSubContainingLine, scrollToLineIndex])
+
   const visibleBlocks = useMemo(() => {
     const result: RenderBlock[] = []
     for (const blk of blocks) {
@@ -2767,11 +2908,23 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   subTableMetaRef.current = stickySubTableMeta
 
+  // 每个删除锚点的被删原文按行拆开：占位行按被删行数逐行渲染（无记录的锚点回退单行空占位）
+  const diffDeletedLinesByAnchor = useMemo(() => {
+    const map = new Map<number, string[]>()
+    for (const anchor of diffDeletedAfterLines) {
+      const text = diffDeletedTextAfterLines?.get(anchor)
+      const lines = text ? text.replace(/\r\n/g, '\n').split('\n') : ['']
+      map.set(anchor, lines.length > 0 ? lines : [''])
+    }
+    return map
+  }, [diffDeletedAfterLines, diffDeletedTextAfterLines])
+
   const tableRenderMetaByBlockIndex = useMemo(() => {
     type TableRenderRow = {
       row: RenderBlock['rows'][number]
       ri: number
       isDeletedPlaceholder: boolean
+      deletedText?: string
     }
 
     const map = new Map<number, {
@@ -2788,8 +2941,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const tableColCount = Math.max(1, blk.rows[0]?.cells.reduce((sum, cell) => sum + (cell.colSpan || 1), 0) || 1)
       const tableRenderRowsAll = blk.rows.flatMap((row, ri) => {
         const rows: TableRenderRow[] = [{ row, ri, isDeletedPlaceholder: false }]
-        if (!row.isHeader && diffDeletedAfterLines.has(row.lineIndex)) {
-          rows.push({ row, ri, isDeletedPlaceholder: true })
+        if (!row.isHeader) {
+          const deletedLines = diffDeletedLinesByAnchor.get(row.lineIndex)
+          if (deletedLines) {
+            for (const deletedText of deletedLines) {
+              rows.push({ row, ri, isDeletedPlaceholder: true, deletedText })
+            }
+          }
         }
         return rows
       })
@@ -2798,7 +2956,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     return map
-  }, [visibleBlocks, diffDeletedAfterLines])
+  }, [visibleBlocks, diffDeletedLinesByAnchor])
 
   const codeRenderMetaCacheRef = useRef(new Map<number, {
     signature: string
@@ -2936,7 +3094,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             marker: resolveMarker(row.lineIndex),
             cells: cells.length > 0 ? cells : [{ text: ' ', cls: '' }],
           })
-          if (diffDeletedAfterLines.has(row.lineIndex)) {
+          for (let di = 0; di < (diffDeletedLinesByAnchor.get(row.lineIndex)?.length || 0); di++) {
             sourceRows.push({ kind: 'deleted', marker: 'deleted' })
           }
         }
@@ -2951,7 +3109,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         marker: resolveMarker(blk.lineIndex),
         codeText,
       })
-      if (diffDeletedAfterLines.has(blk.lineIndex)) {
+      for (let di = 0; di < (diffDeletedLinesByAnchor.get(blk.lineIndex)?.length || 0); di++) {
         sourceRows.push({ kind: 'deleted', marker: 'deleted' })
       }
     }
@@ -2982,7 +3140,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const src = sourceRows[mid]
       return src ? toMiniRow(src) : { kind: 'code' as const, lineIndex: -1, marker: 'none' as const, spans: [{ text: ' ', cls: '' }] }
     })
-  }, [visibleBlocks, diffDeletedAfterLines, lineMarkerTypeMap, shouldShowMinimapPreview])
+  }, [visibleBlocks, diffDeletedLinesByAnchor, lineMarkerTypeMap, shouldShowMinimapPreview])
 
   // 对实际渲染的可见行按顺序分配连续行号（跳过 isHeader / isVirtual）
   // 注意：表格内可能存在多个可见行映射到同一源码 lineIndex（如 DLL 命令块），
@@ -3023,16 +3181,16 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const lineIndices = dataRows.map(row => row.lineIndex).filter(li => Number.isFinite(li) && li >= 0)
         const startLine = lineIndices.length > 0 ? Math.min(...lineIndices) : 0
         const endLine = lineIndices.length > 0 ? Math.max(...lineIndices) : startLine
-        const deletedPlaceholderCount = dataRows.reduce((count, row) => count + (diffDeletedAfterLines.has(row.lineIndex) ? 1 : 0), 0)
+        const deletedPlaceholderCount = dataRows.reduce((count, row) => count + (diffDeletedLinesByAnchor.get(row.lineIndex)?.length || 0), 0)
         const visualRows = Math.max(dataRows.length + deletedPlaceholderCount, 1)
         return { startLine, endLine, visualRows }
       }
 
       const lineIndex = Number.isFinite(blk.lineIndex) && blk.lineIndex >= 0 ? blk.lineIndex : 0
-      const visualRows = 1 + (diffDeletedAfterLines.has(blk.lineIndex) ? 1 : 0)
+      const visualRows = 1 + (diffDeletedLinesByAnchor.get(blk.lineIndex)?.length || 0)
       return { startLine: lineIndex, endLine: lineIndex, visualRows }
     })
-  }, [visibleBlocks, diffDeletedAfterLines])
+  }, [visibleBlocks, diffDeletedLinesByAnchor])
 
   const blockVirtualWindow = useMemo(() => {
     const approxRowPx = Math.max(editorLineHeight + 6, 22)
@@ -6859,11 +7017,19 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           </td>
                         </tr>
                       )}
-                      {tableRenderRows.map(({ row, ri, isDeletedPlaceholder }, renderIndex) => (
+                      {tableRenderRows.map(({ row, ri, isDeletedPlaceholder, deletedText }, renderIndex) => (
                         isDeletedPlaceholder
                           ? (
                               <tr key={`tbl-del-${ri}-${renderIndex}`} className="eyc-data-row eyc-diff-deleted-placeholder-row" aria-hidden="true">
-                                <td className="eyc-diff-deleted-placeholder-cell" colSpan={tableColCount}>&nbsp;</td>
+                                <td
+                                  className="eyc-diff-deleted-placeholder-cell"
+                                  colSpan={tableColCount}
+                                  title={deletedText || undefined}
+                                >
+                                  {deletedText?.trim()
+                                    ? <span className="eyc-diff-deleted-text">{deletedText}</span>
+                                    : ' '}
+                                </td>
                               </tr>
                             )
                           : (
@@ -7446,8 +7612,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 )
               })()}
             </div>
-            {diffDeletedAfterLines.has(blk.lineIndex) && (
-              <div className="eyc-block-row eyc-block-row-wrap eyc-diff-deleted-placeholder" aria-hidden="true">
+            {(diffDeletedLinesByAnchor.get(blk.lineIndex) || []).map((deletedText, di) => (
+              <div key={`code-del-${blk.lineIndex}-${di}`} className="eyc-block-row eyc-block-row-wrap eyc-diff-deleted-placeholder" aria-hidden="true">
                 <div className="eyc-line-gutter">
                   <div className="eyc-gutter-cell eyc-diff-deleted-placeholder-gutter">
                     <span className="eyc-breakpoint-dot">●</span>
@@ -7455,11 +7621,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                     <span className="eyc-gutter-fold-area" />
                   </div>
                 </div>
-                <div className="eyc-code-line eyc-diff-deleted-placeholder-line">
-                  <span className="eyc-code-spans">&nbsp;</span>
+                <div className="eyc-code-line eyc-diff-deleted-placeholder-line" title={deletedText || undefined}>
+                  {deletedText.trim()
+                    ? <span className="eyc-code-spans eyc-diff-deleted-text">{deletedText}</span>
+                    : <span className="eyc-code-spans">&nbsp;</span>}
                 </div>
               </div>
-            )}
+            ))}
             </Fragment>
           )
         })}
@@ -7537,6 +7705,62 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       <div className="eyc-scrollbar-mask eyc-scrollbar-mask-left" aria-hidden="true" />
       <div className="eyc-scrollbar-mask eyc-scrollbar-mask-right" aria-hidden="true" />
       </div>
+      {showVarSummaryPanel && !isResourceTableDoc && (varPanelOpen ? (
+        <div className="eyc-var-panel">
+          <div className="eyc-var-panel-head">
+            <input
+              className="eyc-var-panel-search"
+              value={varPanelQuery}
+              onChange={(e) => setVarPanelQuery(e.target.value)}
+              placeholder="搜索变量…"
+              spellCheck={false}
+              onMouseDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            />
+            <button type="button" className="eyc-var-panel-toggle" title="收起变量面板" onClick={toggleVarPanel}>»</button>
+          </div>
+          <div className="eyc-var-panel-body">
+            {varPanelGroups.map(group => {
+              const collapsed = varPanelCollapsedGroups.has(group.key)
+              return (
+                <div key={group.key} className="eyc-var-group">
+                  <div
+                    className={`eyc-var-group-head${group.isCurrentSub ? ' eyc-var-group-head-current' : ''}`}
+                    onClick={() => toggleVarPanelGroup(group.key)}
+                  >
+                    <span className="eyc-var-group-arrow">{collapsed ? '▸' : '▾'}</span>
+                    <span className="eyc-var-group-title">{group.title}</span>
+                    <span className="eyc-var-group-count">{varPanelQuery.trim() ? `${group.items.length}/${group.total}` : group.total}</span>
+                  </div>
+                  {!collapsed && group.items.map(item => {
+                    const icon = varTypeIconOf(item.typeName)
+                    return (
+                      <div
+                        key={`${group.key}-${item.lineIndex}-${item.name}`}
+                        className="eyc-var-item"
+                        title={`${item.name}  ${item.typeName}${item.arrayText ? `  ${item.arrayText}` : ''}`}
+                        onClick={() => handleVarPanelItemClick(item.lineIndex)}
+                      >
+                        <span className={`eyc-var-item-icon eyc-var-item-icon-${icon.cls}`}>{icon.char}</span>
+                        <span className="eyc-var-item-name">{item.name}</span>
+                        <span className="eyc-var-item-type">{item.isParam ? '参数 · ' : ''}{item.typeName}{item.arrayText ? ` · ${item.arrayText}` : ''}</span>
+                      </div>
+                    )
+                  })}
+                  {!collapsed && group.items.length === 0 && (
+                    <div className="eyc-var-group-empty">{varPanelQuery.trim() ? '无匹配' : '（空）'}</div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="eyc-var-panel-collapsed" title="展开变量面板" onClick={toggleVarPanel}>
+          <span className="eyc-var-panel-collapsed-arrow">«</span>
+          <span className="eyc-var-panel-collapsed-label">变量</span>
+        </button>
+      ))}
       </div>
 
       <EycResourcePreview

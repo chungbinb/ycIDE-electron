@@ -12,6 +12,10 @@ const AI_PANEL_DEFAULT_WIDTH = 420
 
 type ChatEntry = {
   role: 'user' | 'assistant'
+  // reasoning: 模型思考过程——以可折叠的无气泡样式展示，区别于正式回答
+  kind?: 'reasoning'
+  // 思考已结束：自动收起（流式进行中展开，结束后折叠，仍可手动展开）
+  reasoningDone?: boolean
   content: string
   toolTrace?: {
     id: string
@@ -64,6 +68,8 @@ interface AIAssistantPanelProps {
   activeFileLabel: string | null
   problems?: FileProblem[]
   placement?: 'left' | 'right'
+  // 当前项目目录：聊天记录按项目持久化（.ycide-ai-chat.json），切换项目自动换档
+  projectDir?: string | null
   ideContext?: string
   aiFontFamily?: string
   aiFontSize?: number
@@ -212,6 +218,7 @@ function AIAssistantPanel({
   activeFileLabel,
   problems,
   placement = 'right',
+  projectDir,
   ideContext,
   aiFontFamily,
   aiFontSize,
@@ -278,12 +285,91 @@ function AIAssistantPanel({
   const [agentHistory, setAgentHistory] = useState<ChatEntry[]>([])
   const [pendingEdit, setPendingEdit] = useState<AIEditResult | null>(null)
   const [lastEditInstruction, setLastEditInstruction] = useState('')
-  const [editMessages, setEditMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([])
+  const [editMessages, setEditMessages] = useState<ChatEntry[]>([])
   const [editBusy, setEditBusy] = useState(false)
   const [editApplying, setEditApplying] = useState(false)
   const [agentRunning, setAgentRunning] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // ===== 聊天记录按项目持久化 =====
+  // loadedChatDirRef: 已完成加载的项目目录。保存仅在"当前目录已完成加载"后进行，
+  // 防止切换项目瞬间用旧项目/空历史覆盖新项目的存档。
+  const loadedChatDirRef = useRef<string | null>(null)
+  const chatSaveTimerRef = useRef<number | null>(null)
+  const chatSavePayloadRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    loadedChatDirRef.current = null
+    if (chatSaveTimerRef.current !== null) {
+      window.clearTimeout(chatSaveTimerRef.current)
+      chatSaveTimerRef.current = null
+    }
+    setChatHistory([])
+    setPlanHistory([])
+    setAgentHistory([])
+    setEditMessages([])
+    const dir = projectDir
+    if (!dir) return
+
+    let canceled = false
+    void (async () => {
+      const raw = await window.api?.project?.loadAiChat?.(dir)
+      if (canceled) return
+      const data = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : null
+      const pickEntries = (value: unknown): ChatEntry[] => {
+        if (!Array.isArray(value)) return []
+        return value
+          .filter((item): item is ChatEntry =>
+            !!item && typeof item === 'object'
+            && ((item as ChatEntry).role === 'user' || (item as ChatEntry).role === 'assistant')
+            && typeof (item as ChatEntry).content === 'string')
+          // 恢复的思考条目必然已结束，默认收起
+          .map(item => item.kind === 'reasoning' ? { ...item, reasoningDone: true } : item)
+      }
+      if (data) {
+        setChatHistory(pickEntries(data.chat))
+        setPlanHistory(pickEntries(data.plan))
+        setAgentHistory(pickEntries(data.agent))
+        setEditMessages(pickEntries(data.edit))
+      }
+      loadedChatDirRef.current = dir
+    })()
+    return () => { canceled = true }
+  }, [projectDir])
+
+  useEffect(() => {
+    const dir = projectDir
+    // 未加载完成前不保存（含无项目时）
+    if (!dir || loadedChatDirRef.current !== dir) return
+    // 每组最多保留最近 200 条，避免存档无限膨胀
+    const cap = (entries: ChatEntry[]): ChatEntry[] => entries.slice(-200)
+    const payload = JSON.stringify({
+      version: 1,
+      chat: cap(chatHistory),
+      plan: cap(planHistory),
+      agent: cap(agentHistory),
+      edit: cap(editMessages),
+    })
+    if (payload === chatSavePayloadRef.current) return
+    if (chatSaveTimerRef.current !== null) window.clearTimeout(chatSaveTimerRef.current)
+    chatSaveTimerRef.current = window.setTimeout(() => {
+      chatSaveTimerRef.current = null
+      chatSavePayloadRef.current = payload
+      void window.api?.project?.saveAiChat?.(dir, JSON.parse(payload))
+    }, 600)
+    return () => {
+      // 卸载/依赖变化时若有未落盘的保存，立即执行（关面板/关窗口不丢最后一段）
+      if (chatSaveTimerRef.current !== null) {
+        window.clearTimeout(chatSaveTimerRef.current)
+        chatSaveTimerRef.current = null
+        if (loadedChatDirRef.current === dir && payload !== chatSavePayloadRef.current) {
+          chatSavePayloadRef.current = payload
+          void window.api?.project?.saveAiChat?.(dir, JSON.parse(payload))
+        }
+      }
+    }
+  }, [projectDir, chatHistory, planHistory, agentHistory, editMessages])
   const [selectedHunks, setSelectedHunks] = useState<number[]>([])
   const [editChangeSummary, setEditChangeSummary] = useState<EditChangeSummary | null>(null)
   const [showModelConfig, setShowModelConfig] = useState(false)
@@ -791,11 +877,11 @@ function AIAssistantPanel({
     setStatus(null)
     setPendingEdit(null)
 
-    // 添加一个空的 assistant 消息用于流式追加
+    // 添加一个空的 assistant 思考消息用于流式追加（reasoning 无气泡展示）
     let streamingIdx = -1
     setEditMessages(prev => {
       streamingIdx = prev.length
-      return [...prev, { role: 'assistant', content: '' }]
+      return [...prev, { role: 'assistant', kind: 'reasoning', content: '' }]
     })
 
     let hasReasoningContent = false
@@ -837,6 +923,16 @@ function AIAssistantPanel({
       finishRun(runId)
       return
     }
+
+    // 思考结束：自动收起思考过程条目
+    setEditMessages(prev => {
+      if (streamingIdx < 0 || streamingIdx >= prev.length) return prev
+      const current = prev[streamingIdx]
+      if (current.kind !== 'reasoning' || current.reasoningDone) return prev
+      const next = [...prev]
+      next[streamingIdx] = { ...current, reasoningDone: true }
+      return next
+    })
 
     // AI 返回完成，进入应用阶段
     setEditApplying(true)
@@ -1041,6 +1137,55 @@ function AIAssistantPanel({
     }
   }
 
+  // 统一的消息条目渲染：
+  // - 用户消息：右对齐圆角气泡
+  // - 助手回答：无气泡全宽纯文本（参考主流聊天产品）
+  // - 思考过程(reasoning)：无气泡、可折叠、小号灰字
+  // - 工具调用：可折叠圆角卡片
+  const renderChatEntry = (item: ChatEntry, key: string): React.JSX.Element => {
+    if (item.kind === 'reasoning') {
+      return (
+        <details key={key} className="ai-reasoning" open={!item.reasoningDone}>
+          <summary className="ai-reasoning-summary">
+            <span className="ai-reasoning-caret" aria-hidden="true">▸</span>
+            {item.reasoningDone ? '思考过程' : <>正在思考<span className="ai-dots-anim" /></>}
+          </summary>
+          {item.content && <pre className="ai-reasoning-content">{item.content}</pre>}
+        </details>
+      )
+    }
+    if (item.toolTrace) {
+      return (
+        <details key={key} className="ai-tool-trace" open={false}>
+          <summary className="ai-tool-trace-summary">
+            <span className={`ai-tool-trace-status ${item.toolTrace.ok ? 'ai-tool-trace-status-ok' : 'ai-tool-trace-status-fail'}`} aria-hidden="true" />
+            <span className="ai-tool-trace-label">{item.content}</span>
+          </summary>
+          <div className="ai-tool-trace-section">
+            <div className="ai-tool-trace-title">参数</div>
+            <pre className="ai-chat-content">{item.toolTrace.args}</pre>
+          </div>
+          <div className="ai-tool-trace-section">
+            <div className="ai-tool-trace-title">返回</div>
+            <pre className="ai-chat-content">{item.toolTrace.result}</pre>
+          </div>
+        </details>
+      )
+    }
+    if (item.role === 'user') {
+      return (
+        <div key={key} className="ai-msg ai-msg-user">
+          <pre className="ai-chat-content">{item.content}</pre>
+        </div>
+      )
+    }
+    return (
+      <div key={key} className="ai-msg ai-msg-assistant">
+        <pre className="ai-chat-content">{item.content}</pre>
+      </div>
+    )
+  }
+
   return (
     <aside
       className={`ai-panel${placement === 'left' ? ' ai-panel-left' : ''}`}
@@ -1067,11 +1212,7 @@ function AIAssistantPanel({
         <div className="ai-panel-section">
           <div className="ai-chat-log" role="log" aria-label="聊天记录">
             {chatHistory.length === 0 && <div className="ai-empty">开始提问吧，聊天模式不会修改任何文件。</div>}
-            {chatHistory.map((item, idx) => (
-              <div key={`${item.role}-${idx}`} className={`ai-chat-item ai-chat-${item.role}`}>
-                <pre className="ai-chat-content">{item.content}</pre>
-              </div>
-            ))}
+            {chatHistory.map((item, idx) => renderChatEntry(item, `${item.role}-${idx}`))}
           </div>
         </div>
       )}
@@ -1080,11 +1221,7 @@ function AIAssistantPanel({
         <div className="ai-panel-section">
           <div className="ai-chat-log" role="log" aria-label="计划记录">
             {planHistory.length === 0 && <div className="ai-empty">描述你的目标，Plan 模式会生成结构化执行计划。</div>}
-            {planHistory.map((item, idx) => (
-              <div key={`plan-${item.role}-${idx}`} className={`ai-chat-item ai-chat-${item.role}`}>
-                <pre className="ai-chat-content">{item.content}</pre>
-              </div>
-            ))}
+            {planHistory.map((item, idx) => renderChatEntry(item, `plan-${item.role}-${idx}`))}
           </div>
         </div>
       )}
@@ -1093,31 +1230,9 @@ function AIAssistantPanel({
         <div className="ai-panel-section">
           <div className="ai-chat-log" role="log" aria-label="Agent 执行记录">
             {agentHistory.length === 0 && <div className="ai-empty">输入任务目标，Agent 模式会自动拆解步骤并尽量执行修改。</div>}
-            {agentHistory.map((item, idx) => (
-              <div key={`agent-${item.role}-${idx}`} className={`ai-chat-item ai-chat-${item.role}`}>
-                {item.toolTrace ? (
-                  <details className="ai-tool-trace" open={false}>
-                    <summary className="ai-tool-trace-summary">
-                      {item.content}
-                    </summary>
-                    <div className="ai-tool-trace-section">
-                      <div className="ai-tool-trace-title">参数</div>
-                      <pre className="ai-chat-content">{item.toolTrace.args}</pre>
-                    </div>
-                    <div className="ai-tool-trace-section">
-                      <div className="ai-tool-trace-title">返回</div>
-                      <pre className="ai-chat-content">{item.toolTrace.result}</pre>
-                    </div>
-                  </details>
-                ) : (
-                  <pre className="ai-chat-content">{item.content}</pre>
-                )}
-              </div>
-            ))}
+            {agentHistory.map((item, idx) => renderChatEntry(item, `agent-${item.role}-${idx}`))}
             {agentRunning && (
-              <div className="ai-chat-item ai-chat-assistant">
-                <pre className="ai-chat-content">Agent 执行中<span className="ai-dots-anim" /></pre>
-              </div>
+              <div className="ai-msg-status">Agent 执行中<span className="ai-dots-anim" /></div>
             )}
           </div>
         </div>
@@ -1127,15 +1242,9 @@ function AIAssistantPanel({
         <div className="ai-panel-section">
           <div className="ai-chat-log" role="log" aria-label="编辑记录">
             {editMessages.length === 0 && !editBusy && !editApplying && <div className="ai-empty">描述你要对当前文件做的修改。</div>}
-            {editMessages.map((item, idx) => (
-              <div key={`edit-${item.role}-${idx}`} className={`ai-chat-item ai-chat-${item.role}`}>
-                <pre className="ai-chat-content">{item.content}</pre>
-              </div>
-            ))}
+            {editMessages.map((item, idx) => renderChatEntry(item, `edit-${item.role}-${idx}`))}
             {editApplying && (
-              <div className="ai-chat-item ai-chat-assistant">
-                <pre className="ai-chat-content">正在编辑 {activeFileLabel ? getFileName(activeFileLabel) : '文件'} 中<span className="ai-dots-anim" /></pre>
-              </div>
+              <div className="ai-msg-status">正在编辑 {activeFileLabel ? getFileName(activeFileLabel) : '文件'} 中<span className="ai-dots-anim" /></div>
             )}
           </div>
         </div>

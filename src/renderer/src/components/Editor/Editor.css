@@ -343,3 +343,14 @@
   font-size: 13px;
   color: var(--text-disabled);
 }
+
+/* AI 修改产生的未保存更改：白点外包圆角矩形（无框=人工编辑） */
+.editor-tab-modified-ai {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  line-height: 1.2;
+}

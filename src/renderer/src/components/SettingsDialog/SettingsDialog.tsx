@@ -238,6 +238,19 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             </label>
             <span className="settings-unit" />
           </div>
+          <div className="settings-row">
+            <span className="settings-label">变量汇总面板</span>
+            <label className="settings-switch" aria-label="变量汇总面板">
+              <input
+                type="checkbox"
+                className="settings-switch-input"
+                checked={draft.editorShowVarSummaryPanel}
+                onChange={(e) => updateDraft('editorShowVarSummaryPanel', e.target.checked)}
+              />
+              <span className="settings-switch-track" aria-hidden="true" />
+            </label>
+            <span className="settings-unit" />
+          </div>
         </div>
         <div className="settings-group">
           <h4 className="settings-group-title">AI 助手</h4>
