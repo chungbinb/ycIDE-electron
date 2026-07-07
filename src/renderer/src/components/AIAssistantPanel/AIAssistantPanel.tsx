@@ -298,6 +298,19 @@ function AIAssistantPanel({
   const loadedChatDirRef = useRef<string | null>(null)
   const chatSaveTimerRef = useRef<number | null>(null)
   const chatSavePayloadRef = useRef<string | null>(null)
+  // 最新历史快照 ref（每渲染仅赋值，不做 JSON.stringify）：供防抖/切项目落盘时读取，
+  // 避免旧实现里"保存 effect 依赖 histories → 每个流式 delta 都在 cleanup 里立即落盘"。
+  const chatHistoriesRef = useRef<{ chat: ChatEntry[]; plan: ChatEntry[]; agent: ChatEntry[]; edit: ChatEntry[] }>({ chat: [], plan: [], agent: [], edit: [] })
+
+  const flushChatSave = useCallback((dir: string | null | undefined): void => {
+    if (!dir || loadedChatDirRef.current !== dir) return
+    const cap = (entries: ChatEntry[]): ChatEntry[] => entries.slice(-200)
+    const { chat, plan, agent, edit } = chatHistoriesRef.current
+    const payload = JSON.stringify({ version: 1, chat: cap(chat), plan: cap(plan), agent: cap(agent), edit: cap(edit) })
+    if (payload === chatSavePayloadRef.current) return
+    chatSavePayloadRef.current = payload
+    void window.api?.project?.saveAiChat?.(dir, JSON.parse(payload))
+  }, [])
 
   useEffect(() => {
     loadedChatDirRef.current = null
@@ -335,41 +348,31 @@ function AIAssistantPanel({
       }
       loadedChatDirRef.current = dir
     })()
-    return () => { canceled = true }
-  }, [projectDir])
+    return () => {
+      canceled = true
+      // 切换项目/卸载前立即落盘当前项目（此刻 histories ref 仍是该项目内容、loadedChatDirRef 仍为 dir）
+      if (chatSaveTimerRef.current !== null) { window.clearTimeout(chatSaveTimerRef.current); chatSaveTimerRef.current = null }
+      flushChatSave(dir)
+    }
+  }, [projectDir, flushChatSave])
 
+  // 历史快照写入 ref（每渲染仅赋值，供防抖/切项目落盘读取）
+  chatHistoriesRef.current = { chat: chatHistory, plan: planHistory, agent: agentHistory, edit: editMessages }
+
+  // 防抖落盘：历史变化只重新计时；cleanup 只清 timer（不落盘），
+  // 因此流式期间连续 delta 会不断顺延，仅在停顿 800ms 后落盘一次（不再每 delta 写盘）。
   useEffect(() => {
     const dir = projectDir
-    // 未加载完成前不保存（含无项目时）
     if (!dir || loadedChatDirRef.current !== dir) return
-    // 每组最多保留最近 200 条，避免存档无限膨胀
-    const cap = (entries: ChatEntry[]): ChatEntry[] => entries.slice(-200)
-    const payload = JSON.stringify({
-      version: 1,
-      chat: cap(chatHistory),
-      plan: cap(planHistory),
-      agent: cap(agentHistory),
-      edit: cap(editMessages),
-    })
-    if (payload === chatSavePayloadRef.current) return
     if (chatSaveTimerRef.current !== null) window.clearTimeout(chatSaveTimerRef.current)
     chatSaveTimerRef.current = window.setTimeout(() => {
       chatSaveTimerRef.current = null
-      chatSavePayloadRef.current = payload
-      void window.api?.project?.saveAiChat?.(dir, JSON.parse(payload))
-    }, 600)
+      flushChatSave(dir)
+    }, 800)
     return () => {
-      // 卸载/依赖变化时若有未落盘的保存，立即执行（关面板/关窗口不丢最后一段）
-      if (chatSaveTimerRef.current !== null) {
-        window.clearTimeout(chatSaveTimerRef.current)
-        chatSaveTimerRef.current = null
-        if (loadedChatDirRef.current === dir && payload !== chatSavePayloadRef.current) {
-          chatSavePayloadRef.current = payload
-          void window.api?.project?.saveAiChat?.(dir, JSON.parse(payload))
-        }
-      }
+      if (chatSaveTimerRef.current !== null) { window.clearTimeout(chatSaveTimerRef.current); chatSaveTimerRef.current = null }
     }
-  }, [projectDir, chatHistory, planHistory, agentHistory, editMessages])
+  }, [projectDir, chatHistory, planHistory, agentHistory, editMessages, flushChatSave])
   const [selectedHunks, setSelectedHunks] = useState<number[]>([])
   const [editChangeSummary, setEditChangeSummary] = useState<EditChangeSummary | null>(null)
   const [showModelConfig, setShowModelConfig] = useState(false)

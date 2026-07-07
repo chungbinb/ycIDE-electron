@@ -94,12 +94,6 @@ export function renderFlowSegsLine(params: RenderFlowSegsParams): { node: ReactN
     slots[s.depth] = cur ? mergeSameDepthSeg(cur, s) : s
   }
 
-  const hasAnyJudgeBranchStartOverlap = Array.from(depthSegsMap.values()).some(depthSegs => {
-    const hasStart = depthSegs.some(seg => seg.type === 'start' && seg.flowKind === 'judge')
-    const hasBranch = depthSegs.some(seg => seg.type === 'branch' && seg.flowKind === 'judge')
-    return hasStart && hasBranch
-  })
-
   return {
     node: (
       <>
@@ -116,25 +110,22 @@ export function renderFlowSegsLine(params: RenderFlowSegsParams): { node: ReactN
           )
 
           if (hasSameDepthBranchStartOverlap && startAtDepth && branchAtDepth) {
-            const branchHasInnerStartBelow = slots.slice(d + 1).some(next => next?.type === 'start')
-            const startHasOuterBranchAbove = slots.slice(0, d).some(prev => prev?.type === 'branch')
             return (
               <span key={d} className="eyc-flow-overlap-slot">
                 <span
-                  className={`eyc-flow-seg eyc-flow-branch ${branchAtDepth.isLoop ? 'eyc-flow-loop' : ''}${branchAtDepth.suppressOuter ? ' eyc-flow-no-outer' : ''}${branchAtDepth.hasPrevFlowEnd ? ' eyc-flow-has-prev-end' : ''}${branchAtDepth.hasOuterLink ? ' eyc-flow-has-outer-link' : ''}${branchAtDepth.hasInnerLink ? ' eyc-flow-has-inner-link' : ''}${branchAtDepth.hasInnerVertFromAbove ? ' eyc-flow-inner-from-above' : ''} eyc-flow-stagger-upper${branchHasInnerStartBelow ? ' eyc-flow-stagger-upper' : ''}${hasAnyJudgeBranchStartOverlap ? ' eyc-flow-hide-down-arrows' : ''}`}
+                  className={`eyc-flow-seg eyc-flow-branch ${branchAtDepth.isLoop ? 'eyc-flow-loop' : ''}${branchAtDepth.suppressOuter ? ' eyc-flow-no-outer' : ''}${branchAtDepth.hasPrevFlowEnd ? ' eyc-flow-has-prev-end' : ''}${branchAtDepth.hasOuterLink ? ' eyc-flow-has-outer-link' : ''}${branchAtDepth.hasInnerLink ? ' eyc-flow-has-inner-link' : ''}${branchAtDepth.hasInnerVertFromAbove ? ' eyc-flow-inner-from-above' : ''} eyc-flow-stagger-upper eyc-flow-hide-down-arrows`}
                   ref={(element) => {
                     applyFlowColors(element, branchAtDepth, resolveColors)
                   }}
                 >
                   {branchAtDepth.hasInnerVert && <span className={`eyc-flow-inner-vert ${branchAtDepth.hasInnerVertEnd ? 'eyc-flow-inner-end' : 'eyc-flow-inner-through'}`} />}
-                  {!hasStartPrevEndAtDepth && !hasSameDepthBranchStartOverlap && !hasAnyJudgeBranchStartOverlap && branchAtDepth.hasInnerVertEnd && !branchAtDepth.hasInnerVertEndConnected && <span className="eyc-flow-arrow-down eyc-flow-inner-arrow-down" />}
                   <span className="eyc-flow-arrow-right" />
                   {branchAtDepth.hasInnerLink && <span className="eyc-flow-outer-resume" />}
                   {branchAtDepth.hasInnerLink && <span className="eyc-flow-outer-horz" />}
                   {branchAtDepth.hasInnerLink && <span className="eyc-flow-outer-arrow" />}
                 </span>
                 <span
-                  className={`eyc-flow-seg eyc-flow-start ${startAtDepth.isLoop ? 'eyc-flow-loop' : ''}${startAtDepth.suppressOuter ? ' eyc-flow-no-outer' : ''}${startAtDepth.hasPrevFlowEnd ? ' eyc-flow-has-prev-end' : ''}${startAtDepth.hasOuterLink ? ' eyc-flow-has-outer-link' : ''}${startAtDepth.hasInnerLink ? ' eyc-flow-has-inner-link' : ''}${startAtDepth.hasInnerVertFromAbove ? ' eyc-flow-inner-from-above' : ''} eyc-flow-stagger-lower${startHasOuterBranchAbove ? ' eyc-flow-stagger-lower' : ''}${hasAnyJudgeBranchStartOverlap ? ' eyc-flow-hide-down-arrows' : ''}`}
+                  className={`eyc-flow-seg eyc-flow-start ${startAtDepth.isLoop ? 'eyc-flow-loop' : ''}${startAtDepth.suppressOuter ? ' eyc-flow-no-outer' : ''}${startAtDepth.hasPrevFlowEnd ? ' eyc-flow-has-prev-end' : ''}${startAtDepth.hasOuterLink ? ' eyc-flow-has-outer-link' : ''}${startAtDepth.hasInnerLink ? ' eyc-flow-has-inner-link' : ''}${startAtDepth.hasInnerVertFromAbove ? ' eyc-flow-inner-from-above' : ''} eyc-flow-stagger-lower eyc-flow-hide-down-arrows`}
                   ref={(element) => {
                     applyFlowColors(element, startAtDepth, resolveColors)
                   }}
@@ -142,7 +133,6 @@ export function renderFlowSegsLine(params: RenderFlowSegsParams): { node: ReactN
                   {startAtDepth.hasPrevFlowEnd && <><span className="eyc-flow-link-vert" /><span className="eyc-flow-link-horz" /><span className="eyc-flow-link-arrow" /></>}
                   {startAtDepth.isLoop && <span className="eyc-flow-arrow-right" />}
                   {startAtDepth.hasInnerVert && <span className={`eyc-flow-inner-vert ${startAtDepth.hasInnerVertEnd ? 'eyc-flow-inner-end' : 'eyc-flow-inner-through'}`} />}
-                  {!startAtDepth.hasPrevFlowEnd && !hasSameDepthBranchStartOverlap && !hasAnyJudgeBranchStartOverlap && startAtDepth.hasInnerVertEnd && !startAtDepth.hasInnerVertEndConnected && <span className="eyc-flow-arrow-down eyc-flow-inner-arrow-down" />}
                   {startAtDepth.hasInnerLink && <span className="eyc-flow-inner-link-horz" />}
                 </span>
               </span>
@@ -155,29 +145,33 @@ export function renderFlowSegsLine(params: RenderFlowSegsParams): { node: ReactN
           const normalEndArrow = !!(seg?.type === 'end' && !seg?.hasNextFlow && !hasStartSameDepth)
           const arrowOnlyEndArrow = !!seg?.endArrowOnly
           const showEndArrow = !!(
-            (!seg?.isLoop && !isExpanded && !hasStartPrevEndAtDepth && !hasSameDepthBranchStartOverlap && !hasAnyJudgeBranchStartOverlap)
+            (!seg?.isLoop && !isExpanded && !hasStartPrevEndAtDepth && !hasSameDepthBranchStartOverlap)
             && (normalEndArrow || arrowOnlyEndArrow)
           )
           return (
           <span
             key={d}
-            className={`eyc-flow-seg ${seg ? `eyc-flow-${seg.type}` : ''} ${seg?.isLoop ? 'eyc-flow-loop' : ''}${seg?.suppressOuter ? ' eyc-flow-no-outer' : ''}${seg?.hasPrevFlowEnd ? ' eyc-flow-has-prev-end' : ''}${seg?.hasOuterLink ? ' eyc-flow-has-outer-link' : ''}${seg?.hasInnerLink ? ' eyc-flow-has-inner-link' : ''}${seg?.hasInnerVertFromAbove ? ' eyc-flow-inner-from-above' : ''}${hasInnerStartBelow ? ' eyc-flow-stagger-upper' : ''}${hasOuterBranchAbove ? ' eyc-flow-stagger-lower' : ''}${hasAnyJudgeBranchStartOverlap ? ' eyc-flow-hide-down-arrows' : ''}`}
+            className={`eyc-flow-seg ${seg ? `eyc-flow-${seg.type}` : ''} ${seg?.isLoop ? 'eyc-flow-loop' : ''}${seg?.suppressOuter ? ' eyc-flow-no-outer' : ''}${seg?.hasPrevFlowEnd ? ' eyc-flow-has-prev-end' : ''}${seg?.hasOuterLink ? ' eyc-flow-has-outer-link' : ''}${seg?.hasInnerLink ? ' eyc-flow-has-inner-link' : ''}${seg?.hasInnerVertFromAbove ? ' eyc-flow-inner-from-above' : ''}${hasInnerStartBelow ? ' eyc-flow-stagger-upper' : ''}${hasOuterBranchAbove ? ' eyc-flow-stagger-lower' : ''}`}
             ref={(element) => {
               if (!seg) return
               applyFlowColors(element, seg, resolveColors)
             }}
           >
             {seg?.type === 'branch' && seg?.hasInnerVert && <span className={`eyc-flow-inner-vert ${seg?.hasInnerVertEnd ? 'eyc-flow-inner-end' : 'eyc-flow-inner-through'}`} />}
-            {seg?.type === 'branch' && seg?.hasInnerVertEnd && !seg?.hasInnerVertEndConnected && !hasStartPrevEndAtDepth && !hasSameDepthBranchStartOverlap && !hasAnyJudgeBranchStartOverlap && <span className="eyc-flow-arrow-down eyc-flow-inner-arrow-down" />}
+            {seg?.type === 'branch' && seg?.hasInnerVertEnd && !seg?.hasInnerVertEndConnected && !hasStartPrevEndAtDepth && !hasSameDepthBranchStartOverlap && <span className="eyc-flow-arrow-down eyc-flow-inner-arrow-down" />}
             {seg?.type === 'branch' && <span className="eyc-flow-arrow-right" />}
             {seg?.type === 'branch' && seg?.hasInnerLink && <span className="eyc-flow-outer-resume" />}
             {seg?.type === 'branch' && seg?.hasInnerLink && <span className="eyc-flow-outer-horz" />}
             {seg?.type === 'branch' && seg?.hasInnerLink && <span className="eyc-flow-outer-arrow" />}
-            {seg?.type === 'start' && seg?.hasPrevFlowEnd && <><span className="eyc-flow-link-vert" /><span className="eyc-flow-link-horz" /><span className="eyc-flow-link-arrow" /></>}
+            {seg?.type === 'start' && seg?.hasPrevFlowEnd && (() => {
+              // 如果真是单分支结构（无内侧分支线），其块间桥接应接在外侧主结构线（left:4px）上而非内侧线（1ch+4px）。
+              const linkOuter = seg?.flowKind === 'ifTrue' ? ' eyc-flow-link-outer' : ''
+              return <><span className={`eyc-flow-link-vert${linkOuter}`} /><span className={`eyc-flow-link-horz${linkOuter}`} /><span className="eyc-flow-link-arrow" /></>
+            })()}
             {seg?.type === 'start' && seg?.isLoop && <span className="eyc-flow-arrow-right" />}
             {showEndArrow && <span className="eyc-flow-arrow-down" />}
             {seg?.hasInnerVert && seg?.type !== 'branch' && <span className={`eyc-flow-inner-vert ${seg?.hasInnerVertEnd ? 'eyc-flow-inner-end' : 'eyc-flow-inner-through'}`} />}
-            {seg?.hasInnerVertEnd && !seg?.hasInnerVertEndConnected && seg?.type !== 'branch' && !hasStartPrevEndAtDepth && !hasSameDepthBranchStartOverlap && !hasAnyJudgeBranchStartOverlap && !(seg?.type === 'start' && seg?.hasPrevFlowEnd) && <span className="eyc-flow-arrow-down eyc-flow-inner-arrow-down" />}
+            {seg?.hasInnerVertEnd && !seg?.hasInnerVertEndConnected && seg?.type !== 'branch' && !hasStartPrevEndAtDepth && !hasSameDepthBranchStartOverlap && !(seg?.type === 'start' && seg?.hasPrevFlowEnd) && <span className="eyc-flow-arrow-down eyc-flow-inner-arrow-down" />}
             {seg?.hasInnerLink && seg?.type !== 'branch' && <span className="eyc-flow-inner-link-horz" />}
           </span>
           )

@@ -33,6 +33,10 @@ jobs:
       - name: 编辑器契约测试
         run: npm run test:contract:editor:all
 
+      # 构建（electron-vite）：拦截仅在打包时才暴露的渲染端/主进程构建错误
+      - name: 构建
+        run: npm run build
+
       # 注意：test:migration（库清单基线）依赖仓库未跟踪的本地目录（支持库源码/ 等），只能本地运行
       - name: 迁移测试（编码 / x64，基于 fixtures）
         run: |

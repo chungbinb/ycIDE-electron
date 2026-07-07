@@ -11,9 +11,11 @@ import { getBlocksFlowModelCached } from './editorBlocksModelShared'
 import {
   FLOW_AUTO_COMPLETE,
   FLOW_AUTO_TAG,
+  FLOW_END_KW,
   FLOW_KW,
   FLOW_LOOP_KW,
   FLOW_START,
+  computeFlowLines,
   extractFlowKw,
   getFlowStructureAround,
 } from './eycFlow'
@@ -215,6 +217,65 @@ const setCssVars = (element: HTMLElement | null, vars: Record<string, string>): 
 
 const TABLE_MODE_HIDDEN_FLOW_COMMANDS = new Set(['否则', '如果结束', '默认', '判断结束', '如果真结束'])
 
+// 复制/剪切时过滤选区：范围拖选（rangeSet 填满整个 index 区间）会把区间内**表格模式隐藏的配对标记**
+//（否则/默认/如果结束/判断结束/如果真结束）一并纳进选区。若某隐藏标记所属结构的**头**（如果/判断开始/
+// 循环首 等）不在选区里，说明用户只是选了中间可见的正文、并没打算连隐藏标记一起剪切/复制（表格模式里
+// 它们本就看不见），故从剪贴板文本里剔除，避免粘贴出孤立的「否则/如果结束」（用户报的剪切内容多出配对标记）。
+// 头也在选区=整体复制该结构，则保留标记（粘贴可完整重建）。
+function filterClipboardSelectionIndices(ls: string[], sortedIndices: number[]): number[] {
+  const sel = new Set(sortedIndices)
+  const blocks: RenderBlock[] = ls.map((codeLine, idx) => ({ kind: 'codeline', rows: [], codeLine, lineIndex: idx } as RenderBlock))
+  const { map } = computeFlowLines(blocks)
+  return sortedIndices.filter((i) => {
+    if (i < 0 || i >= ls.length) return false
+    const kw = extractFlowKw(ls[i] || '')
+    if (!kw || !TABLE_MODE_HIDDEN_FLOW_COMMANDS.has(kw)) return true // 非隐藏标记（含可见正文/命令头）：保留
+    const segs = map.get(i) || []
+    const depth = segs.length ? Math.max(...segs.map((s) => s.depth)) : 0
+    // 向上找该隐藏标记所属结构的头（同深度、有 start 但非 branch，跳过既 start 又 branch 的判断 case）
+    for (let j = i; j >= 0; j--) {
+      const sj = map.get(j) || []
+      if (sj.some((s) => s.depth === depth && s.type === 'start') && !sj.some((s) => s.depth === depth && s.type === 'branch')) {
+        return sel.has(j) // 头在选区→保留（整体复制）；头不在→剔除（只是顺带被范围填充选中）
+      }
+    }
+    return false // 找不到头（孤立标记）→ 剔除
+  })
+}
+
+// 删除/剪切后修复：若某流程段被删空——「开启标记(head/branch，如 如果/否则/判断开始/默认)」紧跟着
+// 同深度的「闭合标记(branch/end，如 否则/如果结束/判断结束)」、中间没有任何 body——就补一条空 body 行。
+// 场景：某段 body 只有一行正文（如 如果体里只有「调试输出」，没有额外空行），剪切掉那行正文后该段就
+// 空瘪成「如果紧贴否则」；用户要的是留一条空行占位好继续输入。protectMinimalFlowInPartialSelection 只能
+// 保护「已存在的空 body」，救不了「body 全是正文」的情况，故这里在删除后再统一补空 body 兜底。
+// 顺带修复「空的如果体在表格模式显示塌行」——只要段内始终有一条空 body 行，表格就正常显示可点入。
+function ensureMinimalFlowBodies(lines: string[]): string[] {
+  const blocks: RenderBlock[] = lines.map((codeLine, idx) => ({ kind: 'codeline', rows: [], codeLine, lineIndex: idx } as RenderBlock))
+  const { map } = computeFlowLines(blocks)
+  const isCloserAtDepth = (idx: number, d: number): boolean =>
+    (map.get(idx) || []).some((s) => s.depth === d && (s.type === 'branch' || s.type === 'end'))
+  const out: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    out.push(lines[i])
+    const segs = map.get(i) || []
+    // (a) 空瘪段：开启标记(head/branch)紧跟同深度闭合标记(branch/end)、段内无 body → 补一条空行占位
+    const opener = segs.find((s) => s.type === 'start' || s.type === 'branch')
+    if (opener && i + 1 < lines.length && isCloserAtDepth(i + 1, opener.depth)) {
+      out.push('')
+    }
+    // (b) 顶层结构结束(depth-0 的 end)正好落在子程序末尾——到文件尾，或紧跟下一个 .子程序/.程序集——
+    //     补一条尾部普通空行，好在结构**外面**接着写命令；否则结构后没有空行分隔，光标/新命令会落进流程体内。
+    //     （后面已是空行或还有其它内容时不补：只兜"结构正好在子程序尾部、外面无处可写"这一种。）
+    if (segs.some((s) => s.type === 'end' && s.depth === 0)) {
+      const nextTrim = i + 1 < lines.length ? (lines[i + 1] || '').trim() : null
+      if (nextTrim === null || nextTrim.startsWith('.子程序') || nextTrim.startsWith('.程序集')) {
+        out.push('')
+      }
+    }
+  }
+  return out
+}
+
 const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>(), diffDeletedTextAfterLines, showVarSummaryPanel = true }, ref) {
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
@@ -251,6 +312,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const preserveEditOnScrollbarRef = useRef(false) // 拖动滚动条时保留编辑态，避免 blur 提交
   const editCellOrigValRef = useRef<string>('') // 表格单元格编辑前的原始值（liveUpdate 会实时更新 lines，需保存原始值用于重命名比较）
   const codeLineEditOrigValRef = useRef<string>('') // 代码行编辑初始值，用于无改动时跳过重排
+  const editOrigRawLineRef = useRef<string>('') // 代码行编辑前的整行原始文本，编辑期间供流程模型使用（避免正在键入/删除的流程命令实时改流程线）
   const liveUpdateTimerRef = useRef<number | null>(null)
   const pendingLiveUpdateValRef = useRef<string | null>(null)
   const [expandedLines, setExpandedLines] = useState<Set<number>>(new Set())
@@ -515,6 +577,23 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     tableShellRef.current?.style.setProperty('--eyc-minimap-width', `${shouldShowMinimapPreview ? minimapWidthPx : 0}px`)
   }, [minimapWidthPx, shouldShowMinimapPreview])
 
+  // 抑制编辑器内的原生文本选择。代码编辑走 <input>、行多选走 selectedLines（CSS 类）、
+  // 变量面板/预览缩略图走点击，均不需要原生 document 选择；放任它会在按住/拖动鼠标时
+  // 于变量汇总面板与预览缩略图边界渲染出一条蓝色竖条（浏览器默认 ::selection 高亮，
+  // 本项目未定义 ::selection 故为系统蓝）。只放行 input/textarea 内的原生选择
+  // （行内文本选择、变量搜索框），其余一律 preventDefault。
+  useEffect(() => {
+    const root = editorRootRef.current
+    if (!root) return
+    const onSelectStart = (e: Event): void => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.closest?.('input, textarea'))) return
+      e.preventDefault()
+    }
+    root.addEventListener('selectstart', onSelectStart)
+    return () => root.removeEventListener('selectstart', onSelectStart)
+  }, [])
+
   const scrollToLineIndex = useCallback((lineIndex: number, behavior: ScrollBehavior = 'smooth') => {
     if (!Number.isFinite(lineIndex) || lineIndex < 0) return
     const el = wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${lineIndex}"]`)
@@ -777,8 +856,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return s
   }, [])
 
-  const repairBrokenFlowAfterDelete = useCallback((sourceLines: string[]): string[] => {
-    const lines = [...sourceLines]
+  // 删除行后：失去配对结束行的流程结构按"溶解"处理——删除其起始行与分支行、
+  // 结构内部整体反缩进一层，内部完整的子结构原样保留。
+  // （删掉"计次循环尾" → 循环首溶解，只留循环体内的如果/否则/如果结束等内容。）
+  // 仅对"本次删除的结束关键字族"生效：文件中原本就未闭合/缩进错位的结构不受删除无关行的牵连。
+  const repairBrokenFlowAfterDelete = useCallback((sourceLines: string[], deletedFlowEndKws?: Set<string>): string[] => {
+    if (!deletedFlowEndKws || deletedFlowEndKws.size === 0) return sourceLines
+    let lines = [...sourceLines]
     const isBoundary = (line: string): boolean => {
       const trimmed = (line || '').replace(/[\r\t]/g, '').trim()
       return trimmed.startsWith('.子程序 ') || trimmed.startsWith('.程序集 ')
@@ -789,52 +873,246 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return line.slice(Math.min(4, lead.length))
     }
 
-    for (let i = 0; i < lines.length; i++) {
-      const startKw = extractFlowKw(lines[i] || '')
-      if (!startKw || !FLOW_AUTO_COMPLETE[startKw]) continue
-      const pattern = FLOW_AUTO_COMPLETE[startKw]
-      const structuralKws = pattern.filter((kw): kw is string => !!kw)
-      if (structuralKws.length < 2) continue
+    // 连删多层时可能有多个结构同时失去结束行，循环直到没有可溶解的结构。
+    let changed = true
+    let guard = 0
+    while (changed && guard++ < 64) {
+      changed = false
+      for (let i = 0; i < lines.length; i++) {
+        const startKw = extractFlowKw(lines[i] || '')
+        if (!startKw || !FLOW_START[startKw]) continue
+        const endKw = FLOW_START[startKw]
+        if (!deletedFlowEndKws.has(endKw)) continue
+        const pattern = FLOW_AUTO_COMPLETE[startKw] || []
+        const branchKwSet = new Set(pattern.filter((kw): kw is string => !!kw && kw !== endKw))
+        const baseIndentLen = indentLenOf(lines[i] || '')
 
-      const branchKw = structuralKws[0]
-      const endKw = structuralKws[structuralKws.length - 1]
-      if (branchKw === endKw) continue
+        // 向下扫描：同缩进的结束行即闭合（更深层未闭合由后续轮次单独处理，不影响本层判定）。
+        let closed = false
+        let scanEnd = lines.length
+        const branchIndexes: number[] = []
+        for (let j = i + 1; j < lines.length; j++) {
+          const line = lines[j] || ''
+          if (isBoundary(line)) { scanEnd = j; break }
+          const trimmed = line.replace(/[\r\t]/g, '').trim()
+          const indentLen = indentLenOf(line)
+          if (trimmed && indentLen < baseIndentLen) { scanEnd = j; break }
+          const kw = extractFlowKw(line)
+          if (!kw || indentLen !== baseIndentLen) continue
+          if (kw === endKw) { closed = true; break }
+          if (branchKwSet.has(kw)) { branchIndexes.push(j); continue }
+          // 判断结构的额外分支：同缩进的 ".判断 (x)" 行
+          if (kw === '判断' && (startKw === '判断开始' || startKw === '判断')) branchIndexes.push(j)
+        }
+        if (closed) continue
 
-      const baseIndentLen = indentLenOf(lines[i] || '')
-      let branchIndex = -1
-      let endIndex = -1
-      for (let j = i + 1; j < lines.length; j++) {
-        const line = lines[j] || ''
-        if (isBoundary(line)) break
-        const trimmed = line.replace(/[\r\t]/g, '').trim()
-        const indentLen = indentLenOf(line)
-        if (trimmed && indentLen < baseIndentLen) break
-        const kw = extractFlowKw(line)
-        if (kw === branchKw && indentLen === baseIndentLen && branchIndex < 0) {
-          branchIndex = j
-          continue
+        // 溶解：删起始行与分支行，结构内部（缩进更深的行）反缩进一层。
+        const deleteSet = new Set<number>([i, ...branchIndexes])
+        const result: string[] = []
+        for (let j = 0; j < lines.length; j++) {
+          if (deleteSet.has(j)) continue
+          if (j > i && j < scanEnd && indentLenOf(lines[j] || '') > baseIndentLen) {
+            result.push(outdentOneLevel(lines[j]))
+            continue
+          }
+          result.push(lines[j])
         }
-        if (kw === endKw && indentLen === baseIndentLen) {
-          endIndex = j
-          break
-        }
+        lines = result
+        changed = true
+        break
       }
-      if (branchIndex < 0 || endIndex >= 0) continue
-
-      const bodyBeforeBranch = lines.slice(i + 1, branchIndex)
-      const branchLine = lines[branchIndex] || ''
-      const indent = branchLine.match(/^ */)?.[0] || ''
-      const usesDottedFlowSyntax = branchLine.trimStart().startsWith('.')
-      const endLine = indent + (usesDottedFlowSyntax ? '.' : '') + endKw
-      const movedBody = bodyBeforeBranch.map(outdentOneLevel)
-      lines.splice(i + 1, branchIndex - i - 1, '')
-      const repairedBranchIndex = i + 2
-      lines.splice(repairedBranchIndex + 1, 0, '', endLine, ...movedBody)
-      i = repairedBranchIndex + movedBody.length + 2
     }
 
     return lines
   }, [])
+
+  // 「判断」既是 FLOW_START（映射判断结束）又是判断块里的分支/case 关键字。删除一个作为分支的「判断」
+  // 应等同普通删行（只删该分支），而非按起始行溶解整个判断块。判据：同缩进向上先遇到 判断开始/判断/默认
+  //（说明它处在某判断块内）而非 判断结束/子程序边界（说明它是新结构头）。因 formatCommandLine 会把新建的
+  // 「判断」自动转成「判断开始」，正常文档里裸「判断」几乎总是分支；此检查同时对畸形输入保守兜底。
+  // 同缩进向上扫：先遇 判断开始/判断/默认 → 处在判断块内（分支）；先遇 判断结束/子程序边界 → 是新结构头。
+  const isEnclosedJudgeBranchAt = useCallback((lines: string[], index: number, indentLen: number): boolean => {
+    for (let i = index - 1; i >= 0; i--) {
+      const line = lines[i] || ''
+      const trimmed = line.replace(/[\r\t]/g, '').trim()
+      if (trimmed.startsWith('.子程序 ') || trimmed.startsWith('.程序集 ')) return false
+      const kw = extractFlowKw(line)
+      if (!kw) continue
+      const il = line.length - line.replace(/^ +/, '').length
+      if (il !== indentLen) continue
+      if (kw === '判断结束') return false
+      if (kw === '判断开始' || kw === '判断' || kw === '默认') return true
+    }
+    return false
+  }, [])
+
+  const isEnclosedJudgeBranchLine = useCallback((lines: string[], index: number): boolean => {
+    if (extractFlowKw(lines[index] || '') !== '判断') return false
+    const indentLen = (lines[index]?.match(/^ */)?.[0] || '').length
+    return isEnclosedJudgeBranchAt(lines, index, indentLen)
+  }, [isEnclosedJudgeBranchAt])
+
+  // 删除/清空「流程起始行」→ 溶解整个结构：删起始行、其分支行、其结束行，块内正文整体反缩进一层。
+  // 必须在头还在（或已知头的位置/关键字/缩进）时做——删掉头后无法可靠反推结构上边界（会误吞头上方同缩进兄弟语句）。
+  // 用于删除起始行的三条路径（右键删除/Ctrl+X/Delete）与退格删空起始行；headIndex 处即使已被清空也照删。
+  const dissolveFlowStructureAtHead = useCallback((sourceLines: string[], headIndex: number, headKw: string, headIndentLen: number): string[] => {
+    const endKw = FLOW_START[headKw]
+    if (!endKw) return sourceLines
+    const pattern = FLOW_AUTO_COMPLETE[headKw] || []
+    const branchKwSet = new Set(pattern.filter((kw): kw is string => !!kw && kw !== endKw))
+    const indentLenOf = (line: string): number => line.length - line.replace(/^ +/, '').length
+    const outdentOneLevel = (line: string): string => line.slice(Math.min(4, (line.match(/^ */)?.[0] || '').length))
+
+    // 注意：不能因"某行缩进 < 头缩进"就中断——退格删空起始行时 flow 编辑的 live-update
+    // 会把循环体去缩进到 0（比头还浅），此时结构仍在（否则/如果结束在头缩进上），需继续扫到匹配结束/子程序边界。
+    // 扫描只对"头缩进上的流程关键字"动作，普通语句一律跳过，不会误吞结构外的兄弟语句。
+    const deleteSet = new Set<number>([headIndex])
+    let depth = 0
+    let endIndex = -1
+    for (let j = headIndex + 1; j < sourceLines.length; j++) {
+      const line = sourceLines[j] || ''
+      const trimmed = line.replace(/[\r\t]/g, '').trim()
+      if (trimmed.startsWith('.子程序 ') || trimmed.startsWith('.程序集 ')) break
+      const indentLen = indentLenOf(line)
+      const kw = extractFlowKw(line)
+      if (!kw) continue
+      if (indentLen !== headIndentLen) {
+        // 单分支结构（如 如果真）的结束行被 live-update 去缩进到比头浅时也识别为结束，避免残留。
+        if (indentLen < headIndentLen && depth === 0 && kw === endKw) { deleteSet.add(j); endIndex = j; break }
+        continue
+      }
+      if (kw === headKw) { depth++; continue } // 同名嵌套起始：自平衡计数，避免匹配到内层结束
+      if (kw === endKw) {
+        if (depth === 0) { deleteSet.add(j); endIndex = j; break }
+        depth--
+        continue
+      }
+      if (depth === 0 && branchKwSet.has(kw)) deleteSet.add(j)
+      if (depth === 0 && kw === '判断' && (headKw === '判断开始' || headKw === '判断')) deleteSet.add(j)
+    }
+
+    const upTo = endIndex >= 0 ? endIndex : sourceLines.length
+    const result: string[] = []
+    for (let j = 0; j < sourceLines.length; j++) {
+      if (deleteSet.has(j)) continue
+      if (j > headIndex && j < upTo && indentLenOf(sourceLines[j] || '') > headIndentLen) {
+        result.push(outdentOneLevel(sourceLines[j]))
+        continue
+      }
+      result.push(sourceLines[j])
+    }
+    return result
+  }, [])
+
+  // 多选删除时，为「起始来源集合」里每个流程起始行找出其配对的（表格模式下隐藏、常落在可见选区下方的）
+  // 结束行与分支行下标——否则拖选可见行删除后，隐藏的 判断结束/如果真结束/如果结束 会残留（用户反馈"结束语句残留"）。
+  // 起始来源同时包含被删行与被 sub-anchor 规则清空的行（清空即丢失起始关键字，其结束也需一并清理）。
+  const collectMatchingFlowMarkers = useCallback((ls: string[], startSources: Iterable<number>): Set<number> => {
+    const indentLenOf = (line: string): number => line.length - line.replace(/^ +/, '').length
+    const markers = new Set<number>()
+    for (const i of startSources) {
+      const startKw = extractFlowKw(ls[i] || '')
+      if (!startKw || !FLOW_START[startKw]) continue
+      // 作为分支的「判断」不是结构头，删它不应带出整块的判断结束（其结束由块头「判断开始」负责）。
+      if (startKw === '判断' && isEnclosedJudgeBranchLine(ls, i)) continue
+      const endKw = FLOW_START[startKw]
+      const baseIndent = indentLenOf(ls[i] || '')
+      const pattern = FLOW_AUTO_COMPLETE[startKw] || []
+      const branchKwSet = new Set(pattern.filter((kw): kw is string => !!kw && kw !== endKw))
+      let depth = 0
+      for (let j = i + 1; j < ls.length; j++) {
+        const line = ls[j] || ''
+        const trimmed = line.replace(/[\r\t]/g, '').trim()
+        if (trimmed.startsWith('.子程序 ') || trimmed.startsWith('.程序集 ')) break
+        const kw = extractFlowKw(line)
+        if (!kw) continue
+        if (indentLenOf(line) !== baseIndent) continue
+        if (kw === startKw) { depth++; continue } // 同名嵌套：自平衡计数
+        if (kw === endKw) { if (depth === 0) { markers.add(j); break } depth--; continue }
+        if (depth === 0 && branchKwSet.has(kw)) markers.add(j)
+        if (depth === 0 && kw === '判断' && (startKw === '判断开始' || startKw === '判断')) markers.add(j)
+      }
+    }
+    return markers
+  }, [isEnclosedJudgeBranchLine])
+
+  // 多选删除时保护「最小结构」：仅对「有分支的多部件结构」（判断有默认、如果有否则）——若选区未包含其头
+  // （即不是"完整删除整个命令"），则骨架行（判断开始/默认/否则/判断结束 start/branch/end）与每段紧跟骨架后的
+  // 最小空 body 行不删，避免删残成残缺骨架。**无分支结构**（各类循环、如果真——只有首/尾无分支）不保护，
+  // 让"选到尾/体"时经 repairBrokenFlowAfterDelete 正常溶解。选区含头=用户要整块删/溶解，正常删。
+  const protectMinimalFlowInPartialSelection = useCallback((ls: string[], selection: Set<number>): Set<number> => {
+    const blocks = ls.map((codeLine, idx) => ({ kind: 'codeline', rows: [], codeLine, lineIndex: idx } as RenderBlock))
+    const { map } = computeFlowLines(blocks)
+    const isSkel = (idx: number): boolean =>
+      (map.get(idx) || []).some(s => s.type === 'start' || s.type === 'branch' || s.type === 'end')
+    const keep = new Set<number>()
+    for (const i of selection) {
+      const segs = map.get(i) || []
+      if (segs.length === 0) continue
+      const depth = Math.max(...segs.map(s => s.depth))
+      // 裸「判断」case 是额外分支、可删——它虽带 start/branch 段但不属最小结构，不保护（否则删中间 case 会卡住）。
+      if (extractFlowKw(ls[i] || '') === '判断') continue
+      const skel = isSkel(i)
+      // 空 body 行属「最小占位」需保护的判据：它是所在段的边界空行——
+      // 上紧邻任意流程标记（isSkel(i-1)，段首那条空 body），**或**下紧邻本段的分支/结束标记
+      // （nextIsSectionEnd，段尾那条空 body）。补上「段尾」这条，修复：如果段 body=[调试输出, 空行]
+      // 时，多选剪切「调试输出+空行」——空行的上一行是正文(调试输出)、旧判据 isSkel(i-1) 判否→空行没被
+      // 保护→连同正文一起删掉→如果段变空瘪(头紧跟否则、无 body)。现按「下一行是本段结束标记」也保护，
+      // 从而给该段留一条最小空 body。
+      const nextIsSectionEnd = (map.get(i + 1) || []).some(s => s.depth === depth && (s.type === 'branch' || s.type === 'end'))
+      const isEmptyMinimalBody = !skel && (ls[i] || '').trim() === '' && (isSkel(i - 1) || nextIsSectionEnd)
+      if (!skel && !isEmptyMinimalBody) continue
+      // 找「真正的结构头」：有 start 但非 branch（判断开始/如果/循环首）——必须跳过「既是 start 又是 branch」的判断 case，
+      // 否则默认/结束的头会被误定位到相邻的 case；该 case 被选中时默认/结束就漏保护 → 被删、整条判断链散架。
+      let headLine = -1
+      for (let j = i; j >= 0; j--) {
+        const sj = map.get(j) || []
+        if (sj.some(s => s.depth === depth && s.type === 'start') && !sj.some(s => s.depth === depth && s.type === 'branch')) { headLine = j; break }
+      }
+      if (headLine < 0 || selection.has(headLine)) continue // 头在选区=要删整块，不保护
+      // 只对「非循环」结构做最小保护（判断/如果/如果真——命令行回车仍能在体内加行，故删到只剩壳也保留）；
+      // 循环各类（计次/判断循环/循环判断/变量）→ 选到尾/体时经 repairBrokenFlowAfterDelete 正常溶解，不保护。
+      const headIsLoop = (map.get(headLine) || []).some(s => s.depth === depth && s.type === 'start' && s.flowKind === 'loop')
+      if (headIsLoop) continue
+      keep.add(i)
+    }
+    return keep
+  }, [])
+
+  // 删除行（右键删除/Ctrl+X/Delete 共用）的流程感知处理：
+  // 单个「流程起始行」→ 溶解整个结构（删前定位头，删头+分支+结束+反缩进正文）；
+  // 其余（含删除「结束行」）→ 补齐被删起始行的隐藏结束/分支行 + repairBrokenFlowAfterDelete（起始未闭合则溶解）。
+  const applyFlowAwareDeletion = useCallback((ls: string[], deletable: Set<number>): string[] => {
+    if (deletable.size === 1) {
+      const only = [...deletable][0]
+      const headKw = extractFlowKw(ls[only] || '')
+      // 作为分支的「判断」不溶解，按普通删行处理（落到下方 repairBrokenFlowAfterDelete 分支）。
+      if (headKw && FLOW_START[headKw] && !isEnclosedJudgeBranchLine(ls, only)) {
+        const headIndentLen = (ls[only]?.match(/^ */)?.[0] || '').length
+        return dissolveFlowStructureAtHead(ls, only, headKw, headIndentLen)
+      }
+    }
+    const expanded = new Set<number>([...deletable, ...collectMatchingFlowMarkers(ls, deletable)])
+    for (const p of protectMinimalFlowInPartialSelection(ls, deletable)) expanded.delete(p)
+    const endKws = new Set<string>()
+    for (const i of expanded) {
+      const kw = extractFlowKw(ls[i] || '')
+      if (kw && FLOW_END_KW.has(kw)) endKws.add(kw)
+    }
+    return ensureMinimalFlowBodies(repairBrokenFlowAfterDelete(ls.filter((_, i) => !expanded.has(i)), endKws))
+  }, [dissolveFlowStructureAtHead, repairBrokenFlowAfterDelete, isEnclosedJudgeBranchLine, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection])
+
+  // 键盘删除路径专用：仅当"单个流程起始行"时返回溶解后的整段文本，否则 null（走原有 forceBlank 删除逻辑）。
+  const dissolveSingleFlowHeadIfAny = useCallback((ls: string[], deletable: Set<number>): string | null => {
+    if (deletable.size !== 1) return null
+    const only = [...deletable][0]
+    const headKw = extractFlowKw(ls[only] || '')
+    if (!headKw || !FLOW_START[headKw]) return null
+    // 作为分支的「判断」不溶解，返回 null 走普通删除逻辑。
+    if (isEnclosedJudgeBranchLine(ls, only)) return null
+    const headIndentLen = (ls[only]?.match(/^ */)?.[0] || '').length
+    return dissolveFlowStructureAtHead(ls, only, headKw, headIndentLen).join('\n')
+  }, [dissolveFlowStructureAtHead, isEnclosedJudgeBranchLine])
 
   /** 行内文本拖选过程中，按锚点/当前 X 坐标实时更新输入框的选择范围（产生原生选中背景） */
   const updateLineTextSelect = useCallback((anchorX: number, headX: number): void => {
@@ -937,8 +1215,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           lineTextSelectDragRef.current = null
           setEditCell(null)
           setAcVisible(false)
+          optimisticLineEditRef.current = null
           wasDragSelect.current = true
           setSelectedLines(rangeSet(dragAnchor.current, liNow))
+          // 焦点移回 wrapper：否则输入框卸载后焦点落到 body，inEditor 判否、Backspace/Delete 删不了选中行。
+          focusWrapper()
           return
         }
         updateLineTextSelect(lineTextSelectDragRef.current.anchorX, e.clientX)
@@ -954,6 +1235,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           // 同一行内横向拖动 → 行内文本选择。
           if (!cand || (li >= 0 && li !== dragAnchor.current) || Math.abs(dy) >= Math.abs(dx)) {
             wasDragSelect.current = true
+            // 从代码行内容区起拖、转为行多选时：退出 mousedown 时开的乐观编辑态并把焦点移回 wrapper。
+            // 否则输入框仍聚焦，随后按 Backspace/Delete 会落到输入框删单个字符，而非删除选中的多行。
+            if (editCellRef.current) {
+              setEditCell(null)
+              setAcVisible(false)
+              optimisticLineEditRef.current = null
+              focusWrapper()
+            }
           } else if (li === cand.lineIndex) {
             // 同一行内横向拖动超过阈值：立即进入编辑态并选中拖过的范围，后续移动实时更新
             lineTextSelectDragRef.current = { anchorX: dragStartPos.current.x }
@@ -1173,7 +1462,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         e.preventDefault()
         const sorted = [...selectedLines].sort((a, b) => a - b)
         const ls = currentText.split('\n')
-        const selectedText = eycToYiFormat(sorted.filter(i => i < ls.length).map(i => ls[i]).join('\n'))
+        const selectedText = eycToYiFormat(filterClipboardSelectionIndices(ls, sorted.filter(i => i >= 0 && i < ls.length)).map(i => ls[i]).join('\n'))
         navigator.clipboard.writeText(selectedText)
         return
       }
@@ -1182,17 +1471,30 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const ls = currentText.split('\n')
         const { deletable: rawDeletable, sorted } = getDeletableSelection(ls, selectedLines)
         if (sorted.length === 0) return
-        const selectedText = eycToYiFormat(sorted.map(i => ls[i]).join('\n'))
+        const selectedText = eycToYiFormat(filterClipboardSelectionIndices(ls, sorted).map(i => ls[i]).join('\n'))
         navigator.clipboard.writeText(selectedText)
         // 删除选中行
         const { deletable, forceBlank } = applySubAnchorDeleteRule(ls, rawDeletable)
         pushUndo(currentText)
+        const cutHeadNt = dissolveSingleFlowHeadIfAny(ls, deletable)
+        if (cutHeadNt != null) {
+          setCurrentText(cutHeadNt); prevRef.current = cutHeadNt; onChange(cutHeadNt)
+          setSelectedLines(new Set())
+          return
+        }
+        const cutDeletable = new Set<number>([...deletable, ...collectMatchingFlowMarkers(ls, new Set<number>([...deletable, ...forceBlank]))])
+        for (const p of protectMinimalFlowInPartialSelection(ls, new Set<number>([...deletable, ...forceBlank]))) cutDeletable.delete(p)
+        const cutFlowEndKws = new Set<string>()
+        for (const i of cutDeletable) {
+          const kw = extractFlowKw(ls[i] || '')
+          if (kw && FLOW_END_KW.has(kw)) cutFlowEndKws.add(kw)
+        }
         const deletedLines = preserveTrailingBlankLine(ls, ls.reduce<string[]>((acc, line, i) => {
-          if (deletable.has(i)) return acc
+          if (cutDeletable.has(i)) return acc
           acc.push(forceBlank.has(i) ? '' : line)
           return acc
         }, []))
-        const nl = repairBrokenFlowAfterDelete(deletedLines)
+        const nl = ensureMinimalFlowBodies(repairBrokenFlowAfterDelete(deletedLines, cutFlowEndKws))
         const nt = nl.join('\n')
         setCurrentText(nt); prevRef.current = nt; onChange(nt)
         setSelectedLines(new Set())
@@ -1205,12 +1507,25 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         if (sortedSel.length === 0) return
         const { deletable, forceBlank } = applySubAnchorDeleteRule(ls, rawDeletable)
         pushUndo(currentText)
+        const delHeadNt = dissolveSingleFlowHeadIfAny(ls, deletable)
+        if (delHeadNt != null) {
+          setCurrentText(delHeadNt); prevRef.current = delHeadNt; onChange(delHeadNt)
+          setSelectedLines(new Set())
+          return
+        }
+        const delDeletable = new Set<number>([...deletable, ...collectMatchingFlowMarkers(ls, new Set<number>([...deletable, ...forceBlank]))])
+        for (const p of protectMinimalFlowInPartialSelection(ls, new Set<number>([...deletable, ...forceBlank]))) delDeletable.delete(p)
+        const delFlowEndKws = new Set<string>()
+        for (const i of delDeletable) {
+          const kw = extractFlowKw(ls[i] || '')
+          if (kw && FLOW_END_KW.has(kw)) delFlowEndKws.add(kw)
+        }
         const deletedLines = preserveTrailingBlankLine(ls, ls.reduce<string[]>((acc, line, i) => {
-          if (deletable.has(i)) return acc
+          if (delDeletable.has(i)) return acc
           acc.push(forceBlank.has(i) ? '' : line)
           return acc
         }, []))
-        const nl = repairBrokenFlowAfterDelete(deletedLines)
+        const nl = ensureMinimalFlowBodies(repairBrokenFlowAfterDelete(deletedLines, delFlowEndKws))
         const nt = nl.join('\n')
         setCurrentText(nt); prevRef.current = nt; onChange(nt)
         setSelectedLines(new Set())
@@ -1219,7 +1534,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete])
+  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection])
 
   // ===== 自动补全状态 =====
   const [acItems, setAcItems] = useState<AcDisplayItem[]>([])
@@ -1411,8 +1726,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   // 初始加载 + 支持库变更时重新加载命令
   useEffect(() => {
     reloadCommands()
-    window.api.on('library:loaded', reloadCommands)
-    return () => { window.api.off('library:loaded') }
+    const dispose = window.api.on('library:loaded', reloadCommands)
+    return () => { dispose() }
   }, [reloadCommands])
 
   // 从已加载支持库收集数据类型
@@ -1461,10 +1776,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
     }
     void loadLibraryMeta()
-    window.api.on('library:loaded', loadLibraryMeta)
+    const dispose = window.api.on('library:loaded', loadLibraryMeta)
     return () => {
       cancelled = true
-      window.api.off('library:loaded')
+      dispose()
     }
   }, [])
 
@@ -1526,6 +1841,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     } = resolveCompletionWordContext(val, cursorPos)
     // 普通代码输入下，空词且不在成员访问上下文时不弹补全，避免无意义打扰。
     if (!isTypeCellEdit && !isClassNameCellEdit && !hashMode && word.length === 0 && !isMemberAccess) { setAcVisible(false); return }
+    // 数字开头的输入是数值字面量（如 .如果真（1） 里的 1），易语言标识符不能以数字开头，
+    // 故它绝不会是命令/变量/类型/类名——不弹补全窗，免得 "1" 去 fuzzy 匹配含 1 的命令/变量打扰输入。
+    // （# 常量、成员访问 obj. 两种上下文的前导字符不是标识符起始，不在此列。）
+    if (!hashMode && !isMemberAccess && /^[0-9０-９]/.test(word)) { setAcVisible(false); return }
 
     acWordStartRef.current = wordStart
     acPrefixRef.current = hashMode ? '#' : ''
@@ -1535,7 +1854,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       ...userVarCompletionItemsRef.current,
       ...userSubCompletionItemsRef.current,
       ...dllCompletionItemsRef.current,
-      ...allCommandsRef.current,
+      // 隐藏的配对结构标记（否则/默认/如果结束/判断结束/如果真结束）由结构自动补全生成，手打会造出孤立标记，故不进补全弹窗。
+      ...allCommandsRef.current.filter(c => !TABLE_MODE_HIDDEN_FLOW_COMMANDS.has(c.name)),
     ]
 
     const sourceList = selectCompletionSourceList({
@@ -1797,7 +2117,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (options?.preferJudgeBranch && cmdName === '判断') {
       const parenRange = getOuterParenRange(trimmed)
       if (parenRange) {
-        const argText = trimmed.slice(parenRange.start + 1, parenRange.end).trim()
+        const argText = formatOps(trimmed.slice(parenRange.start + 1, parenRange.end).trim())
         return [prefix + '判断（' + argText + '）']
       }
       const cmd = resolved.command || allCmdPool.find(c => c.name === lookupCmdName)
@@ -1816,8 +2136,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       let mainLine: string
       const parenRange = getOuterParenRange(trimmed)
       if (parenRange) {
-        // 已输入括号时尽量保留用户输入参数内容，再做流程补齐
-        const argText = trimmed.slice(parenRange.start + 1, parenRange.end).trim()
+        // 已输入括号时尽量保留用户输入参数内容，再做流程补齐（顺带把 != / <> / >= / <= 等规范成 ≠ / ≥ / ≤）
+        const argText = formatOps(trimmed.slice(parenRange.start + 1, parenRange.end).trim())
         mainLine = innerPrefix + flowStartCmdName + '（' + argText + '）'
       } else if (cmd && cmd.params.length > 0) {
         const paramSlots = cmd.params.map(p => p.optional ? '' : '').join(',')
@@ -1828,13 +2148,15 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       // 自动插入的分支/结束行
       const extra = autoLines.map(kw => {
         if (kw === null) return ''
-        if (FLOW_KW.has(kw)) return innerPrefix + kw
-        // 流程尾命令也需要括号（如 计次循环尾）
+        // 有参数的流程尾命令（如 循环判断尾 带「条件」）必须带括号并铺参数位——即便它是流程关键字，
+        // 故参数判定要在 FLOW_KW 之前。此前先走 FLOW_KW 一律不加括号，导致带参尾命令丢括号。
         const tailCmd = allCommandsRef.current.find(c => c.name === kw)
         if (tailCmd && tailCmd.params.length > 0) {
           const tailSlots = tailCmd.params.map(p => p.optional ? '' : '').join(',')
           return innerPrefix + kw + '（' + tailSlots + '）'
         }
+        // 隐藏的配对结构标记（否则/默认/各种结束）是纯结构关键字，不带括号；其余流程尾命令（如计次循环尾）带空括号。
+        if (TABLE_MODE_HIDDEN_FLOW_COMMANDS.has(kw)) return innerPrefix + kw
         return innerPrefix + kw + '（）'
       })
       return [mainLine, ...extra]
@@ -1866,174 +2188,53 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return [prefix + cmdName + '（' + paramSlots + '）']
   }, [])
 
-  const shouldPreferJudgeBranchAtLine = useCallback((lineIndex: number): boolean => {
+  // 找出包裹 lineIndex 的最内层「判断」结构（判断开始…判断结束），返回控制缩进、默认行下标（无则 -1）、结束行下标（无则 -1）。
+  // 用已修正的 computeFlowLines 复算（把当前行中和成空 body 行，避免正在输入的“判断”自我污染），按段 depth 取最内层，正确处理多层嵌套。
+  const analyzeEnclosingJudge = useCallback((lines: string[], lineIndex: number): { controlIndentLen: number; defaultLineIdx: number; endLineIdx: number } | null => {
     try {
-      const latestLines = prevRef.current.split('\n')
-      const safeLine = (index: number): string | null => {
-        if (index < 0 || index >= latestLines.length) return null
-        return latestLines[index]
+      const indentLenOf = (line: string): number => line.length - line.replace(/^ +/, '').length
+      const probe = [...lines]
+      probe[lineIndex] = ' '.repeat(indentLenOf(lines[lineIndex] || ''))
+      const { map } = computeFlowLines(
+        probe.map((codeLine, i) => ({ kind: 'codeline', rows: [], codeLine, lineIndex: i } as RenderBlock)),
+      )
+      let depth = -1
+      for (const seg of map.get(lineIndex) || []) if (seg.flowKind === 'judge' && seg.depth > depth) depth = seg.depth
+      if (depth < 0) return null
+      let startLine = -1
+      for (let i = lineIndex - 1; i >= 0; i--) {
+        if ((map.get(i) || []).some(seg => seg.depth === depth && seg.type === 'start' && seg.flowKind === 'judge')) { startLine = i; break }
       }
-      const indentLenOf = (line: string | null): number => {
-        if (!line) return 0
-        return line.length - line.trimStart().length
+      if (startLine < 0) return null
+      const controlIndentLen = indentLenOf(probe[startLine] || '')
+      let endLineIdx = -1
+      for (let i = lineIndex + 1; i < probe.length; i++) {
+        if ((map.get(i) || []).some(seg => seg.depth === depth && seg.type === 'end' && seg.flowKind === 'judge')) { endLineIdx = i; break }
       }
-      const nearestFlowUp = (() => {
-        for (let i = lineIndex; i >= 0; i--) {
-          const kw = extractFlowKw(latestLines[i] || '')
-          if (kw) return { line: i, kw }
-        }
-        return null
-      })()
-      const nearestFlowDown = (() => {
-        for (let i = lineIndex; i < latestLines.length; i++) {
-          const kw = extractFlowKw(latestLines[i] || '')
-          if (kw) return { line: i, kw }
-        }
-        return null
-      })()
-      const currentLineKw = normalizeFlowCommandName((latestLines[lineIndex] || '').trim())
-      const prevLineText = safeLine(lineIndex - 1)
-      const nextLineText = safeLine(lineIndex + 1)
-      const prevKw = prevLineText ? extractFlowKw(prevLineText) : null
-      const nextKw = nextLineText ? extractFlowKw(nextLineText) : null
-      const currentIndentLen = indentLenOf(safeLine(lineIndex))
-      const prevIndentLen = indentLenOf(prevLineText)
-      const nextIndentLen = indentLenOf(nextLineText)
-      const prevNonEmpty = (() => {
-        for (let i = lineIndex - 1; i >= 0; i--) {
-          const line = latestLines[i] || ''
-          if (!line.trim()) continue
-          return { lineIndex: i, text: line, kw: extractFlowKw(line), indentLen: indentLenOf(line) }
-        }
-        return null
-      })()
-      const nextNonEmpty = (() => {
-        for (let i = lineIndex + 1; i < latestLines.length; i++) {
-          const line = latestLines[i] || ''
-          if (!line.trim()) continue
-          return { lineIndex: i, text: line, kw: extractFlowKw(line), indentLen: indentLenOf(line) }
-        }
-        return null
-      })()
-
-      // 兜底：用户在“默认 与 判断结束”之间直接键入“判断”时，
-      // 当前行会先被当成新起始行，导致 around 判空。此处按相邻结构强制命中。
-      if (
-        currentLineKw === '判断'
-        && prevNonEmpty?.kw === '默认'
-        && nextNonEmpty?.kw === '判断结束'
-        && prevNonEmpty.indentLen === nextNonEmpty.indentLen
-        && currentIndentLen >= prevNonEmpty.indentLen
-      ) {
-        debugFlowPaste('judge-branch:check', {
-          lineIndex,
-          result: true,
-          reason: 'adjacent-default-end-heuristic',
-          source: 'adjacent-heuristic',
-          currentLine: safeLine(lineIndex),
-          prevLine: prevLineText,
-          nextLine: nextLineText,
-          currentLineKw,
-          prevKw,
-          nextKw,
-          prevNonEmptyLine: prevNonEmpty.lineIndex,
-          prevNonEmptyKw: prevNonEmpty.kw,
-          nextNonEmptyLine: nextNonEmpty.lineIndex,
-          nextNonEmptyKw: nextNonEmpty.kw,
-        })
-        return true
+      // 默认行必须按「同一 depth 的 judge 分支段」定位，不能按缩进——表格模式源码扁平（内层结构与外层同缩进），
+      // 若按缩进匹配会把内层已闭合判断的「默认」误当外层默认（→ 外层 body 键入判断被错当默认区加 case，嵌套兄弟判断建不出来）。
+      let defaultLineIdx = -1
+      const scanTo = endLineIdx >= 0 ? endLineIdx : probe.length
+      for (let i = startLine + 1; i < scanTo; i++) {
+        if ((map.get(i) || []).some(seg => seg.depth === depth && seg.type === 'branch' && seg.flowKind === 'judge')
+          && extractFlowKw(probe[i] || '') === '默认') { defaultLineIdx = i; break }
       }
-
-      const evaluateAround = (aroundInfo: { cmdLine: number; sections: Array<{ char: string | null; startLine: number; endLine: number; count: number }>; sectionIdx: number } | null, source: 'direct' | 'fallback-prev'): boolean => {
-        if (!aroundInfo) return false
-        const cmdKw = extractFlowKw(latestLines[aroundInfo.cmdLine] || '')
-        const sectionsSummary = aroundInfo.sections.map((section, index) => ({
-          idx: index,
-          char: section?.char ?? null,
-          startLine: section?.startLine ?? null,
-        }))
-
-        if (cmdKw !== '判断开始' && cmdKw !== '判断') {
-          debugFlowPaste('judge-branch:check', {
-            lineIndex,
-            result: false,
-            reason: 'not-judge-structure',
-            source,
-            cmdLine: aroundInfo.cmdLine,
-            cmdKw,
-            sectionsSummary,
-          })
-          return false
-        }
-
-        const targetSectionIdx = aroundInfo.sections.findIndex(section => lineIndex >= section.startLine && lineIndex <= section.endLine)
-        if (targetSectionIdx < 0) {
-          debugFlowPaste('judge-branch:check', {
-            lineIndex,
-            result: false,
-            reason: 'target-line-not-in-section',
-            source,
-            cmdLine: aroundInfo.cmdLine,
-            cmdKw,
-            sectionsSummary,
-          })
-          return false
-        }
-
-        const section = aroundInfo.sections[targetSectionIdx]
-        const prevSection = aroundInfo.sections[targetSectionIdx - 1]
-        const isDefaultBodyFirstLine = section.char === null && prevSection?.char === '默认' && section.startLine === lineIndex
-        debugFlowPaste('judge-branch:check', {
-          lineIndex,
-          result: isDefaultBodyFirstLine,
-          reason: isDefaultBodyFirstLine ? 'default-body-first-line' : 'section-mismatch',
-          source,
-          cmdLine: aroundInfo.cmdLine,
-          cmdKw,
-          sectionIdx: targetSectionIdx,
-          sectionChar: section.char,
-          sectionStartLine: section.startLine,
-          prevSectionChar: prevSection?.char ?? null,
-          sectionsSummary,
-        })
-        return isDefaultBodyFirstLine
-      }
-
-      const around = getFlowStructureAround(latestLines, lineIndex)
-      if (!around) {
-        // 当前行正在输入“判断”时，可能被结构搜索误当作新的 cmdLine，导致 around 为空。
-        // 回退到上一行重新找外层结构，以判定“默认后首行”特例。
-        if (currentLineKw === '判断' && lineIndex > 0) {
-          const fallbackAround = getFlowStructureAround(latestLines, lineIndex - 1)
-          if (evaluateAround(fallbackAround, 'fallback-prev')) {
-            return true
-          }
-        }
-        debugFlowPaste('judge-branch:check', {
-          lineIndex,
-          result: false,
-          reason: 'no-structure-around',
-          currentLine: safeLine(lineIndex),
-          prevLine: prevLineText,
-          nextLine: nextLineText,
-          nearestFlowUpLine: nearestFlowUp?.line ?? null,
-          nearestFlowUpKw: nearestFlowUp?.kw ?? null,
-          nearestFlowDownLine: nearestFlowDown?.line ?? null,
-          nearestFlowDownKw: nearestFlowDown?.kw ?? null,
-          currentLineKw,
-        })
-        return false
-      }
-      return evaluateAround(around, 'direct')
+      return { controlIndentLen, defaultLineIdx, endLineIdx }
     } catch {
-      debugFlowPaste('judge-branch:check', {
-        lineIndex,
-        result: false,
-        reason: 'exception',
-      })
-      return false
+      return null
     }
-  }, [debugFlowPaste])
+  }, [])
+
+  // 键入「判断」时：仅当当前行处在最内层判断结构的「默认区」（默认之后、判断结束之前）时，作为该判断的新分支 case（插到默认之前）；
+  // 其余位置（如判断开始之后的首个 body）键入「判断」应新建嵌套判断结构（自动补全）。这与用户预期一致：
+  // 首个 body 输入判断→嵌套；默认区输入判断→加分支。无默认的判断块暂按“不在默认区”处理（键入判断→嵌套）。
+  const shouldPreferJudgeBranchAtLine = useCallback((lineIndex: number): boolean => {
+    const judge = analyzeEnclosingJudge(prevRef.current.split('\n'), lineIndex)
+    if (!judge) return false
+    return judge.defaultLineIdx >= 0
+      && lineIndex > judge.defaultLineIdx
+      && (judge.endLineIdx < 0 || lineIndex < judge.endLineIdx)
+  }, [analyzeEnclosingJudge])
 
   const normalizeNonFlowCommandIndent = useCallback((text: string): string => {
     if (isResourceTableDoc) return text
@@ -2277,8 +2478,22 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
   }, [findOwnerAssemblyName, findOwnerSubName, onCommandClick, parsedLines])
 
+  // 编辑代码行期间，流程模型（决定流程线/隐藏标记）用该行「编辑前的原始值」参与计算，而不是正在键入/删除的瞬时值——
+  // 否则刚打「如果」还没上屏就会实时把流程线画到下方结构的结束位置，或删头瞬间闪现否则/如果结束。等上屏提交后
+  // editCell 清空、流程线按新结构重绘（用户要求「等上屏自动格式化后再绘制流程线」）。参数/表达式/单元格/虚拟行编辑不介入。
+  const flowModelText = useMemo(() => {
+    if (!editCell || editCell.cellIndex >= 0 || editCell.fieldIdx >= 0
+      || editCell.paramIdx !== undefined || editCell.exprPath !== undefined || editCell.isVirtual) return currentText
+    const li = editCell.lineIndex
+    if (li < 0) return currentText
+    const lines = currentText.split('\n')
+    if (li >= lines.length || lines[li] === editOrigRawLineRef.current) return currentText
+    lines[li] = editOrigRawLineRef.current
+    return lines.join('\n')
+  }, [currentText, editCell])
+
   const { blocks, flowLines } = useEditorBlocksModel({
-    text: currentText,
+    text: flowModelText,
     isClassModule,
     isResourceTableDoc,
     suppressHeadPreview: !!editCell,
@@ -2456,10 +2671,22 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   const visibleBlocks = useMemo(() => {
     const result: RenderBlock[] = []
+    // 正在编辑流程头（退格清空/改动其关键字）期间，其配对标记会瞬时变孤立、闪现出「否则/各种结束」并把流程线画到
+    // 下方别的结构去。此时一律保持这些隐藏标记继续隐藏，等提交溶解时随结构一并消失（都溶解了也就不需要流程线）。
+    const editingFlowHead = editCell != null && wasFlowStartRef.current
     for (const blk of blocks) {
       if (blk.kind === 'codeline' && blk.codeLine) {
         const kw = extractFlowKw(blk.codeLine)
-        if (kw && TABLE_MODE_HIDDEN_FLOW_COMMANDS.has(kw)) continue
+        if (kw && TABLE_MODE_HIDDEN_FLOW_COMMANDS.has(kw)) {
+          // 只隐藏真正配对成功的流程行（该行在流程模型里有对应的 branch/end 段）。
+          // 孤立/未配对的分支与结束行保持可见——否则文件里的行会在界面上凭空消失
+          //（如 "如果真" 里误写 "否则"、没有匹配起始的 "如果结束"）。但编辑流程头期间的孤立是瞬时的，保持隐藏。
+          const segs = flowLines.map.get(blk.lineIndex) || []
+          const paired = (kw === '否则' || kw === '默认')
+            ? segs.some(seg => seg.type === 'branch')
+            : segs.some(seg => seg.type === 'end')
+          if (paired || editingFlowHead) continue
+        }
       }
       // 折叠的子程序：声明块只保留声明行（表头+子程序名行），范围内其余块全部隐藏
       const owningRange = collapsedSubRanges.find(range => blk.lineIndex > range.startLine && blk.lineIndex <= range.endLine)
@@ -2474,7 +2701,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       result.push(blk)
     }
     return result
-  }, [blocks, collapsedSubRanges])
+  }, [blocks, collapsedSubRanges, flowLines, editCell])
 
   const visibleCodeLineIndexes = useMemo(() => {
     const indexes = new Set<number>()
@@ -2557,7 +2784,15 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         }
 
         const prevVisibleLine = findPrevVisibleCodeLineAtDepth(blk.lineIndex - 1, branchSeg.depth) ?? prevVisibleFallback
-        const nextVisibleLine = findNextVisibleCodeLineAtDepth(blk.lineIndex + 1, branchSeg.depth, flowEndLine ?? undefined) ?? nextVisibleFallback
+        // 空分支区（否则/默认 与 结束行 之间无可见同深度行，如 autocomplete 刚生成骨架尚未填内容）：
+        // 主查找（受 flowEndLine 边界约束）返回 null 时，不能回退到无边界的 nextVisibleFallback——它会越过
+        // flowEndLine 落到结构之外的行上，画出一条指向结构外命令的幽灵分支箭头。仅当回退目标仍在结构内
+        //（< flowEndLine；结构未闭合 flowEndLine==null 时保持原行为）才锚定外侧结束横线。
+        const nextVisibleAtDepth = findNextVisibleCodeLineAtDepth(blk.lineIndex + 1, branchSeg.depth, flowEndLine ?? undefined)
+        const boundedNextFallback = (nextVisibleFallback != null && (flowEndLine == null || nextVisibleFallback < flowEndLine))
+          ? nextVisibleFallback
+          : null
+        const nextVisibleLine = nextVisibleAtDepth ?? boundedNextFallback
 
         let lastVisibleFlowLine: number | null = null
         if (flowEndLine != null) {
@@ -2808,6 +3043,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if (hiddenEndSegs.length === 0) continue
 
       for (const endSeg of hiddenEndSegs) {
+        // 桥接到下一如果真：不画向下三角，改由下一如果真起始行的 hasPrevFlowEnd 画向下拐+右指命令的连接箭头。
+        if (endSeg.hasNextFlow) continue
         const prevVisibleLine = findPrevVisibleCodeLineAtDepth(blk.lineIndex - 1, endSeg.depth)
         if (prevVisibleLine == null) continue
 
@@ -3362,8 +3599,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const getSelectedSourceText = useCallback((): string => {
     const sorted = [...selectedLines].sort((a, b) => a - b)
     const ls = currentText.split('\n')
-    const raw = sorted.filter(i => i >= 0 && i < ls.length).map(i => ls[i]).join('\n')
-    return eycToYiFormat(raw)
+    const kept = filterClipboardSelectionIndices(ls, sorted.filter(i => i >= 0 && i < ls.length))
+    return eycToYiFormat(kept.map(i => ls[i]).join('\n'))
   }, [selectedLines, currentText])
 
   const getMouseRangeSelectedSourceText = useCallback((): string | null => {
@@ -3922,6 +4159,30 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     if (editCell.cellIndex < 0) {
       effectiveVal = normalizeCodeLineInput(effectiveVal)
+
+      // 编辑「流程结束行」（计次循环尾/判断循环尾/循环判断尾/变量循环尾等）为空或改成别的命令
+      // → 与删除该结束行等价：溶解所属结构（删起始/分支行、内部反缩进）。
+      // 起始行的溶解走下方 editingExistingFlowStart 逻辑；此处专补结束行编辑路径（用户逐字符 backspace 删空后失焦）。
+      // 仅关键字变化才触发；改参数（关键字不变，如 .计次循环尾() → .计次循环尾(x)）不溶解。
+      if (!editCell.isVirtual) {
+        const origEndKw = extractFlowKw(codeLineEditOrigValRef.current || '')
+        const newKw = extractFlowKw(effectiveVal)
+        if (origEndKw && FLOW_END_KW.has(origEndKw) && newKw !== origEndKw) {
+          const nl = [...lines]
+          // 清空 → 删掉该行（不留空行）；改成别的命令 → 保留新内容
+          if (effectiveVal.trim() === '') nl.splice(editCell.lineIndex, 1)
+          else nl[editCell.lineIndex] = effectiveVal
+          const dissolved = repairBrokenFlowAfterDelete(nl, new Set([origEndKw]))
+          const nt = dissolved.join('\n')
+          setCurrentText(nt); prevRef.current = nt; onChange(nt); setEditCell(null)
+          wasFlowStartRef.current = false
+          wasFlowKwRef.current = ''
+          wasFlowOrigIndentRef.current = ''
+          flowIndentRef.current = ''
+          return
+        }
+      }
+
       const originalFlowKw = wasFlowKwRef.current
       const inferredFlowStart = (() => {
         if (editCell.isVirtual || originalFlowKw) return null
@@ -3952,6 +4213,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const effectiveOriginalFlowKw = originalFlowKw || inferredFlowStart?.kw || ''
       const effectiveFlowOrigIndent = originalFlowKw ? wasFlowOrigIndentRef.current : (inferredFlowStart?.indent || wasFlowOrigIndentRef.current)
       const editingExistingFlowStart = !editCell.isVirtual && !!effectiveOriginalFlowKw && !!FLOW_START[effectiveOriginalFlowKw]
+      // 编辑「已存在的『判断』分支 case」：原关键字就是裸「判断」（持久化的裸判断必为分支，新键入的判断才会补全成判断开始）。
+      // 这类行只需原地更新参数，绝不能走自动补全（会被转成判断开始破坏结构）、也不能走分支插入（会重复）。
+      const editingExistingJudgeCase = !editCell.isVirtual && effectiveOriginalFlowKw === '判断'
       // 流程上下文中，若文本未改动则直接退出编辑，避免仅点击/失焦触发格式化导致流程结构漂移。
       const unchanged = overrideVal === undefined
         && (effectiveVal === codeLineEditOrigValRef.current || effectiveVal === normalizeCodeLineInput(codeLineEditOrigValRef.current))
@@ -3973,14 +4237,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const cmdCheckName = normalizeFlowCommandName(trimmedCmd)
       const isBareCmd = /^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*\s*$/.test(trimmedCmd)
       const isParenCmd = /^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*\s*[\(（].*[\)）]\s*$/.test(trimmedCmd)
-      if ((isBareCmd || isParenCmd) && trimmedCmd && FLOW_AUTO_COMPLETE[cmdCheckName] && baseIndent.length >= 4) {
+      if ((isBareCmd || isParenCmd) && trimmedCmd && FLOW_AUTO_COMPLETE[cmdCheckName] && baseIndent.length >= 4 && !editingExistingJudgeCase) {
         baseIndent = baseIndent.slice(0, baseIndent.length - 4)
       }
       // 原流程起始命令被改为普通命令：沿用原始行的真实缩进作为 baseIndent，避免嵌套层级下过度反缩进
       if (wasFlowStartRef.current && trimmedCmd && !FLOW_AUTO_COMPLETE[cmdCheckName]) {
         baseIndent = effectiveFlowOrigIndent
       }
-      const preferJudgeBranch = cmdCheckName === '判断' && shouldPreferJudgeBranchAtLine(editCell.lineIndex)
+      // 编辑「已有流程头、关键字不变」（只改参数）：必须原地更新、保原缩进、绝不溶解/补标记，
+      // 否则会把结构内容甩到结构外并重复出默认/判断结束（用户实测：流程内有内容再改参数就散架）。
+      const isSameFlowKeywordEdit = editingExistingFlowStart && !!cmdCheckName && cmdCheckName === effectiveOriginalFlowKw
+      // 分支格式化（formatCommandLine 保持「判断」不自动补全）：新键入在默认区、或编辑已有分支，二者都要。
+      const preferJudgeBranch = cmdCheckName === '判断' && (editingExistingJudgeCase || shouldPreferJudgeBranchAtLine(editCell.lineIndex))
       debugFlowPaste('commit:main-line-input', {
         lineIndex: editCell.lineIndex,
         effectiveVal,
@@ -3995,7 +4263,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       })
       const formattedLines = formatCommandLine(baseIndent + effectiveVal, { preferJudgeBranch })
       flowIndentRef.current = ''
-      const mainLine = formattedLines[0]
+      let mainLine = formattedLines[0]
+      // 保原缩进：formatCommandLine 的 +4 自动缩进只应给"新键入"，编辑已有流程头时会把它多推一层
+      // （如 indent0→4）与下方标记错位，进而下次编辑触发误溶解。编辑已有头（关键字不变）强制回原缩进。
+      if (isSameFlowKeywordEdit) mainLine = effectiveFlowOrigIndent + mainLine.trimStart()
       const existingFlowStructureIsIntact = (() => {
         if (!editingExistingFlowStart) return true
         const expected = (FLOW_AUTO_COMPLETE[effectiveOriginalFlowKw] || []).filter((kw): kw is string => !!kw)
@@ -4061,7 +4332,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const oldKw = effectiveOriginalFlowKw
       const newIsFlow = !!(trimmedCmd && FLOW_AUTO_COMPLETE[cmdCheckName] && !preferJudgeBranch)
       const shouldDissolveExistingFlow = editingExistingFlowStart && (!newIsFlow || !existingFlowStructureIsIntact || cmdCheckName !== effectiveOriginalFlowKw)
-      if (!editCell.isVirtual && oldKw && shouldDissolveExistingFlow && FLOW_START[oldKw]) {
+      // 作为分支的「判断」被编辑/退格清空后失焦时不溶解整块——它是判断块的 case，不是块头（行此刻可能已空，按原缩进向上扫判定）。
+      const oldKwIsJudgeBranch = oldKw === '判断' && isEnclosedJudgeBranchAt(nl, editCell.lineIndex, effectiveFlowOrigIndent.length)
+      if (!editCell.isVirtual && oldKw && shouldDissolveExistingFlow && FLOW_START[oldKw] && !oldKwIsJudgeBranch) {
         const deleteSet = new Set<number>()
         const unindentSet = new Set<number>()
         const baseIndentLen = effectiveFlowOrigIndent.length
@@ -4084,6 +4357,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
           if (trimmed.startsWith('.子程序 ') || trimmed.startsWith('.程序集 ')) break
           if (lineIndentLen < baseIndentLen && newIsFlow) break
+          // 退格清空头时，本块的分支/结束行会被 live-update 去缩进到比头还浅的位置（如 否则/如果结束 从 indent4 掉到 0）。
+          // 落不到下面的"同缩进"分支：结束行本已单独识别；分支行（如 否则、默认）此前漏了——会掉进末尾 unindent 残留。
+          // 这里对去缩进的分支行也删除（continue 继续扫，遇去缩进的结束行才 break）。
+          if (lineIndentLen < baseIndentLen) {
+            const kw = extractFlowKw(lineText)
+            if (kw && branchKwSet.has(kw)) { deleteSet.add(i); continue }
+            if (kw && endKwSet.has(kw)) { deleteSet.add(i); break }
+          }
 
           if (lineIndentLen === baseIndentLen) {
             const kw = extractFlowKw(lineText)
@@ -4092,6 +4373,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               break
             }
             if (kw && branchKwSet.has(kw)) {
+              deleteSet.add(i)
+              continue
+            }
+            // 判断块的 case 关键字「判断」不在 FLOW_AUTO_COMPLETE['判断开始'] 的 pattern 里，需单独随头删除，
+            // 否则溶解判断开始头后会残留孤立的「判断」行（与 dissolveFlowStructureAtHead line 882 对齐）。
+            // 循环在遇到 判断结束 时 break、更深嵌套行走 unindent 分支，故此处 baseIndent 的「判断」必属当前块。
+            if (kw === '判断' && (oldKw === '判断开始' || oldKw === '判断')) {
               deleteSet.add(i)
               continue
             }
@@ -4132,45 +4420,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
       // preferJudgeBranch：用户在 .默认 之后的空 body 行键入“判断”
       // → 在 .默认 行之前插入 .判断 () 分支，并清空当前行（保留为空 body）。
-      if (preferJudgeBranch && !editCell.isVirtual) {
-        const around = getFlowStructureAround(nl, editCell.lineIndex)
-        const prevSection = around?.sections[(around?.sectionIdx ?? 0) - 1]
-        if (around && prevSection && prevSection.char === '默认') {
-          const defaultLineIdx = prevSection.startLine
-          if (defaultLineIdx >= 0 && defaultLineIdx <= nl.length) {
-            const findIndentLen = (lineText: string): number => lineText.length - lineText.replace(/^ +/, '').length
-            const findJudgeControlIndentLen = (): number => {
-              for (let i = defaultLineIdx - 1; i >= 0; i--) {
-                const line = nl[i] || ''
-                const kw = extractFlowKw(line)
-                if (kw === '判断开始' || kw === '判断') return findIndentLen(line)
-              }
-              const defaultLine = nl[defaultLineIdx] || ''
-              return findIndentLen(defaultLine)
-            }
-            const controlIndentLen = findJudgeControlIndentLen()
-            const judgeLine = ' '.repeat(controlIndentLen) + mainLine.trimStart()
-            const normalizeControlLineIndent = (targetLineIndex: number): void => {
-              if (targetLineIndex < 0 || targetLineIndex >= nl.length) return
-              const raw = nl[targetLineIndex] || ''
-              if (!raw.trim()) return
-              nl[targetLineIndex] = ' '.repeat(controlIndentLen) + raw.trimStart()
-            }
-
-            normalizeControlLineIndent(defaultLineIdx)
-            for (let i = defaultLineIdx + 1; i < nl.length; i++) {
-              const line = nl[i] || ''
-              if (!line.trim()) continue
-              if (extractFlowKw(line) === '判断结束') normalizeControlLineIndent(i)
-              break
-            }
-
-            nl[editCell.lineIndex] = ''
-            nl.splice(defaultLineIdx, 0, judgeLine)
-            const nt = nl.join('\n')
-            setCurrentText(nt); prevRef.current = nt; onChange(nt); setEditCell(null)
-            return
-          }
+      // 编辑已有分支（editingExistingJudgeCase）不插入——只原地更新参数，否则会重复出一条分支。
+      if (preferJudgeBranch && !editingExistingJudgeCase && !editCell.isVirtual) {
+        // 键入「判断」作为最内层判断结构的新分支：插到该判断的「默认」之前（无默认则「判断结束」之前），对齐控制缩进，并清空当前行。
+        const judge = analyzeEnclosingJudge(nl, editCell.lineIndex)
+        const insertAt = judge ? (judge.defaultLineIdx >= 0 ? judge.defaultLineIdx : judge.endLineIdx) : -1
+        if (judge && insertAt >= 0 && insertAt <= nl.length) {
+          const judgeLine = ' '.repeat(judge.controlIndentLen) + mainLine.trimStart()
+          nl[editCell.lineIndex] = ''
+          nl.splice(insertAt, 0, judgeLine, '')
+          const nt = nl.join('\n')
+          setCurrentText(nt); prevRef.current = nt; onChange(nt); setEditCell(null)
+          return
         }
       }
       nl.splice(editCell.lineIndex, 1, mainLine, ...extraLines)
@@ -4503,6 +4764,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     lastFocusedLine.current = li
     flowIndentRef.current = flowIndent
     codeLineEditOrigValRef.current = text
+    editOrigRawLineRef.current = isVirtual ? '' : (latestText.split('\n')[li] ?? '')
     setEditCell({ lineIndex: li, cellIndex: -1, fieldIdx: -1, sliceField: false, isVirtual }); setEditVal(text)
     setTimeout(() => {
       if (!inputRef.current) return
@@ -4687,6 +4949,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const beginCodeLineEdit = useCallback((lineIndex: number, value: string) => {
     setEditCell({ lineIndex, cellIndex: -1, fieldIdx: -1, sliceField: false })
     codeLineEditOrigValRef.current = value
+    editOrigRawLineRef.current = prevRef.current.split('\n')[lineIndex] ?? ''
     setEditVal(value)
   }, [])
 
@@ -4824,23 +5087,46 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return { anchorLine: ordinaryLines[0], ordinaryLines }
     }
 
-    let deleteIndex = lineIndex
+    // 被编辑行（lineIndex）原本是流程结构行时，优先于子程序锚点重定向按 lineIndex 溶解整个结构——
+    // 否则头被退格清空后会被锚点逻辑当成"普通空行"重定向到 body，导致 origKw 判定落空、结构残留。
+    // 行此刻已空、关键字丢失，用编辑前保留的 codeLineEditOrigValRef / wasFlowOrigIndentRef 判定。
+    const editedLineOrigKw = extractFlowKw(codeLineEditOrigValRef.current || '')
+    // 作为分支的「判断」被退格清空时同样不溶解——按普通空行删除（行此刻已空，用原缩进向上扫判定是否处在判断块内）。
+    const editedJudgeIsBranch = editedLineOrigKw === '判断'
+      && isEnclosedJudgeBranchAt(latestLines, lineIndex, wasFlowOrigIndentRef.current.length)
+    let nl: string[]
     let focusLineAfter = action.targetLine
-    const anchorInfo = getSubAnchorInfoForLine(latestLines, lineIndex)
-    if (anchorInfo && anchorInfo.anchorLine === lineIndex) {
-      const nextOrdinary = anchorInfo.ordinaryLines.find(i => i > lineIndex)
-      if (nextOrdinary === undefined) {
-        // 子程序仅剩保底空行时，不允许再删掉它。
-        return
-      }
-      deleteIndex = nextOrdinary
+    if (editedLineOrigKw && FLOW_START[editedLineOrigKw] && !editedJudgeIsBranch) {
+      suppressInlineBlurCommit()
+      pushUndo(prevRef.current)
+      nl = dissolveFlowStructureAtHead(latestLines, lineIndex, editedLineOrigKw, wasFlowOrigIndentRef.current.length)
       focusLineAfter = lineIndex
+    } else if (editedLineOrigKw && FLOW_END_KW.has(editedLineOrigKw)) {
+      suppressInlineBlurCommit()
+      pushUndo(prevRef.current)
+      const spliced = [...latestLines]
+      spliced.splice(lineIndex, 1)
+      nl = repairBrokenFlowAfterDelete(spliced, new Set([editedLineOrigKw])) // 结束行：起始未闭合 → 溶解
+      focusLineAfter = lineIndex
+    } else {
+      // 普通空行删除：保留原有子程序锚点保护 + splice。
+      let deleteIndex = lineIndex
+      const anchorInfo = getSubAnchorInfoForLine(latestLines, lineIndex)
+      if (anchorInfo && anchorInfo.anchorLine === lineIndex) {
+        const nextOrdinary = anchorInfo.ordinaryLines.find(i => i > lineIndex)
+        if (nextOrdinary === undefined) {
+          // 子程序仅剩保底空行时，不允许再删掉它。
+          return
+        }
+        deleteIndex = nextOrdinary
+        focusLineAfter = lineIndex
+      }
+      suppressInlineBlurCommit()
+      pushUndo(prevRef.current)
+      const spliced = [...latestLines]
+      spliced.splice(deleteIndex, 1)
+      nl = spliced
     }
-
-    suppressInlineBlurCommit()
-    pushUndo(prevRef.current)
-    const nl = [...latestLines]
-    nl.splice(deleteIndex, 1)
     const nt = nl.join('\n')
     const clampedLi = Math.max(0, Math.min(focusLineAfter, nl.length - 1))
 
@@ -5043,95 +5329,25 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       // preferJudgeBranch：用户在 .默认 之后的空 body 行键入“判断”+回车，
       // 在 .默认 之前插入 .判断 () 分支与一个空 body 行，原编辑行保持为 .默认 的空 body。
       if (preferJudgeBranch && !editCellState.isVirtual) {
-        const resolveDefaultLineIdx = (): number | null => {
-          const around = getFlowStructureAround(lines, editCellState.lineIndex)
-          const prevSection = around?.sections[(around?.sectionIdx ?? 0) - 1]
-          if (around && prevSection && prevSection.char === '默认') return prevSection.startLine
-
-          // 与判定一致的兜底：当前行位于“默认 与 判断结束”之间。
-          const findPrevNonEmpty = (): { index: number; kw: string | null } | null => {
-            for (let i = editCellState.lineIndex - 1; i >= 0; i--) {
-              const line = lines[i] || ''
-              if (!line.trim()) continue
-              return { index: i, kw: extractFlowKw(line) }
-            }
-            return null
-          }
-          const findNextNonEmpty = (): { index: number; kw: string | null } | null => {
-            for (let i = editCellState.lineIndex + 1; i < lines.length; i++) {
-              const line = lines[i] || ''
-              if (!line.trim()) continue
-              return { index: i, kw: extractFlowKw(line) }
-            }
-            return null
-          }
-          const prevNonEmpty = findPrevNonEmpty()
-          const nextNonEmpty = findNextNonEmpty()
-          if (prevNonEmpty?.kw === '默认' && nextNonEmpty?.kw === '判断结束') {
-            return prevNonEmpty.index
-          }
-          return null
-        }
-
-        const defaultLineIdx = resolveDefaultLineIdx()
-        if (defaultLineIdx != null) {
-          const findIndentLen = (lineText: string): number => lineText.length - lineText.replace(/^ +/, '').length
-          const findJudgeControlIndentLen = (): number => {
-            for (let i = defaultLineIdx - 1; i >= 0; i--) {
-              const line = lines[i] || ''
-              const kw = extractFlowKw(line)
-              if (kw === '判断开始' || kw === '判断') return findIndentLen(line)
-            }
-            const defaultLine = lines[defaultLineIdx] || ''
-            return findIndentLen(defaultLine)
-          }
-
-          const controlIndentLen = findJudgeControlIndentLen()
-          const judgeIndentLen = controlIndentLen
+        // 键入「判断」+回车：作为最内层判断结构的新分支，插到「默认」之前（无默认则「判断结束」之前），对齐控制缩进，光标移到新分支下方空 body。
+        const judge = analyzeEnclosingJudge(nl, editCellState.lineIndex)
+        const insertAt = judge ? (judge.defaultLineIdx >= 0 ? judge.defaultLineIdx : judge.endLineIdx) : -1
+        if (judge && insertAt >= 0 && insertAt <= nl.length) {
           const judgeRawLine = formatCommandLine(enterIndent + editVal, { preferJudgeBranch: true })[0]
-          const judgeLine = ' '.repeat(judgeIndentLen) + judgeRawLine.trimStart()
-          const normalizeControlLineIndent = (targetLineIndex: number): void => {
-            if (targetLineIndex < 0 || targetLineIndex >= nl.length) return
-            const raw = nl[targetLineIndex] || ''
-            if (!raw.trim()) return
-            nl[targetLineIndex] = ' '.repeat(controlIndentLen) + raw.trimStart()
-          }
-
-          // 保持判断结构缩进一致：.判断/.默认/.判断结束 与 .判断开始 控制行对齐。
-          normalizeControlLineIndent(defaultLineIdx)
-          for (let i = defaultLineIdx + 1; i < nl.length; i++) {
-            const line = nl[i] || ''
-            if (!line.trim()) continue
-            if (extractFlowKw(line) === '判断结束') normalizeControlLineIndent(i)
-            break
-          }
-
-          // 还原原编辑行为空 body（清掉用户输入的“判断”文本，仅保留缩进或空串）
+          const judgeLine = ' '.repeat(judge.controlIndentLen) + judgeRawLine.trimStart()
           nl[editCellState.lineIndex] = ''
-          // 在 .默认 行之前插入 ".判断 ()" 与一个空 body 行
-          nl.splice(defaultLineIdx, 0, judgeLine, '')
+          nl.splice(insertAt, 0, judgeLine, '')
           const nt = nl.join('\n')
           applyTextChange(nt)
-          // 光标移到新插入 .判断 () 行下方的空 body 行
-          const cursorLi = defaultLineIdx + 1
+          const cursorLi = insertAt + 1
           flowMarkRef.current = ''
           flowIndentRef.current = ''
           wasFlowStartRef.current = false
           beginCodeLineEdit(cursorLi, '')
           focusCodeInputAt(0)
           commitGuardRef.current = true
-          debugFlowPaste('enter:auto-expand-judge-branch-inserted', {
-            lineIndex: editCellState.lineIndex,
-            defaultLineIdx,
-            judgeLine,
-            cursorLi,
-          })
           return true
         }
-        debugFlowPaste('enter:auto-expand-judge-branch-skipped', {
-          lineIndex: editCellState.lineIndex,
-          reason: 'default-line-not-found',
-        })
       }
       const formattedLines = formatCommandLine(enterIndent + editVal, { preferJudgeBranch })
       if (formattedLines.length > 1) {
@@ -5409,6 +5625,33 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     const li = editCell.lineIndex
+
+    // 保护流程结构体：在结构体内的空 body 行（或结构紧邻其后的首个空行）按 Backspace 时，
+    // 不删除该行/破坏结构，而是把光标上移到上一可见行的末尾（复用 ArrowLeft-at-col0 的 leftToPrevLineEnd）。
+    // 逐行上移直到命令头行（有内容，不走此路径）才恢复正常字符删除/溶解——这样光标能走出结构而不困在里面。
+    if (key === 'Backspace') {
+      const guardLines = prevRef.current.split('\n')
+      const { map } = computeFlowLines(
+        guardLines.map((codeLine, i) => ({ kind: 'codeline', rows: [], codeLine, lineIndex: i } as RenderBlock)),
+      )
+      const curSegs = map.get(li) || []
+      const prevSegs = map.get(li - 1) || []
+      // body 行：有流程段但自身不是结构头(start)；trailing 行：自身无段但上一行有段（结构紧邻其后的首个空行）。
+      const isFlowBody = curSegs.length > 0 && !curSegs.some(seg => seg.type === 'start')
+      const isFlowTrailing = curSegs.length === 0 && prevSegs.length > 0
+      const nextSegs = map.get(li + 1) || []
+      // 只保护「最小结构体」：那条空 body 行必须**上紧邻头/分支标记、下紧邻本结构的分支/结束标记**
+      //（上下都是标记、中间没有任何正文），即它是本段唯一的最小占位 body。
+      // 若下一行是正文内容（如 调试输出，只有 through 穿越段、非 branch/end），说明本段已有内容、
+      // 这条空行是回车多敲出来的多余行 → 放行正常删除（删该行 + 光标上移到上一行末尾），不再保护。
+      const prevIsFlowMarker = prevSegs.some(seg => seg.type === 'start' || seg.type === 'branch' || seg.type === 'end')
+      const nextIsFlowMarker = nextSegs.some(seg => seg.type === 'branch' || seg.type === 'end')
+      if (((isFlowBody && nextIsFlowMarker) || isFlowTrailing) && prevIsFlowMarker && li > 0) {
+        applyCodeLineNavigation({ type: 'leftToPrevLineEnd', targetLine: li - 1 })
+        return { handled: true, preventDefault: true }
+      }
+    }
+
     const deleteAction = getEmptyCodeLineDeleteAction({
       lines,
       lineIndex: li,
@@ -5420,7 +5663,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     applyEmptyCodeLineDelete({ action: deleteAction, lineIndex: li, isVirtual: editCell.isVirtual })
     return { handled: true, preventDefault: true }
-  }, [applyEmptyCodeLineDelete, editCell, editVal, getEmptyCodeLineDeleteAction, lines])
+  }, [applyCodeLineNavigation, applyEmptyCodeLineDelete, editCell, editVal, getEmptyCodeLineDeleteAction, lines])
 
   const applyArrowNavigationKey = useCallback((params: {
     key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight'
@@ -5586,27 +5829,16 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const sorted = Array.from(deletable).sort((a, b) => a - b)
     if (sorted.length === 0) return false
 
-    const checkedCmds = new Set<number>()
-    const wouldBreak = sorted.some(i => {
-      const st = getFlowStructureAround(ls, i)
-      if (!st || checkedCmds.has(st.cmdLine)) return false
-      checkedCmds.add(st.cmdLine)
-      if (deletable.has(st.cmdLine)) return false
-      // 仅保护结构性结束标记行（最后一段的最后一行）
-      const lastSec = [...st.sections].reverse().find(s => s.char !== null)
-      return !!lastSec && deletable.has(lastSec.endLine)
-    })
-    if (wouldBreak) return false
-
+    // 删除结构性结束/起始行不再拒绝：统一按"溶解"语义处理。
     pushUndo(currentText)
-    const repaired = repairBrokenFlowAfterDelete(ls.filter((_, i) => !deletable.has(i)))
+    const repaired = applyFlowAwareDeletion(ls, deletable)
     const nt = repaired.join('\n')
     setCurrentText(nt)
     prevRef.current = nt
     onChange(nt)
     setSelectedLines(new Set())
     return true
-  }, [currentText, onChange, pushUndo, repairBrokenFlowAfterDelete])
+  }, [currentText, onChange, pushUndo, applyFlowAwareDeletion])
 
   const handleWrapperContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -7358,7 +7590,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                               >{renderDebugAwareSpan(displayText, className, `code-${blk.lineIndex}-${si}`)}</span>
                             )
                           }
-                          const className = `${s.cls}${isLineSyntaxInvalid ? ' eyc-cmd-invalid' : ''}`
+                          // 表达式/流程条件里引用的干净标识符，非命令/子程序/变量/保留字 → 未定义变量，红标（与问题面板诊断一致）。
+                          const isUndefinedVarRef = s.cls === '' && hasCommandCatalog
+                            && /^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(s.text)
+                            && !validCommandNames.has(s.text) && !allKnownVarNames.has(s.text) && !reservedNameSet.has(s.text)
+                          const className = `${s.cls}${(isLineSyntaxInvalid || isUndefinedVarRef) ? ' eyc-cmd-invalid' : ''}`
                           return <span key={si} className={className}>{renderDebugAwareSpan(displayText, className, `code-${blk.lineIndex}-${si}`)}</span>
                         })}
                       </>

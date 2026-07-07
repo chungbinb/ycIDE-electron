@@ -1,4 +1,4 @@
-import { basename, dirname, extname, join } from 'path'
+import { basename, dirname, extname, join, resolve } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import type { EProjectImportRequest, EProjectImportResult } from '../../shared/eprojectImport'
 import { decodeEncryptedSourceBytes, EProjectCryptoError } from './crypto'
@@ -6,8 +6,11 @@ import { parseNativeProjectSnapshot } from './sections'
 import { writeImportedProject } from './ycProjectWriter'
 
 export function getEProjectImportTarget(eFilePath: string): { projectName: string; targetDir: string; targetExists: boolean } {
-  const sourceExt = extname(eFilePath).toLowerCase()
-  const projectName = basename(eFilePath, sourceExt)
+  // basename(path, ext) 的扩展名剥离区分大小写：对 "工程.E" 传小写 ".e" 剥不掉，
+  // projectName 会带上扩展名，导致 targetDir 恰好等于源文件本身（覆盖导入时删源文件）。
+  const rawBase = basename(eFilePath)
+  const sourceExt = extname(eFilePath)
+  const projectName = sourceExt ? rawBase.slice(0, -sourceExt.length) : rawBase
   const targetDir = join(dirname(eFilePath), projectName)
   return { projectName, targetDir, targetExists: existsSync(targetDir) }
 }
@@ -19,6 +22,10 @@ export function importEProjectFile(request: EProjectImportRequest): EProjectImpo
   }
 
   const target = getEProjectImportTarget(request.eFilePath)
+  // 双保险：目标目录绝不允许与源文件重合（覆盖导入会先递归删除目标）
+  if (resolve(target.targetDir) === resolve(request.eFilePath)) {
+    return { status: 'error', code: 'invalidProjectFile', message: '导入目标目录与源文件路径重合，已中止以保护源文件。' }
+  }
   if (target.targetExists && !request.conflictAction) {
     return { status: 'targetConflict', eFilePath: request.eFilePath, projectName: target.projectName, targetDir: target.targetDir }
   }

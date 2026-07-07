@@ -193,14 +193,19 @@ test('keyboard dispatcher contract: flow boundary detection uses real subroutine
   assert.doesNotMatch(source, /瀛愮▼搴|绋嬪簭闆/)
 })
 
-test('keyboard dispatcher contract: deleting a visible branch body repairs hidden flow shell', () => {
+test('keyboard dispatcher contract: deleting/emptying a flow structure line dissolves it', () => {
   const source = fs.readFileSync(tableEditorTsxPath, 'utf-8')
 
-  assert.match(source, /const\s+repairBrokenFlowAfterDelete\s*=\s*useCallback\(\(sourceLines:\s*string\[\]\):\s*string\[\]\s*=>\s*\{/)
-  assert.match(source, /const\s+structuralKws\s*=\s*pattern\.filter\(\(kw\):\s*kw\s+is\s+string\s*=>\s*!!kw\)/)
-  assert.match(source, /const\s+endLine\s*=\s*indent\s*\+\s*\(usesDottedFlowSyntax\s*\?\s*'\.'\s*:\s*''\)\s*\+\s*endKw/)
-  assert.match(source, /const\s+movedBody\s*=\s*bodyBeforeBranch\.map\(outdentOneLevel\)/)
-  assert.match(source, /lines\.splice\(i\s*\+\s*1,\s*branchIndex\s*-\s*i\s*-\s*1,\s*''\)/)
-  assert.match(source, /lines\.splice\(repairedBranchIndex\s*\+\s*1,\s*0,\s*'',\s*endLine,\s*\.\.\.movedBody\)/)
-  assert.match(source, /repairBrokenFlowAfterDelete\(deletedLines\)/)
+  // 溶解语义：删除或编辑清空流程结构行后，整个结构溶解。
+  // 结束行被删 → 起始未闭合，删起始/分支、正文反缩进（仅对本次删除的结束关键字族生效）。
+  assert.match(source, /const\s+repairBrokenFlowAfterDelete\s*=\s*useCallback\(\(sourceLines:\s*string\[\],\s*deletedFlowEndKws\?:\s*Set<string>\):\s*string\[\]\s*=>\s*\{/)
+  assert.match(source, /if\s*\(!deletedFlowEndKws\s*\|\|\s*deletedFlowEndKws\.size\s*===\s*0\)\s*return\s+sourceLines/)
+  // 起始行被删 → 删头+分支+结束、正文反缩进（必须在头还在时定位，否则误吞兄弟语句）。
+  assert.match(source, /const\s+dissolveFlowStructureAtHead\s*=\s*useCallback\(/)
+  // 删除行三路径经流程感知删除：单个起始行走 dissolveFlowStructureAtHead，其余走结束行溶解。
+  assert.match(source, /const\s+applyFlowAwareDeletion\s*=\s*useCallback\(/)
+  assert.match(source, /const\s+dissolveSingleFlowHeadIfAny\s*=\s*useCallback\(/)
+  // 编辑路径：结束/起始行被逐字符退格清空后失焦或删空行，也要溶解（用 codeLineEditOrigValRef 原值判定）。
+  assert.match(source, /const\s+origEndKw\s*=\s*extractFlowKw\(codeLineEditOrigValRef\.current\s*\|\|\s*''\)/)
+  assert.match(source, /const\s+editedLineOrigKw\s*=\s*extractFlowKw\(codeLineEditOrigValRef\.current\s*\|\|\s*''\)/)
 })

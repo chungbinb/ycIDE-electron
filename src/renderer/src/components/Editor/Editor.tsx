@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo, useImperativeHandle, forwardRef, Component, type ErrorInfo, type ReactNode } from 'react'
+import './monaco-setup' // 必须在 @monaco-editor/react 首次 init 前：用本地 monaco 替代 CDN（离线可用）
 import MonacoEditor, { OnMount, OnChange, type Monaco } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import EycTableEditor, { type EycTableEditorHandle, type FileProblem } from './EycTableEditor'
@@ -414,6 +415,13 @@ class EycEditorErrorBoundary extends Component<EycEditorErrorBoundaryProps, EycE
 const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }>; currentTheme?: string; themeTokenValues?: Record<string, string>; editorFontFamily?: string; editorFontSize?: number; editorLineHeight?: number; editorFreezeSubTableHeader?: boolean; editorShowMinimapPreview?: boolean; editorShowVarSummaryPanel?: boolean; targetPlatform?: string; readFileForExternalCheck?: (filePath: string) => Promise<string | null>; resolveFileEncoding?: (filePath: string) => string | undefined }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [], currentTheme = '', themeTokenValues = {}, editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, editorFreezeSubTableHeader = false, editorShowMinimapPreview = true, editorShowVarSummaryPanel = true, targetPlatform = 'windows', readFileForExternalCheck, resolveFileEncoding }, ref) {
   const [tabs, setTabs] = useState<EditorTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
+  // 防抖版 tabs：项目元数据收集（全局变量/常量/数据类型/DLL命令/类）依赖它而非 tabs，
+  // 避免每次按键都重跑 5 遍全文解析 + readDir + 逐个 readFile（这些声明不随普通代码行输入变化）。
+  const [debouncedTabs, setDebouncedTabs] = useState<EditorTab[]>([])
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedTabs(tabs), 300)
+    return () => window.clearTimeout(timer)
+  }, [tabs])
   const [tabBarPosition, setTabBarPosition] = useState<TabBarPosition>(() => {
     try {
       const saved = localStorage.getItem(EDITOR_TAB_BAR_POS_KEY)
@@ -1515,8 +1523,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 
   useEffect(() => {
     loadWindowUnits()
-    window.api.on('library:loaded', loadWindowUnits)
-    return () => { window.api.off('library:loaded') }
+    const dispose = window.api.on('library:loaded', loadWindowUnits)
+    return () => { dispose() }
   }, [loadWindowUnits])
 
   useEffect(() => {
@@ -1535,7 +1543,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       setExternalChangePrompt(null)
       return
     }
-    const active = tabs.find(t => t.id === activeTabId)
+    // 用 ref 读取当前标签，避免把 tabs 放进依赖——否则每次按键都会重建 2s 轮询并立即读盘一次。
+    const active = tabsRef.current.find(t => t.id === activeTabId)
     if (!active?.filePath) {
       setExternalChangePrompt(null)
       return
@@ -1576,7 +1585,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       disposed = true
       window.clearInterval(timer)
     }
-  }, [activeTabId, tabs, readFileForExternalCheck])
+  }, [activeTabId, readFileForExternalCheck])
 
   // 收集项目内全局变量（.egv + 已打开标签页），用于 EYC 补全
   useEffect(() => {
@@ -1601,7 +1610,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       const vars = new Map<string, string>()
 
       // 优先使用已打开标签页中的最新内容（含未保存修改）
-      for (const t of tabs) {
+      for (const t of debouncedTabs) {
         if ((t.language === 'egv' || t.language === 'eyc' || t.language === 'ecs' || t.language === 'edt' || t.language === 'ell' || t.language === 'erc') && t.value) {
           parseGlobalVars(eycToYiFormat(t.value), vars)
         }
@@ -1626,7 +1635,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     })()
 
     return () => { cancelled = true }
-  }, [projectDir, tabs])
+  }, [projectDir, debouncedTabs])
 
   // 收集项目内 DLL 命令（.ell + 已打开标签页），用于 .eyc 代码补全
   useEffect(() => {
@@ -1745,7 +1754,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       const commands = new Map<string, ProjectDllCommand>()
 
       // 优先使用已打开标签页中的最新内容（含未保存修改）
-      for (const t of tabs) {
+      for (const t of debouncedTabs) {
         if ((t.language === 'ell' || t.language === 'eyc' || t.language === 'egv' || t.language === 'ecs' || t.language === 'edt' || t.language === 'erc') && t.value) {
           parseDllCommands(eycToYiFormat(t.value), commands)
         }
@@ -1770,7 +1779,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     })()
 
     return () => { cancelled = true }
-  }, [projectDir, tabs])
+  }, [projectDir, debouncedTabs])
 
   // 收集项目内常量与资源名（.ecs/.erc + 已打开标签页），用于 #补全
   useEffect(() => {
@@ -1805,7 +1814,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       const constants = new Map<string, { value: string; kind: 'constant' | 'resource' }>()
 
       // 优先使用已打开标签页中的最新内容（含未保存修改）
-      for (const t of tabs) {
+      for (const t of debouncedTabs) {
         if ((t.language === 'ecs' || t.language === 'eyc' || t.language === 'egv' || t.language === 'erc') && t.value) {
           const yi = eycToYiFormat(t.value)
           parseConstants(yi, constants)
@@ -1836,7 +1845,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     })()
 
     return () => { cancelled = true }
-  }, [projectDir, tabs])
+  }, [projectDir, debouncedTabs])
 
   // 收集项目内自定义数据类型（.edt + 已打开标签页），用于类型补全
   useEffect(() => {
@@ -1884,7 +1893,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       const dataTypeMap = new Map<string, { name: string; fields: Array<{ name: string; type: string }> }>()
 
       // 优先使用已打开标签页中的最新内容（含未保存修改）
-      for (const t of tabs) {
+      for (const t of debouncedTabs) {
         if ((t.language === 'edt' || t.language === 'eyc') && t.value) {
           parseDataTypes(eycToYiFormat(t.value), dataTypeMap)
         }
@@ -1909,7 +1918,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     })()
 
     return () => { cancelled = true }
-  }, [projectDir, tabs])
+  }, [projectDir, debouncedTabs])
 
   // 收集项目内类名与公开方法（.ecc + 已打开标签页），用于类模块继承补全与成员补全
   useEffect(() => {
@@ -1963,7 +1972,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 
       // 优先使用已打开标签页中的最新内容（含未保存修改）
       // 注意：类模块标签页的 label 是类名（不带扩展名），必须按 filePath 判断
-      for (const t of tabs) {
+      for (const t of debouncedTabs) {
         const tabFileName = (t.filePath || t.label || '').toLowerCase()
         if (tabFileName.endsWith('.ecc') && t.value) {
           parseClassModules(eycToYiFormat(t.value), classMap)
@@ -1989,7 +1998,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     })()
 
     return () => { cancelled = true }
-  }, [projectDir, tabs])
+  }, [projectDir, debouncedTabs])
 
   // 设计器双击/属性事件跳转创建子程序后，仅刷新项目树，不自动保存。
   // 保持标签页 dirty 状态，避免“先变更后瞬间变已保存”的误导行为。

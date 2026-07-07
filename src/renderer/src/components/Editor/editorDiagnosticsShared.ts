@@ -299,6 +299,12 @@ export function buildEditorDiagnosticsProblems(
         if (s.cls === 'assignTarget' && !isKnownAssignmentTarget(s.text, allKnownVarNames)) {
           problems.push({ line: i + 1, column: col, message: `未知变量"${s.text}"`, severity: 'error' })
         }
+        // 表达式/流程条件里被引用的干净标识符（如判断条件里的变量）：既非命令/子程序/变量/流程关键字（validCommandNames 已含这些），
+        // 也非保留字 → 判为未定义变量。#常量走 conscolor、命令调用走 funccolor、数字不匹配标识符正则，均不会误报。
+        if (s.cls === '' && /^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(s.text)
+          && !validCommandNames.has(s.text) && !allKnownVarNames.has(s.text) && !reservedNameSet.has(s.text)) {
+          problems.push({ line: i + 1, column: col, message: `未定义变量"${s.text}"`, severity: 'error' })
+        }
         col += s.text.length
       }
 

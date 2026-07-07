@@ -104,6 +104,16 @@ async function compileInMain(options: CompileOptions, editorFiles?: Record<strin
   return compileProject(options, ef)
 }
 
+// 支持库加载/卸载/安装/移除后调用：让常驻 worker 重扫支持库，
+// 否则 worker 里的库快照冻结在首次编译时刻，之后新载入的库编译报"未知命令"直到重启 IDE。
+export function notifyWorkerLibrariesChanged(): void {
+  // 仅当 worker 已就绪时通知；未创建则下次编译自会全新扫描，无需处理。
+  if (!workerReadyPromise) return
+  void workerReadyPromise.then((worker) => {
+    if (worker) worker.postMessage({ kind: 'reloadLibraries' })
+  })
+}
+
 // 经工作线程编译；worker 不可用时回退主进程编译。
 export async function compileViaWorker(
   options: CompileOptions,
