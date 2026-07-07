@@ -128,6 +128,18 @@
   user-select: none;
 }
 
+/* 编辑器自管理焦点视觉（输入框光标、选中行高亮、搜索框边框），不需要全局键盘焦点描边。
+   global.css 的 `:focus-visible { outline: var(--focus-ring-size) solid var(--border-focus) }`
+   会落到编辑器里可聚焦的容器上（如挂载即被 focus 的 .eyc-table-wrapper，或 .eyc-minimap），
+   而这些容器的**右缘正好压在与变量汇总面板的交界处**，描边就渲染成一条贯穿全高的蓝色竖条
+   （用户 DevTools 实测：色值 = --border-focus、位置 = 变量面板左侧；点最大化/收展面板等切到
+   鼠标模态即 focus-visible 熄灭、竖条消失，故一度被误判为"重绘残影"）。逐元素 outline:none
+   会被全局规则按源码/主题注入顺序反超（同为 0,1,0 优先级，dev 与打包顺序还不一样），故这里用
+   更高优先级（后代选择器，0,2,0）统一盖掉编辑器内的焦点描边；各输入框仍保留自身 border 焦点提示。 */
+.eyc-table-editor :focus-visible {
+  outline: none;
+}
+
 .eyc-virtual-spacer {
   height: var(--eyc-virtual-spacer-height, 0px);
 }
@@ -232,7 +244,12 @@
 }
 
 .eyc-minimap:focus-visible {
-  box-shadow: inset 0 0 0 var(--focus-ring-size, 2px) var(--border-focus, var(--accent));
+  /* 不画 inset 焦点环：minimap 是紧贴变量汇总面板的全高绝对定位条，环的右缘会渲染成
+     一条贯穿全高的蓝色竖条卡在面板边界（用户报的 bug）。焦点提示改由 .eyc-minimap-viewport
+     视口条在 :focus-visible 时显现承担（见下方规则），不再产生边界竖线。
+     注意：焦点环在鼠标/程序化聚焦时也会被 Chromium 判为 :focus-visible（div 的判定较宽），
+     故加载态/点击后都可能常驻，最大化切到鼠标模态才消失——直接去掉环最稳。 */
+  box-shadow: -8px 0 10px -10px var(--menu-shadow, rgba(0, 0, 0, 0.45));
 }
 
 .eyc-minimap-track {
@@ -914,6 +931,11 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   height: 1px;
   background-image: repeating-linear-gradient(to right, var(--flow-inner-link-color, var(--flow-line-inner-link, #4fc1ff)) 0 3px, transparent 3px 6px);
 }
+/* 如果真等单分支结构：桥接接到外侧主结构线（left:4px），与前块的外侧竖线对齐，而非内侧线。 */
+.eyc-flow-link-vert.eyc-flow-link-outer,
+.eyc-flow-link-horz.eyc-flow-link-outer {
+  left: 4px;
+}
 /* 连接上方流程的右箭头 */
 .eyc-flow-link-arrow {
   position: absolute;
@@ -989,6 +1011,12 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 }
 
 .eyc-flow-start.eyc-flow-stagger-lower::after {
+  top: 68%;
+}
+
+/* 内层为循环时，起始行的向右箭头需跟随错位后的横线下移到 68%，
+   否则 ▶ 停在 50% 而横线/竖角在 68%，箭头与横线脱节（对照 branch 侧 stagger-upper 的 35% 箭头规则）。 */
+.eyc-flow-start.eyc-flow-stagger-lower .eyc-flow-arrow-right {
   top: 68%;
 }
 

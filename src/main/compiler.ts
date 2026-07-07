@@ -236,7 +236,7 @@ interface TranspileCacheFile {
   entries: Record<string, TranspileCacheEntry>
 }
 
-const TRANSPILE_CACHE_VERSION = 7
+const TRANSPILE_CACHE_VERSION = 8
 
 interface BuildArtifactCacheFile {
   version: number
@@ -1578,9 +1578,11 @@ function parseWindowFile(efwPath: string): WindowFileInfo {
     if (p['可视'] === false) info.visible = false
     if (p['禁止'] === true) info.disabled = true
     if (typeof p['边框'] === 'number') info.border = p['边框']
-    if (p['最大化按鈕'] === false) info.maxButton = false
-    if (p['最小化按鈕'] === false) info.minButton = false
-    if (p['控制按鈕'] === false) info.controlBox = false
+    // 兼容简体"钮"（设计器内存路径与 window-units.json 用简体）与历史繁体"鈕"，
+    // 否则关闭标签页后按磁盘 .efw 编译时这几个属性被忽略、与标签开着时行为不一致。
+    if (p['最大化按钮'] === false || p['最大化按鈕'] === false) info.maxButton = false
+    if (p['最小化按钮'] === false || p['最小化按鈕'] === false) info.minButton = false
+    if (p['控制按钮'] === false || p['控制按鈕'] === false) info.controlBox = false
     if (p['总在最前'] === true) info.topmost = true
     if (typeof p['位置'] === 'number') info.startPos = p['位置']
     if (Array.isArray(data.controls)) {
@@ -2715,13 +2717,16 @@ function translateExpressionToC(
   const trimmed = (expr || '').trim()
   if (!trimmed) return '0'
 
-  const chineseStrMatch = trimmed.match(/^\u201c(.*)\u201d$/)
+  // \u6574\u4f53\u5b57\u9762\u91cf\u5224\u5b9a\u5fc5\u987b\u8981\u6c42\u5185\u90e8\u4e0d\u518d\u51fa\u73b0\u540c\u7c7b\u5f15\u53f7\uff1a
+  // \u5426\u5219 \u201c\u5171\u201d \uff0b \u5230\u6587\u672c(n) \uff0b \u201c\u4e2a\u201d \u4f1a\u88ab\u8d2a\u5a6a\u5339\u914d\u6574\u4f53\u541e\u6210\u4e00\u4e2a\u5b57\u9762\u91cf\uff0c
+  // \u7f16\u8bd1\u901a\u8fc7\u4f46\u8fd0\u884c\u65f6\u539f\u6837\u8f93\u51fa\u4e2d\u95f4\u7684\u53d8\u91cf\u4e0e\u52a0\u53f7\uff08\u9759\u9ed8\u9519\u8bef\u7a0b\u5e8f\uff09\u3002
+  const chineseStrMatch = trimmed.match(/^\u201c([^\u201c\u201d]*)\u201d$/)
   if (chineseStrMatch) {
     const content = chineseStrMatch[1].replace(/\\/g, '\\\\').replace(/"/g, '\\"')
     return `L"${content}"`
   }
 
-  const englishStrMatch = trimmed.match(/^"(.*)"$/)
+  const englishStrMatch = trimmed.match(/^"([^"]*)"$/)
   if (englishStrMatch) {
     const content = englishStrMatch[1].replace(/\\/g, '\\\\').replace(/"/g, '\\"')
     return `L"${content}"`
@@ -3142,12 +3147,16 @@ function formatArgForYcCommand(arg: string, field: string): string {
   if (!trimmed) return field === 'm_pText' ? '(char*)""' : '0'
 
   if (field === 'm_pText') {
-    const quoted = trimmed.match(/^\u201c(.*)\u201d$/) || trimmed.match(/^"(.*)"$/)
+    // \u540c translateExpressionToC\uff1a\u5185\u90e8\u542b\u540c\u7c7b\u5f15\u53f7\u8bf4\u660e\u4e0d\u662f\u5355\u4e2a\u5b57\u9762\u91cf\uff08\u5982\u5b57\u7b26\u4e32\u62fc\u63a5\u8868\u8fbe\u5f0f\uff09
+    const quoted = trimmed.match(/^\u201c([^\u201c\u201d]*)\u201d$/) || trimmed.match(/^"([^"]*)"$/)
     if (quoted) {
+      // \u5b57\u9762\u91cf\u5728 -fexec-charset=utf-8 \u4e0b\u5373\u4e3a UTF-8 \u7a84\u5b57\u8282\uff0c\u76f4\u63a5\u4f5c char* \u4f20\u5165\u3002
       const content = quoted[1].replace(/\\/g, '\\\\').replace(/"/g, '\\"')
       return `(char*)"${content}"`
     }
-    return `(char*)(${replaceConstantRefs(convertFullWidthOps(trimmed))})`
+    // \u6587\u672c\u578b\u53d8\u91cf/\u8868\u8fbe\u5f0f\u5728\u8fd0\u884c\u65f6\u662f wchar_t*(UTF-16)\uff0c\u901a\u7528 fne \u5206\u53d1\u63a5\u53e3\u8981 UTF-8 char*\uff0c
+    // \u5fc5\u987b\u7ecf yc_wide_to_utf8 \u8f6c\u6362\uff1b\u6b64\u524d\u76f4\u63a5 (char*) \u91cd\u89e3\u91ca\u4f1a\u628a UTF-16 \u5b57\u8282\u5f53\u7a84\u4e32\u4f20\u51fa\uff08\u4e71\u7801/\u622a\u65ad\uff09\u3002
+    return `(char*)yc_wide_to_utf8(${replaceConstantRefs(convertFullWidthOps(trimmed))})`
   }
 
   if (field === 'm_bool') {
@@ -3669,7 +3678,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '} YC_MDATA_INF;\n\n'
   result += 'extern "C" void yc_invoke_support_cmd(const char* libName, int cmdIndex, YC_MDATA_INF* pRetData, int argCount, YC_MDATA_INF* pArgs);\n'
   result += 'extern void yc_set_control_text(const wchar_t* ctrlName, const wchar_t* text);\n'
-  result += 'extern const wchar_t* yc_get_control_text(const wchar_t* ctrlName);\n'
+  result += 'extern wchar_t* yc_get_control_text(const wchar_t* ctrlName);\n'
   result += 'extern int yc_text_compare(const wchar_t* left, const wchar_t* right);\n'
   result += 'extern int yc_text_starts_with(const wchar_t* text, const wchar_t* prefix);\n\n'
   result += 'static wchar_t* yc_wcsdup_text(const wchar_t* s);\n'
@@ -4660,7 +4669,21 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         const flowCall = parseCommandCall(line.substring(1).trim())
         const flowName = flowCall?.name || ''
 
-        if (flowName === '如果' || flowName === '如果真' || flowName === '判断') {
+        // "判断开始" 块内的 ".判断 (条件)" 是新分支（else if），与表格编辑器落盘结构一致：
+        // .判断开始 (c1) / 正文 / .判断 (c2) / 正文 / .默认 / 正文 / .判断结束
+        if (flowName === '判断' && flowStack[flowStack.length - 1]?.name === '判断开始') {
+          const currentFlow = flowStack[flowStack.length - 1]
+          if (currentFlow.hasElse) {
+            throwSourceError(lineIndex + 1, '.默认 之后不能再出现 .判断 分支')
+          }
+          const cond = formatArgForC(flowCall?.args?.[0] || '0', commandMap, directCallables)
+          blockIndent = Math.max(1, blockIndent - 1)
+          emitSubLine(`} else if ${wrapConditionForC(cond)} {`)
+          blockIndent++
+          continue
+        }
+
+        if (flowName === '如果' || flowName === '如果真' || flowName === '判断' || flowName === '判断开始') {
           const cond = formatArgForC(flowCall?.args?.[0] || '0', commandMap, directCallables)
           emitSubLine(`if ${wrapConditionForC(cond)} {`)
           blockIndent++
@@ -4670,9 +4693,9 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
 
         if (flowName === '否则' || flowName === '默认') {
           const currentFlow = flowStack[flowStack.length - 1]
-          const expectedStart = flowName === '默认' ? '判断' : '如果'
-          if (!currentFlow || currentFlow.name !== expectedStart) {
-            throwSourceError(lineIndex + 1, `.${flowName} 没有匹配的 .${expectedStart}`)
+          const expectedStarts = flowName === '默认' ? ['判断', '判断开始'] : ['如果']
+          if (!currentFlow || !expectedStarts.includes(currentFlow.name)) {
+            throwSourceError(lineIndex + 1, `.${flowName} 没有匹配的 .${expectedStarts[0]}`)
           }
           if (currentFlow.hasElse) {
             throwSourceError(lineIndex + 1, `.${currentFlow.name} 只能包含一个 .${flowName}`)
@@ -4686,9 +4709,9 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
 
         if (flowName === '如果结束' || flowName === '如果真结束' || flowName === '判断结束') {
           const currentFlow = flowStack[flowStack.length - 1]
-          const expectedStart = flowName === '判断结束' ? '判断' : flowName === '如果真结束' ? '如果真' : '如果'
-          if (!currentFlow || currentFlow.name !== expectedStart) {
-            throwSourceError(lineIndex + 1, `.${flowName} 没有匹配的 .${expectedStart}`)
+          const expectedStarts = flowName === '判断结束' ? ['判断', '判断开始'] : flowName === '如果真结束' ? ['如果真'] : ['如果']
+          if (!currentFlow || !expectedStarts.includes(currentFlow.name)) {
+            throwSourceError(lineIndex + 1, `.${flowName} 没有匹配的 .${expectedStarts[0]}`)
           }
           flowStack.pop()
           blockIndent = Math.max(1, blockIndent - 1)
@@ -5148,7 +5171,7 @@ function generateMainC(
 
     // 全局变量
     mainCode += 'static const wchar_t* g_szClassName = L"ycIDEWindowClass";\n'
-    mainCode += `static const wchar_t* g_szTitle = L"${winInfo.title}";\n`
+    mainCode += `static const wchar_t* g_szTitle = L"${escapeCString(winInfo.title)}";\n`
     mainCode += `static int g_nWidth = ${winInfo.width};\n`
     mainCode += `static int g_nHeight = ${winInfo.height};\n`
     mainCode += 'static HINSTANCE g_hInstance;\n'
@@ -5173,25 +5196,22 @@ function generateMainC(
     mainCode += '    return NULL;\n'
     mainCode += '}\n\n'
 
-    mainCode += 'static wchar_t* g_yc_text_buffers[4] = { NULL, NULL, NULL, NULL };\n'
-    mainCode += 'static int g_yc_text_buffer_sizes[4] = { 0, 0, 0, 0 };\n'
-    mainCode += 'static int g_yc_text_buffer_index = 0;\n\n'
-    mainCode += 'const wchar_t* yc_get_control_text(const wchar_t* ctrlName) {\n'
+    // 控件文本读取（编辑框1.内容 等）返回**独占的堆拷贝**(wchar_t*)，与其余文本取值函数
+    // （yc_wcsdup_text 系）一致，符合易语言文本型「赋值即拷贝」的值语义。
+    // 旧实现用 4 槽轮转缓冲并返回 const wchar_t*，两处毛病：①文本型变量是 wchar_t*，赋值
+    // `a = yc_get_control_text(...)` 触发「assigning to 'wchar_t*' from 'const wchar_t*'
+    // discards qualifiers」编译错误；②别名隐患——`a=编辑框.内容` 后再读 ≥4 个控件文本，a 所指
+    // 的槽被复用、内容被悄悄覆盖。改为每次 malloc 独立拷贝，一并解决。
+    mainCode += 'wchar_t* yc_get_control_text(const wchar_t* ctrlName) {\n'
     mainCode += '    HWND hCtrl = yc_get_control_handle_by_name(ctrlName);\n'
-    mainCode += '    if (!hCtrl) return L"";\n'
-    mainCode += '    int slot = g_yc_text_buffer_index++ % 4;\n'
-    mainCode += '    int len = GetWindowTextLengthW(hCtrl);\n'
+    mainCode += '    int len = hCtrl ? GetWindowTextLengthW(hCtrl) : 0;\n'
     mainCode += '    int need = len + 1;\n'
     mainCode += '    if (need < 1) need = 1;\n'
-    mainCode += '    if (g_yc_text_buffer_sizes[slot] < need) {\n'
-    mainCode += '        wchar_t* resized = (wchar_t*)realloc(g_yc_text_buffers[slot], sizeof(wchar_t) * (size_t)need);\n'
-    mainCode += '        if (!resized) return L"";\n'
-    mainCode += '        g_yc_text_buffers[slot] = resized;\n'
-    mainCode += '        g_yc_text_buffer_sizes[slot] = need;\n'
-    mainCode += '    }\n'
-    mainCode += '    g_yc_text_buffers[slot][0] = L\'\\0\';\n'
-    mainCode += '    GetWindowTextW(hCtrl, g_yc_text_buffers[slot], need);\n'
-    mainCode += '    return g_yc_text_buffers[slot];\n'
+    mainCode += '    wchar_t* buf = (wchar_t*)malloc(sizeof(wchar_t) * (size_t)need);\n'
+    mainCode += '    if (!buf) return NULL;\n'
+    mainCode += '    buf[0] = L\'\\0\';\n'
+    mainCode += '    if (hCtrl) GetWindowTextW(hCtrl, buf, need);\n'
+    mainCode += '    return buf;\n'
     mainCode += '}\n\n'
 
     mainCode += 'int yc_text_compare(const wchar_t* left, const wchar_t* right) {\n'
@@ -5312,7 +5332,7 @@ function generateMainC(
         || ctrl.type === 'Edit'
         || ctrl.type === 'TextBox'
       const text = isEditLike ? (ctrl.text || '') : (ctrl.text || ctrl.name)
-      mainCode += `    hCtrl = CreateWindowExW(${exStyle}, L"${className}", L"${text}",\n`
+      mainCode += `    hCtrl = CreateWindowExW(${exStyle}, L"${className}", L"${escapeCString(text)}",\n`
       mainCode += `        ${style},\n`
       mainCode += `        ${ctrl.x}, ${ctrl.y}, ${ctrl.width}, ${ctrl.height},\n`
       mainCode += `        hWndParent, (HMENU)${ctrlId++}, g_hInstance, NULL);\n`
@@ -5759,7 +5779,8 @@ function generateMainC(
       const content = editorContent || (existsSync(eycPath) ? readFileSync(eycPath, 'utf-8') : '')
       if (!content) continue
 
-      transpileProjectFile(f.fileName, content, [])
+      // 与窗口分支一致注入支持库常量，否则控制台项目用 #键代码_回车 等常量会报 undeclared identifier。
+      transpileProjectFile(f.fileName, content, libraryConstants)
     }
 
     mainCode += '/* 控制台程序入口点 */\n'
@@ -5767,7 +5788,7 @@ function generateMainC(
     mainCode += '    SetConsoleOutputCP(65001);\n'
     mainCode += '    SetConsoleCP(65001);\n'
     mainCode += `    printf("程序开始运行...\\n");\n`
-    mainCode += `    printf("项目: ${project.projectName}\\n");\n`
+    mainCode += `    printf("项目: ${escapeCString(project.projectName)}\\n");\n`
     mainCode += '    printf("\\n");\n'
 
     // 查找是否有 _启动子程序
@@ -5972,7 +5993,9 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
 
     const resourceEntries = collectProjectResourceEntries(project, editorFiles)
     const resourceStamps = resourceEntries
-      .map(entry => collectFileStamp(join(project.projectDir, entry.fileName)))
+      // 必须与实际加载一致地解析（优先 rc/ 子目录），否则 rc/ 下的资源修改
+      // 不会改变指纹，重编译静默复用旧产物（exe 里还是旧图片）。
+      .map(entry => collectFileStamp(resolveProjectResourcePath(project.projectDir, entry.fileName) ?? join(project.projectDir, entry.fileName)))
       .sort()
     const sourceStamps = [mainC, ...additionalCFiles].map(collectContentStamp).sort()
     const staticLibStamps = libsToLink
@@ -6286,6 +6309,10 @@ export function runExecutable(exePath: string): boolean {
       cwd: workDir,
       maxBuffer: 10 * 1024 * 1024,
       windowsHide: false,
+      // 必须 'buffer'：execFile 默认 encoding='utf8' 会对子进程 stdout/stderr 调用 setEncoding，
+      // 于是 'data' 事件回调收到的是字符串而非 Buffer，下面的 TextDecoder.decode(字符串) 会抛
+      // ERR_INVALID_ARG_TYPE 成为主进程未捕获异常、整个应用崩溃（如被运行程序退出时 libpng 往 stderr 写告警）。
+      encoding: 'buffer',
     })
 
     runningProcess = proc
@@ -6296,20 +6323,32 @@ export function runExecutable(exePath: string): boolean {
       sendMessage({ type: 'success', text: `程序已启动 (PID: ${proc.pid})` })
     })
 
-    proc.stdout?.on('data', (data: Buffer) => {
-      stdoutBuffer = emitBufferedOutputChunk(data.toString('utf-8'), stdoutBuffer, 'info')
+    // 流式解码：UTF-8 多字节字符可能被切在 chunk 边界，用 {stream:true} 的 TextDecoder
+    // 保留半个字符到下一 chunk，避免逐 chunk toString('utf-8') 产生的 � 乱码。
+    const stdoutDecoder = new TextDecoder('utf-8')
+    const stderrDecoder = new TextDecoder('utf-8')
+
+    // 防御：即便上游 encoding 变化导致 data 是字符串，也不再崩溃（TextDecoder.decode 只接受 Buffer/视图）。
+    const decodeChunk = (decoder: TextDecoder, data: Buffer | string): string =>
+      typeof data === 'string' ? data : decoder.decode(data, { stream: true })
+
+    proc.stdout?.on('data', (data: Buffer | string) => {
+      stdoutBuffer = emitBufferedOutputChunk(decodeChunk(stdoutDecoder, data), stdoutBuffer, 'info')
     })
 
-    proc.stderr?.on('data', (data: Buffer) => {
-      stderrBuffer = emitBufferedOutputChunk(data.toString('utf-8'), stderrBuffer, 'warning')
+    proc.stderr?.on('data', (data: Buffer | string) => {
+      stderrBuffer = emitBufferedOutputChunk(decodeChunk(stderrDecoder, data), stderrBuffer, 'warning')
     })
 
     proc.on('exit', (code) => {
+      flushBufferedOutputRemainder(stdoutBuffer, 'info')
+      flushBufferedOutputRemainder(stderrBuffer, 'warning')
+      // 身份校验：停止后立刻重新运行时，旧进程延迟到达的 exit 不得清空新进程的全局状态、
+      // 也不该冒出"程序已退出"误导用户（否则停止按钮失效、断点续跑对新进程恒返回 false）。
+      if (runningProcess !== proc) return
       runningProcess = null
       runningDebugCmdFile = null
       runningDebugResumeToken = 0
-      flushBufferedOutputRemainder(stdoutBuffer, 'info')
-      flushBufferedOutputRemainder(stderrBuffer, 'warning')
       sendMessage({ type: 'info', text: '' })
       if (code === 0) {
         sendMessage({ type: 'success', text: `程序已退出 (退出码: ${code})` })
@@ -6320,9 +6359,11 @@ export function runExecutable(exePath: string): boolean {
     })
 
     proc.on('error', (err) => {
-      runningProcess = null
-      runningDebugCmdFile = null
-      runningDebugResumeToken = 0
+      if (runningProcess === proc) {
+        runningProcess = null
+        runningDebugCmdFile = null
+        runningDebugResumeToken = 0
+      }
       const detailed = formatLaunchError(err)
       const blockedBySecuritySoftware = isLikelySecurityInterception(err)
       if (canFallbackToShellOpen(err)) {

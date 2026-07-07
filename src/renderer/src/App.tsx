@@ -1022,6 +1022,35 @@ function App(): React.JSX.Element {
     }
   }, [])
 
+  // 输出消息带上限 + rAF 批量刷新：用户程序循环打印上万行时，避免逐条触发整个 App 重渲染
+  // 与 O(n²) 数组拷贝、内存无界增长。高频编译/运行输出走 appendOutputMessage。
+  const OUTPUT_MSG_LIMIT = 5000
+  const outputBufferRef = useRef<OutputMessage[]>([])
+  const outputFlushRafRef = useRef<number | null>(null)
+  const flushOutputBuffer = useCallback(() => {
+    outputFlushRafRef.current = null
+    const buffered = outputBufferRef.current
+    if (buffered.length === 0) return
+    outputBufferRef.current = []
+    setOutputMessages(prev => {
+      const merged = prev.length + buffered.length > OUTPUT_MSG_LIMIT
+        ? [...prev, ...buffered].slice(-OUTPUT_MSG_LIMIT)
+        : [...prev, ...buffered]
+      return merged
+    })
+  }, [])
+  const appendOutputMessage = useCallback((msg: OutputMessage) => {
+    outputBufferRef.current.push(msg)
+    if (outputFlushRafRef.current === null) {
+      outputFlushRafRef.current = window.requestAnimationFrame(flushOutputBuffer)
+    }
+  }, [flushOutputBuffer])
+  const resetOutputMessages = useCallback(() => {
+    if (outputFlushRafRef.current !== null) { window.cancelAnimationFrame(outputFlushRafRef.current); outputFlushRafRef.current = null }
+    outputBufferRef.current = []
+    setOutputMessages([])
+  }, [])
+
   const syncDebugDisplayLine = useCallback((sourceLine: number) => {
     if (!sourceLine || sourceLine <= 0) {
       setDebugDisplayLine(null)
@@ -1078,11 +1107,11 @@ function App(): React.JSX.Element {
         }
         return
       }
-      setOutputMessages(prev => [...prev, msg])
+      appendOutputMessage(msg)
     }
-    window.api.on('compiler:output', handleOutput)
-    return () => { window.api.off('compiler:output') }
-  }, [joinPath, syncDebugDisplayLine])
+    const dispose = window.api.on('compiler:output', handleOutput)
+    return () => { dispose() }
+  }, [joinPath, syncDebugDisplayLine, appendOutputMessage])
 
   // 监听程序退出
   useEffect(() => {
@@ -1241,7 +1270,7 @@ function App(): React.JSX.Element {
     }
     setIsCompiling(true)
     editorRef.current?.save()
-    setOutputMessages([])
+    resetOutputMessages()
     setShowOutput(true)
     setForceOutputTab('compile')
     setDebugResumePending(false)
@@ -1266,7 +1295,7 @@ function App(): React.JSX.Element {
     }
     setIsCompiling(true)
     editorRef.current?.save()
-    setOutputMessages([])
+    resetOutputMessages()
     setShowOutput(true)
     setForceOutputTab('compile')
     const editorFiles = editorRef.current?.getEditorFiles()
@@ -2645,10 +2674,10 @@ function App(): React.JSX.Element {
   }, [extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, extractResourceNodes, joinPath])
 
   // 标签页变化时保存到项目目录，并重新检查设计时诊断
-  const handleOpenTabsChange = useCallback((tabs: EditorTab[]) => {
-    setOpenEditorTabs(tabs)
-    openTabsRef.current = tabs
-    commandCacheRef.current.clear()
+  // 项目树/未调用标记/会话落盘的重活（O(总源码量) 分词 + 全树重建 + IPC）。
+  // 从 handleOpenTabsChange 里剥离并防抖：连续输入时只在停顿后跑一次，读 openTabsRef 最新值。
+  const syncProjectMetaFromTabs = useCallback(() => {
+    const tabs = openTabsRef.current
     const dir = currentProjectDirRef.current
     if (dir) {
       const session: ProjectSessionState = {
@@ -2657,7 +2686,6 @@ function App(): React.JSX.Element {
       }
       window.api?.project?.saveOpenTabs(dir, session)
     }
-    checkDesignProblems(tabs)
 
     // 用标签页内存内容即时回写项目树声明节点，避免“未保存编辑”下项目树信息滞后。
     // 同时以内存内容覆盖源码缓存后重算"未调用子程序"标记（分词判定，O(总源码量)）。
@@ -2723,7 +2751,21 @@ function App(): React.JSX.Element {
         })
       })
     }
-  }, [checkDesignProblems, extractSubroutineNodes])
+  }, [extractSubroutineNodes])
+
+  const projectSyncTimerRef = useRef<number | null>(null)
+  const handleOpenTabsChange = useCallback((tabs: EditorTab[]) => {
+    // 每键只做轻量同步；重活（会话落盘/未调用扫描/项目树重建）防抖到停顿后一次。
+    setOpenEditorTabs(tabs)
+    openTabsRef.current = tabs
+    commandCacheRef.current.clear()
+    checkDesignProblems(tabs)
+    if (projectSyncTimerRef.current !== null) window.clearTimeout(projectSyncTimerRef.current)
+    projectSyncTimerRef.current = window.setTimeout(() => {
+      projectSyncTimerRef.current = null
+      syncProjectMetaFromTabs()
+    }, 300)
+  }, [checkDesignProblems, syncProjectMetaFromTabs])
 
   // 刷新项目树（窗口重命名后调用）
   const refreshProjectTree = useCallback(async () => {
@@ -3356,7 +3398,7 @@ function App(): React.JSX.Element {
           mergedBreakpoints[fileKey] = Array.from(current).sort((a, b) => a - b)
           setIsCompiling(true)
           editorRef.current?.save()
-          setOutputMessages([])
+          resetOutputMessages()
           setShowOutput(true)
           setForceOutputTab('compile')
           setDebugResumePending(false)
@@ -4238,7 +4280,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.3-beta.63（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.4-beta.5（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -4329,7 +4371,7 @@ function App(): React.JSX.Element {
       }
     }
 
-    window.api.on(channel, handleChunk)
+    const dispose = window.api.on(channel, handleChunk)
     try {
       const result = await window.api?.ai?.chatStream({ model: ideSettings.aiModel, messages }, requestId)
       if (aiCanceledChatRequestIdsRef.current.has(requestId)) {
@@ -4344,7 +4386,7 @@ function App(): React.JSX.Element {
     } finally {
       aiActiveChatRequestIdsRef.current.delete(requestId)
       aiCanceledChatRequestIdsRef.current.delete(requestId)
-      window.api.off(channel)
+      dispose()
     }
   }, [ideSettings.aiModel])
 
@@ -4473,7 +4515,7 @@ function App(): React.JSX.Element {
       }
     }
 
-    window.api.on(channel, handleChunk)
+    const dispose = window.api.on(channel, handleChunk)
     try {
       const result = await window.api?.ai?.proposeEditStream({
         model: ideSettings.aiModel,
@@ -4517,7 +4559,7 @@ function App(): React.JSX.Element {
     } finally {
       aiActiveEditRequestIdsRef.current.delete(requestId)
       aiCanceledEditRequestIdsRef.current.delete(requestId)
-      window.api.off(channel)
+      dispose()
     }
   }, [getTextTabByPath, ideSettings.aiModel, fileProblems, designProblems, aiIdeContext])
 

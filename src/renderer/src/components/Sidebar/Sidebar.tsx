@@ -1683,8 +1683,8 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
   useEffect(() => {
     loadWindowUnits()
     const handler = () => { loadWindowUnits(); onLibraryChange?.() }
-    window.api.on('library:loaded', handler)
-    return () => { window.api.off('library:loaded') }
+    const dispose = window.api.on('library:loaded', handler)
+    return () => { dispose() }
   }, [loadWindowUnits, onLibraryChange])
 
   // 加载项目中所有 .efw 的窗口名称（用于项目级窗口重名检查，控件只在窗口内检查）

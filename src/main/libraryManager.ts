@@ -520,14 +520,19 @@ class LibraryManager {
   }
 
   private getSavedLoadedNames(): string[] | null {
+    // 返回 null = 无有效配置，按默认（全部加载）处理；返回 [] = 用户确实全部卸载。
+    // 二者绝不能混淆：文件缺失/损坏/字段非数组一律 null，否则损坏的配置会静默卸载全部支持库、
+    // 所有项目命令报"未知命令"，且无任何指向配置文件的提示。
+    const cfgPath = this.getConfigPath()
+    if (!existsSync(cfgPath)) return null
     try {
-      const cfgPath = this.getConfigPath()
-      if (!existsSync(cfgPath)) return null
       const data = JSON.parse(readFileSync(cfgPath, 'utf-8')) as { loadedLibs?: unknown }
-      if (!Array.isArray(data.loadedLibs)) return []
+      if (!Array.isArray(data.loadedLibs)) return null
       return data.loadedLibs.filter((x): x is string => typeof x === 'string')
-    } catch {
-      return []
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn(`[libraryManager] 支持库加载状态文件损坏，已按默认全部加载：${cfgPath}（${message}）`)
+      return null
     }
   }
 

@@ -1,7 +1,16 @@
 {
   "name": "ycide",
-  "version": "0.0.3-beta.63",
+  "version": "0.0.4-beta.5",
   "description": "ycIDE - 易语言集成开发环境 (HTML版)",
+  "license": "MIT",
+  "author": "chungbinb",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chungbinb/ycIDE-electron.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -30,7 +39,7 @@
     "test:theme:gate": "node scripts/theme/run-theme-gate.mjs",
     "test:theme:full": "node scripts/theme/run-theme-full.mjs",
     "krnln:mapping:generate": "node scripts/krnln/generate-command-mapping.mjs",
-    "krnln:mapping:check": "node scripts/krnln/generate-command-mapping.mjs",
+    "krnln:mapping:check": "node scripts/krnln/generate-command-mapping.mjs --check",
     "libraries:package": "node scripts/package-libraries.mjs",
     "package:win": "electron-vite build && electron-builder --win",
     "package:win:zip": "npm run package:win && node scripts/package-win-zip.mjs",
@@ -47,7 +56,8 @@
     },
     "files": [
       "out/**/*",
-      "resources/**/*"
+      "resources/**/*",
+      "!out/**/*.map"
     ],
     "asarUnpack": [
       "out/main/compile-worker.js",
@@ -88,34 +98,33 @@
     }
   },
   "devDependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "@playwright/test": "^1.52.0",
     "@types/adm-zip": "^0.5.8",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "axe-core": "^4.10.3",
-    "electron": "^34.5.8",
-    "electron-builder": "^25.0.0",
-    "electron-vite": "^3.0.0",
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
     "eslint": "^10.4.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.6.0",
     "jsdom": "^29.1.1",
-    "typescript": "^5.7.0",
-    "typescript-eslint": "^8.61.0",
-    "vite": "^6.0.0",
-    "vitest": "^4.1.8"
-  },
-  "dependencies": {
-    "@monaco-editor/react": "^4.7.0",
-    "@tanstack/react-virtual": "^3.13.24",
-    "adm-zip": "^0.5.17",
-    "diff": "^9.0.0",
-    "iconv-lite": "^0.7.2",
     "monaco-editor": "^0.55.1",
     "pinyin-pro": "^3.28.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.61.0",
+    "vite": "^6.0.0",
+    "vitest": "^4.1.8",
     "zustand": "^5.0.14"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.17",
+    "diff": "^9.0.0",
+    "iconv-lite": "^0.7.2"
   }
 }

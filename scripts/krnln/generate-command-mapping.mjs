@@ -161,6 +161,26 @@ const summary = {
   duplicateNativeSymbols: dupSymbols
 }
 
+// --check：只校验已提交的映射是否与当前源码一致，不写任何文件（供 CI/预提交使用）。
+const CHECK = process.argv.includes('--check')
+if (CHECK) {
+  let existing = null
+  try {
+    existing = JSON.parse(readFileSync(outJsonPath, 'utf-8'))
+  } catch {
+    console.error(`✗ 映射校验失败：无法读取 ${outJsonPath}，请先运行 npm run krnln:mapping:generate`)
+    process.exit(1)
+  }
+  // 忽略 generatedAt 时间戳，仅比对有意义内容（mapping + summary）
+  const norm = (o) => JSON.stringify({ summary: o.summary, mapping: o.mapping })
+  if (norm(existing) !== norm({ summary, mapping })) {
+    console.error('✗ 映射校验失败：krnln 命令映射与源码不一致，请运行 npm run krnln:mapping:generate 并提交更新。')
+    process.exit(1)
+  }
+  console.log('✓ krnln 命令映射与源码一致。')
+  process.exit(0)
+}
+
 mkdirSync(dirname(outJsonPath), { recursive: true })
 mkdirSync(dirname(outReportPath), { recursive: true })
 

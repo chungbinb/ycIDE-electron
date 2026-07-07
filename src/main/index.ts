@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, dialog, ipcMain, shell, screen, type BrowserWindowConstructorOptions, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, Menu, dialog, ipcMain, shell, screen, safeStorage, type BrowserWindowConstructorOptions, type MenuItemConstructorOptions } from 'electron'
 import { join, dirname, basename, extname } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync, unlinkSync, rmSync } from 'fs'
 import { readFile as readFileAsync, writeFile as writeFileAsync, readdir as readdirAsync, stat as statAsync } from 'fs/promises'
@@ -6,7 +6,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import iconv from 'iconv-lite'
 import { libraryManager } from './libraryManager'
 import { runExecutable, stopExecutable, isRunning, continueDebugExecutable, setCompilerHost } from './compiler'
-import { compileViaWorker } from './compileWorkerClient'
+import { compileViaWorker, notifyWorkerLibrariesChanged } from './compileWorkerClient'
 import { setRuntimeEnv } from './runtimeEnv'
 import { buildAndRunAndroidProject, shouldRunAsAndroid } from './android-runner'
 import { normalizeRuntimePlatform } from '../shared/platform'
@@ -162,12 +162,35 @@ function pushTerminalOutputUnique(text: string): void {
   pushTerminalOutput(text)
 }
 
+// 跨 chunk 保留结尾不完整的 UTF-8 多字节序列，避免边界截断产生假 � 触发错误的 GBK 回退。
+let terminalDecodeLeftover = Buffer.alloc(0)
+
+// 返回 buf 结尾处"不完整 UTF-8 多字节序列"的字节数（0 表示结尾完整）。
+function incompleteUtf8TailLen(buf: Buffer): number {
+  let i = buf.length - 1
+  let cont = 0
+  while (i >= 0 && (buf[i] & 0xc0) === 0x80) { cont++; i-- } // 跳过 continuation 字节
+  if (i < 0) return cont > 0 ? cont : 0
+  const lead = buf[i]
+  let need = 0
+  if ((lead & 0x80) === 0) need = 0
+  else if ((lead & 0xe0) === 0xc0) need = 1
+  else if ((lead & 0xf0) === 0xe0) need = 2
+  else if ((lead & 0xf8) === 0xf0) need = 3
+  else return 0
+  return cont < need ? 1 + cont : 0 // 尾部字符不完整则保留 lead + 已到的 continuation
+}
+
 function decodeTerminalChunk(chunk: Buffer): string {
-  const utf8 = chunk.toString('utf-8')
-  // cmd.exe 在中文 Windows 下常见为 GBK/CP936，出现大量替换符时回退 GBK 解码。
+  const buf = terminalDecodeLeftover.length > 0 ? Buffer.concat([terminalDecodeLeftover, chunk]) : chunk
+  const tail = incompleteUtf8TailLen(buf)
+  const decodable = tail > 0 ? buf.subarray(0, buf.length - tail) : buf
+  terminalDecodeLeftover = tail > 0 ? Buffer.from(buf.subarray(buf.length - tail)) : Buffer.alloc(0)
+  const utf8 = decodable.toString('utf-8')
+  // 已剔除不完整尾部后仍含 �，才是真乱码：cmd.exe 在中文 Windows 常为 GBK/CP936，回退 GBK。
   if (utf8.includes('�')) {
     try {
-      return iconv.decode(chunk, 'gbk')
+      return iconv.decode(Buffer.from(decodable), 'gbk')
     } catch {
       return utf8
     }
@@ -209,6 +232,7 @@ function createTerminalProcess(): void {
     pushTerminalOutput(decodeTerminalChunk(chunk))
   })
   terminalProcess.on('close', (code, signal) => {
+    terminalDecodeLeftover = Buffer.alloc(0)
     pushTerminalOutput(`[terminal] 已退出 (code=${code ?? 'null'}, signal=${signal ?? 'null'})\n`)
     terminalProcess = null
     if (terminalRestartRequested) {
@@ -380,18 +404,62 @@ function writeMainWindowState(state: MainWindowState): void {
   writeFileSync(getMainWindowStatePath(), JSON.stringify(state, null, 2), 'utf-8')
 }
 
+// ===== AI API Key 落盘加密（Electron safeStorage / OS keyring） =====
+// 三处 key（aiDeepseekApiKey / aiGlmApiKey / aiCustomModels[].apiKey）此前明文存 ide-settings.json。
+// 以 'enc:v1:'+base64 前缀标识密文，与存量明文迁移共存；加解密只在主进程读写漏斗内完成，
+// renderer 始终只见明文。任何失败都优雅降级（返回明文/空串），绝不崩溃、绝不影响其它设置字段。
+const SECRET_ENC_PREFIX = 'enc:v1:'
+
+function encryptSecret(plain: string): string {
+  if (!plain) return ''
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return plain // Linux 无 keyring：回退明文
+    return SECRET_ENC_PREFIX + safeStorage.encryptString(plain).toString('base64')
+  } catch {
+    return plain // 加密异常也不丢 key
+  }
+}
+
+function decryptSecret(stored: unknown): string {
+  if (typeof stored !== 'string' || !stored) return ''
+  if (!stored.startsWith(SECRET_ENC_PREFIX)) return stored // 存量明文
+  try {
+    return safeStorage.decryptString(Buffer.from(stored.slice(SECRET_ENC_PREFIX.length), 'base64'))
+  } catch {
+    return '' // 换机/keyring 变化/密文损坏：降级为空，需重填
+  }
+}
+
 function readIDESettings(): IDESettings {
   const filePath = getIDESettingsPath()
   if (!existsSync(filePath)) return resolveIDESettings()
   try {
-    return resolveIDESettings(JSON.parse(readFileSync(filePath, 'utf-8')))
+    const raw = JSON.parse(readFileSync(filePath, 'utf-8')) as Partial<IDESettings>
+    if (raw && typeof raw === 'object') {
+      // 先解密三处 key（拿明文），再交 resolveIDESettings 做形状校验
+      raw.aiDeepseekApiKey = decryptSecret(raw.aiDeepseekApiKey)
+      raw.aiGlmApiKey = decryptSecret(raw.aiGlmApiKey)
+      if (Array.isArray(raw.aiCustomModels)) {
+        raw.aiCustomModels = raw.aiCustomModels.map(m =>
+          m && typeof m === 'object' ? { ...m, apiKey: decryptSecret((m as { apiKey?: unknown }).apiKey) } : m,
+        )
+      }
+    }
+    return resolveIDESettings(raw)
   } catch {
     return resolveIDESettings()
   }
 }
 
 function writeIDESettings(settings: IDESettings): void {
-  writeFileSync(getIDESettingsPath(), JSON.stringify(settings, null, 2), 'utf-8')
+  // 浅拷贝加密后落盘：绝不就地 mutate settings，否则 settings:save 回传给 renderer 的会是密文。
+  const onDisk: IDESettings = {
+    ...settings,
+    aiDeepseekApiKey: encryptSecret(settings.aiDeepseekApiKey),
+    aiGlmApiKey: encryptSecret(settings.aiGlmApiKey),
+    aiCustomModels: settings.aiCustomModels.map(m => ({ ...m, apiKey: encryptSecret(m.apiKey) })),
+  }
+  writeFileSync(getIDESettingsPath(), JSON.stringify(onDisk, null, 2), 'utf-8')
 }
 
 function listThemeIds(): ThemeId[] {
@@ -1096,6 +1164,18 @@ app.whenReady().then(() => {
     app.setAppUserModelId('com.ycide.app')
   }
 
+  // 存量明文 API Key 一次性升级为密文（仅在真检测到明文时重写，避免每次启动 churn）。
+  try {
+    if (safeStorage.isEncryptionAvailable() && existsSync(getIDESettingsPath())) {
+      const rawText = readFileSync(getIDESettingsPath(), 'utf-8')
+      const raw = JSON.parse(rawText) as Partial<IDESettings>
+      const hasPlaintextSecret = [raw?.aiDeepseekApiKey, raw?.aiGlmApiKey,
+        ...(Array.isArray(raw?.aiCustomModels) ? raw!.aiCustomModels.map(m => (m as { apiKey?: unknown })?.apiKey) : [])]
+        .some(v => typeof v === 'string' && v && !v.startsWith(SECRET_ENC_PREFIX))
+      if (hasPlaintextSecret) writeIDESettings(readIDESettings()) // 读得明文 → 写回密文
+    }
+  } catch { /* 迁移失败不阻断启动 */ }
+
   // 注入运行环境与编译器宿主：必须在任何 libraryManager / compiler 调用之前。
   // 这样这些模块不再直接依赖 electron，可在 worker_threads 中复用（worker 端会注入各自的实现）。
   setRuntimeEnv({
@@ -1625,6 +1705,11 @@ app.whenReady().then(() => {
   // 窗口重命名：重命名文件、更新 .epp、更新所有 .eyc 内容引用
   ipcMain.handle('project:renameWindow', (_event, projectDir: string, oldName: string, newName: string, openEycPaths: string[]) => {
     projectDir = validatePath(projectDir)
+    for (const name of [oldName, newName]) {
+      if (name.includes('/') || name.includes('\\') || name.includes('..')) {
+        throw new Error('无效的窗口名称。')
+      }
+    }
     const oldEfw = join(projectDir, oldName + '.efw')
     const newEfw = join(projectDir, newName + '.efw')
     const oldEyc = join(projectDir, oldName + '.eyc')
@@ -1689,6 +1774,11 @@ app.whenReady().then(() => {
   // 类模块重命名：重命名 .ecc、更新 .epp、更新项目源码中的类名引用
   ipcMain.handle('project:renameClassModule', (_event, projectDir: string, oldFileName: string, newFileName: string, oldClassName: string, newClassName: string, openSourcePaths: string[]) => {
     projectDir = validatePath(projectDir)
+    for (const name of [oldFileName, newFileName]) {
+      if (name.includes('/') || name.includes('\\') || name.includes('..')) {
+        throw new Error('无效的文件名。')
+      }
+    }
     const oldClassPath = join(projectDir, oldFileName)
     const newClassPath = join(projectDir, newFileName)
     const openSet = new Set(openSourcePaths.map(p => p.toLowerCase()))
@@ -1761,6 +1851,10 @@ app.whenReady().then(() => {
 
   // 从项目移除文件：删除 .epp 中的 File 行，并把文件移入回收站（失败则直接删除）
   ipcMain.handle('project:removeFile', async (_event, projectDir: string, fileName: string) => {
+    projectDir = validatePath(projectDir)
+    if (fileName.includes('/') || fileName.includes('\\') || fileName.includes('..')) {
+      throw new Error('无效的文件名。')
+    }
     const filePath = join(projectDir, fileName)
     const eppFiles = readdirSync(projectDir).filter(f => f.endsWith('.epp'))
     if (eppFiles.length > 0) {
@@ -2042,6 +2136,12 @@ app.whenReady().then(() => {
     }
   })
 
+  // 支持库变更后统一广播：通知渲染进程刷新，并让常驻编译 worker 重扫（避免库快照冻结）。
+  const broadcastLibrariesChanged = (): void => {
+    BrowserWindow.getAllWindows().forEach(w => w.webContents.send('library:loaded'))
+    notifyWorkerLibrariesChanged()
+  }
+
   // 支持库 IPC
   ipcMain.handle('library:scan', (_event, folder?: string) => {
     return libraryManager.scan(folder)
@@ -2049,25 +2149,25 @@ app.whenReady().then(() => {
   ipcMain.handle('library:load', async (_event, name: string) => {
     const result = libraryManager.load(name)
     if (result.success) {
-      BrowserWindow.getAllWindows().forEach(w => w.webContents.send('library:loaded'))
+      broadcastLibrariesChanged()
     }
     return result
   })
   ipcMain.handle('library:unload', (_event, name: string) => {
     const result = libraryManager.unload(name)
     if (result.success) {
-      BrowserWindow.getAllWindows().forEach(w => w.webContents.send('library:loaded'))
+      broadcastLibrariesChanged()
     }
     return result
   })
   ipcMain.handle('library:loadAll', async () => {
     const result = libraryManager.loadAll()
-    BrowserWindow.getAllWindows().forEach(w => w.webContents.send('library:loaded'))
+    broadcastLibrariesChanged()
     return result
   })
   ipcMain.handle('library:applySelection', async (_event, selectedNames: string[]) => {
     const result = libraryManager.applySelection(selectedNames)
-    BrowserWindow.getAllWindows().forEach(w => w.webContents.send('library:loaded'))
+    broadcastLibrariesChanged()
     return result
   })
   ipcMain.handle('library:getList', () => {
@@ -2085,14 +2185,14 @@ app.whenReady().then(() => {
     const settings = readIDESettings()
     const result = await libraryManager.installFromRemote(name, settings.libraryStoreIndexUrl)
     if (result.ok) {
-      BrowserWindow.getAllWindows().forEach(w => w.webContents.send('library:loaded'))
+      broadcastLibrariesChanged()
     }
     return result
   })
   ipcMain.handle('library:removeInstalled', (_event, name: string) => {
     const result = libraryManager.removeInstalled(name)
     if (result.ok) {
-      BrowserWindow.getAllWindows().forEach(w => w.webContents.send('library:loaded'))
+      broadcastLibrariesChanged()
     }
     return result
   })

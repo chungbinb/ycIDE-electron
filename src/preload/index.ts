@@ -240,9 +240,12 @@ const api = {
     updateRecentOpened: (items: RecentOpenedItem[]) => ipcRenderer.send('menu:updateRecentOpened', items),
     updateThemes: (state: ThemeMenuState) => ipcRenderer.send('menu:updateThemes', state),
   },
-  // 通用 IPC
-  on: (channel: string, callback: (...args: unknown[]) => void) => {
-    ipcRenderer.on(channel, (_event, ...args) => callback(...args))
+  // 通用 IPC。on 返回精确取消订阅的 disposer——多个组件订阅同一频道时（如 library:loaded），
+  // 必须用返回的 disposer 只摘自己的监听；用 off(channel) 会 removeAllListeners 误杀其他订阅者。
+  on: (channel: string, callback: (...args: unknown[]) => void): (() => void) => {
+    const listener = (_event: unknown, ...args: unknown[]): void => callback(...args)
+    ipcRenderer.on(channel, listener)
+    return () => { ipcRenderer.removeListener(channel, listener) }
   },
   off: (channel: string) => {
     ipcRenderer.removeAllListeners(channel)

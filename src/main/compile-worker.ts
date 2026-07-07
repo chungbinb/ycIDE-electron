@@ -6,6 +6,7 @@
 import { parentPort, workerData } from 'worker_threads'
 import { setRuntimeEnv, type RuntimeEnv } from './runtimeEnv'
 import { setCompilerHost, compileProject, type CompileOptions, type CompileResult, type CompileMessage } from './compiler'
+import { libraryManager } from './libraryManager'
 
 if (!parentPort) {
   throw new Error('compile-worker 必须在 worker_threads 环境中运行')
@@ -37,19 +38,43 @@ interface CompileRequestMessage {
   editorFiles?: Record<string, string>
 }
 
+interface ReloadLibrariesMessage {
+  kind: 'reloadLibraries'
+}
+
+type WorkerMessage = CompileRequestMessage | ReloadLibrariesMessage
+
 const FAILED_RESULT: CompileResult = {
   success: false, outputFile: '', errorCount: 1, warningCount: 0, elapsedMs: 0,
 }
 
-port.on('message', (message: CompileRequestMessage) => {
-  if (!message || message.kind !== 'compile') return
-  const editorFiles = message.editorFiles ? new Map(Object.entries(message.editorFiles)) : undefined
-  compileProject(message.options, editorFiles)
-    .then((result) => {
+// compileProject 内部有多处 await（会交错），且共享模块级状态（诊断日志/项目类型缓存）
+// 并读写同一 temp/main.cpp 与输出 exe。因此编译请求必须串行排队，不得并发。
+let compileChain: Promise<void> = Promise.resolve()
+
+function runCompile(message: CompileRequestMessage): void {
+  compileChain = compileChain.then(async () => {
+    const editorFiles = message.editorFiles ? new Map(Object.entries(message.editorFiles)) : undefined
+    try {
+      const result = await compileProject(message.options, editorFiles)
       port.postMessage({ kind: 'compileResult', reqId: message.reqId, result })
-    })
-    .catch((err) => {
+    } catch (err) {
       port.postMessage({ kind: 'output', msg: { type: 'error', text: `编译线程异常: ${err instanceof Error ? err.message : String(err)}` } })
       port.postMessage({ kind: 'compileResult', reqId: message.reqId, result: FAILED_RESULT })
+    }
+  })
+}
+
+port.on('message', (message: WorkerMessage) => {
+  if (!message) return
+  // 主进程侧支持库变更：重扫，让本 worker 的库快照与主进程一致（重读 userData 里的加载状态）。
+  // 排在编译队列尾部执行，避免与正在进行的编译争用库状态。
+  if (message.kind === 'reloadLibraries') {
+    compileChain = compileChain.then(() => {
+      try { libraryManager.scan() } catch { /* 下次编译仍会自行处理 */ }
     })
+    return
+  }
+  if (message.kind !== 'compile') return
+  runCompile(message)
 })
