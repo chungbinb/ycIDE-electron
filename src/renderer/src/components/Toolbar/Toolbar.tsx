@@ -2,7 +2,6 @@ import { useRef, memo } from 'react'
 import './Toolbar.css'
 import Icon from '../Icon/Icon'
 import '../Icon/Icon.css'
-import type { AlignAction } from '../Editor/VisualDesigner'
 import { getPrimaryModifierLabel, getRedoShortcutLabel, type RuntimePlatform } from '../../utils/shortcuts'
 
 import type { IconColorMode } from '../Icon/Icon'
@@ -47,8 +46,6 @@ function ToolbarButton({ onAction, onMouseDown, disabled, children, ...rest }: T
 
 interface ToolbarProps {
   runtimePlatform?: RuntimePlatform
-  hasControlSelected?: boolean
-  onAlign?: (action: AlignAction) => void
   onCompileRun?: () => void
   onStop?: () => void
   onDebugStepOver?: () => void
@@ -78,8 +75,6 @@ function getToolbarIconColorMode(preserve: boolean): IconColorMode {
 
 function Toolbar({
   runtimePlatform = 'windows',
-  hasControlSelected = false,
-  onAlign,
   onCompileRun,
   onStop,
   onDebugStepOver,
@@ -221,37 +216,6 @@ function Toolbar({
         </ToolbarButton>
       </div>
 
-      <div className="toolbar-separator" aria-hidden="true" />
-
-      <div className="toolbar-group">
-        <ToolbarButton className="toolbar-btn" aria-label="左对齐" title="左对齐" disabled={!hasControlSelected} onAction={() => onAlign?.('align-left')}>
-          <ToolbarIcon name="align-left" colorMode={iconMode} />
-        </ToolbarButton>
-        <ToolbarButton className="toolbar-btn" aria-label="右对齐" title="右对齐" disabled={!hasControlSelected} onAction={() => onAlign?.('align-right')}>
-          <ToolbarIcon name="align-right" colorMode={iconMode} />
-        </ToolbarButton>
-        <ToolbarButton className="toolbar-btn" aria-label="顶端对齐" title="顶端对齐" disabled={!hasControlSelected} onAction={() => onAlign?.('align-top')}>
-          <ToolbarIcon name="align-top" colorMode={iconMode} />
-        </ToolbarButton>
-        <ToolbarButton className="toolbar-btn" aria-label="底端对齐" title="底端对齐" disabled={!hasControlSelected} onAction={() => onAlign?.('align-bottom')}>
-          <ToolbarIcon name="align-bottom" colorMode={iconMode} />
-        </ToolbarButton>
-        <ToolbarButton className="toolbar-btn" aria-label="水平居中" title="水平居中" disabled={!hasControlSelected} onAction={() => onAlign?.('center-h')}>
-          <ToolbarIcon name="center-h" colorMode={iconMode} />
-        </ToolbarButton>
-        <ToolbarButton className="toolbar-btn" aria-label="垂直居中" title="垂直居中" disabled={!hasControlSelected} onAction={() => onAlign?.('center-v')}>
-          <ToolbarIcon name="center-v" colorMode={iconMode} />
-        </ToolbarButton>
-        <ToolbarButton className="toolbar-btn" aria-label="相同宽度" title="相同宽度" disabled={!hasControlSelected} onAction={() => onAlign?.('same-width')}>
-          <ToolbarIcon name="same-width" colorMode={iconMode} />
-        </ToolbarButton>
-        <ToolbarButton className="toolbar-btn" aria-label="相同高度" title="相同高度" disabled={!hasControlSelected} onAction={() => onAlign?.('same-height')}>
-          <ToolbarIcon name="same-height" colorMode={iconMode} />
-        </ToolbarButton>
-        <ToolbarButton className="toolbar-btn" aria-label="相同大小" title="相同大小" disabled={!hasControlSelected} onAction={() => onAlign?.('same-size')}>
-          <ToolbarIcon name="same-size" colorMode={iconMode} />
-        </ToolbarButton>
-      </div>
     </div>
   )
 }

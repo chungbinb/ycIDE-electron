@@ -16,7 +16,7 @@ import ThemeSettingsDialog from './components/ThemeSettingsDialog/ThemeSettingsD
 import ThemeManager from './components/ThemeManager/ThemeManager'
 import SettingsDialog from './components/SettingsDialog/SettingsDialog'
 import AIAssistantPanel from './components/AIAssistantPanel/AIAssistantPanel'
-import type { SelectionTarget, AlignAction, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
+import type { SelectionTarget, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
 import { mountIdeActionLogger } from './utils/ideActionLogger'
@@ -780,8 +780,6 @@ function App(): React.JSX.Element {
   const [selection, setSelection] = useState<SelectionTarget>(null)
   const sidebarTab = useUiLayoutStore(s => s.sidebarTab)
   const setSidebarTab = useUiLayoutStore(s => s.setSidebarTab)
-  const [alignAction, setAlignAction] = useState<AlignAction>(null)
-  const [multiSelectCount, setMultiSelectCount] = useState(0)
   const [fileEncodingByPath, setFileEncodingByPath] = useState<Record<string, string>>({})
 
   const [openProjectFiles, setOpenProjectFiles] = useState<EditorTab[]>()
@@ -1303,6 +1301,22 @@ function App(): React.JSX.Element {
     setIsCompiling(false)
     setForceOutputTab(null)
   }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, fileProblems, designProblems])
+
+  // 窗口预览：编译运行【当前窗体】作为启动窗口，但跳过所有源代码转译（只出纯 UI 窗口，
+  // 事件走 WEAK 空实现）。因不编译源代码，故不受问题面板(代码/设计错误)阻断。
+  const handlePreviewWindow = useCallback(async (efwFileName: string) => {
+    if (!isProjectWorkspace || !currentProjectDir || isCompiling) return
+    setIsCompiling(true)
+    editorRef.current?.save()
+    resetOutputMessages()
+    setShowOutput(true)
+    setForceOutputTab('compile')
+    const editorFiles = editorRef.current?.getEditorFiles()
+    const result = await window.api.compiler.run(currentProjectDir, editorFiles, targetArch, { previewWindow: efwFileName })
+    setIsCompiling(false)
+    setForceOutputTab(null)
+    if (result?.success && targetPlatform !== 'android') setIsRunning(true)
+  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, targetPlatform])
 
   // 停止运行
   const handleStop = useCallback(() => {
@@ -2258,7 +2272,6 @@ function App(): React.JSX.Element {
     })()
   }, [applyTheme, handleThemeWarning])
 
-  const handleAlignDone = useCallback(() => setAlignAction(null), [])
 
   useEffect(() => {
     if (!showThemeManager) {
@@ -2883,6 +2896,7 @@ function App(): React.JSX.Element {
         height: efwData.height || 384,
         sourceFile: efwData.sourceFile,
         properties: efwData.properties || undefined,
+        menu: Array.isArray(efwData.menu) ? efwData.menu : undefined,
         controls: (efwData.controls || []).map((c: any) => ({
           id: c.id, type: c.type, name: c.name,
           left: c.x ?? c.left ?? 0, top: c.y ?? c.top ?? 0,
@@ -3352,6 +3366,9 @@ function App(): React.JSX.Element {
       case 'edit:find':
       case 'edit:replace':
         editorRef.current?.editorAction(action.split(':')[1])
+        break
+      case 'nav:back':
+        editorRef.current?.editorAction('navBack')
         break
       case 'build:run':
         handleCompileRun()
@@ -4115,6 +4132,7 @@ function App(): React.JSX.Element {
       // 编辑菜单
       else if (ctrl && !shift && code === 'KeyZ') action = 'edit:undo'
       else if (isRedoShortcut(e, runtimePlatform)) action = 'edit:redo'
+      else if (ctrl && !shift && code === 'KeyJ') action = 'nav:back'  // 跳回先前位置
       else if (ctrl && !shift && code === 'KeyX') action = 'edit:cut'
       else if (ctrl && !shift && code === 'KeyC') action = 'edit:copy'
       else if (ctrl && !shift && code === 'KeyV') action = 'edit:paste'
@@ -4280,7 +4298,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.4-beta.5（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.4-beta.6（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -5272,8 +5290,6 @@ function App(): React.JSX.Element {
         canCompileRun={canCompileRunCurrentTab}
         runtimePlatform={runtimePlatform}
         preserveOriginalIconColors={themeIconConfig.preserveToolbarIconOriginalColors}
-        hasControlSelected={multiSelectCount >= 2}
-        onAlign={setAlignAction}
         onCompileRun={handleCompileRun}
         onStop={handleStop}
         onDebugStepOver={handleDebugStepOver}
@@ -5387,10 +5403,8 @@ function App(): React.JSX.Element {
                   ref={editorRef}
                   onSelectControl={setSelection}
                   onSidebarTab={setSidebarTab}
+                  onPreviewWindow={handlePreviewWindow}
                   selection={selection}
-                  alignAction={alignAction}
-                  onAlignDone={handleAlignDone}
-                  onMultiSelectChange={setMultiSelectCount}
                   openProjectFiles={openProjectFiles}
                   onOpenTabsChange={handleOpenTabsChange}
                   onActiveTabChange={setActiveFileId}

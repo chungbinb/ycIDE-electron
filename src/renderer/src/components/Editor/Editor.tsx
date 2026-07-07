@@ -4,7 +4,7 @@ import MonacoEditor, { OnMount, OnChange, type Monaco } from '@monaco-editor/rea
 import type { editor } from 'monaco-editor'
 import EycTableEditor, { type EycTableEditorHandle, type FileProblem } from './EycTableEditor'
 import { useEditorDiagnosticsProblems } from './editorDiagnostics'
-import VisualDesigner, { type DesignForm, type DesignControl, type SelectionTarget, type LibWindowUnit, type LibUnitEvent, type AlignAction } from './VisualDesigner'
+import VisualDesigner, { type DesignForm, type DesignControl, type SelectionTarget, type LibWindowUnit, type LibUnitEvent } from './VisualDesigner'
 import { eycToInternalFormat, eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
 import { parseLines } from './eycBlocks'
 import { buildMultiLinePasteResult } from './editorPasteUtils'
@@ -412,7 +412,7 @@ class EycEditorErrorBoundary extends Component<EycEditorErrorBoundaryProps, EycE
   }
 }
 
-const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; alignAction?: AlignAction; onAlignDone?: () => void; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }>; currentTheme?: string; themeTokenValues?: Record<string, string>; editorFontFamily?: string; editorFontSize?: number; editorLineHeight?: number; editorFreezeSubTableHeader?: boolean; editorShowMinimapPreview?: boolean; editorShowVarSummaryPanel?: boolean; targetPlatform?: string; readFileForExternalCheck?: (filePath: string) => Promise<string | null>; resolveFileEncoding?: (filePath: string) => string | undefined }>(function Editor({ onSelectControl, onSidebarTab, selection, alignAction, onAlignDone, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [], currentTheme = '', themeTokenValues = {}, editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, editorFreezeSubTableHeader = false, editorShowMinimapPreview = true, editorShowVarSummaryPanel = true, targetPlatform = 'windows', readFileForExternalCheck, resolveFileEncoding }, ref) {
+const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTarget) => void; onSidebarTab?: (tab: 'project' | 'library' | 'property') => void; selection?: SelectionTarget; onMultiSelectChange?: (count: number) => void; openProjectFiles?: EditorTab[]; onOpenTabsChange?: (tabs: EditorTab[]) => void; onActiveTabChange?: (tabId: string | null) => void; onCommandClick?: (commandName: string, paramIndex?: number) => void; onCommandClear?: () => void; onProblemsChange?: (problems: FileProblem[]) => void; onCursorChange?: (line: number, column: number, sourceLine?: number) => void; onDocTypeChange?: (docType: string) => void; projectDir?: string; onProjectTreeRefresh?: () => void; breakpointsByFile?: Record<string, number[]>; debugLocation?: { file: string; line: number } | null; debugVariables?: Array<{ name: string; type: string; value: string }>; currentTheme?: string; themeTokenValues?: Record<string, string>; editorFontFamily?: string; editorFontSize?: number; editorLineHeight?: number; editorFreezeSubTableHeader?: boolean; editorShowMinimapPreview?: boolean; editorShowVarSummaryPanel?: boolean; targetPlatform?: string; readFileForExternalCheck?: (filePath: string) => Promise<string | null>; resolveFileEncoding?: (filePath: string) => string | undefined; onPreviewWindow?: (efwFileName: string) => void }>(function Editor({ onSelectControl, onSidebarTab, selection, onMultiSelectChange, openProjectFiles, onOpenTabsChange, onActiveTabChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onDocTypeChange, projectDir, onProjectTreeRefresh, breakpointsByFile = {}, debugLocation = null, debugVariables = [], currentTheme = '', themeTokenValues = {}, editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, editorFreezeSubTableHeader = false, editorShowMinimapPreview = true, editorShowVarSummaryPanel = true, targetPlatform = 'windows', readFileForExternalCheck, resolveFileEncoding, onPreviewWindow }, ref) {
   const [tabs, setTabs] = useState<EditorTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   // 防抖版 tabs：项目元数据收集（全局变量/常量/数据类型/DLL命令/类）依赖它而非 tabs，
@@ -458,6 +458,133 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const pendingNavigateRef = useRef<PendingSubNavigation | null>(null)
   const tabsRef = useRef<EditorTab[]>([])
   const activeTabIdRef = useRef<string | null>(null)
+
+  // ===== 全局撤销/重做：跨「代码表格编辑器」与「可视化设计器」，按动作时间顺序记录 =====
+  // 每条记录 = 某个标签页的一次可撤销改动（content=代码文本 / formData=设计器窗体）。
+  // 两个编辑器的 onChange 都写进同一个栈；撤销时回退对应标签页内容并自动切到该标签页，
+  // 于是「先撤设计器移动控件、再撤代码修改」按真实时间顺序发生。
+  type GlobalUndoKind = 'content' | 'formData'
+  // 普通快照条目：回退某标签页的 content(代码文本) / formData(设计器窗体)
+  interface GlobalUndoSnapshotEntry { kind: GlobalUndoKind; tabId: string; before: string | DesignForm; after: string | DesignForm }
+  // 改名条目：窗口/控件改名牵连磁盘文件重命名，撤销=反向改名（复用 updateFormProperty 的完整改名机制）
+  interface GlobalUndoRenameEntry { kind: 'rename'; targetKind: 'form' | 'control'; controlId: string | null; formName: string; oldName: string; newName: string }
+  type GlobalUndoEntry = GlobalUndoSnapshotEntry | GlobalUndoRenameEntry
+  const undoStackRef = useRef<GlobalUndoEntry[]>([])
+  const redoStackRef = useRef<GlobalUndoEntry[]>([])
+  const undoLastRef = useRef<{ tabId: string; kind: GlobalUndoKind; time: number } | null>(null)
+  // 撤销/重做把旧值回灌给子编辑器时，子编辑器可能再次触发 onChange（回声），用它跳过一次以免污染栈
+  const undoEchoRef = useRef<{ tabId: string; kind: GlobalUndoKind; value: string | DesignForm } | null>(null)
+  // 撤销/重做改名时会反向调用 updateFormProperty，用它抑制那次调用再产生新的撤销记录
+  const isApplyingUndoRef = useRef(false)
+  // 打破声明顺序环：applyRename 需调用 updateFormProperty，但后者定义在后面，用 ref 中转
+  const updateFormPropertyRef = useRef<((targetKind: 'form' | 'control', controlId: string | null, propName: string, value: string | number | boolean, forTabId?: string) => void) | null>(null)
+  // 同理：命令式 editorAction('navBack')(供 App 全局 Ctrl+J)需要 navigateBack，但后者定义在后面
+  const navigateBackRef = useRef<(() => void) | null>(null)
+
+  const recordUndo = useCallback((tabId: string, kind: GlobalUndoKind, before: string | DesignForm, after: string | DesignForm) => {
+    if (isApplyingUndoRef.current) return
+    const eq = (a: string | DesignForm, b: string | DesignForm): boolean =>
+      (typeof a === 'string' || typeof b === 'string') ? a === b : JSON.stringify(a) === JSON.stringify(b)
+    const echo = undoEchoRef.current
+    if (echo && echo.tabId === tabId && echo.kind === kind && eq(echo.value, after)) {
+      undoEchoRef.current = null
+      return
+    }
+    undoEchoRef.current = null
+    if (eq(before, after)) return
+    const now = Date.now()
+    const stack = undoStackRef.current
+    const last = stack[stack.length - 1]
+    const lastMeta = undoLastRef.current
+    // 同一标签页、同类型、且 600ms 内的连续改动（拖动控件、连续输入）合并为一条撤销
+    if (last && last.kind !== 'rename' && lastMeta && last.tabId === tabId && last.kind === kind && (now - lastMeta.time) < 600) {
+      last.after = after
+      lastMeta.time = now
+    } else {
+      stack.push({ kind, tabId, before, after })
+      undoLastRef.current = { tabId, kind, time: now }
+      if (stack.length > 300) stack.shift()
+    }
+    redoStackRef.current = []
+  }, [])
+
+  const recordRename = useCallback((entry: Omit<GlobalUndoRenameEntry, 'kind'>) => {
+    if (isApplyingUndoRef.current) return
+    const stack = undoStackRef.current
+    stack.push({ kind: 'rename', ...entry })
+    if (stack.length > 300) stack.shift()
+    undoLastRef.current = null
+    redoStackRef.current = []
+  }, [])
+
+  const applyUndoEntry = useCallback((entry: GlobalUndoSnapshotEntry, target: 'before' | 'after') => {
+    const value = target === 'before' ? entry.before : entry.after
+    undoEchoRef.current = { tabId: entry.tabId, kind: entry.kind, value }
+    setActiveTabId(entry.tabId)
+    setTabs(prev => {
+      const next = prev.map(t => {
+        if (t.id !== entry.tabId) return t
+        return entry.kind === 'content'
+          ? { ...t, value: value as string, aiModified: undefined }
+          : { ...t, formData: value as DesignForm, aiModified: undefined }
+      })
+      onOpenTabsChange?.(next)
+      return next
+    })
+  }, [onOpenTabsChange])
+
+  // 改名撤销/重做：反向再改一次名（undo→改回旧名，redo→改成新名）。复用 updateFormProperty
+  // 的完整改名机制（同步更新标签内容/路径 + 异步磁盘文件重命名 + .epp + 项目树），
+  // 因 renameWindow 是对称的（交换新旧名即可完全反向）。isApplyingUndoRef 抑制其再记录撤销。
+  const applyRename = useCallback((entry: GlobalUndoRenameEntry, direction: 'undo' | 'redo') => {
+    const targetName = direction === 'undo' ? entry.oldName : entry.newName
+    // 定位承载该窗体的 .efw 标签页：改窗口名时窗口名会变，按当前应有的名字找；
+    // 改控件名时窗口名不变，按 formName 找。
+    const expectedFormName = entry.targetKind === 'form'
+      ? (direction === 'undo' ? entry.newName : entry.oldName)
+      : entry.formName
+    const efwTab = tabsRef.current.find(t => t.language === 'efw' && t.formData?.name === expectedFormName)
+    if (!efwTab) return
+    setActiveTabId(efwTab.id) // 切到该窗体标签页，让改名回退可见（改窗口名时 updateFormProperty 内部还会再切到新路径）
+    isApplyingUndoRef.current = true
+    try {
+      updateFormPropertyRef.current?.(entry.targetKind, entry.controlId, '__name__', targetName, efwTab.id)
+    } finally {
+      isApplyingUndoRef.current = false
+    }
+  }, [])
+
+  const globalUndo = useCallback(() => {
+    const stack = undoStackRef.current
+    let entry: GlobalUndoEntry | undefined
+    while (stack.length > 0) {
+      const e = stack.pop()!
+      if (e.kind === 'rename') { entry = e; break }
+      if (tabsRef.current.some(t => t.id === e.tabId)) { entry = e; break }
+      // 该标签页已关闭：丢弃这条撤销记录，继续找上一条
+    }
+    if (!entry) return
+    redoStackRef.current.push(entry)
+    undoLastRef.current = null
+    if (entry.kind === 'rename') applyRename(entry, 'undo')
+    else applyUndoEntry(entry, 'before')
+  }, [applyUndoEntry, applyRename])
+
+  const globalRedo = useCallback(() => {
+    const stack = redoStackRef.current
+    let entry: GlobalUndoEntry | undefined
+    while (stack.length > 0) {
+      const e = stack.pop()!
+      if (e.kind === 'rename') { entry = e; break }
+      if (tabsRef.current.some(t => t.id === e.tabId)) { entry = e; break }
+    }
+    if (!entry) return
+    undoStackRef.current.push(entry)
+    undoLastRef.current = null
+    if (entry.kind === 'rename') applyRename(entry, 'redo')
+    else applyUndoEntry(entry, 'after')
+  }, [applyUndoEntry, applyRename])
+
   const monacoThemeId = currentTheme === '默认浅色' ? 'ycide-light' : 'ycide-dark'
   const monacoEditorOptions = useMemo(
     () => createMonacoEditorOptions(editorFontFamily, editorFontSize, editorLineHeight),
@@ -510,6 +637,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         height: data.height || 384,
         sourceFile: data.sourceFile,
         properties: data.properties || undefined,
+        menu: Array.isArray(data.menu) ? data.menu : undefined,
         controls: (Array.isArray(data.controls) ? data.controls : []).map((c: any) => ({
           id: c.id,
           type: c.type,
@@ -916,9 +1044,22 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   }, [activeTabId, applyClassRenameToContent, onOpenTabsChange, onProjectTreeRefresh, projectDir])
 
   // 属性面板修改属性值 → 更新 formData 和 selection
-  const updateFormProperty = useCallback((targetKind: 'form' | 'control', controlId: string | null, propName: string, value: string | number | boolean) => {
+  const updateFormProperty = useCallback((targetKind: 'form' | 'control', controlId: string | null, propName: string, value: string | number | boolean, forTabId?: string) => {
+    const activeId = forTabId ?? activeTabId
+    // 改名（__name__）记入全局撤销栈：撤销=反向改名（见 applyRename）。放在 setTabs 外，
+    // 从 tabsRef 取当前旧名，避免在 reducer 里读状态。
+    if (propName === '__name__' && !isApplyingUndoRef.current && activeId) {
+      const curForm = tabsRef.current.find(t => t.id === activeId)?.formData
+      if (curForm) {
+        const oldNm = targetKind === 'form' ? curForm.name : (curForm.controls.find(c => c.id === controlId)?.name ?? '')
+        const newNm = String(value)
+        if (oldNm && oldNm !== newNm) {
+          recordRename({ targetKind, controlId, formName: curForm.name, oldName: oldNm, newName: newNm })
+        }
+      }
+    }
     setTabs(prev => {
-      const tab = prev.find(t => t.id === activeTabId)
+      const tab = prev.find(t => t.id === activeId)
       if (!tab || !tab.formData) return prev
       const form = tab.formData
 
@@ -966,7 +1107,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
           // 更新当前 .efw 标签页的路径和标签
           if (newEfwPath) {
             updatedTabs = updatedTabs.map(t =>
-              t.id === activeTabId
+              t.id === activeId
                 ? { ...t, id: newEfwPath, label: newName + '.efw', filePath: newEfwPath, formData: newForm }
                 : t
             )
@@ -1055,9 +1196,16 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       if (targetKind === 'form' && propName === '__name__') {
         return updatedTabs
       }
-      return updatedTabs.map(t => t.id === activeTabId ? { ...t, formData: newForm } : t)
+      // 记入全局撤销栈：属性面板的普通属性改动一并可撤销；改名（__name__）已在函数开头
+      // 用 recordRename 记为「反向改名」型撤销，这里不再重复记录。
+      if (activeId && propName !== '__name__') {
+        recordUndo(activeId, 'formData', form, newForm)
+      }
+      return updatedTabs.map(t => t.id === activeId ? { ...t, formData: newForm } : t)
     })
-  }, [activeTabId, onSelectControl, renameDiskFiles, projectDir, onProjectTreeRefresh, onOpenTabsChange])
+  }, [activeTabId, onSelectControl, renameDiskFiles, projectDir, onProjectTreeRefresh, onOpenTabsChange, recordUndo, recordRename])
+  // 把最新的 updateFormProperty 暴露给 applyRename（打破声明顺序环，见上方 updateFormPropertyRef）
+  updateFormPropertyRef.current = updateFormProperty
 
   // 属性面板事件栏 → 跳转到或创建指定事件的子程序
   const navigateToEventSub = useCallback(async (
@@ -1295,11 +1443,22 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     clearAllTabs,
     hasModifiedTabs: () => tabs.some(t => isTabModified(t)),
     editorAction: (action: string) => {
+      if (action === 'navBack') { navigateBackRef.current?.(); return } // 「跳回先前位置」(Ctrl+J)，全局可用
       const active = tabs.find(t => t.id === activeTabId)
       const activeIsEycSource = !!active && isEycSourceLanguage(active.language)
       const activeIsTableMode = !!active && activeIsEycSource
         && (eycEditorModeTabs[active.id] || 'table') === 'table'
         && !eycFallbackTabs[active.id]
+
+      // 撤销/重做：表格代码编辑器与可视化设计器统一走全局栈（Monaco 文本模式仍用自身 undo）
+      if (action === 'undo' || action === 'redo') {
+        const activeIsDesigner = active?.language === 'efw'
+        if (activeIsTableMode || activeIsDesigner) {
+          if (action === 'undo') globalUndo()
+          else globalRedo()
+          return
+        }
+      }
 
       if (activeIsTableMode) {
         eycEditorRef.current?.editorAction(action)
@@ -1497,7 +1656,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     },
     updateFormProperty,
     navigateToEventSub,
-  }), [saveCurrentFile, saveTabAs, saveAllFiles, saveProjectFiles, closeActiveFile, closeProjectTabs, clearAllTabs, tabs, activeTabId, onOpenTabsChange, syncSidebarByLanguage, updateFormProperty, navigateToEventSub, appendDiffDecorations, clearDiffDecorations, setEycDiffHighlightLines, eycEditorModeTabs, eycFallbackTabs])
+  }), [saveCurrentFile, saveTabAs, saveAllFiles, saveProjectFiles, closeActiveFile, closeProjectTabs, clearAllTabs, tabs, activeTabId, onOpenTabsChange, syncSidebarByLanguage, updateFormProperty, navigateToEventSub, appendDiffDecorations, clearDiffDecorations, setEycDiffHighlightLines, eycEditorModeTabs, eycFallbackTabs, globalUndo, globalRedo])
 
   // 接收外部打开的项目文件
   useEffect(() => {
@@ -2009,9 +2168,67 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   }, [onProjectTreeRefresh])
 
   // 双击可视化设计器控件 → 跳转到 .eyc 文件并定位/创建事件子程序
+  // 导航历史（「跳回先前位置」）：跳转前记录当前标签页，供回跳
+  const navBackStackRef = useRef<Array<{ tabId: string }>>([])
+  const pushNavLocation = useCallback(() => {
+    const id = activeTabIdRef.current
+    if (!id) return
+    const stack = navBackStackRef.current
+    if (stack[stack.length - 1]?.tabId === id) return // 连续同一位置不重复记录
+    stack.push({ tabId: id })
+    if (stack.length > 50) stack.shift()
+  }, [])
+  const navigateBack = useCallback(() => {
+    const stack = navBackStackRef.current
+    while (stack.length > 0) {
+      const loc = stack.pop()!
+      if (loc.tabId !== activeTabIdRef.current && tabsRef.current.some(t => t.id === loc.tabId)) {
+        setActiveTabId(loc.tabId)
+        return
+      }
+    }
+  }, [])
+  const canNavigateBack = useCallback(
+    () => navBackStackRef.current.some(l => l.tabId !== activeTabIdRef.current && tabsRef.current.some(t => t.id === l.tabId)),
+    [],
+  )
+  navigateBackRef.current = navigateBack // 暴露给命令式 editorAction('navBack')
+
+  // 「到对应窗口程序集」：从设计器打开/切到该窗体关联的 .eyc 代码文件
+  const handleOpenWindowSource = useCallback(async () => {
+    const activeT = tabsRef.current.find(t => t.id === activeTabIdRef.current)
+    if (!activeT || activeT.language !== 'efw' || !activeT.filePath) return
+    const efwDir = activeT.filePath.replace(/[/\\][^/\\]+$/, '')
+    const sourceFileName = activeT.formData?.sourceFile
+    const eycPath = sourceFileName
+      ? joinPathByBaseDir(efwDir, sourceFileName)
+      : activeT.filePath.replace(/\.efw$/i, '.eyc')
+    pushNavLocation()
+    const existingTab = tabsRef.current.find(t => t.filePath === eycPath)
+    if (existingTab) {
+      onSidebarTab?.('project')
+      setActiveTabId(existingTab.id)
+      return
+    }
+    const content = await window.api?.project?.readFile(eycPath)
+    if (content === null || content === undefined) return
+    const newTab: EditorTab = {
+      id: eycPath, label: resolveEycTabLabel(eycPath, content), language: 'eyc',
+      value: content, savedValue: content, filePath: eycPath,
+    }
+    setTabs(prev => {
+      const merged = [...prev, newTab]
+      onOpenTabsChange?.(merged)
+      return merged
+    })
+    onSidebarTab?.('project')
+    setActiveTabId(eycPath)
+  }, [onOpenTabsChange, onSidebarTab, pushNavLocation])
+
   const handleControlDblClick = useCallback(async (ctrl: DesignControl, defaultEvent: LibUnitEvent | null) => {
     const activeT = tabs.find(t => t.id === activeTabId)
     if (!activeT || activeT.language !== 'efw' || !activeT.filePath) return
+    pushNavLocation()
 
     // 优先使用 .efw 中定义的 sourceFile，否则回退到文件名替换
     const efwDir = activeT.filePath.replace(/[/\\][^/\\]+$/, '')
@@ -2055,12 +2272,13 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
       setActiveTabId(eycPath)
     }
-  }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, onSidebarTab, syncProjectTreeAfterEventSubChange])
+  }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, onSidebarTab, syncProjectTreeAfterEventSubChange, pushNavLocation])
 
   // 双击可视化设计器窗口 → 跳转到 .eyc 文件并定位/创建窗口默认事件子程序
   const handleFormDblClick = useCallback(async (formData: DesignForm, defaultEvent: LibUnitEvent | null) => {
     const activeT = tabs.find(t => t.id === activeTabId)
     if (!activeT || activeT.language !== 'efw' || !activeT.filePath) return
+    pushNavLocation()
 
     const efwDir = activeT.filePath.replace(/[/\\][^/\\]+$/, '')
     const sourceFileName = activeT.formData?.sourceFile
@@ -2099,7 +2317,68 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
       setActiveTabId(eycPath)
     }
-  }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, syncProjectTreeAfterEventSubChange])
+  }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, syncProjectTreeAfterEventSubChange, pushNavLocation])
+
+  // 单击设计器菜单栏里的菜单项 → 跳转/创建该菜单项的 _名_被选择 事件子程序
+  const handleMenuItemActivate = useCallback(async (itemName: string) => {
+    const activeT = tabs.find(t => t.id === activeTabId)
+    if (!activeT || activeT.language !== 'efw' || !activeT.filePath || !itemName) return
+    const efwDir = activeT.filePath.replace(/[/\\][^/\\]+$/, '')
+    const sourceFileName = activeT.formData?.sourceFile
+    const eycPath = sourceFileName
+      ? joinPathByBaseDir(efwDir, sourceFileName)
+      : activeT.filePath.replace(/\.efw$/i, '.eyc')
+    const subName = buildEventSubName(itemName, '被选择')
+    const params: Array<{ name: string; dataType: string; isByRef: boolean }> = []
+    pushNavLocation()
+    const existingTab = tabs.find(t => t.filePath === eycPath)
+    if (existingTab) {
+      if (existingTab.id === activeTabId) {
+        eycEditorRef.current?.navigateOrCreateSub(subName, params)
+        syncProjectTreeAfterEventSubChange()
+      } else {
+        onSidebarTab?.('project')
+        pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
+        setActiveTabId(existingTab.id)
+      }
+    } else {
+      const content = await window.api?.project?.readFile(eycPath)
+      if (content === null || content === undefined) return
+      const newTab: EditorTab = {
+        id: eycPath, label: resolveEycTabLabel(eycPath, content), language: 'eyc',
+        value: content, savedValue: content, filePath: eycPath,
+      }
+      setTabs(prev => { const merged = [...prev, newTab]; onOpenTabsChange?.(merged); return merged })
+      onSidebarTab?.('project')
+      pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
+      setActiveTabId(eycPath)
+    }
+  }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, onSidebarTab, syncProjectTreeAfterEventSubChange, pushNavLocation])
+
+  // 菜单项改名 → 同步源代码里的事件引用：_旧名_被选择 → _新名_被选择（打开的 .eyc 标签 + 磁盘未打开的）
+  const handleMenuItemRenames = useCallback((renames: Array<{ oldName: string; newName: string }>) => {
+    if (!renames.length) return
+    const openEycPaths = new Set<string>()
+    for (const t of tabsRef.current) {
+      if (t.language === 'eyc' && t.filePath) openEycPaths.add(t.filePath)
+    }
+    setTabs(prev => {
+      const next = prev.map(t => {
+        if (t.language !== 'eyc') return t
+        let val = t.value
+        for (const r of renames) {
+          const oldSub = `_${r.oldName}_被选择`
+          if (val.includes(oldSub)) val = val.split(oldSub).join(`_${r.newName}_被选择`)
+        }
+        return val === t.value ? t : { ...t, value: val }
+      })
+      onOpenTabsChange?.(next)
+      return next
+    })
+    for (const r of renames) {
+      renameDiskFiles(openEycPaths, `_${r.oldName}_被选择`, `_${r.newName}_被选择`)
+    }
+  }, [onOpenTabsChange, renameDiskFiles])
 
   // 标签切换后执行挂起的子程序导航
   useEffect(() => {
@@ -2285,6 +2564,10 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 
   // 直接接收 string 的 onChange（给 EycTableEditor 用）
   const handleEycChange = useCallback((value: string) => {
+    if (activeTabId) {
+      const before = tabsRef.current.find(t => t.id === activeTabId)?.value
+      if (before !== undefined) recordUndo(activeTabId, 'content', before, value)
+    }
     setTabs(prev => {
       const next = prev.map(t =>
         t.id === activeTabId ? { ...t, value, aiModified: undefined } : t
@@ -2292,7 +2575,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       onOpenTabsChange?.(next)
       return next
     })
-  }, [activeTabId, onOpenTabsChange])
+  }, [activeTabId, onOpenTabsChange, recordUndo])
 
   const handleRouteDeclarationPaste = useCallback((routes: Array<{ language: RoutedDeclLanguage; lines: string[] }>) => {
     if (!routes || routes.length === 0) return
@@ -2448,6 +2731,10 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 
   // 可视化设计器 form 改变
   const handleFormChange = useCallback((form: DesignForm) => {
+    if (activeTabId) {
+      const before = tabsRef.current.find(t => t.id === activeTabId)?.formData
+      if (before) recordUndo(activeTabId, 'formData', before, form)
+    }
     setTabs(prev => {
       const next = prev.map(t =>
         t.id === activeTabId ? { ...t, formData: form, aiModified: undefined } : t
@@ -2455,7 +2742,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       onOpenTabsChange?.(next)
       return next
     })
-  }, [activeTabId, onOpenTabsChange])
+  }, [activeTabId, onOpenTabsChange, recordUndo])
 
   // 可视化设计器选中控件变化
   const handleSelectControl = useCallback((target: SelectionTarget) => {
@@ -2581,11 +2868,21 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             onSelectControl={handleSelectControl}
             windowUnits={windowUnits}
             externalSelectedId={selection?.kind === 'form' ? '__form__' : selection?.kind === 'control' ? selection.control.id : undefined}
-            alignAction={alignAction}
-            onAlignDone={onAlignDone}
             onMultiSelectChange={onMultiSelectChange}
             onControlDoubleClick={handleControlDblClick}
             onFormDoubleClick={handleFormDblClick}
+            onUndo={globalUndo}
+            onOpenWindowSource={handleOpenWindowSource}
+            onNavigateBack={navigateBack}
+            onCanNavigateBack={canNavigateBack}
+            onPreviewWindow={() => {
+              const activeT = tabsRef.current.find(t => t.id === activeTabIdRef.current)
+              if (activeT?.language === 'efw' && activeT.filePath) {
+                onPreviewWindow?.(activeT.filePath.replace(/^.*[\\/]/, ''))
+              }
+            }}
+            onMenuItemActivate={handleMenuItemActivate}
+            onMenuItemRenames={handleMenuItemRenames}
           />
         ) : isEycSourceLanguage(activeTab.language) ? (
           activeTabUseTextMode ? (
@@ -2669,6 +2966,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                 projectClassNames={projectClassNames}
                 onClassNameRename={handleClassModuleNameRename}
                 onChange={handleEycChange}
+                onGlobalUndo={globalUndo}
+                onGlobalRedo={globalRedo}
                 onCommandClick={onCommandClick}
                 onCommandClear={onCommandClear}
                 onProblemsChange={onProblemsChange}

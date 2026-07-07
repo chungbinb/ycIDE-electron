@@ -135,6 +135,9 @@ interface EycTableEditorProps {
   projectClassNames?: Array<{ name: string; methods?: Array<{ name: string; returnType: string; description: string; params: Array<{ name: string; type: string }> }> }>
   onClassNameRename?: (oldName: string, newName: string) => void
   onChange: (value: string) => void
+  // 全局撤销/重做：编辑器区域内按 Ctrl+Z / Ctrl+Y 时上抛给外层统一的全局撤销栈处理（不再各自维护）
+  onGlobalUndo?: () => void
+  onGlobalRedo?: () => void
   onCommandClick?: (commandName: string, paramIndex?: number) => void
   onCommandClear?: () => void
   onProblemsChange?: (problems: FileProblem[]) => void
@@ -276,7 +279,7 @@ function ensureMinimalFlowBodies(lines: string[]): string[] {
   return out
 }
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>(), diffDeletedTextAfterLines, showVarSummaryPanel = true }, ref) {
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onGlobalUndo, onGlobalRedo, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>(), diffDeletedTextAfterLines, showVarSummaryPanel = true }, ref) {
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
@@ -1402,26 +1405,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         return
       }
 
-      // Ctrl+Z / Ctrl+Y：撤销/重做（编辑器区域内）
-      const key = e.key.toLowerCase()
-      if (ctrl && key === 'z' && !e.shiftKey && inEditor) {
-        e.preventDefault()
-        if (undoStack.current.length > 0) {
-          const prev = undoStack.current.pop()!
-          redoStack.current.push(prevRef.current)
-          setCurrentText(prev); prevRef.current = prev; onChange(prev)
-        }
-        return
-      }
-      if (ctrl && (key === 'y' || (e.shiftKey && key === 'z')) && inEditor) {
-        e.preventDefault()
-        if (redoStack.current.length > 0) {
-          const next = redoStack.current.pop()!
-          undoStack.current.push(prevRef.current)
-          setCurrentText(next); prevRef.current = next; onChange(next)
-        }
-        return
-      }
+      // Ctrl+Z / Ctrl+Y（撤销/重做）不在此 window 监听里处理：
+      // 焦点在编辑器区域(非输入框)时，App 的全局快捷键会派发 editorAction('undo'/'redo')
+      // → 外层全局撤销栈统一处理；若此处再处理会与 App 的 window 监听重复触发（双重撤销）。
+      // 输入框内的 Ctrl+Z 由各输入框的 onKey / handleParamInputCtrlKey 上抛全局栈。
 
       // Ctrl+V：粘贴多行内容
       if (ctrl && e.key === 'v' && inEditor) {
@@ -1534,7 +1521,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection])
+  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo])
 
   // ===== 自动补全状态 =====
   const [acItems, setAcItems] = useState<AcDisplayItem[]>([])
@@ -5721,26 +5708,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (!(e.ctrlKey || e.metaKey)) return false
     const key = e.key.toLowerCase()
     if (key !== 'z' && key !== 'y') return false
-    const action = dispatchCtrlShortcutWithHistory({
-      key,
-      shiftKey: e.shiftKey,
-      undoStack: undoStack.current,
-      redoStack: redoStack.current,
-      currentText: prevRef.current,
-      applyTextChange: (next) => {
-        // 先关编辑再应用文本，保证撤销后 onBlur 的 commit 不会写回旧值。
-        setEditCell(null)
-        applyTextChange(next)
-      },
-      onSelectAll: () => { /* 参数输入框内 Ctrl+A 交给浏览器原生 */ },
-      onPaste: () => false,
-    })
-    if (action.handled) {
-      if (action.preventDefault) e.preventDefault()
-      return true
-    }
-    return false
-  }, [applyTextChange])
+    // 参数展开小输入框内的 Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z → 全局撤销栈；
+    // 先关编辑，保证撤销后 onBlur 的 commit 不会把旧 editVal 写回覆盖已回退的文本。
+    e.preventDefault()
+    setEditCell(null)
+    if (key === 'z' && !e.shiftKey) onGlobalUndo?.()
+    else onGlobalRedo?.()
+    return true
+  }, [onGlobalUndo, onGlobalRedo])
 
   const onKey = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     const cursorPos = e.currentTarget.selectionStart ?? 0
@@ -5752,30 +5727,40 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       shiftKey: e.shiftKey,
       onTypeCellSpaceGuard: applyTypeCellSpaceGuard,
       onCompletionPopupKey: applyCompletionPopupKey,
-      onCtrlShortcut: ({ key, shiftKey }) => dispatchCtrlShortcutWithHistory({
-        key,
-        shiftKey,
-        undoStack: undoStack.current,
-        redoStack: redoStack.current,
-        currentText: prevRef.current,
-        applyTextChange: (next) => {
-          // Ctrl+Z/Y 命中文档栈时先结束当前输入态，避免 blur 后旧 editVal 被再次提交。
+      onCtrlShortcut: ({ key, shiftKey }) => {
+        const k = key.toLowerCase()
+        // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z：统一上抛给外层全局撤销栈；先结束当前输入态，
+        // 避免撤销后 blur 把旧 editVal 提交回去覆盖已回退的文本。
+        if (k === 'z' || k === 'y') {
           setEditCell(null)
-          applyTextChange(next)
-        },
-        onSelectAll: () => {
-          // 全选基于最新文本快照，避免使用过期闭包内容。
-          const ls = prevRef.current.split('\n')
-          const all = new Set<number>()
-          for (let i = 0; i < ls.length; i++) all.add(i)
-          setSelectedLines(all)
-          dragAnchor.current = 0
-          setAcVisible(false)
-          setEditCell(null)
-          focusWrapper()
-        },
-        onPaste: () => applyCustomPasteShortcut(),
-      }),
+          if (k === 'z' && !shiftKey) onGlobalUndo?.()
+          else onGlobalRedo?.()
+          return { handled: true, preventDefault: true }
+        }
+        return dispatchCtrlShortcutWithHistory({
+          key,
+          shiftKey,
+          undoStack: undoStack.current,
+          redoStack: redoStack.current,
+          currentText: prevRef.current,
+          applyTextChange: (next) => {
+            setEditCell(null)
+            applyTextChange(next)
+          },
+          onSelectAll: () => {
+            // 全选基于最新文本快照，避免使用过期闭包内容。
+            const ls = prevRef.current.split('\n')
+            const all = new Set<number>()
+            for (let i = 0; i < ls.length; i++) all.add(i)
+            setSelectedLines(all)
+            dragAnchor.current = 0
+            setAcVisible(false)
+            setEditCell(null)
+            focusWrapper()
+          },
+          onPaste: () => applyCustomPasteShortcut(),
+        })
+      },
       onParenScopedKey: applyParenScopedKey,
     })
     if (preAction.handled) {
@@ -5807,6 +5792,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     applyTextChange,
     applyCustomPasteShortcut,
     focusWrapper,
+    onGlobalUndo,
+    onGlobalRedo,
   ])
 
   // 插入子程序：在当前光标所处子程序后方插入，无光标时插入到末尾
@@ -6007,25 +5994,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return
     }
     if (action === 'undo') {
-      if (undoStack.current.length > 0) {
-        const prev = undoStack.current.pop()!
-        redoStack.current.push(prevRef.current)
-        setCurrentText(prev)
-        prevRef.current = prev
-        onChange(prev)
-      }
+      // 右键菜单撤销 → 全局撤销栈（与 Ctrl+Z 一致）
       setEditorContextMenu(null)
+      onGlobalUndo?.()
       return
     }
     if (action === 'redo') {
-      if (redoStack.current.length > 0) {
-        const next = redoStack.current.pop()!
-        undoStack.current.push(prevRef.current)
-        setCurrentText(next)
-        prevRef.current = next
-        onChange(next)
-      }
       setEditorContextMenu(null)
+      onGlobalRedo?.()
       return
     }
     if (action === 'copy') {
@@ -6092,10 +6068,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setSelectedLines(all)
     dragAnchor.current = 0
     setEditorContextMenu(null)
-  }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine])
+  }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine, onGlobalUndo, onGlobalRedo])
 
-  const canUndoContextAction = undoStack.current.length > 0
-  const canRedoContextAction = redoStack.current.length > 0
+  // 撤销/重做统一走外层全局撤销栈：只要外层接了全局处理器就允许点击，
+  // 是否真有可撤销/重做项由全局栈在点击时决定（无项则空操作）。
+  const canUndoContextAction = !!onGlobalUndo
+  const canRedoContextAction = !!onGlobalRedo
   const hasLineSelection = selectedLines.size > 0
   const hasCopySelection = hasLineSelection || (getMouseRangeSelectedSourceText() || '').length > 0
   const canCutContextAction = hasLineSelection

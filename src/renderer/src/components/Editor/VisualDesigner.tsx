@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import Icon, { resolveUnitIconName } from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './VisualDesigner.css'
+import MenuEditorDialog from './MenuEditorDialog'
 
 // ========== 类型定义 ==========
 
@@ -49,10 +50,23 @@ export interface DesignControl {
   text: string
   visible: boolean
   enabled: boolean
+  locked?: boolean      // 设计器中锁定：可选中（便于解锁）但不可拖动/缩放
   properties: Record<string, string | number | boolean>  // 支持库属性值
 }
 
 /** 窗口属性 */
+/** 窗口菜单项（菜单编辑器）：一棵树，separator=true 表示分隔条，children 表示子菜单 */
+export interface MenuItemDef {
+  name: string          // 名称（生成 _名_被选择 事件用）
+  caption: string       // 标题（显示文本；分隔条忽略）
+  shortcut?: string     // 快捷键（如 "Ctrl+S"）
+  checked?: boolean     // 选中标记
+  disabled?: boolean    // 禁止
+  visible?: boolean      // 可视（缺省 true）
+  separator?: boolean   // 分隔条
+  children?: MenuItemDef[]
+}
+
 export interface DesignForm {
   name: string
   title: string
@@ -60,6 +74,7 @@ export interface DesignForm {
   height: number
   sourceFile?: string  // 关联的 .eyc 源代码文件名
   controls: DesignControl[]
+  menu?: MenuItemDef[]  // 窗口菜单栏（顶级菜单数组）
   properties?: Record<string, string | number | boolean>  // 支持库属性值
 }
 
@@ -73,17 +88,35 @@ export type SelectionTarget =
 export type AlignAction = 'align-left' | 'align-right' | 'align-top' | 'align-bottom'
   | 'center-h' | 'center-v' | 'same-width' | 'same-height' | 'same-size' | null
 
+// 设计器标尺下方的对齐工具条按钮（原先在顶部工具栏，现独立到可视化设计器内、只在设计窗口时显示）
+const VD_ALIGN_BUTTONS: { action: Exclude<AlignAction, null>; icon: string; title: string }[] = [
+  { action: 'align-left', icon: 'align-left', title: '左对齐' },
+  { action: 'align-right', icon: 'align-right', title: '右对齐' },
+  { action: 'align-top', icon: 'align-top', title: '顶端对齐' },
+  { action: 'align-bottom', icon: 'align-bottom', title: '底端对齐' },
+  { action: 'center-h', icon: 'center-h', title: '水平居中' },
+  { action: 'center-v', icon: 'center-v', title: '垂直居中' },
+  { action: 'same-width', icon: 'same-width', title: '相同宽度' },
+  { action: 'same-height', icon: 'same-height', title: '相同高度' },
+  { action: 'same-size', icon: 'same-size', title: '相同大小' },
+]
+
 interface VisualDesignerProps {
   form: DesignForm
   onChange: (form: DesignForm) => void
   onSelectControl: (target: SelectionTarget) => void
   windowUnits?: LibWindowUnit[]
   externalSelectedId?: string
-  alignAction?: AlignAction
-  onAlignDone?: () => void
   onMultiSelectChange?: (count: number) => void
   onControlDoubleClick?: (control: DesignControl, defaultEvent: LibUnitEvent | null) => void
   onFormDoubleClick?: (form: DesignForm, defaultEvent: LibUnitEvent | null) => void
+  onUndo?: () => void  // 右键菜单「撤销」→ 外层全局撤销栈
+  onOpenWindowSource?: () => void       // 「到对应窗口程序集」→ 打开该窗体的 .eyc 代码
+  onNavigateBack?: () => void           // 「跳回先前位置」→ 导航历史回跳
+  onCanNavigateBack?: () => boolean     // 是否有可回跳的历史（渲染菜单时查询）
+  onPreviewWindow?: () => void          // 「预览」→ 编译运行该窗口(不编译源代码)
+  onMenuItemActivate?: (itemName: string) => void  // 单击设计器菜单栏的菜单项 → 生成/跳转 _名_被选择 事件
+  onMenuItemRenames?: (renames: Array<{ oldName: string; newName: string }>) => void  // 菜单项改名 → 同步源代码引用
 }
 
 // ========== 内置默认尺寸 ==========
@@ -291,18 +324,30 @@ function rectsIntersect(
 }
 
 let nextControlId = 1
+// 控件剪贴板（模块级，跨窗体/标签页保留，语义类似系统剪贴板）
+let vdControlClipboard: DesignControl[] = []
 
 // ========== 组件 ==========
 
 // 记住上次选中的 id（跨重渲染保持）
 let lastSelectedId: string = '__form__'
 
-function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], externalSelectedId, alignAction, onAlignDone, onMultiSelectChange, onControlDoubleClick, onFormDoubleClick }: VisualDesignerProps): React.JSX.Element {
+function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], externalSelectedId, onMultiSelectChange, onControlDoubleClick, onFormDoubleClick, onUndo, onOpenWindowSource, onNavigateBack, onCanNavigateBack, onPreviewWindow, onMenuItemActivate, onMenuItemRenames }: VisualDesignerProps): React.JSX.Element {
   // '__form__' 表示选中窗口自身，null 表示无选中
   const [selectedId, setSelectedId] = useState<string | null>(lastSelectedId)
   // 多选支持
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeTool, setActiveTool] = useState<string | null>(null)
+  // 右键菜单：位置(视口坐标) + 是否右键在控件上；null 表示未打开
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; onControl: boolean } | null>(null)
+  // 「位置及尺寸」子菜单是否展开
+  const [ctxSubmenuOpen, setCtxSubmenuOpen] = useState(false)
+  // 「查看数据类型定义」弹框：要展示的控件类型（支持库单元）信息；null 表示未打开
+  const [typeInfoUnit, setTypeInfoUnit] = useState<LibWindowUnit | null>(null)
+  // 「菜单编辑器」对话框是否打开
+  const [menuEditorOpen, setMenuEditorOpen] = useState(false)
+  // 设计器菜单栏：当前展开的顶级菜单下标（null 表示未展开）
+  const [menuBarOpenTop, setMenuBarOpenTop] = useState<number | null>(null)
   const [toolboxFloat, setToolboxFloat] = useState(false)
   const [toolboxDockSide, setToolboxDockSide] = useState<'left' | 'right'>('right')
   const [toolboxDockWidth, setToolboxDockWidth] = useState(160)
@@ -881,20 +926,168 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     setSelectedId(null)
   }, [selectedId, selectedIds])
 
+  // ===== 右键菜单动作：复制/剪切/粘贴/层级/锁定，均作用于当前选中控件 =====
+  const getSelectedControlIds = useCallback((): string[] => {
+    if (selectedIds.size > 0) return [...selectedIds]
+    if (selectedId && selectedId !== '__form__') return [selectedId]
+    return []
+  }, [selectedIds, selectedId])
+
+  const copySelected = useCallback(() => {
+    const ids = new Set(getSelectedControlIds())
+    if (ids.size === 0) return
+    vdControlClipboard = formRef.current.controls
+      .filter(c => ids.has(c.id))
+      .map(c => ({ ...c, properties: { ...c.properties } }))
+  }, [getSelectedControlIds])
+
+  const pasteControls = useCallback(() => {
+    if (vdControlClipboard.length === 0) return
+    const latestForm = formRef.current
+    const existingIds = new Set(latestForm.controls.map(c => c.id))
+    const newControls: DesignControl[] = []
+    for (const src of vdControlClipboard) {
+      let id: string
+      do { id = `ctrl_${nextControlId++}` } while (existingIds.has(id))
+      existingIds.add(id)
+      // 生成唯一名字：类型 + 最小可用序号
+      const usedNames = new Set([...latestForm.controls, ...newControls].map(c => c.name))
+      let n = 1
+      let name = `${src.type}${n}`
+      while (usedNames.has(name)) { n++; name = `${src.type}${n}` }
+      newControls.push({ ...src, id, name, left: src.left + 8, top: src.top + 8, properties: { ...src.properties } })
+    }
+    onChangeRef.current({ ...latestForm, controls: [...latestForm.controls, ...newControls] })
+    if (newControls.length > 1) {
+      setSelectedIds(new Set(newControls.map(c => c.id)))
+      setSelectedId(newControls[newControls.length - 1].id)
+    } else {
+      setSelectedIds(new Set())
+      setSelectedId(newControls[0]?.id ?? null)
+    }
+  }, [])
+
+  const cutSelected = useCallback(() => {
+    copySelected()
+    deleteSelected()
+  }, [copySelected, deleteSelected])
+
+  const bringToFront = useCallback(() => {
+    const ids = new Set(getSelectedControlIds())
+    if (ids.size === 0) return
+    const latestForm = formRef.current
+    const kept = latestForm.controls.filter(c => !ids.has(c.id))
+    const moved = latestForm.controls.filter(c => ids.has(c.id))
+    onChangeRef.current({ ...latestForm, controls: [...kept, ...moved] })
+  }, [getSelectedControlIds])
+
+  const sendToBack = useCallback(() => {
+    const ids = new Set(getSelectedControlIds())
+    if (ids.size === 0) return
+    const latestForm = formRef.current
+    const moved = latestForm.controls.filter(c => ids.has(c.id))
+    const kept = latestForm.controls.filter(c => !ids.has(c.id))
+    onChangeRef.current({ ...latestForm, controls: [...moved, ...kept] })
+  }, [getSelectedControlIds])
+
+  const setLockSelected = useCallback((locked: boolean) => {
+    const ids = new Set(getSelectedControlIds())
+    if (ids.size === 0) return
+    const latestForm = formRef.current
+    onChangeRef.current({ ...latestForm, controls: latestForm.controls.map(c => ids.has(c.id) ? { ...c, locked } : c) })
+  }, [getSelectedControlIds])
+
+  // 打开右键菜单：右键控件时若它不在多选集合内，则单选它
+  const openContextMenu = useCallback((e: React.MouseEvent, ctrl?: DesignControl) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (ctrl && !selectedIds.has(ctrl.id)) {
+      setSelectedIds(new Set())
+      setSelectedId(ctrl.id)
+    }
+    setCtxSubmenuOpen(false)
+    setContextMenu({ x: e.clientX, y: e.clientY, onControl: !!ctrl })
+  }, [selectedIds])
+
+  const runVdMenuAction = useCallback((action: string) => {
+    setContextMenu(null)
+    switch (action) {
+      case 'undo': onUndo?.(); break
+      case 'delete': deleteSelected(); break
+      case 'copy': copySelected(); break
+      case 'cut': cutSelected(); break
+      case 'paste': pasteControls(); break
+      case 'toFront': bringToFront(); break
+      case 'toBack': sendToBack(); break
+      case 'lock': setLockSelected(true); break
+      case 'unlock': setLockSelected(false); break
+      case 'openSource': onOpenWindowSource?.(); break
+      case 'navBack': onNavigateBack?.(); break
+      case 'preview': onPreviewWindow?.(); break
+      case 'menuEditor': setMenuEditorOpen(true); break
+      case 'viewType': {
+        const ctrl = formRef.current.controls.find(c => c.id === getSelectedControlIds()[0])
+        if (ctrl) {
+          const unit = windowUnits.find(u => u.name === ctrl.type)
+          setTypeInfoUnit(unit ?? { name: ctrl.type, englishName: '', description: '（未在支持库中找到该类型的定义信息）', libraryName: '', properties: [], events: [] })
+        }
+        break
+      }
+    }
+  }, [onUndo, deleteSelected, copySelected, cutSelected, pasteControls, bringToFront, sendToBack, setLockSelected, onOpenWindowSource, onNavigateBack, onPreviewWindow, getSelectedControlIds, windowUnits])
+
+  // 右键菜单：点击别处 / 按 Esc 关闭（延迟一帧再挂监听，避免开菜单那次 mousedown 立即关掉）
+  useEffect(() => {
+    if (!contextMenu) return
+    const close = (): void => setContextMenu(null)
+    const onKey = (ev: KeyboardEvent): void => { if (ev.key === 'Escape') { ev.stopPropagation(); setContextMenu(null) } }
+    const t = window.setTimeout(() => {
+      document.addEventListener('mousedown', close)
+      window.addEventListener('keydown', onKey, true)
+    }, 0)
+    return () => {
+      window.clearTimeout(t)
+      document.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [contextMenu])
+
+  // 设计器菜单栏下拉：点别处 / Esc 关闭
+  useEffect(() => {
+    if (menuBarOpenTop === null) return
+    const close = (): void => setMenuBarOpenTop(null)
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setMenuBarOpenTop(null) }
+    const t = window.setTimeout(() => {
+      document.addEventListener('mousedown', close)
+      window.addEventListener('keydown', onKey, true)
+    }, 0)
+    return () => {
+      window.clearTimeout(t)
+      document.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [menuBarOpenTop])
+
+  // 「查看数据类型定义」弹框：Esc 关闭
+  useEffect(() => {
+    if (!typeInfoUnit) return
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') { e.stopPropagation(); setTypeInfoUnit(null) } }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [typeInfoUnit])
+
   // 通知父组件多选数量变化
   useEffect(() => {
     onMultiSelectChange?.(selectedIds.size)
   }, [selectedIds.size, onMultiSelectChange])
 
-  // 执行对齐操作
-  useEffect(() => {
-    if (!alignAction) return
+  // 执行对齐操作（由设计器标尺下方的对齐工具条直接调用；需选中 ≥2 个控件）
+  const applyAlign = useCallback((action: AlignAction): void => {
+    if (!action) return
     // 收集所有选中的控件（多选 + 单选）
     const ids = selectedIds.size > 0 ? selectedIds : (selectedId && selectedId !== '__form__' ? new Set([selectedId]) : new Set<string>())
     const selected = form.controls.filter(c => ids.has(c.id))
-    if (selected.length < 1) { onAlignDone?.(); return }
-
-    if (selected.length < 2) { onAlignDone?.(); return }
+    if (selected.length < 2) return
 
     // 以最边缘的控件为基准
     const minLeft = Math.min(...selected.map(c => c.left))
@@ -907,7 +1100,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
     const updated = form.controls.map(c => {
       if (!ids.has(c.id)) return c
-      switch (alignAction) {
+      switch (action) {
         case 'align-left': return { ...c, left: minLeft }
         case 'align-right': return { ...c, left: maxRight - c.width }
         case 'align-top': return { ...c, top: minTop }
@@ -921,8 +1114,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       }
     })
     onChange({ ...form, controls: updated })
-    onAlignDone?.()
-  }, [alignAction])
+  }, [selectedIds, selectedId, form, onChange])
 
   // 键盘事件
   useEffect(() => {
@@ -939,6 +1131,32 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [selectedId, deleteSelected])
+
+  // 设计器编辑快捷键（Ctrl+C/X/V 复制剪切粘贴、Ctrl+T 置顶）。用「捕获阶段」抢在 App 全局
+  // 快捷键之前处理并阻断：否则 App 的 edit:paste 对 efw 会触发命令粘贴，与控件粘贴冲突。
+  // 仅在真正有可操作对象时才拦截（否则放行，交给 App/浏览器）。
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
+      const tgt = e.target
+      if (tgt instanceof HTMLElement && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.tagName === 'SELECT' || tgt.isContentEditable)) return
+      const hasSel = getSelectedControlIds().length > 0
+      let done = false
+      switch (e.key.toLowerCase()) {
+        case 'c': if (hasSel) { copySelected(); done = true } break
+        case 'x': if (hasSel) { cutSelected(); done = true } break
+        case 'v': if (vdControlClipboard.length > 0) { pasteControls(); done = true } break
+        case 't': if (hasSel) { bringToFront(); done = true } break
+        case 'u': if (onOpenWindowSource) { onOpenWindowSource(); done = true } break
+        case 'j': if (onNavigateBack && onCanNavigateBack?.()) { onNavigateBack(); done = true } break
+        case 'enter': if (onPreviewWindow) { onPreviewWindow(); done = true } break // Ctrl+Enter 预览
+        case 'e': setMenuEditorOpen(true); done = true; break // Ctrl+E 菜单编辑器
+      }
+      if (done) { e.preventDefault(); e.stopPropagation() }
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [getSelectedControlIds, copySelected, cutSelected, pasteControls, bringToFront, onOpenWindowSource, onNavigateBack, onCanNavigateBack, onPreviewWindow])
 
   // 画布鼠标按下 — 开始创建控件或选中窗口
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
@@ -1257,6 +1475,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       setSelectedIds(new Set())
       setSelectedId(ctrl.id)
     }
+
+    // 锁定的控件：允许选中（便于在右键菜单里解锁），但不启动拖动
+    if (ctrl.locked) return
 
     if (isInMultiSelect && selectedIds.size >= 2) {
       // 多选拖拽：记录所有选中控件的初始位置
@@ -1847,6 +2068,199 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     </div>
   )
 
+  // 右键菜单渲染（照易语言窗体设计器：字母助记键 + 快捷键 + 分隔线 + 子菜单 + 灰显占位项）
+  const renderContextMenu = (): React.JSX.Element | null => {
+    if (!contextMenu) return null
+    const selIds = getSelectedControlIds()
+    const hasSel = selIds.length > 0
+    const canAlign = selIds.length >= 2
+    const canPaste = vdControlClipboard.length > 0
+    const allLocked = hasSel && selIds.every(id => form.controls.find(c => c.id === id)?.locked)
+    const anyLocked = hasSel && selIds.some(id => form.controls.find(c => c.id === id)?.locked)
+    const menuW = 236, menuH = 408
+    const x = Math.max(4, Math.min(contextMenu.x, window.innerWidth - menuW - 4))
+    const y = Math.max(4, Math.min(contextMenu.y, window.innerHeight - menuH - 4))
+    const alignItems: { label: string; action: Exclude<AlignAction, null> }[] = [
+      { label: '左对齐', action: 'align-left' },
+      { label: '右对齐', action: 'align-right' },
+      { label: '顶对齐', action: 'align-top' },
+      { label: '底对齐', action: 'align-bottom' },
+      { label: '水平居中', action: 'center-h' },
+      { label: '垂直居中', action: 'center-v' },
+      { label: '相同宽度', action: 'same-width' },
+      { label: '相同高度', action: 'same-height' },
+      { label: '相同大小', action: 'same-size' },
+    ]
+    const mkItem = (accel: string, label: string, action: string | null, shortcut?: string, disabled?: boolean): React.JSX.Element => (
+      <button
+        type="button"
+        className="vd-ctx-item"
+        disabled={disabled || !action}
+        onClick={action ? () => runVdMenuAction(action) : undefined}
+      >
+        <span className="vd-ctx-accel">{accel}.</span>
+        <span className="vd-ctx-label">{label}</span>
+        {shortcut ? <span className="vd-ctx-shortcut">{shortcut}</span> : null}
+      </button>
+    )
+    return (
+      <div
+        className="vd-ctx-menu"
+        ref={(el) => setCssVars(el, { '--vd-ctx-left': `${x}px`, '--vd-ctx-top': `${y}px` })}
+        onMouseDown={(e) => e.stopPropagation()}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        {mkItem('A', '查看数据类型定义', 'viewType', undefined, !hasSel)}
+        <div className="vd-ctx-sep" />
+        {mkItem('U', '撤销', 'undo', 'Ctrl+Z')}
+        {mkItem('D', '删除', 'delete', 'Del', !hasSel)}
+        <div className="vd-ctx-sep" />
+        {mkItem('C', '复制', 'copy', 'Ctrl+C', !hasSel)}
+        {mkItem('T', '剪切', 'cut', 'Ctrl+X', !hasSel)}
+        {mkItem('P', '粘贴', 'paste', 'Ctrl+V', !canPaste)}
+        <div className="vd-ctx-sep" />
+        <div
+          className="vd-ctx-subwrap"
+          onMouseEnter={() => setCtxSubmenuOpen(true)}
+          onMouseLeave={() => setCtxSubmenuOpen(false)}
+        >
+          <button type="button" className="vd-ctx-item vd-ctx-item-sub" disabled={!canAlign}>
+            <span className="vd-ctx-accel">W.</span>
+            <span className="vd-ctx-label">位置及尺寸</span>
+            <span className="vd-ctx-arrow">▶</span>
+          </button>
+          {ctxSubmenuOpen && canAlign ? (
+            <div className="vd-ctx-submenu">
+              {alignItems.map(a => (
+                <button
+                  key={a.action}
+                  type="button"
+                  className="vd-ctx-item"
+                  onClick={() => { setContextMenu(null); applyAlign(a.action) }}
+                >
+                  <span className="vd-ctx-label">{a.label}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        {mkItem('T', '到最顶层', 'toFront', 'Ctrl+T', !hasSel)}
+        {mkItem('B', '到最底层', 'toBack', undefined, !hasSel)}
+        <div className="vd-ctx-sep" />
+        {mkItem('L', '锁定', 'lock', undefined, !hasSel || allLocked)}
+        {mkItem('K', '解除锁定', 'unlock', undefined, !anyLocked)}
+        <div className="vd-ctx-sep" />
+        {mkItem('M', '菜单编辑器', 'menuEditor', 'Ctrl+E')}
+        {mkItem('V', '预览', 'preview', 'Ctrl+Enter')}
+        {mkItem('Z', '跳回先前位置', 'navBack', 'Ctrl+J', !onCanNavigateBack?.())}
+        {mkItem('J', '到对应窗口程序集', 'openSource', 'Ctrl+U')}
+      </div>
+    )
+  }
+
+  // 「查看数据类型定义」弹框：展示该控件类型（支持库单元）的属性/事件
+  const renderTypeInfoDialog = (): React.JSX.Element | null => {
+    if (!typeInfoUnit) return null
+    const u = typeInfoUnit
+    return (
+      <div className="vd-typeinfo-overlay" onMouseDown={() => setTypeInfoUnit(null)}>
+        <div className="vd-typeinfo-dialog" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="vd-typeinfo-header">
+            <span className="vd-typeinfo-title">{u.name}{u.englishName ? `（${u.englishName}）` : ''}</span>
+            <button type="button" className="vd-typeinfo-close" onClick={() => setTypeInfoUnit(null)} aria-label="关闭">×</button>
+          </div>
+          {(u.libraryName || u.description) && (
+            <div className="vd-typeinfo-meta">
+              {u.libraryName ? <div>支持库：{u.libraryName}</div> : null}
+              {u.description ? <div className="vd-typeinfo-desc">{u.description}</div> : null}
+            </div>
+          )}
+          <div className="vd-typeinfo-body">
+            <div className="vd-typeinfo-section-title">属性（{u.properties.length}）</div>
+            {u.properties.length > 0 ? (
+              <table className="vd-typeinfo-table">
+                <thead><tr><th>名称</th><th>类型</th><th>说明</th></tr></thead>
+                <tbody>
+                  {u.properties.map(p => (
+                    <tr key={p.name}>
+                      <td>{p.name}{p.isReadOnly ? ' (只读)' : ''}</td>
+                      <td>{p.typeName}</td>
+                      <td>{p.description}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <div className="vd-typeinfo-empty">无</div>}
+            <div className="vd-typeinfo-section-title">事件（{u.events.length}）</div>
+            {u.events.length > 0 ? (
+              <table className="vd-typeinfo-table">
+                <thead><tr><th>名称</th><th>说明</th></tr></thead>
+                <tbody>
+                  {u.events.map(ev => (
+                    <tr key={ev.name}>
+                      <td>{ev.name}</td>
+                      <td>{ev.description}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <div className="vd-typeinfo-empty">无</div>}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // 设计器菜单栏：递归渲染下拉（叶子双击生成 _名_被选择 事件；有子项 CSS :hover 展开子菜单）
+  const renderMenuNodes = (nodes: MenuItemDef[]): React.JSX.Element => (
+    <div className="vd-fmenu-dropdown">
+      {nodes.filter(n => n && n.visible !== false).map((n, i) => {
+        if (n.separator) return <div key={`sep-${i}`} className="vd-fmenu-sep" />
+        const kids = Array.isArray(n.children) ? n.children.filter(Boolean) : []
+        return (
+          <div
+            key={n.name || `it-${i}`}
+            className={`vd-fmenu-item${n.disabled ? ' vd-fmenu-disabled' : ''}`}
+            onMouseDown={(e) => { e.stopPropagation(); if (kids.length === 0 && n.name) { setMenuBarOpenTop(null); onMenuItemActivate?.(n.name) } }}
+          >
+            <span className="vd-fmenu-caption">{n.checked ? '✓ ' : ''}{n.caption || '(未命名)'}</span>
+            {n.shortcut ? <span className="vd-fmenu-shortcut">{n.shortcut}</span> : null}
+            {kids.length > 0 ? <span className="vd-fmenu-arrow">▶</span> : null}
+            {kids.length > 0 ? renderMenuNodes(kids) : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+
+  const renderFormMenuBar = (): React.JSX.Element | null => {
+    const tops = Array.isArray(form.menu) ? form.menu.filter(n => n && n.visible !== false) : []
+    if (tops.length === 0) return null
+    return (
+      <div className="vd-fmenu-bar" onMouseDown={(e) => e.stopPropagation()}>
+        {tops.map((top, i) => {
+          const kids = Array.isArray(top.children) ? top.children.filter(Boolean) : []
+          return (
+            <div
+              key={top.name || `top-${i}`}
+              className={`vd-fmenu-top${menuBarOpenTop === i ? ' vd-fmenu-top-open' : ''}${top.disabled ? ' vd-fmenu-disabled' : ''}`}
+              onMouseDown={(e) => {
+                e.stopPropagation()
+                // 有子菜单：单击展开/收起下拉；无子菜单（顶级命令项）：单击直接生成/跳转事件
+                if (kids.length > 0) setMenuBarOpenTop(prev => (prev === i ? null : i))
+                else if (top.name) { setMenuBarOpenTop(null); onMenuItemActivate?.(top.name) }
+              }}
+              onMouseEnter={() => { if (menuBarOpenTop !== null) setMenuBarOpenTop(i) }}
+            >
+              <span className="vd-fmenu-topcap">{top.caption || '(未命名)'}</span>
+              {menuBarOpenTop === i && kids.length > 0 ? renderMenuNodes(kids) : null}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
   return (
     <div className="vd" ref={designerRootRef}>
       {/* 画布区域 */}
@@ -1912,6 +2326,23 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           ))}
         </div>
 
+        {/* 对齐工具条：独立于顶部工具栏，只在可视化设计器内、标尺下方显示；选中 ≥2 个控件时可用 */}
+        <div className="vd-align-bar" role="toolbar" aria-label="对齐">
+          {VD_ALIGN_BUTTONS.map(b => (
+            <button
+              key={b.action}
+              type="button"
+              className="vd-align-btn"
+              title={b.title}
+              aria-label={b.title}
+              disabled={selectedIds.size < 2}
+              onClick={() => applyAlign(b.action)}
+            >
+              <Icon name={b.icon} size={16} />
+            </button>
+          ))}
+        </div>
+
         <div
           className={`vd-canvas-scroll ${isSpacePressed ? 'vd-canvas-scroll-pan-ready' : ''} ${isPanningView ? 'vd-canvas-scroll-pan-active' : ''}`}
           ref={canvasAreaRef}
@@ -1958,6 +2389,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             </span>
           </div>
 
+          {/* 菜单栏（有菜单时显示，双击菜单项生成事件） */}
+          {renderFormMenuBar()}
+
           {/* 窗口客户区 */}
           <div
             className={`vd-form-canvas ${activeTool ? 'vd-crosshair' : ''} ${selectedId === '__form__' ? 'vd-form-selected' : ''}`}
@@ -1969,6 +2403,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               })
             }}
             onMouseDown={handleCanvasMouseDown}
+            onContextMenu={(e) => openContextMenu(e)}
             onMouseMove={(e) => updateMouseRulerPos(e.clientX, e.clientY)}
             onMouseLeave={() => setMouseRulerPos(null)}
             onDoubleClick={handleFormDblClick}
@@ -2032,7 +2467,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               return (
                 <div
                   key={ctrl.id}
-                  className={`vd-control ${isSelected ? 'vd-control-selected' : ''} ${isMultiSelected ? 'vd-control-multi-selected' : ''} ${isHovered ? 'vd-control-hovered' : ''}`}
+                  className={`vd-control ${isSelected ? 'vd-control-selected' : ''} ${isMultiSelected ? 'vd-control-multi-selected' : ''} ${isHovered ? 'vd-control-hovered' : ''} ${ctrl.locked ? 'vd-control-locked' : ''}`}
                   ref={(element) => setCssVars(element, {
                     '--vd-control-left': `${ctrl.left}px`,
                     '--vd-control-top': `${ctrl.top}px`,
@@ -2043,11 +2478,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
                   onMouseLeave={() => setHoveredControlId(prev => prev === ctrl.id ? null : prev)}
                   onMouseDown={(e) => handleControlMouseDown(e, ctrl)}
                   onDoubleClick={(e) => handleControlDblClick(e, ctrl)}
+                  onContextMenu={(e) => openContextMenu(e, ctrl)}
                 >
                   {renderControlPreview(ctrl)}
 
-                  {/* 选中句柄 */}
-                  {(isSelected || isMultiSelected) && HANDLES.map(h => (
+                  {/* 选中句柄（锁定控件不显示，禁止缩放） */}
+                  {(isSelected || isMultiSelected) && !ctrl.locked && HANDLES.map(h => (
                     <div
                       key={h}
                       className={`vd-handle vd-handle-${h}`}
@@ -2126,6 +2562,26 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
       {/* 工具箱：固定模式在右侧渲染，浮动模式悬浮在整个设计器上方 */}
       {renderToolbox()}
+
+      {/* 右键菜单 */}
+      {renderContextMenu()}
+
+      {/* 「查看数据类型定义」弹框 */}
+      {renderTypeInfoDialog()}
+
+      {/* 「菜单编辑器」对话框 */}
+      {menuEditorOpen && (
+        <MenuEditorDialog
+          menu={form.menu}
+          formName={form.title || form.name}
+          onClose={() => setMenuEditorOpen(false)}
+          onSave={(menu, renames) => {
+            onChange({ ...form, menu })
+            if (renames.length) onMenuItemRenames?.(renames)
+            setMenuEditorOpen(false)
+          }}
+        />
+      )}
     </div>
   )
 }

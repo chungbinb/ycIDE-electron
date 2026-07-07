@@ -2916,14 +2916,14 @@ app.whenReady().then(() => {
     return compileViaWorker({ projectDir, debug: true, arch, mode: 'compile' }, editorFilesObj)
   })
 
-  ipcMain.handle('compiler:run', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string, debugOptions?: { breakpoints?: Record<string, number[]> }) => {
+  ipcMain.handle('compiler:run', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string, debugOptions?: { breakpoints?: Record<string, number[]>; previewWindow?: string }) => {
     if (shouldRunAsAndroid(projectDir)) {
       const settings = readIDESettings()
       const editorFiles = editorFilesObj ? new Map(Object.entries(editorFilesObj)) : undefined
       return buildAndRunAndroidProject(projectDir, settings, editorFiles)
     }
     // 编译在工作线程完成（不卡界面）；运行 exe 仍在主进程（本就用子进程，不阻塞，且涉及调试交互）。
-    const result = await compileViaWorker({ projectDir, debug: true, arch, mode: 'run', breakpoints: debugOptions?.breakpoints || {} }, editorFilesObj)
+    const result = await compileViaWorker({ projectDir, debug: true, arch, mode: 'run', breakpoints: debugOptions?.breakpoints || {}, previewWindow: debugOptions?.previewWindow }, editorFilesObj)
     if (result.success && result.outputFile) {
       runExecutable(result.outputFile)
     }

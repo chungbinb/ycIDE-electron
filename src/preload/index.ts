@@ -119,7 +119,7 @@ const api = {
       projectDir: string,
       editorFiles?: Record<string, string>,
       arch?: string,
-      debugOptions?: { breakpoints?: Record<string, number[]> },
+      debugOptions?: { breakpoints?: Record<string, number[]>; previewWindow?: string },
     ) => ipcRenderer.invoke('compiler:run', projectDir, editorFiles, arch, debugOptions),
     stop: () => ipcRenderer.invoke('compiler:stop'),
     isRunning: () => ipcRenderer.invoke('compiler:isRunning') as Promise<boolean>,

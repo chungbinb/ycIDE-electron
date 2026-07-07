@@ -23,6 +23,9 @@ export interface CompileOptions {
   arch?: string                    // 目标架构（优先于 .epp 中的 platform）
   mode?: 'compile' | 'run'         // compile: 按 .epp 目标平台；run: 按宿主平台
   breakpoints?: Record<string, number[]>
+  // 窗口预览：以该 .efw（文件名或窗体名）为启动窗口、跳过所有源代码(.eyc等)转译，
+  // 只编译出纯 UI 窗口（事件走 WEAK 空实现），用于「预览」——不编译对应源代码。
+  previewWindow?: string
 }
 
 // 编译结果
@@ -48,6 +51,18 @@ interface WindowControlInfo {
   extraProps: Record<string, unknown>  // 支持库自定义属性原始值
 }
 
+// 窗口菜单项（菜单编辑器生成，存在 .efw 的 menu 字段里，一棵树）
+interface MenuNodeInfo {
+  name?: string
+  caption?: string
+  shortcut?: string
+  checked?: boolean
+  disabled?: boolean
+  visible?: boolean
+  separator?: boolean
+  children?: MenuNodeInfo[]
+}
+
 // 窗口文件信息
 interface WindowFileInfo {
   formName: string
@@ -63,6 +78,7 @@ interface WindowFileInfo {
   topmost: boolean
   startPos: number     // 0手工 1居中(default)
   controls: WindowControlInfo[]
+  menu?: MenuNodeInfo[]  // 窗口菜单栏
 }
 
 // 项目文件条目
@@ -1602,6 +1618,7 @@ function parseWindowFile(efwPath: string): WindowFileInfo {
         })
       }
     }
+    if (Array.isArray(data.menu)) info.menu = data.menu as MenuNodeInfo[]
   } catch { /* ignore */ }
   return info
 }
@@ -4932,6 +4949,7 @@ function generateMainC(
   debugBuild = false,
   breakpoints: Record<string, number[]> = {},
   targetPlatform: TargetPlatform = 'windows',
+  previewWindow?: string, // 非空 = 窗口预览：以该窗体为启动窗口 + 跳过源代码转译
 ): string[] {
   const mainCPath = join(tempDir, 'main.cpp')
   const additionalCFiles: string[] = []
@@ -5114,8 +5132,11 @@ function generateMainC(
   mainCode += '}\n\n'
 
   if (isWindowsApp) {
-    // 查找启动窗口文件
-    let efwFile = project.files.find(f => f.fileName === '_启动窗口.efw')
+    // 查找启动窗口文件（预览时优先用指定的当前窗体作为启动窗口）
+    let efwFile = previewWindow
+      ? project.files.find(f => f.type === 'EFW' && (f.fileName === previewWindow || basename(f.fileName, '.efw') === previewWindow))
+      : undefined
+    if (!efwFile) efwFile = project.files.find(f => f.fileName === '_启动窗口.efw')
     if (!efwFile) efwFile = project.files.find(f => f.type === 'EFW')
 
     const defaultWindowFormName = efwFile ? basename(efwFile.fileName, '.efw') : '_启动窗口'
@@ -5153,6 +5174,7 @@ function generateMainC(
               })
             }
           }
+          if (Array.isArray(data.menu)) winInfo.menu = data.menu as MenuNodeInfo[]
         } catch { /* fall through to file */ }
       } else {
         winInfo = parseWindowFile(join(project.projectDir, efwFile.fileName))
@@ -5233,16 +5255,19 @@ function generateMainC(
     mainCode += '    SetWindowTextW(hCtrl, text ? text : L"");\n'
     mainCode += '}\n\n'
 
-    // 前向声明 .eyc 中的子程序
-    // 查找关联的 .eyc 文件并转译
-    for (const f of project.files) {
-      if (f.type !== 'EYC' && f.type !== 'EGV' && f.type !== 'ECS' && f.type !== 'EDT' && f.type !== 'ELL') continue
-      const eycPath = join(project.projectDir, f.fileName)
-      const editorContent = editorFiles?.get(f.fileName)
-      const content = editorContent || (existsSync(eycPath) ? readFileSync(eycPath, 'utf-8') : '')
-      if (!content) continue
+    // 查找关联的 .eyc 文件并转译。
+    // 预览模式：跳过所有源代码转译——不生成任何用户 .cpp，事件处理全部回退到 main.cpp 里的
+    // WEAK 空实现，于是窗口能显示、控件在位，但点击等无任何逻辑（即“编译窗口不编译源代码”）。
+    if (!previewWindow) {
+      for (const f of project.files) {
+        if (f.type !== 'EYC' && f.type !== 'EGV' && f.type !== 'ECS' && f.type !== 'EDT' && f.type !== 'ELL') continue
+        const eycPath = join(project.projectDir, f.fileName)
+        const editorContent = editorFiles?.get(f.fileName)
+        const content = editorContent || (existsSync(eycPath) ? readFileSync(eycPath, 'utf-8') : '')
+        if (!content) continue
 
-      transpileProjectFile(f.fileName, content, libraryConstants)
+        transpileProjectFile(f.fileName, content, libraryConstants)
+      }
     }
     compileLogMark('  组装: 二次转译 .eyc(前向声明)')
 
@@ -5492,6 +5517,50 @@ function generateMainC(
     mainCode += `WEAK_FUNC void ${windowEventPrefix}_即将被销毁(void) { }\n`
     mainCode += `WEAK_FUNC void ${windowEventPrefix}_被销毁(void) { }\n`
 
+    // ===== 窗口菜单（菜单编辑器的 menu 字段）：生成 CreateMenus + 菜单项被选择的弱空实现 + 命令表 =====
+    const menuCommands: Array<{ cmdId: number; evSub: string }> = []
+    let menuCreateBody = ''
+    const hasWindowMenu = Array.isArray(winInfo.menu) && winInfo.menu.length > 0
+    if (hasWindowMenu) {
+      let menuHandleSeq = 0
+      let nextMenuCmdId = 40001
+      const emitMenuItems = (items: MenuNodeInfo[], parentVar: string): void => {
+        for (const it of items || []) {
+          if (!it || it.visible === false) continue
+          if (it.separator) { menuCreateBody += `    AppendMenuW(${parentVar}, MF_SEPARATOR, 0, NULL);\n`; continue }
+          const caption = it.caption || ''
+          const kids = Array.isArray(it.children) ? it.children.filter(Boolean) : []
+          if (kids.length > 0) {
+            const sub = `hSub${++menuHandleSeq}`
+            menuCreateBody += `    HMENU ${sub} = CreatePopupMenu();\n`
+            emitMenuItems(kids, sub)
+            let flags = 'MF_POPUP'
+            if (it.disabled) flags += ' | MF_GRAYED'
+            menuCreateBody += `    AppendMenuW(${parentVar}, ${flags}, (UINT_PTR)${sub}, L"${escapeCString(caption)}");\n`
+          } else {
+            const cmdId = nextMenuCmdId++
+            const evSub = it.name ? `_${it.name.replace(/^_+/, '')}_被选择` : ''
+            if (evSub) menuCommands.push({ cmdId, evSub })
+            let flags = 'MF_STRING'
+            if (it.disabled) flags += ' | MF_GRAYED'
+            if (it.checked) flags += ' | MF_CHECKED'
+            const cLabel = it.shortcut ? `${escapeCString(caption)}\\t${escapeCString(it.shortcut)}` : escapeCString(caption)
+            menuCreateBody += `    AppendMenuW(${parentVar}, ${flags}, ${cmdId}, L"${cLabel}");\n`
+          }
+        }
+      }
+      emitMenuItems(winInfo.menu!, 'hMenuBar')
+      menuCreateBody = '    HMENU hMenuBar = CreateMenu();\n' + menuCreateBody + '    SetMenu(hWnd, hMenuBar);\n'
+      // 菜单项被选择事件的弱空实现（用户 .eyc 提供强实现覆盖；预览无源码时保留空实现）
+      for (const mc of menuCommands) {
+        if (declaredHandlers.has(mc.evSub)) continue
+        declaredHandlers.add(mc.evSub)
+        mainCode += `WEAK_FUNC void ${mc.evSub}(void) { }\n`
+      }
+      // CreateMenus 函数（定义在 WndProc 之前，供 WM_CREATE 调用）
+      mainCode += 'void CreateMenus(HWND hWnd) {\n' + menuCreateBody + '}\n'
+    }
+
     // 窗口过程
     mainCode += '/* 窗口过程函数 */\n'
     mainCode += 'LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {\n'
@@ -5501,6 +5570,7 @@ function generateMainC(
     // 此时 CreateWindowExW 尚未返回，必须先在这里完成赋值
     mainCode += '        g_hMainWnd = hWnd;\n'
     mainCode += '        CreateControls(hWnd);\n'
+    if (hasWindowMenu) mainCode += '        CreateMenus(hWnd);\n'
     mainCode += `        ${windowEventPrefix}_创建完毕();\n`
     mainCode += '        break;\n'
     mainCode += '    case WM_COMMAND: {\n'
@@ -5527,6 +5597,11 @@ function generateMainC(
         mainCode += '            break;\n'
       }
       ctrlId++
+    }
+
+    // 菜单项被选择 → 派发到 _名_被选择()（命令 ID 从 40001 起，与控件 ID 1001+ 不冲突）
+    for (const mc of menuCommands) {
+      mainCode += `        case ${mc.cmdId}: ${mc.evSub}(); break;\n`
     }
 
     mainCode += '        }\n'
@@ -5735,7 +5810,7 @@ function generateMainC(
       mainCode += `    DWORD dwExStyle = ${dwExStyle};\n`
     }
     mainCode += '    RECT rc = { 0, 0, g_nWidth, g_nHeight };\n'
-    mainCode += '    AdjustWindowRectEx(&rc, dwStyle, FALSE, dwExStyle);\n'
+    mainCode += `    AdjustWindowRectEx(&rc, dwStyle, ${hasWindowMenu ? 'TRUE' : 'FALSE'}, dwExStyle);\n`
     mainCode += '    int winW = rc.right - rc.left;\n'
     mainCode += '    int winH = rc.bottom - rc.top;\n'
     // 根据位置属性决定起始坐标
@@ -5957,7 +6032,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     sendMessage({ type: 'info', text: '正在生成C++代码...' })
     compileLogMark('开始生成C++代码')
     await yieldToEventLoop()
-    const additionalCFiles = generateMainC(project, tempDir, editorFiles, libsToLink, staticCmdDispatchLibs, !!options.debug, options.breakpoints || {}, targetPlatform)
+    const additionalCFiles = generateMainC(project, tempDir, editorFiles, libsToLink, staticCmdDispatchLibs, !!options.debug, options.breakpoints || {}, targetPlatform, options.previewWindow)
     compileLogMark('C++代码生成完成')
     await yieldToEventLoop()
     const outputName = project.projectName
