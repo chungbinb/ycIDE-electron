@@ -16,6 +16,7 @@ self.onmessage = (event: MessageEvent<EditorDiagnosticsRequest>): void => {
     validCommandNames: payload.validCommandNames || [],
     allKnownVarNames: payload.allKnownVarNames || [],
     reservedNames: payload.reservedNames || [],
+    commandSignatures: payload.commandSignatures,
   })
 
   const response: EditorDiagnosticsResponse = {

@@ -7,6 +7,19 @@ import {
   isValidVariableLikeName,
 } from './editorCoreUtils'
 
+export interface DiagCommandParam {
+  name: string
+  type: string
+  optional?: boolean
+  isArray?: boolean
+  repeatable?: boolean
+}
+
+export interface DiagCommandSignature {
+  params: DiagCommandParam[]
+  returnType?: string
+}
+
 export interface EditorDiagnosticsRequest {
   id: number
   text: string
@@ -14,6 +27,8 @@ export interface EditorDiagnosticsRequest {
   validCommandNames: string[]
   allKnownVarNames: string[]
   reservedNames: string[]
+  // 命令签名表（命令名 → 参数类型/返回类型），用于参数数据类型匹配检查；缺省不检查
+  commandSignatures?: Record<string, DiagCommandSignature>
 }
 
 export interface EditorDiagnosticsProblem {
@@ -275,6 +290,207 @@ function isPureNumericExpression(
   return hasNumericValue
 }
 
+// ===== 命令参数数据类型检查 =====
+// 只对"能可靠推断"的实参类型做族级匹配（数值族/文本/逻辑/字节集/日期时间），
+// 通用型参数、无法推断的表达式（含运算符/常量/成员访问/未知变量）一律跳过，避免误报。
+
+/** 数据类型 → 匹配族；'' 表示不参与判定（通用型/组件/自定义类型/指针等） */
+function classifyTypeFamily(typeName: string): string {
+  const t = normalizeDataTypeName(typeName)
+  if (!t) return ''
+  if (NUMERIC_TYPES.has(t)) return 'numeric'
+  if (t === '文本型') return 'text'
+  if (t === '逻辑型') return 'logic'
+  if (t === '字节集') return 'bin'
+  if (t === '日期时间型') return 'datetime'
+  return ''
+}
+
+/** 按顶层逗号切分实参（引号/括号感知），返回各参数文本与其在源串中的偏移 */
+function splitTopLevelArgs(argsText: string): Array<{ text: string; offset: number }> {
+  const out: Array<{ text: string; offset: number }> = []
+  let depth = 0
+  let inStr = false
+  let start = 0
+  for (let i = 0; i < argsText.length; i++) {
+    const ch = argsText[i]
+    if (inStr) {
+      if (ch === '"' || ch === '”') inStr = false
+      continue
+    }
+    if (ch === '"' || ch === '“') { inStr = true; continue }
+    if (ch === '(' || ch === '（') depth++
+    else if (ch === ')' || ch === '）') depth--
+    else if ((ch === ',' || ch === '，') && depth === 0) {
+      out.push({ text: argsText.slice(start, i), offset: start })
+      start = i + 1
+    }
+  }
+  out.push({ text: argsText.slice(start), offset: start })
+  return out
+}
+
+/** 整个实参是否恰为一个字符串字面量（“…” 或 "…"，无拼接） */
+function isSingleQuotedLiteral(arg: string): boolean {
+  if (arg.length < 2) return false
+  const open = arg[0]
+  if (open !== '"' && open !== '“') return false
+  const close = open === '“' ? '”' : '"'
+  const end = arg.indexOf(close, 1)
+  return end === arg.length - 1
+}
+
+const NUMERIC_LITERAL_RE = /^[+-]?[0-9０-９]+(?:[.．][0-9０-９]+)?$/
+const IDENTIFIER_RE = /^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/
+const CALL_HEAD_RE = /^([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)\s*[（(]/
+
+/**
+ * 数字开头但不是合法数值字面量的"单词型"实参（如 1.txt、3x）：
+ * 易语言标识符不能以数字开头，这必然是非法表达式（最常见是文本忘加引号）。
+ * 含空白/运算符/引号/括号的表达式不在此列（交给类型推断按未知跳过）。
+ */
+function isInvalidDigitStartToken(arg: string): boolean {
+  if (!/^[+-]?[0-9０-９]/.test(arg)) return false
+  if (NUMERIC_LITERAL_RE.test(arg)) return false
+  return /^[+-]?[0-9０-９][0-9０-９A-Za-z_一-龥.．。]*$/.test(arg)
+}
+
+/** 推断实参类型族；'' = 无法可靠推断（跳过检查） */
+function inferArgTypeFamily(
+  arg: string,
+  lineIndex: number,
+  scopes: { assemblyVars: Map<string, string>; globalVars: Map<string, string>; subScopes: SubScope[] },
+  signatures: Record<string, DiagCommandSignature>,
+): { family: string; typeName: string } {
+  const t = arg.trim()
+  if (!t) return { family: '', typeName: '' }
+  if (isSingleQuotedLiteral(t)) return { family: 'text', typeName: '文本型' }
+  if (t === '真' || t === '假') return { family: 'logic', typeName: '逻辑型' }
+  if (NUMERIC_LITERAL_RE.test(t)) {
+    return /[.．]/.test(t)
+      ? { family: 'numeric', typeName: '小数型' }
+      : { family: 'numeric', typeName: '整数型' }
+  }
+  if (IDENTIFIER_RE.test(t)) {
+    const varType = resolveVarTypeAtLine(t, lineIndex, scopes)
+    if (!varType) return { family: '', typeName: '' }
+    return { family: classifyTypeFamily(varType), typeName: varType }
+  }
+  // 嵌套命令调用：取返回类型（要求整个实参就是一次调用，如 到字节集(...)）
+  const callHead = t.match(CALL_HEAD_RE)
+  if (callHead && (t.endsWith(')') || t.endsWith('）'))) {
+    const sig = signatures[callHead[1]]
+    const ret = sig?.returnType || ''
+    if (!ret) return { family: '', typeName: '' }
+    return { family: classifyTypeFamily(ret), typeName: ret }
+  }
+  // 纯数值表达式（数值变量/字面量 + 四则运算）
+  if (isPureNumericExpression(t, lineIndex, scopes)) return { family: 'numeric', typeName: '数值' }
+  return { family: '', typeName: '' }
+}
+
+/**
+ * 扫描一段代码文本里的所有命令调用（含嵌套），对签名表里已知的命令做实参类型检查。
+ * textOffset 为该段文本在整行中的起始偏移（列号定位用）。
+ */
+function checkCommandArgTypes(
+  text: string,
+  textOffset: number,
+  lineIndex: number,
+  scopes: { assemblyVars: Map<string, string>; globalVars: Map<string, string>; subScopes: SubScope[] },
+  signatures: Record<string, DiagCommandSignature>,
+  problems: EditorDiagnosticsProblem[],
+): void {
+  let inStr = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (inStr) {
+      if (ch === '"' || ch === '”') inStr = false
+      continue
+    }
+    if (ch === '"' || ch === '“') { inStr = true; continue }
+    if (!/[一-龥A-Za-z_]/.test(ch)) continue
+
+    // 读出标识符
+    let j = i
+    while (j < text.length && /[一-龥A-Za-z0-9_]/.test(text[j])) j++
+    const name = text.slice(i, j)
+    // 名后紧跟开括号（允许空格）才是调用
+    let k = j
+    while (k < text.length && (text[k] === ' ' || text[k] === '　')) k++
+    if (text[k] !== '(' && text[k] !== '（') { i = j - 1; continue }
+    // 成员方法调用（对象.方法）不做签名匹配（方法名可能与全局命令重名）
+    const prev = text.slice(0, i).trimEnd()
+    const isMember = /[.。．]$/.test(prev)
+
+    // 提取配平的括号内文本
+    const openIdx = k
+    let depth = 0
+    let closeIdx = text.length
+    let strFlag = false
+    for (let m = openIdx; m < text.length; m++) {
+      const c = text[m]
+      if (strFlag) {
+        if (c === '"' || c === '”') strFlag = false
+        continue
+      }
+      if (c === '"' || c === '“') { strFlag = true; continue }
+      if (c === '(' || c === '（') depth++
+      else if (c === ')' || c === '）') {
+        depth--
+        if (depth === 0) { closeIdx = m; break }
+      }
+    }
+    const inner = text.slice(openIdx + 1, closeIdx)
+    const args = splitTopLevelArgs(inner)
+
+    const sig = !isMember ? signatures[name] : undefined
+    if (sig && sig.params.length > 0) {
+      for (let a = 0; a < args.length; a++) {
+        const lastParam = sig.params[sig.params.length - 1]
+        const param = a < sig.params.length ? sig.params[a] : (lastParam?.repeatable ? lastParam : undefined)
+        if (!param) continue
+        const raw = args[a].text
+        const trimmed = raw.trim()
+        if (!trimmed) continue
+        const argCol = textOffset + openIdx + 1 + args[a].offset + (raw.length - raw.trimStart().length) + 1
+        // 数字开头的非法单词（如 1.txt）：必错，文本参数给出加引号提示
+        if (isInvalidDigitStartToken(trimmed)) {
+          const paramFam = classifyTypeFamily(param.type)
+          const hint = paramFam === 'text' ? `；文本内容需加引号（如：“${trimmed}”）` : ''
+          problems.push({
+            line: lineIndex + 1,
+            column: argCol,
+            message: `参数"${param.name}"的值 ${trimmed} 不是有效表达式${hint}`,
+            severity: 'error',
+          })
+          continue
+        }
+        if (param.isArray) continue
+        const paramFam = classifyTypeFamily(param.type)
+        if (!paramFam) continue
+        const inferred = inferArgTypeFamily(trimmed, lineIndex, scopes, signatures)
+        if (!inferred.family) continue
+        if (inferred.family !== paramFam) {
+          problems.push({
+            line: lineIndex + 1,
+            column: argCol,
+            message: `参数"${param.name}"类型不匹配：需要 ${param.type}，当前为 ${inferred.typeName}`,
+            severity: 'error',
+          })
+        }
+      }
+    }
+
+    // 递归进入每个实参检查嵌套调用（无论本调用是否在签名表里）
+    for (const argItem of args) {
+      checkCommandArgTypes(argItem.text, textOffset + openIdx + 1 + argItem.offset, lineIndex, scopes, signatures, problems)
+    }
+
+    i = closeIdx
+  }
+}
+
 export function buildEditorDiagnosticsProblems(
   request: Omit<EditorDiagnosticsRequest, 'id'>,
 ): EditorDiagnosticsProblem[] {
@@ -313,6 +529,11 @@ export function buildEditorDiagnosticsProblems(
         const eqPos = rawLine.search(/(?:=|＝)\s*$/)
         const column = eqPos >= 0 ? eqPos + 1 : 1
         problems.push({ line: i + 1, column, message: `赋值语句缺少右值（${missingTarget}）`, severity: 'error' })
+      }
+
+      // 命令实参数据类型匹配检查（含嵌套调用）
+      if (request.commandSignatures) {
+        checkCommandArgTypes(rawLine, 0, i, typeScopes, request.commandSignatures, problems)
       }
     }
   }

@@ -4298,7 +4298,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.4-beta.6（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.4-beta.7（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]

@@ -29,6 +29,8 @@ import EycResourcePreview from './EycResourcePreview'
 import { resolveFlowLineColors } from './flowLineTheme'
 import { useCodeLineEditor, type CodeLineNavigationAction, type EmptyCodeLineDeleteAction, type ParenScopedKeyAction } from './useCodeLineEditor'
 import {
+  balanceArgParens,
+  isArgParensBalanced,
   isQuotedTextLiteral,
   parseAssignmentDetail,
   parseAssignmentLineParts,
@@ -99,6 +101,7 @@ import {
   resolveCompletionWordContext,
 } from './editorCompletionInputUtils'
 import { useEditorDiagnosticsProblems } from './editorDiagnostics'
+import type { DiagCommandSignature } from './editorDiagnosticsShared'
 import { useEditorBlocksModel } from './editorBlocksModel'
 
 // ========== 组件 ==========
@@ -1487,7 +1490,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         setSelectedLines(new Set())
         return
       }
-      if (e.key === 'Delete' || e.key === 'Backspace') {
+      // 空格 = 删除：易语言代码里没有空格语义，行多选状态下按空格等同 Delete（同一套
+      // 最小结构保护/溶解逻辑）。仅在有行选区时劫持空格；输入框内的空格不受影响（本
+      // 监听器开头已对 INPUT/TEXTAREA 提前返回，正常文本编辑照常输入空格）。
+      if (e.key === 'Delete' || e.key === 'Backspace' || (e.key === ' ' && !ctrl && selectedLines.size > 0)) {
         e.preventDefault()
         const ls = currentText.split('\n')
         const { deletable: rawDeletable, sorted: sortedSel } = getDeletableSelection(ls, selectedLines)
@@ -1886,9 +1892,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     const matches = paginateCompletionDisplayItems(fullMatches, AC_PAGE_SIZE)
 
-    // 计算弹窗位置（词首像素偏移记入 ref，供弹窗打开期间的位置跟踪复用）
-    if (inputRef.current) {
-      const popupPos = computeCompletionPopupPosition(inputRef.current, val, wordStart, eycScale)
+    // 计算弹窗位置（词首像素偏移记入 ref，供弹窗打开期间的位置跟踪复用）。
+    // 展开参数编辑时锚定到参数输入框（inputRef 是代码行输入框、此时未渲染）。
+    const anchorInput = editCell.paramIdx !== undefined ? paramInputRef.current : inputRef.current
+    if (anchorInput) {
+      const popupPos = computeCompletionPopupPosition(anchorInput, val, wordStart, eycScale)
       acWordLeftOffsetRef.current = popupPos.leftOffset
       setAcPos({ left: popupPos.left, top: popupPos.top })
     }
@@ -1904,7 +1912,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const item = displayItem.cmd
     const wordStart = acWordStartRef.current
     const prefix = acPrefixRef.current
-    const cursorPos = inputRef.current?.selectionStart ?? editVal.length
+    // 展开参数编辑时活动输入框是 paramInputRef（inputRef 是代码行输入框、此时未渲染）
+    const isParamExprEdit = !!editCell && editCell.paramIdx !== undefined
+    const activeInput = isParamExprEdit ? paramInputRef.current : inputRef.current
+    const cursorPos = activeInput?.selectionStart ?? editVal.length
     const before = editVal.slice(0, prefix ? Math.max(0, wordStart - 1) : wordStart)
     const after = editVal.slice(cursorPos)
 
@@ -1914,7 +1925,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       ...memberCommandsRef.current,
     ]
     const isCodeLineEdit = !!editCell && editCell.cellIndex === -1 && editCell.paramIdx === undefined
-    const isCallable = isCodeLineEdit && (
+    // 参数值是表达式，命令（如 到字节集）同样可调用、自动补括号
+    const isCallable = (isCodeLineEdit || isParamExprEdit) && (
       commandPool.some(c => c.name === item.name)
       || userSubNamesRef.current.has(item.name)
       // 项目类的公开方法（对象.方法）同样可调用
@@ -1945,17 +1957,24 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setEditVal(newVal)
     setAcVisible(false)
     setTimeout(() => {
-      if (inputRef.current) {
+      const target = isParamExprEdit ? paramInputRef.current : inputRef.current
+      if (target) {
         const newPos = before.length + prefix.length + item.name.length + caretExtra
         try {
-          inputRef.current.focus({ preventScroll: true })
+          target.focus({ preventScroll: true })
         } catch {
-          inputRef.current.focus()
+          target.focus()
         }
-        inputRef.current.setSelectionRange(newPos, newPos)
+        target.setSelectionRange(newPos, newPos)
       }
     }, 0)
   }, [editVal, editCell])
+
+  // 编辑态结束（blur 提交 / Esc / 提交后 setEditCell(null) 等路径）统一关掉补全弹窗，
+  // 避免参数输入框 blur 提交后弹窗残留在原位。
+  useEffect(() => {
+    if (!editCell) setAcVisible(false)
+  }, [editCell])
 
   const expandMoreCompletion = useCallback((index: number) => {
     setAcItems(prev => {
@@ -2992,6 +3011,31 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               })
             }
             map.set(li, segsAtLi)
+          }
+        }
+
+        // 「判断」case 行之后 body 多行时的内侧线向下延续：
+        // 上方循环只标到 case 行、隐藏默认的延续段只从「默认的上一可见行」开始标，
+        // body 多于一行时中间行两段都不覆盖 → 内侧竖线在 case 下一行断开。
+        // 这里从 case 行的下一可见行起逐行补 hasInnerVert，直到接上已标记的锚行
+        // （默认/下一 case 的上一可见行）或遇到同深度的下一 case/结束边界为止。
+        {
+          let li = lineIndex + 1
+          while (li < lines.length) {
+            if (!visibleCodeLineSet.has(li)) { li++; continue }
+            const segsAtLi = map.get(li) || []
+            const sameDepthSegs = segsAtLi.filter(seg => seg.depth === startSeg.depth)
+            if (sameDepthSegs.length === 0) break // 已出结构范围
+            // 下一 case / 结束 / 新起始：边界，交给它们自己的衔接逻辑
+            if (sameDepthSegs.some(seg => seg.type === 'branch' || seg.type === 'start' || seg.type === 'end')) break
+            // 已被隐藏默认的延续段标记：链路接上，停止
+            if (sameDepthSegs.every(seg => seg.hasInnerVert)) break
+            for (const seg of sameDepthSegs) {
+              seg.hasInnerVert = true
+              seg.hasInnerVertFromAbove = true
+            }
+            map.set(li, segsAtLi)
+            li++
           }
         }
 
@@ -4048,12 +4092,28 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return set
   }, [parsedLinesForCurrentText, reservedNameSet])
 
+  // 命令签名表（命令名 → 参数/返回类型），供诊断做实参数据类型匹配检查。
+  // 只收支持库命令 + DLL 命令（用户子程序的补全项无参数类型信息，天然跳过不误报）。
+  const diagCommandSignatures = useMemo(() => {
+    const map: Record<string, DiagCommandSignature> = {}
+    for (const c of [...allCommandsRef.current, ...dllCompletionItemsRef.current]) {
+      if (!c.name || c.isMember) continue
+      map[c.name] = {
+        params: c.params.map(p => ({ name: p.name, type: p.type, optional: p.optional, isArray: p.isArray, repeatable: p.repeatable })),
+        returnType: c.returnType || '',
+      }
+    }
+    return map
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cmdLoadId, dllCompletionItems])
+
   const diagnosticsProblems = useEditorDiagnosticsProblems({
     text: diagnosticsText,
     hasCommandCatalog: allCommandsRef.current.length > 0,
     validCommandNames,
     allKnownVarNames,
     reservedNameSet,
+    commandSignatures: diagCommandSignatures,
   })
 
   // 问题列表由 worker 异步计算，主线程仅分发结果。
@@ -4099,6 +4159,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     // 参数值编辑 / 赋值语句右值编辑
     if (editCell.paramIdx !== undefined) {
+      // 提交兜底：补齐缺失的右括号/引号（如「到字节集(」→「到字节集()」），
+      // 避免未配平的值写回后吞掉外层调用的右括号、破坏整行括号结构。
+      effectiveVal = balanceArgParens(effectiveVal)
       if (editCell.paramIdx >= 0) {
         const codeLine = lines[editCell.lineIndex]
         const formattedVal = formatParamOperators(effectiveVal)
@@ -5554,7 +5617,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       onApplyCompletion: applyCompletion,
       onHidePopup: () => setAcVisible(false),
     })
-    if (handled && (key === 'ArrowUp' || key === 'ArrowDown')) {
+    if (handled && (key === 'ArrowUp' || key === 'ArrowDown') && editCellRef.current?.paramIdx === undefined) {
+      // 代码行输入框需要重新聚焦；参数输入框按键时焦点本就在自身，不抢焦点
       const pos = inputRef.current?.selectionStart ?? editVal.length
       focusInlineInputAt(pos)
     }
@@ -6783,13 +6847,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                       className="eyc-param-val-input"
                       aria-label={`编辑参数 ${item.name}`}
                       value={editVal}
-                      onChange={e => setEditVal(e.target.value)}
+                      onChange={e => { const v = e.target.value; setEditVal(v); updateCompletion(v, e.currentTarget.selectionStart ?? v.length) }}
                       onBlur={() => {
                         if (shouldSuppressBlurCommit()) return
                         commit()
                       }}
                       onKeyDown={e => {
                         if (handleParamInputCtrlKey(e)) return
+                        if (applyCompletionPopupKey(e.key)) { e.preventDefault(); return }
                         if (e.key === 'Enter') { e.preventDefault(); commit() }
                         else if (e.key === 'Escape') setEditCell(null)
                       }}
@@ -6806,7 +6871,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         })}
       </div>
     )
-  }, [commit, editCell, editVal, findOwnerAssemblyName, flowLineModeConfig, focusParamInputAt, handleParamInputCtrlKey, onCommandClick, shouldSuppressBlurCommit])
+  }, [commit, editCell, editVal, findOwnerAssemblyName, flowLineModeConfig, focusParamInputAt, handleParamInputCtrlKey, onCommandClick, shouldSuppressBlurCommit, applyCompletionPopupKey, updateCompletion])
 
 
   // 查找代码行中第一个命令名（不要求有参数）
@@ -6843,6 +6908,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     // 参数值编辑
     if (editCell.paramIdx !== undefined) {
+      // 括号/引号未配平的中间态（如正敲「到字节集(」）不写回：未配平的开括号会吞掉外层
+      // 调用自身的右括号，下一键 replaceCallArg 在破行上找不到参数边界、走"追加"分支，
+      // 每敲一键行尾多出一组重复参数。输入框本地照常编辑，配平后再同步。
+      if (!isArgParensBalanced(val)) return
       if (editCell.paramIdx >= 0) {
         // 嵌套表达式行编辑不做实时同步：实时改写会让路径解析跑在中间态文本上，提交时一次性替换
         if (editCell.exprPath && editCell.exprPath.length > 0) return
@@ -7667,13 +7736,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                     className="eyc-param-val-input"
                                     aria-label={`编辑参数 ${p.name}`}
                                     value={editVal}
-                                    onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
+                                    onChange={e => { const v = e.target.value; setEditVal(v); scheduleLiveUpdate(v); updateCompletion(v, e.currentTarget.selectionStart ?? v.length) }}
                                     onBlur={() => {
                                       if (shouldSuppressBlurCommit()) return
                                       commit()
                                     }}
                                     onKeyDown={e => {
                                       if (handleParamInputCtrlKey(e)) return
+                                      if (applyCompletionPopupKey(e.key)) { e.preventDefault(); return }
                                       if (e.key === 'Enter') { e.preventDefault(); commit() }
                                       else if (e.key === 'Escape') setEditCell(null)
                                     }}
@@ -7753,13 +7823,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                             className="eyc-param-val-input"
                             aria-label="编辑赋值内容"
                             value={editVal}
-                            onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
+                            onChange={e => { const v = e.target.value; setEditVal(v); scheduleLiveUpdate(v); updateCompletion(v, e.currentTarget.selectionStart ?? v.length) }}
                             onBlur={() => {
                               if (shouldSuppressBlurCommit()) return
                               commit()
                             }}
                             onKeyDown={e => {
                               if (handleParamInputCtrlKey(e)) return
+                              if (applyCompletionPopupKey(e.key)) { e.preventDefault(); return }
                               if (e.key === 'Enter') { e.preventDefault(); commit() }
                               else if (e.key === 'Escape') setEditCell(null)
                             }}
@@ -7801,13 +7872,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                     className="eyc-param-val-input"
                                     aria-label={`编辑赋值命令参数 ${p.name}`}
                                     value={editVal}
-                                    onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
+                                    onChange={e => { const v = e.target.value; setEditVal(v); scheduleLiveUpdate(v); updateCompletion(v, e.currentTarget.selectionStart ?? v.length) }}
                                     onBlur={() => {
                                       if (shouldSuppressBlurCommit()) return
                                       commit()
                                     }}
                                     onKeyDown={e => {
                                       if (handleParamInputCtrlKey(e)) return
+                                      if (applyCompletionPopupKey(e.key)) { e.preventDefault(); return }
                                       if (e.key === 'Enter') { e.preventDefault(); commit() }
                                       else if (e.key === 'Escape') setEditCell(null)
                                     }}

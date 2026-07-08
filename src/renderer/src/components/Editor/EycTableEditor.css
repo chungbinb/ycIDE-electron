@@ -1020,6 +1020,24 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   top: 68%;
 }
 
+/* 分支的内容行是同一行右侧紧邻的内层结构（如 否则体首行就是嵌套如果）：
+   横线与 ▶ 原本停在本格 right:1ch、与内层结构之间留一截缺口；
+   延伸穿过内层格，箭头尖画到内层命令文本左边（下一格的 right:1ch 处，
+   即嵌套「如」字左边、内层自身钩线末端的位置——与普通分支箭头到正文的间距一致）。
+   须放在 stagger 规则之后以覆盖其 right（top 仍沿用 stagger 的 35%）。 */
+.eyc-flow-branch.eyc-flow-arrow-into-inner::after {
+  right: -3ch;
+}
+.eyc-flow-branch.eyc-flow-arrow-into-inner .eyc-flow-arrow-right {
+  right: -3ch;
+}
+.eyc-flow-branch.eyc-flow-arrow-into-inner .eyc-flow-outer-horz {
+  right: -3ch;
+}
+.eyc-flow-branch.eyc-flow-arrow-into-inner .eyc-flow-outer-arrow {
+  right: -3ch;
+}
+
 /* hasInnerLink 的 through 行：外侧竖线需完整贯通，避免出现中段断裂 */
 .eyc-flow-through.eyc-flow-has-inner-link::before {
   bottom: var(--flow-join-gap) !important;

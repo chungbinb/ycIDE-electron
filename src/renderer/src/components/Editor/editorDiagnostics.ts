@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   buildEditorDiagnosticsProblems,
+  type DiagCommandSignature,
   type EditorDiagnosticsProblem,
   type EditorDiagnosticsRequest,
   type EditorDiagnosticsResponse,
@@ -12,6 +13,8 @@ interface DiagnosticsWorkerInput {
   validCommandNames: Set<string>
   allKnownVarNames: Set<string>
   reservedNameSet: Set<string>
+  // 命令签名表（命令名 → 参数/返回类型），用于实参数据类型匹配检查
+  commandSignatures?: Record<string, DiagCommandSignature>
 }
 
 function createDiagnosticsWorker(): Worker | null {
@@ -35,8 +38,9 @@ export function useEditorDiagnosticsProblems(input: DiagnosticsWorkerInput): Edi
       validCommandNames: Array.from(input.validCommandNames),
       allKnownVarNames: Array.from(input.allKnownVarNames),
       reservedNames: Array.from(input.reservedNameSet),
+      commandSignatures: input.commandSignatures,
     }
-  }, [input.text, input.hasCommandCatalog, input.validCommandNames, input.allKnownVarNames, input.reservedNameSet])
+  }, [input.text, input.hasCommandCatalog, input.validCommandNames, input.allKnownVarNames, input.reservedNameSet, input.commandSignatures])
 
   useEffect(() => {
     const worker = createDiagnosticsWorker()
@@ -73,6 +77,7 @@ export function useEditorDiagnosticsProblems(input: DiagnosticsWorkerInput): Edi
       validCommandNames: normalized.validCommandNames,
       allKnownVarNames: normalized.allKnownVarNames,
       reservedNames: normalized.reservedNames,
+      commandSignatures: normalized.commandSignatures,
     }
     worker.postMessage(payload)
   }, [normalized])
