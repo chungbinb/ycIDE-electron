@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeFlowLines } from '../../src/renderer/src/components/Editor/eycFlow'
+import { appendMissingFlowEnds, computeFlowLines } from '../../src/renderer/src/components/Editor/eycFlow'
 import type { RenderBlock } from '../../src/renderer/src/components/Editor/eycTableModel'
 
 function codeBlocks(lines: string[]): RenderBlock[] {
@@ -135,5 +135,44 @@ describe('computeFlowLines 配对与隐式闭合', () => {
     ])).map
     expect((judgeThenIfTrue.get(2) || []).some(s => s.hasNextFlow)).toBe(false)
     expect((judgeThenIfTrue.get(3) || []).some(s => s.hasPrevFlowEnd)).toBe(false)
+  })
+})
+
+describe('appendMissingFlowEnds（复制/粘贴补齐流程结束行）', () => {
+  it('判断开始+case+默认 缺判断结束 → 末尾补判断结束（用户场景）', () => {
+    const out = appendMissingFlowEnds(['.判断开始 (a ＝ 1)', '    调试输出 (1)', '.判断 (a ＝ 2)', '    调试输出 (2)', '.默认', '    调试输出 (9)'])
+    expect(out[out.length - 1]).toBe('.判断结束')
+    expect(out).toHaveLength(7)
+  })
+
+  it('如果+否则 缺如果结束 → 补如果结束；已配平的片段原样返回', () => {
+    const out = appendMissingFlowEnds(['.如果 (a ＝ 1)', '    调试输出 (1)', '.否则', '    调试输出 (2)'])
+    expect(out[out.length - 1]).toBe('.如果结束')
+    const balanced = ['.如果 (a ＝ 1)', '    调试输出 (1)', '.如果结束']
+    expect(appendMissingFlowEnds(balanced)).toEqual(balanced)
+  })
+
+  it('嵌套双头都缺尾 → 按 LIFO 先补内层再补外层，缩进/点号沿用头行', () => {
+    const out = appendMissingFlowEnds(['.如果 (a ＝ 1)', '    .判断开始 (b ＝ 2)', '        调试输出 (1)'])
+    expect(out.slice(-2)).toEqual(['    .判断结束', '.如果结束'])
+  })
+
+  it('循环头缺尾 → 补带空括号的循环尾', () => {
+    const out = appendMissingFlowEnds(['.计次循环首 (10, i)', '    调试输出 (i)'])
+    expect(out[out.length - 1]).toBe('.计次循环尾 ()')
+  })
+
+  it('裸「判断」不视为可闭合头：单独的 case 片段原样返回；判断开始下的 case 不重复补', () => {
+    const caseOnly = ['.判断 (a ＝ 2)', '    调试输出 (2)']
+    expect(appendMissingFlowEnds(caseOnly)).toEqual(caseOnly)
+    const withHead = appendMissingFlowEnds(['.判断开始 (a ＝ 1)', '.判断 (a ＝ 2)', '    调试输出 (2)'])
+    expect(withHead.filter(l => l.includes('判断结束'))).toHaveLength(1)
+  })
+
+  it('内层未闭合但外层结束在场 → 内层视为隐式闭合、不补（与 implicitClose 一致）；孤立结束行原样', () => {
+    const crossed = ['.如果 (a ＝ 1)', '    .计次循环首 (10, i)', '.如果结束']
+    expect(appendMissingFlowEnds(crossed)).toEqual(crossed)
+    const strayEnd = ['    调试输出 (1)', '.如果结束']
+    expect(appendMissingFlowEnds(strayEnd)).toEqual(strayEnd)
   })
 })

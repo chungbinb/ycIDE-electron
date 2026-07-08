@@ -239,6 +239,12 @@
   background: var(--bg-hover, rgba(255, 255, 255, 0.08));
 }
 
+.sidebar-tabs-context-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+  background: transparent;
+}
+
 /* Library icon */
 .tree-icon-lib {
   background: var(--tree-lib-bg);

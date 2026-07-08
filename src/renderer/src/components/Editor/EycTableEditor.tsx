@@ -15,6 +15,7 @@ import {
   FLOW_KW,
   FLOW_LOOP_KW,
   FLOW_START,
+  appendMissingFlowEnds,
   computeFlowLines,
   extractFlowKw,
   getFlowStructureAround,
@@ -61,7 +62,7 @@ import {
   renderFlowContinuationLine,
   renderFlowSegsLine,
 } from './editorFlowRenderUtils'
-import { buildMultiLinePasteResult } from './editorPasteUtils'
+import { buildMultiLinePasteResult, relocateMisplacedLocalVarLines } from './editorPasteUtils'
 import { useEditorInteractionHandlers } from './useEditorInteractionHandlers'
 import {
   getCmdIconClass,
@@ -166,12 +167,28 @@ export interface FileProblem {
   severity: 'error' | 'warning'
 }
 
+/** 可勾切换格（公开/静态/传址/参考/可空/数组）的 cellIndex 集合——与 tryToggleTableBooleanCell 的判定一一对应 */
+function getBooleanToggleCellIndexes(lineType: string, tableType?: string): Set<number> {
+  switch (lineType) {
+    case 'dll': return new Set([2])
+    case 'ptrCmd': return new Set([2])
+    case 'sub': return new Set([2])
+    case 'localVar': return new Set([2])
+    case 'globalVar': return new Set([3])
+    case 'dataTypeMember': return new Set([2])
+    case 'subParam':
+      return (tableType === 'dll' || tableType === 'ptrcmd') ? new Set([2, 3]) : new Set([2, 3, 4])
+    default: return new Set()
+  }
+}
+
 interface EditState {
   lineIndex: number
   cellIndex: number
   fieldIdx: number    // -1 表示无字段映射（代码行编辑整行）
   sliceField: boolean
   isVirtual?: boolean // 虚拟代码行（编辑时插入而非替换）
+  booleanCell?: boolean // 打勾格（公开/静态/传址…）键盘焦点态：无输入框，空格切换、方向键导航
   paramIdx?: number   // 展开参数编辑：第几个参数 (0-based)
   exprPath?: number[] // 嵌套表达式行编辑：从顶层参数值出发的子节点路径（加法拆分 0/1 或子命令参数序号）
 }
@@ -401,6 +418,19 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const [editorContextMenu, setEditorContextMenu] = useState<{ x: number; y: number; lineIndex: number | null } | null>(null)
   const [contextMenuCanPaste, setContextMenuCanPaste] = useState(false)
   const dragAnchor = useRef<number | null>(null)  // 拖选起点行号
+  // 打勾格键盘态从 window keydown 接管按键：经 ref 调用，避免把大函数塞进监听 effect 依赖
+  const applyArrowNavigationKeyRef = useRef<((params: { key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight'; cursorPos: number }) => { handled: boolean; preventDefault: boolean }) | null>(null)
+  const tryToggleTableBooleanCellRef = useRef<((tableType: string | undefined, lineIndex: number, cellIndex: number) => boolean) | null>(null)
+  // 未知标识符回车 → 「插入变量」提示框：{ 名称, 所在行 }
+  const [insertVarPrompt, setInsertVarPrompt] = useState<{ name: string; anchorLine: number } | null>(null)
+  useEffect(() => {
+    if (!insertVarPrompt) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') { e.stopPropagation(); setInsertVarPrompt(null) }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [insertVarPrompt])
   const isDragging = useRef(false)
   const dragStartPos = useRef<{ x: number; y: number } | null>(null)
   const wasDragSelect = useRef(false)
@@ -514,6 +544,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return null
     })
   }, [applySingleLineUpdate])
+  tryToggleTableBooleanCellRef.current = tryToggleTableBooleanCell
 
   // ===== 行选择：拖选逻辑 =====
   // 从行号到实际元素的映射（用于鼠标位置判定）
@@ -1190,6 +1221,30 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     focusWrapper()
   }, [focusWrapper, rangeSet])
 
+  // 行号区按下：单击=整行选中、按住拖动=整行多选（不进入编辑态）；Shift+单击扩展选择。
+  // 折叠按钮自带 stopPropagation 不会到这；断点圆点无独立交互、一并按整行选中处理。
+  const handleGutterMouseDown = useCallback((e: React.MouseEvent, lineIndex: number) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation() // 不冒泡到行 mousedown，避免乐观进入编辑态
+    optimisticLineEditRef.current = null
+    if (editCellRef.current) commitRef.current()
+    lineTextDragCandidateRef.current = null
+    lineTextSelectDragRef.current = null
+    dragStartPos.current = { x: e.clientX, y: e.clientY }
+    if (e.shiftKey && dragAnchor.current !== null) {
+      setSelectedLines(rangeSet(dragAnchor.current, lineIndex))
+    } else {
+      dragAnchor.current = lineIndex
+      setSelectedLines(new Set([lineIndex]))
+    }
+    // 点击即选中整行；置 wasDragSelect 让后续拖动直接走 onMove 的 rangeSet 多选、
+    // 并吞掉随后的 click（不触发点击进编辑）。
+    wasDragSelect.current = true
+    isDragging.current = true
+    focusWrapper()
+  }, [focusWrapper, rangeSet])
+
   // mousemove 和 mouseup 全局监听
   useEffect(() => {
     const onMove = (e: MouseEvent): void => {
@@ -1397,6 +1452,31 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
       const ctrl = e.ctrlKey || e.metaKey
 
+      // 打勾格（公开/静态/传址…）键盘焦点态：空格切换、方向键继续导航、Esc 退出。
+      // 该状态下焦点在 wrapper（无输入框），按键从这里接管。
+      if (editCellRef.current?.booleanCell) {
+        const bc = editCellRef.current
+        if (e.key === ' ' && !ctrl) {
+          e.preventDefault()
+          let boolTableType: string | undefined
+          for (const b of blocksRef.current) {
+            if (b.kind !== 'table') continue
+            if (b.rows.some(r => !r.isHeader && r.lineIndex === bc.lineIndex)) { boolTableType = b.tableType; break }
+          }
+          tryToggleTableBooleanCellRef.current?.(boolTableType, bc.lineIndex, bc.cellIndex)
+          return
+        }
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          e.preventDefault()
+          applyArrowNavigationKeyRef.current?.({ key: e.key, cursorPos: 0 })
+          return
+        }
+        if (e.key === 'Escape') {
+          setEditCell(null)
+          return
+        }
+      }
+
       // Ctrl+A：全选所有行（只要焦点在编辑器区域）
       if (ctrl && e.key === 'a' && inEditor) {
         e.preventDefault()
@@ -1452,7 +1532,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         e.preventDefault()
         const sorted = [...selectedLines].sort((a, b) => a - b)
         const ls = currentText.split('\n')
-        const selectedText = eycToYiFormat(filterClipboardSelectionIndices(ls, sorted.filter(i => i >= 0 && i < ls.length)).map(i => ls[i]).join('\n'))
+        const selectedText = eycToYiFormat(appendMissingFlowEnds(filterClipboardSelectionIndices(ls, sorted.filter(i => i >= 0 && i < ls.length)).map(i => ls[i])).join('\n'))
         navigator.clipboard.writeText(selectedText)
         return
       }
@@ -1461,7 +1541,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const ls = currentText.split('\n')
         const { deletable: rawDeletable, sorted } = getDeletableSelection(ls, selectedLines)
         if (sorted.length === 0) return
-        const selectedText = eycToYiFormat(filterClipboardSelectionIndices(ls, sorted).map(i => ls[i]).join('\n'))
+        const selectedText = eycToYiFormat(appendMissingFlowEnds(filterClipboardSelectionIndices(ls, sorted).map(i => ls[i])).join('\n'))
         navigator.clipboard.writeText(selectedText)
         // 删除选中行
         const { deletable, forceBlank } = applySubAnchorDeleteRule(ls, rawDeletable)
@@ -1975,6 +2055,25 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   useEffect(() => {
     if (!editCell) setAcVisible(false)
   }, [editCell])
+
+  // 手工输入的 .局部变量 自动归位：编辑会话结束时把错位的局部变量声明（子程序正文中敲出的、
+  // 会形成第二张局部变量表）归位到所属子程序头部声明区。只在"确有编辑发生后"的会话结束时跑，
+  // 打开文件不触发；会话进行中不动（正在编辑的行不能被抽走，行号也不能在编辑态下平移）。
+  const hadEditSessionRef = useRef(false)
+  useEffect(() => {
+    if (editCell) {
+      hadEditSessionRef.current = true
+      return
+    }
+    if (!hadEditSessionRef.current) return
+    hadEditSessionRef.current = false
+    const nt = relocateMisplacedLocalVarLines(prevRef.current)
+    if (nt != null && nt !== prevRef.current) {
+      setCurrentText(nt)
+      prevRef.current = nt
+      onChange(nt)
+    }
+  }, [editCell, onChange])
 
   const expandMoreCompletion = useCallback((index: number) => {
     setAcItems(prev => {
@@ -3631,7 +3730,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const sorted = [...selectedLines].sort((a, b) => a - b)
     const ls = currentText.split('\n')
     const kept = filterClipboardSelectionIndices(ls, sorted.filter(i => i >= 0 && i < ls.length))
-    return eycToYiFormat(kept.map(i => ls[i]).join('\n'))
+    // 复制护栏：选区含流程头但没选到配对结束时，剪贴板自动补齐结束行（粘贴不破坏流程线）
+    return eycToYiFormat(appendMissingFlowEnds(kept.map(i => ls[i])).join('\n'))
   }, [selectedLines, currentText])
 
   const getMouseRangeSelectedSourceText = useCallback((): string | null => {
@@ -4116,6 +4216,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     commandSignatures: diagCommandSignatures,
   })
 
+  // 声明重复/同名类错误（局部变量在当前子程序重复定义、与程序集/全局变量同名、子程序重名等）
+  // 的行集合 → 声明表格的名称格标红，与问题面板一致（此前只有面板报、表格行内无提示）。
+  const duplicateDeclLineSet = useMemo(() => {
+    const set = new Set<number>()
+    for (const p of diagnosticsProblems) {
+      if (p.severity === 'error' && (p.message.includes('重复定义') || p.message.includes('同名'))) {
+        set.add(p.line - 1)
+      }
+    }
+    return set
+  }, [diagnosticsProblems])
+
   // 问题列表由 worker 异步计算，主线程仅分发结果。
   useEffect(() => {
     const errorLines = Array.from(new Set(
@@ -4137,6 +4249,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   const commit = useCallback((overrideVal?: string) => {
     if (!editCell || commitGuardRef.current) return
+    // 打勾格焦点态没有文本可提交，直接退出编辑态
+    if (editCell.booleanCell) { setEditCell(null); return }
     commitGuardRef.current = true
     setAcVisible(false)
 
@@ -5640,6 +5754,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const before = editVal.slice(0, cursorPos)
       const after = editVal.slice(cursorPos)
 
+      // 整行是裸的未知标识符（如「我是」）→ 回车后弹「插入变量」提示（照易语言）。
+      // 已知命令/变量/流程关键字/保留字不弹；正常回车流程继续执行，弹窗叠加其上。
+      if (editCell.paramIdx === undefined) {
+        const bareName = editVal.trim()
+        if (/^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(bareName)
+          && !validCommandNames.has(bareName)
+          && !allKnownVarNames.has(bareName)
+          && !reservedNameSet.has(bareName)) {
+          setInsertVarPrompt({ name: bareName, anchorLine: editCell.lineIndex })
+        }
+      }
+
       // ===== 流程命令自动格式化：输入流程命令后按回车自动展开结构 =====
       const autoExpand = getFlowAutoExpandCandidate({ editValue: editVal, trailingText: after })
       if (autoExpand) {
@@ -5668,6 +5794,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     applyFlowAutoExpandOnEnter,
     applyTableRowEnterInsert,
     getFlowAutoExpandCandidate,
+    validCommandNames,
+    allKnownVarNames,
+    reservedNameSet,
   ])
 
   const applyEmptyDeleteKey = useCallback((key: 'Backspace' | 'Delete'): { handled: boolean; preventDefault: boolean } => {
@@ -5716,11 +5845,181 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return { handled: true, preventDefault: true }
   }, [applyCodeLineNavigation, applyEmptyCodeLineDelete, editCell, editVal, getEmptyCodeLineDeleteAction, lines])
 
+  // 可编辑行序列（文档序）：非虚拟代码行 + 表格非表头行（含该行可编辑单元格清单），
+  // 供方向键在 代码行↔表格单元格 之间穿行导航使用。
+  type EditableNavEntry =
+    | { line: number; kind: 'code' }
+    | { line: number; kind: 'cell'; cells: Array<{ ci: number; fieldIdx?: number; text: string; sliceField?: boolean; boolean?: boolean }> }
+  const buildEditableNavEntries = useCallback((): EditableNavEntry[] => {
+    const entries: EditableNavEntry[] = []
+    const parsedAll = parseLines(prevRef.current)
+    for (const blk of blocksRef.current) {
+      if (blk.kind === 'codeline') {
+        if (!blk.isVirtual) entries.push({ line: blk.lineIndex, kind: 'code' })
+      } else if (blk.kind === 'table') {
+        for (const row of blk.rows) {
+          if (row.isHeader) continue
+          const boolCis = getBooleanToggleCellIndexes(parsedAll[row.lineIndex]?.type || '', blk.tableType)
+          entries.push({
+            line: row.lineIndex,
+            kind: 'cell',
+            cells: row.cells.map((c, ci) => ({ ci, fieldIdx: c.fieldIdx, text: c.text || '', sliceField: c.sliceField, boolean: boolCis.has(ci) || undefined })),
+          })
+        }
+      }
+    }
+    return entries
+  }, [])
+
+  // 进入导航目标单元格：打勾格进键盘焦点态（无输入框、焦点在 wrapper、空格切换），普通格进文本编辑
+  const enterNavCell = useCallback((line: number, cell: { ci: number; fieldIdx?: number; text: string; sliceField?: boolean; boolean?: boolean }) => {
+    if (cell.boolean) {
+      setSelectedLines(new Set())
+      lastFocusedLine.current = line
+      setEditVal('')
+      setEditCell({ lineIndex: line, cellIndex: cell.ci, fieldIdx: -1, sliceField: false, booleanCell: true })
+      focusWrapper()
+      return
+    }
+    startEditCell(line, cell.ci, cell.text, cell.fieldIdx, cell.sliceField)
+  }, [startEditCell, focusWrapper])
+
+  // 提交后按最新 blocks 定位并进入目标（代码行 / 同列单元格）
+  const navigateEditableVertical = useCallback((fromLine: number, dir: -1 | 1, wantFieldIdx: number | undefined, keepHorizontalPos: number, wantCi?: number) => {
+    commit()
+    setTimeout(() => {
+      const entries = buildEditableNavEntries()
+      const idx = entries.findIndex(en => en.line === fromLine)
+      if (idx < 0) return
+      // 文档边界（无相邻可编辑行）：重新进入当前行，保证提交后光标不消失
+      const target = entries[idx + dir] ?? entries[idx]
+      if (!target) return
+      if (target.kind === 'code') {
+        startEditLine(target.line)
+        focusInlineInputAt(keepHorizontalPos)
+        return
+      }
+      const editableCells = target.cells.filter(c => c.fieldIdx !== undefined || c.boolean)
+      if (editableCells.length === 0) return
+      const cell = (wantFieldIdx !== undefined && wantFieldIdx >= 0 ? editableCells.find(c => c.fieldIdx === wantFieldIdx) : undefined)
+        || (wantCi !== undefined ? editableCells.find(c => c.ci === wantCi) : undefined)
+        || editableCells[0]
+      enterNavCell(target.line, cell)
+    }, 0)
+  }, [commit, buildEditableNavEntries, startEditLine, focusInlineInputAt, enterNavCell])
+
+  // 「插入变量」提示框执行：局部/程序集变量插入对应声明区，全局变量路由到 .egv 文件。
+  // 插入后按位移恢复正在编辑的行（回车后正编辑下一行，插入声明会使其行号 +1）。
+  const applyInsertVariable = useCallback((scope: 'local' | 'assembly' | 'global') => {
+    const prompt = insertVarPrompt
+    if (!prompt) return
+    setInsertVarPrompt(null)
+    const resumeLine = editCellRef.current?.lineIndex ?? null
+    const resumeIsVirtual = editCellRef.current?.isVirtual
+    if (editCellRef.current) commitRef.current()
+    if (scope === 'global') {
+      onRouteDeclarationPaste?.([{ language: 'egv', lines: [`.全局变量 ${prompt.name}, 整数型`] }])
+      if (resumeLine != null) {
+        setTimeout(() => { startEditLine(resumeLine, undefined, undefined, resumeIsVirtual); focusInlineInputAt('end') }, 0)
+      }
+      return
+    }
+    setTimeout(() => {
+      const ls = prevRef.current.split('\n')
+      const parsed = parseLines(prevRef.current)
+      let insertAt = -1
+      if (scope === 'local') {
+        let subLine = -1
+        for (let i = Math.min(prompt.anchorLine, parsed.length - 1); i >= 0; i--) {
+          const t = parsed[i]?.type
+          if (t === 'sub') { subLine = i; break }
+          if (t === 'assembly') break
+        }
+        if (subLine < 0) return
+        insertAt = subLine + 1
+        while (insertAt < parsed.length && (parsed[insertAt].type === 'subParam' || parsed[insertAt].type === 'localVar')) insertAt++
+        ls.splice(insertAt, 0, `.局部变量 ${prompt.name}, 整数型`)
+      } else {
+        let asmLine = -1
+        for (let i = 0; i < parsed.length; i++) {
+          if (parsed[i].type === 'assembly') { asmLine = i; break }
+        }
+        if (asmLine < 0) return
+        insertAt = asmLine + 1
+        while (insertAt < parsed.length && parsed[insertAt].type === 'assemblyVar') insertAt++
+        ls.splice(insertAt, 0, `.程序集变量 ${prompt.name}, 整数型`)
+      }
+      const nt = ls.join('\n')
+      setCurrentText(nt)
+      prevRef.current = nt
+      onChange(nt)
+      if (resumeLine != null) {
+        const adjusted = insertAt <= resumeLine ? resumeLine + 1 : resumeLine
+        setTimeout(() => { startEditLine(adjusted, undefined, undefined, resumeIsVirtual); focusInlineInputAt('end') }, 0)
+      }
+    }, 0)
+  }, [insertVarPrompt, onRouteDeclarationPaste, onChange, startEditLine, focusInlineInputAt])
+
   const applyArrowNavigationKey = useCallback((params: {
     key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight'
     cursorPos: number
   }): { handled: boolean; preventDefault: boolean } => {
     const { key, cursorPos } = params
+    // 表格单元格编辑：↑/↓ 提交并移动到相邻可编辑行（相邻表格行取同 fieldIdx 单元格、
+    // 相邻代码行进入行编辑）；→ 在文本末尾跨到本行下一可编辑格、← 在行首跨到上一格，
+    // 其余情况保持输入框原生水平移动。
+    if (editCell && editCell.cellIndex >= 0) {
+      if (key === 'ArrowUp' || key === 'ArrowDown') {
+        navigateEditableVertical(editCell.lineIndex, key === 'ArrowUp' ? -1 : 1, editCell.fieldIdx, 0, editCell.cellIndex)
+        return { handled: true, preventDefault: true }
+      }
+      // ←/→：仅在文本边界处跨列（打勾格无文本，任意 ←/→ 都跨列）
+      const atStart = editCell.booleanCell ? true : cursorPos === 0
+      const atEnd = editCell.booleanCell ? true : cursorPos >= editVal.length
+      if ((key === 'ArrowRight' && !atEnd) || (key === 'ArrowLeft' && !atStart)) {
+        return { handled: false, preventDefault: false }
+      }
+      const hDir = key === 'ArrowRight' ? 1 : -1
+      const fromLine = editCell.lineIndex
+      const fromCi = editCell.cellIndex
+      commit()
+      setTimeout(() => {
+        const entries = buildEditableNavEntries()
+        const rowEntry = entries.find(en => en.line === fromLine && en.kind === 'cell') as Extract<EditableNavEntry, { kind: 'cell' }> | undefined
+        if (!rowEntry) return
+        const editableCells = rowEntry.cells.filter(c => c.fieldIdx !== undefined || c.boolean)
+        const pos = editableCells.findIndex(c => c.ci === fromCi)
+        if (pos < 0) return
+        const next = editableCells[pos + hDir]
+        if (!next) {
+          // 行首/行末继续按 → 跨行：→ 进下一可编辑行（表格行取首格、代码行进行首），
+          // ← 进上一行（表格行取末格、代码行进行尾）；文档边界重新进入当前格（光标不消失）。
+          const idx = entries.findIndex(en => en.line === fromLine)
+          const target = idx >= 0 ? entries[idx + hDir] : undefined
+          if (!target) {
+            const cur = editableCells[pos]
+            enterNavCell(fromLine, cur)
+            if (!cur.boolean) pendingInputCaretRef.current = hDir === 1 ? cur.text.length : 0
+            return
+          }
+          if (target.kind === 'code') {
+            startEditLine(target.line)
+            focusInlineInputAt(hDir === 1 ? 0 : 'end')
+            return
+          }
+          const targetCells = target.cells.filter(c => c.fieldIdx !== undefined || c.boolean)
+          if (targetCells.length === 0) return
+          const cell2 = hDir === 1 ? targetCells[0] : targetCells[targetCells.length - 1]
+          enterNavCell(target.line, cell2)
+          if (!cell2.boolean) pendingInputCaretRef.current = hDir === 1 ? 0 : cell2.text.length
+          return
+        }
+        enterNavCell(fromLine, next)
+        // → 进入下一格光标置行首、← 进入上一格光标置行尾（打勾格无输入框不需要）
+        if (!next.boolean) pendingInputCaretRef.current = hDir === 1 ? 0 : next.text.length
+      }, 0)
+      return { handled: true, preventDefault: true }
+    }
     if (!(editCell && editCell.cellIndex < 0)) {
       return { handled: false, preventDefault: false }
     }
@@ -5733,9 +6032,23 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })
     if (!navAction) return { handled: false, preventDefault: false }
 
+    // 代码行 ↑/↓：相邻可编辑行若是表格行，进入其单元格（旧路径只认代码行、会整表跳过）；
+    // 相邻仍是代码行则走原 applyCodeLineNavigation（保留隐藏行解析与水平位保持等语义）。
+    if (navAction.type === 'upOrDown' && !editCell.isVirtual) {
+      const dir: -1 | 1 = key === 'ArrowUp' ? -1 : 1
+      const entries = buildEditableNavEntries()
+      const idx = entries.findIndex(en => en.line === editCell.lineIndex)
+      const target = idx >= 0 ? entries[idx + dir] : undefined
+      if (target && target.kind === 'cell') {
+        navigateEditableVertical(editCell.lineIndex, dir, 0, cursorPos)
+        return { handled: true, preventDefault: true }
+      }
+    }
+
     applyCodeLineNavigation(navAction)
     return { handled: true, preventDefault: true }
-  }, [applyCodeLineNavigation, editCell, editVal, getCodeLineNavigationAction])
+  }, [applyCodeLineNavigation, editCell, editVal, getCodeLineNavigationAction, commit, enterNavCell, startEditLine, focusInlineInputAt, buildEditableNavEntries, navigateEditableVertical])
+  applyArrowNavigationKeyRef.current = applyArrowNavigationKey
 
   const applyParenScopedKey = useCallback((params: {
     key: string
@@ -7246,7 +7559,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                             key={`gutter-row-${ri}-${renderIndex}`}
                             className={row.isHeader
                               ? 'eyc-gutter-cell'
-                              : `eyc-gutter-cell${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                              : `eyc-gutter-cell${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${editCell && editCell.lineIndex === row.lineIndex ? ' eyc-line-editing' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                            onMouseDown={row.isHeader ? undefined : (e) => handleGutterMouseDown(e, row.lineIndex)}
                           >
                             {(() => {
                               const actualLine = row.isHeader ? 0 : (lineNumMaps.tableRowNumMap.get(`${bi}:${ri}`) ?? row.lineIndex + 1)
@@ -7314,17 +7628,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           : (
                               <tr
                                 key={`tbl-row-${ri}-${renderIndex}`}
-                                className={row.isHeader ? 'eyc-hdr-row' : `eyc-data-row${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                                className={row.isHeader ? 'eyc-hdr-row' : `eyc-data-row${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${editCell && editCell.lineIndex === row.lineIndex ? ' eyc-line-editing' : ''}${diffClassSuffixFor(row.lineIndex)}`}
                                 {...(!row.isHeader ? { 'data-line-index': row.lineIndex } : {})}
                                 onMouseDown={row.isHeader ? undefined : (e) => handleTableRowMouseDown(e, row.lineIndex)}
                               >
                             {row.cells.map((cell, ci) => (
                               (() => {
-                                const isInvalidVarNameCell = !row.isHeader && cell.fieldIdx === 0 && invalidVarNameLineSet.has(row.lineIndex)
+                                const isInvalidVarNameCell = !row.isHeader && cell.fieldIdx === 0 && (invalidVarNameLineSet.has(row.lineIndex) || duplicateDeclLineSet.has(row.lineIndex))
                                 return (
                               <td
                                 key={ci}
-                                className={`${cell.cls} Rowheight${cell.align ? ' eyc-cell-align-center' : ''}${isInvalidVarNameCell ? ' eyc-cell-invalid' : ''}`}
+                                className={`${cell.cls} Rowheight${cell.align ? ' eyc-cell-align-center' : ''}${isInvalidVarNameCell ? ' eyc-cell-invalid' : ''}${editCell && editCell.booleanCell && editCell.lineIndex === row.lineIndex && editCell.cellIndex === ci ? ' eyc-cell-bool-focus' : ''}`}
                                 colSpan={cell.colSpan}
                                 onMouseDown={handleTableCellMouseDown}
                                 onClick={(e) => handleTableCellClick(e, {
@@ -7461,12 +7775,15 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           return (
             <Fragment key={bi}>
             <div
-              className={`eyc-block-row eyc-block-row-wrap${isLineSelected ? ' eyc-line-selected' : ''}${isDebugLine ? ' eyc-debug-line' : ''}${diffClassSuffixFor(blk.lineIndex)}`}
+              className={`eyc-block-row eyc-block-row-wrap${isLineSelected ? ' eyc-line-selected' : ''}${editCell && editCell.lineIndex === blk.lineIndex && editCell.isVirtual === blk.isVirtual ? ' eyc-line-editing' : ''}${isDebugLine ? ' eyc-debug-line' : ''}${diffClassSuffixFor(blk.lineIndex)}`}
               data-line-index={blk.lineIndex}
               onMouseDown={(e) => handleCodeBlockMouseDown(e, blk.lineIndex, blk.isVirtual)}
             >
               <div className="eyc-line-gutter">
-                <div className="eyc-gutter-cell">
+                <div
+                  className="eyc-gutter-cell"
+                  onMouseDown={blk.isVirtual ? undefined : (e) => handleGutterMouseDown(e, blk.lineIndex)}
+                >
                   <span className={`eyc-breakpoint-dot${hasBreakpoint ? ' active' : ''}`}>●</span>
                   <span className="eyc-gutter-linenum">{blk.isVirtual ? '' : actualLine}</span>
                   <span className="eyc-gutter-fold-area">
@@ -8260,6 +8577,21 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           <div className="eyc-debug-hover-name">{debugHover.variable.name}</div>
           <div className="eyc-debug-hover-type">{debugHover.variable.type}</div>
           <div className="eyc-debug-hover-value">{debugHover.variable.value || '（空）'}</div>
+        </div>
+      )}
+
+      {/* 未知标识符回车 → 插入变量提示框（照易语言） */}
+      {insertVarPrompt && (
+        <div className="eyc-insertvar-overlay" onMouseDown={() => { setInsertVarPrompt(null); focusWrapper() }}>
+          <div className="eyc-insertvar-dialog" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="eyc-insertvar-text">未知命令“{insertVarPrompt.name}”。是否将“{insertVarPrompt.name}”插入为变量？</div>
+            <div className="eyc-insertvar-btns">
+              <button type="button" autoFocus onClick={() => applyInsertVariable('local')}>局部变量</button>
+              <button type="button" onClick={() => applyInsertVariable('assembly')}>程序集变量</button>
+              <button type="button" onClick={() => applyInsertVariable('global')}>全局变量</button>
+              <button type="button" onClick={() => { setInsertVarPrompt(null); focusWrapper() }}>取消</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

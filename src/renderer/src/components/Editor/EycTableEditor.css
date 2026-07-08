@@ -400,6 +400,62 @@
   min-width: max-content;
 }
 
+/* 未知标识符回车 → 插入变量提示框 */
+.eyc-insertvar-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10004;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.25);
+}
+.eyc-insertvar-dialog {
+  min-width: 320px;
+  max-width: 480px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-color, #3c3c3c);
+  border-radius: 6px;
+  background: var(--bg-secondary, #252526);
+  color: var(--text-primary, #d4d4d4);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+}
+.eyc-insertvar-text {
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.eyc-insertvar-btns {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.eyc-insertvar-btns button {
+  appearance: none;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--border-color, #3c3c3c);
+  border-radius: 3px;
+  background: var(--bg-primary, #1e1e1e);
+  color: var(--text-primary, #d4d4d4);
+  cursor: pointer;
+  font-size: 12px;
+}
+.eyc-insertvar-btns button:hover {
+  border-color: var(--accent, #4f8cff);
+}
+.eyc-insertvar-btns button:first-child {
+  background: var(--accent, #4f8cff);
+  border-color: var(--accent, #4f8cff);
+  color: #fff;
+}
+
+/* 打勾格（公开/静态/传址…）键盘焦点态：描边提示（空格切换、方向键移动、Esc 退出） */
+td.eyc-cell-bool-focus {
+  outline: 1px solid var(--border-focus, #2f9bff);
+  outline-offset: -2px;
+}
+
 /* 行选中高亮 */
 .eyc-line-selected {
   background-color: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
@@ -412,6 +468,17 @@
 }
 /* 选中行时覆盖 gutter 的不透明背景，保持选中色可见 */
 .eyc-block-row.eyc-line-selected > .eyc-line-gutter {
+  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+}
+
+/* 正在编辑（获得焦点）的行：焦点背景，gutter 一并着色（与行选中同款焦点色） */
+.eyc-line-editing {
+  background-color: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+}
+.eyc-gutter-cell.eyc-line-editing {
+  background-color: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+}
+.eyc-block-row.eyc-line-editing > .eyc-line-gutter {
   background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
 }
 /* 调试/diff 高亮行的 gutter 保持对应背景 */
@@ -630,6 +697,14 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   align-items: center;
   justify-content: center;
   margin-right: 6px;
+}
+
+/* 行号区：左右镜像的箭头光标（指向行内容，热点在右上尖端），提示"单击选中整行、拖动多选"。
+   CSS 无法翻转系统当前主题的光标（cursor 只能换图），这里按 Windows 标准箭头几何 1:1 镜像自绘
+   （白填充+黑描边）。用户权衡后选定此方案（手型 pointer 试过又改回）。
+   粘性子程序头 gutter 与 diff 删除占位 gutter 不参与。 */
+.eyc-line-gutter:not(.eyc-sticky-scope-gutter) .eyc-gutter-cell:not(.eyc-diff-deleted-placeholder-gutter):not(.eyc-virtual-gutter-spacer) {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='21'><path d='M 12.66,1.5 L 12.66,18.37 L 8.68,14.71 L 6.01,20.53 L 3.25,19.27 L 5.92,13.45 L 0.5,13.45 Z' fill='white' stroke='black' stroke-width='1' stroke-linejoin='miter'/></svg>") 13 2, default;
 }
 
 /* 行号旁的展开/收缩按钮 */
@@ -1325,6 +1400,29 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   pointer-events: none;
 }
 
+/* 正在编辑（获得焦点）的表格行：与选中同款焦点背景（含 td 本体覆盖与右侧补色） */
+.eyc-data-row.eyc-line-editing,
+.eyc-data-row.eyc-line-editing:hover {
+  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+}
+.eyc-data-row.eyc-line-editing > td.Rowheight,
+.eyc-data-row.eyc-line-editing:hover > td.Rowheight {
+  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+}
+.eyc-data-row.eyc-line-editing > td:last-child {
+  position: relative;
+}
+.eyc-data-row.eyc-line-editing > td:last-child::after {
+  content: '';
+  position: absolute;
+  left: 100%;
+  top: -1px;
+  bottom: -1px;
+  width: 100vw;
+  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  pointer-events: none;
+}
+
 /* ===== 表头背景色 ===== */
 /* 默认表头（子程序、常量、DLL等）— 灰绿色 */
 .eHeadercolor {
@@ -1432,6 +1530,12 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
 /* 已选中行在 hover 时保持选中背景，不被悬停色覆盖 */
 .eyc-line-selected .eyc-code-line,
 .eyc-line-selected .eyc-code-line:hover {
+  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+}
+
+/* 正在编辑的行在 hover 时保持焦点背景，不被悬停色覆盖（否则悬停色盖住编辑背景显得错乱） */
+.eyc-line-editing .eyc-code-line,
+.eyc-line-editing .eyc-code-line:hover {
   background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
 }
 

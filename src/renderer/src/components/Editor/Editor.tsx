@@ -943,21 +943,28 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     }
   }, [projectDir])
 
-  // 窗口重命名：更新 .eyc 内容中所有引用模式
+  // 窗口重命名：更新 .eyc 内容中所有引用模式。
+  // 命名约定（与编译器/双击窗体生成一致）：**程序集名**用剥前导下划线的核心名（_启动窗口 →
+  // 窗口程序集_启动窗口，前导下划线兼作分隔符，直接拼原名会得到双下划线匹配不上）；
+  // **窗口事件名**用原始名（_启动窗口 的事件是「__启动窗口_创建完毕」，双下划线合法）；
+  // 跨窗口成员引用（旧名.）用原始名。与 App 粘贴窗口、主进程 renameWindow 的规则一致。
   const applyWindowRenameToContent = (content: string, oldName: string, newName: string, forceAssemblyName = false): string => {
+    const oldCore = oldName.replace(/^_+/, '')
+    const newCore = newName.replace(/^_+/, '')
     let result = content
-    // 程序集名：窗口程序集_旧名 → 窗口程序集_新名
-    result = result.split('窗口程序集_' + oldName).join('窗口程序集_' + newName)
+    // 程序集名：窗口程序集_旧核心名 → 窗口程序集_新核心名
+    result = result.split('窗口程序集_' + oldCore).join('窗口程序集_' + newCore)
     // 兼容旧规则：若程序集名仍是“旧窗口名”，迁移为“窗口程序集_新窗口名”
     if (forceAssemblyName) {
       const escapedOldName = oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const escapedOldCore = oldCore.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const assemblyLineRe = new RegExp(
-        '^(\\s*\\.程序集\\s+)(窗口程序集_' + escapedOldName + '|' + escapedOldName + ')(?=\\s|,|$)',
+        '^(\\s*\\.程序集\\s+)(窗口程序集_' + escapedOldCore + '|' + escapedOldName + ')(?=\\s|,|$)',
         'm'
       )
-      result = result.replace(assemblyLineRe, '$1窗口程序集_' + newName)
+      result = result.replace(assemblyLineRe, '$1窗口程序集_' + newCore)
     }
-    // 事件引用：_旧名_ → _新名_
+    // 事件引用：_原始旧名_ → _原始新名_（_启动窗口 → __启动窗口_创建完毕 的双下划线由此而来）
     result = result.split('_' + oldName + '_').join('_' + newName + '_')
     // 跨窗口引用：旧名.控件名.属性 或 旧名._事件
     result = result.split(oldName + '.').join(newName + '.')
@@ -2355,20 +2362,22 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     }
   }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, onSidebarTab, syncProjectTreeAfterEventSubChange, pushNavLocation])
 
-  // 菜单项改名 → 同步源代码里的事件引用：_旧名_被选择 → _新名_被选择（打开的 .eyc 标签 + 磁盘未打开的）
+  // 菜单项改名 → 同步源代码里的事件引用：_旧名_被选择 → _新名_被选择（打开的 .eyc 标签 + 磁盘未打开的）。
+  // 事件名拼法与编译器一致：剥掉菜单项名的前导下划线（`_${name.replace(/^_+/,'')}_被选择`）。
   const handleMenuItemRenames = useCallback((renames: Array<{ oldName: string; newName: string }>) => {
     if (!renames.length) return
     const openEycPaths = new Set<string>()
     for (const t of tabsRef.current) {
       if (t.language === 'eyc' && t.filePath) openEycPaths.add(t.filePath)
     }
+    const subNameOf = (name: string): string => `_${name.replace(/^_+/, '')}_被选择`
     setTabs(prev => {
       const next = prev.map(t => {
         if (t.language !== 'eyc') return t
         let val = t.value
         for (const r of renames) {
-          const oldSub = `_${r.oldName}_被选择`
-          if (val.includes(oldSub)) val = val.split(oldSub).join(`_${r.newName}_被选择`)
+          const oldSub = subNameOf(r.oldName)
+          if (val.includes(oldSub)) val = val.split(oldSub).join(subNameOf(r.newName))
         }
         return val === t.value ? t : { ...t, value: val }
       })
@@ -2376,7 +2385,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       return next
     })
     for (const r of renames) {
-      renameDiskFiles(openEycPaths, `_${r.oldName}_被选择`, `_${r.newName}_被选择`)
+      renameDiskFiles(openEycPaths, subNameOf(r.oldName), subNameOf(r.newName))
     }
   }, [onOpenTabsChange, renameDiskFiles])
 

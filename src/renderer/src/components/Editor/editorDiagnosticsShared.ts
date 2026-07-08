@@ -544,6 +544,21 @@ export function buildEditorDiagnosticsProblems(
     const rawLine = (ln.raw || '').replace(FLOW_AUTO_TAG, '')
     const assign = parseAssignment(rawLine)
     const targetType = assign ? resolveVarTypeAtLine(assign.target, i, typeScopes) : ''
+
+    // 以数字开头的裸语句（如整行只写 123555）：数字不能作为命令，标识符也不能以数字开头。
+    // 赋值行交给"未知变量"检查（避免同一行重复报两条）。
+    if (!assign) {
+      const stmt = rawLine.trim()
+      const digitHead = stmt.match(/^([+-]?[0-9０-９][^\s(（,，=＝]*)/)
+      if (digitHead) {
+        problems.push({
+          line: i + 1,
+          column: rawLine.indexOf(digitHead[1]) + 1,
+          message: `无效语句"${digitHead[1]}"：语句不能以数字开头`,
+          severity: 'error',
+        })
+      }
+    }
     const skipInt64Overflow = isBigType(targetType)
     if (!skipInt64Overflow) {
       for (const overflow of findOutOfRangeInt64Literals(rawLine)) {

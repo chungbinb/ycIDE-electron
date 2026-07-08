@@ -1,4 +1,5 @@
 import { parseLines } from './eycBlocks'
+import { appendMissingFlowEnds } from './eycFlow'
 
 type SubBlock = {
   name: string
@@ -37,68 +38,33 @@ function collectSubBlocksByLines(lines: string[]): SubBlock[] {
   return blocks
 }
 
-function splitPastedLinesForDuplicateSubMerge(currentLines: string[], pastedLines: string[]): {
-  linesToInsert: string[]
-  appendBySubName: Map<string, string[]>
-} {
-  const currentBlocks = collectSubBlocksByLines(currentLines)
-  const existingNames = new Set(currentBlocks.map(block => block.name))
-  if (existingNames.size === 0) {
-    return { linesToInsert: pastedLines, appendBySubName: new Map() }
-  }
-
+/**
+ * 粘贴的子程序与现有子程序重名 → 自动改名：原名_1，_1 也占用则 _2 依次类推。
+ * 只改 `.子程序` 声明行的名称字段，片段其余内容原样保留（不再走"并入同名子程序"的旧合并语义——
+ * 旧语义下复制一个只有声明行的子程序粘贴会被整块剔除、看起来毫无反应）。
+ */
+function renameDuplicatePastedSubs(currentLines: string[], pastedLines: string[]): string[] {
+  const usedNames = new Set(collectSubBlocksByLines(currentLines).map(block => block.name))
+  if (usedNames.size === 0) return pastedLines
   const pastedBlocks = collectSubBlocksByLines(pastedLines)
-  if (pastedBlocks.length === 0) {
-    return { linesToInsert: pastedLines, appendBySubName: new Map() }
-  }
+  if (pastedBlocks.length === 0) return pastedLines
 
-  const keepMask = new Array<boolean>(pastedLines.length).fill(true)
-  const appendBySubName = new Map<string, string[]>()
-
+  const out = [...pastedLines]
   for (const block of pastedBlocks) {
-    if (!existingNames.has(block.name)) continue
-
-    for (let i = block.start; i < block.end; i++) {
-      keepMask[i] = false
+    if (!usedNames.has(block.name)) {
+      usedNames.add(block.name)
+      continue
     }
-
-    const bodyLines = pastedLines.slice(block.start + 1, block.end)
-    if (bodyLines.length === 0) continue
-    const prev = appendBySubName.get(block.name)
-    if (prev) prev.push(...bodyLines)
-    else appendBySubName.set(block.name, [...bodyLines])
+    let n = 1
+    while (usedNames.has(`${block.name}_${n}`)) n++
+    const newName = `${block.name}_${n}`
+    const line = out[block.start]
+    const m = line.match(/^(\s*\.子程序\s+)([^,，\r\n]*)(.*)$/)
+    if (!m) continue
+    out[block.start] = `${m[1]}${newName}${m[3]}`
+    usedNames.add(newName)
   }
-
-  return {
-    linesToInsert: pastedLines.filter((_, i) => keepMask[i]),
-    appendBySubName,
-  }
-}
-
-function appendSubBodiesToExistingText(lines: string[], appendBySubName: Map<string, string[]>): {
-  nextLines: string[]
-  firstInsertAt: number
-  insertedLineCount: number
-} {
-  if (appendBySubName.size === 0) {
-    return { nextLines: lines, firstInsertAt: -1, insertedLineCount: 0 }
-  }
-
-  const nextLines = [...lines]
-  let firstInsertAt = -1
-  let insertedLineCount = 0
-
-  for (const [subName, bodyLines] of appendBySubName) {
-    if (bodyLines.length === 0) continue
-    const blocks = collectSubBlocksByLines(nextLines)
-    const target = blocks.find(block => block.name === subName)
-    if (!target) continue
-    nextLines.splice(target.end, 0, ...bodyLines)
-    if (firstInsertAt < 0) firstInsertAt = target.end
-    insertedLineCount += bodyLines.length
-  }
-
-  return { nextLines, firstInsertAt, insertedLineCount }
+  return out
 }
 
 export function findInsertAtForPastedSubs(lines: string[], cursorLine: number): number {
@@ -199,6 +165,50 @@ function findTopAssemblyVarInsertPosition(lines: string[]): number {
   return lines.length
 }
 
+/**
+ * 把错位的 `.局部变量` 行归位到所属子程序头部声明区（参数/局部变量块）末尾。
+ * 处理手工在子程序正文中敲出的局部变量声明（会在子程序中部形成第二张局部变量表）；
+ * 逐子程序收集错位行、按原有相对顺序并入声明区。无错位时返回 null（调用方免写回）。
+ */
+export function relocateMisplacedLocalVarLines(text: string): string | null {
+  const ls = text.split('\n')
+  const parsed = parseLines(text)
+
+  const removeSet = new Set<number>()
+  const insertByDeclEnd = new Map<number, string[]>()
+  let subLine = -1
+  let declEnd = -1
+  for (let i = 0; i < parsed.length; i++) {
+    const t = parsed[i]?.type
+    if (t === 'sub') {
+      subLine = i
+      declEnd = i + 1
+      while (declEnd < parsed.length && (parsed[declEnd].type === 'subParam' || parsed[declEnd].type === 'localVar')) declEnd++
+      continue
+    }
+    if (t === 'assembly') {
+      subLine = -1
+      continue
+    }
+    if (t === 'localVar' && subLine >= 0 && i >= declEnd) {
+      removeSet.add(i)
+      const list = insertByDeclEnd.get(declEnd)
+      if (list) list.push(ls[i])
+      else insertByDeclEnd.set(declEnd, [ls[i]])
+    }
+  }
+  if (removeSet.size === 0) return null
+
+  const out: string[] = []
+  for (let i = 0; i < ls.length; i++) {
+    const pending = insertByDeclEnd.get(i)
+    if (pending) out.push(...pending)
+    if (removeSet.has(i)) continue
+    out.push(ls[i])
+  }
+  return out.join('\n')
+}
+
 export interface MultiLinePasteResult {
   nextText: string
   insertAt: number
@@ -270,14 +280,56 @@ export function buildMultiLinePasteResult(params: {
     pastedLines = pastedLines.filter((_, i) => keepMask[i])
   }
 
+  // 粘贴护栏：片段含流程头但缺配对结束（含外部来源的半截结构）→ 自动补齐结束行，避免破坏流程线
+  pastedLines = appendMissingFlowEnds(pastedLines)
+
+  const lines = currentText.split('\n')
+
+  // `.局部变量` 行归位：粘贴目标在某个子程序内时，片段中"不属于片段内子程序"的 .局部变量 行
+  // （片段首个 .子程序 头之前的那些）不在光标处内联——那会在子程序中部形成第二张局部变量表，
+  // 改为并入目标子程序头部的声明区（参数/局部变量块末尾）。片段内自带子程序的局部变量原样保留。
+  const relocatedLocalVars: string[] = []
+  let localVarDeclPos = -1
+  if (pastedLines.some(l => l.trimStart().startsWith('.局部变量'))) {
+    const currentParsed = parseLines(currentText)
+    let targetSubLine = -1
+    for (let i = Math.min(cursorLine, currentParsed.length - 1); i >= 0; i--) {
+      const t = currentParsed[i]?.type
+      if (t === 'sub') { targetSubLine = i; break }
+      if (t === 'assembly') break
+    }
+    if (targetSubLine >= 0) {
+      let declPos = targetSubLine + 1
+      while (declPos < currentParsed.length && (currentParsed[declPos].type === 'subParam' || currentParsed[declPos].type === 'localVar')) declPos++
+      localVarDeclPos = declPos
+
+      const pastedParsedForVars = parseLines(pastedLines.join('\n'))
+      const keep: string[] = []
+      let seenSub = false
+      for (let i = 0; i < pastedLines.length; i++) {
+        const t = pastedParsedForVars[i]?.type
+        if (t === 'sub') seenSub = true
+        if (!seenSub && t === 'localVar') {
+          relocatedLocalVars.push(pastedLines[i])
+          continue
+        }
+        keep.push(pastedLines[i])
+      }
+      // 只剩空行的余量不再内联（纯局部变量粘贴不留空洞）
+      if (relocatedLocalVars.length > 0 && keep.every(l => l.trim() === '')) {
+        pastedLines = []
+      } else if (relocatedLocalVars.length > 0) {
+        pastedLines = keep
+      }
+    }
+  }
+
   const hasInlineContent = pastedLines.join('\n').length > 0
   const extractedAsmVars = extractAssemblyVarLines
     ? extractAssemblyVarLines(clipText, currentText)
     : []
 
-  if (!hasInlineContent && extractedAsmVars.length === 0 && routedDeclarations.length === 0) return null
-
-  const lines = currentText.split('\n')
+  if (!hasInlineContent && extractedAsmVars.length === 0 && routedDeclarations.length === 0 && relocatedLocalVars.length === 0) return null
   const pastedParsed = hasInlineContent ? parseLines(pastedLines.join('\n')) : []
   const pastedHasSub = pastedParsed.some(ln => ln.type === 'sub')
   const pastedHasDll = pastedParsed.some(ln => ln.type === 'dll')
@@ -306,14 +358,29 @@ export function buildMultiLinePasteResult(params: {
     }
   }
 
-  const mergeResult = pastedHasSub
-    ? splitPastedLinesForDuplicateSubMerge(lines, adjustedLines)
-    : { linesToInsert: adjustedLines, appendBySubName: new Map<string, string[]>() }
-  adjustedLines = mergeResult.linesToInsert
+  // 粘贴的子程序与现有重名 → 自动改名（原名_1/_2…），整块原样插入
+  if (pastedHasSub) {
+    adjustedLines = renameDuplicatePastedSubs(lines, adjustedLines)
+  }
 
-  let nextLines = [...lines]
+  const nextLines = [...lines]
   if (hasInlineContent) {
     nextLines.splice(insertAt, 0, ...adjustedLines)
+  }
+
+  // 归位的 `.局部变量` 插入目标子程序声明区末尾（声明区在光标上方：内联插入若在其前需平移声明位，
+  // 插入后再平移内联选中范围）
+  let relocatedLocalVarInsertAt = -1
+  if (relocatedLocalVars.length > 0 && localVarDeclPos >= 0) {
+    let declPos = localVarDeclPos
+    // 内联插入点严格位于声明区上方（光标在声明块内）才需要平移声明位；
+    // 恰在声明区末尾（insertAt === declPos）时变量仍应插在内联代码之前。
+    if (hasInlineContent && insertAt < declPos) declPos += adjustedLines.length
+    nextLines.splice(declPos, 0, ...relocatedLocalVars)
+    relocatedLocalVarInsertAt = declPos
+    if (hasInlineContent && declPos <= insertAt) {
+      insertAt += relocatedLocalVars.length
+    }
   }
 
   // 提取到的 `.程序集变量` 插入到顶部程序集变量区末尾。
@@ -326,21 +393,19 @@ export function buildMultiLinePasteResult(params: {
       if (hasInlineContent && asmInsertPos <= insertAt) {
         insertAt += extractedAsmVars.length
       }
+      if (relocatedLocalVarInsertAt >= 0 && asmInsertPos <= relocatedLocalVarInsertAt) {
+        relocatedLocalVarInsertAt += extractedAsmVars.length
+      }
     }
   }
-
-  const appendResult = appendSubBodiesToExistingText(nextLines, mergeResult.appendBySubName)
-  nextLines = appendResult.nextLines
 
   const insertedInlineCount = hasInlineContent ? adjustedLines.length : 0
   const resultInsertAt = insertedInlineCount > 0
     ? insertAt
-    : appendResult.firstInsertAt >= 0
-      ? appendResult.firstInsertAt
+    : relocatedLocalVarInsertAt >= 0
+      ? relocatedLocalVarInsertAt
       : nextLines.length
-  const resultLineCount = insertedInlineCount > 0
-    ? insertedInlineCount
-    : appendResult.insertedLineCount
+  const resultLineCount = insertedInlineCount > 0 ? insertedInlineCount : relocatedLocalVars.length
 
   return {
     nextText: nextLines.join('\n'),

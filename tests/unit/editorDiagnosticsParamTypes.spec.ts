@@ -115,3 +115,23 @@ describe('命令参数数据类型检查', () => {
     expect(problems.filter(p => p.message.includes('不是有效表达式'))).toHaveLength(0)
   })
 })
+
+describe('数字开头的裸语句', () => {
+  it('整行纯数字 → 无效语句（用户场景：123555 没报未知命令）', () => {
+    const problems = run(`${SUB_HEAD}123555`)
+    const hit = problems.find(p => p.message.includes('无效语句'))
+    expect(hit).toBeTruthy()
+    expect(hit!.message).toContain('123555')
+  })
+
+  it('数字开头的杂项 token（1.txt 裸写在语句位）也报', () => {
+    const problems = run(`${SUB_HEAD}1.txt`)
+    expect(problems.some(p => p.message.includes('无效语句'))).toBe(true)
+  })
+
+  it('数字作参数/赋值右值不误报', () => {
+    const problems = run(`${SUB_HEAD}延时 (100)
+整数变量 ＝ 123`)
+    expect(problems.filter(p => p.message.includes('无效语句'))).toHaveLength(0)
+  })
+})

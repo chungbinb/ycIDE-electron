@@ -5182,6 +5182,8 @@ function generateMainC(
     }
 
     const windowEventTarget = (winInfo.formName || defaultWindowFormName || '_启动窗口').trim() || '_启动窗口'
+    // 窗口事件名 = `_` + 原始窗口名 + `_事件`：_启动窗口 的事件是「__启动窗口_创建完毕」（双下划线合法，
+    // 与编辑器双击窗体生成的子程序名一致）。不要剥前导下划线——只有程序集名（窗口程序集_核心名）才剥。
     const windowEventPrefix = `_${windowEventTarget}`
 
     // 停留顺序决定控件创建顺序（Win32 Tab 焦点顺序 = 创建顺序），数值小者优先，相同时保持原序。

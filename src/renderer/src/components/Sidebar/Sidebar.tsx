@@ -122,9 +122,27 @@ interface SidebarProps {
   onLibraryHint?: (hint: { title: string; lines: string[] }) => void
   /** 项目树节点右键操作（程序集分类/程序集/类模块） */
   onProjectNodeAction?: (action: ProjectNodeAction, node: { id: string; label: string }) => void
+  /** 是否有已复制的窗口可粘贴（窗口节点右键菜单“粘贴窗口”的可用性） */
+  canPasteWindow?: boolean
 }
 
-export type ProjectNodeAction = 'newAssembly' | 'newClassModule' | 'newSub' | 'deleteModule'
+export type ProjectNodeAction = 'newAssembly' | 'newClassModule' | 'newSub' | 'deleteModule' | 'newWindow' | 'newGlobalVar' | 'newConstant' | 'newDataType' | 'newDllCmd' | 'newPtrCmd' | 'copyWindow' | 'pasteWindow' | 'deleteWindow'
+
+// 项目树各分类节点右键的「新建」菜单项（分类 id → 菜单项；动作复用插入菜单同款逻辑）
+const CATEGORY_CONTEXT_MENU_ITEMS: Record<string, Array<{ action: ProjectNodeAction; label: string }>> = {
+  _cat_windows: [{ action: 'newWindow', label: '新建窗口' }],
+  _cat_sources: [
+    { action: 'newAssembly', label: '新建程序集' },
+    { action: 'newClassModule', label: '新建类模块' },
+  ],
+  _cat_globals: [{ action: 'newGlobalVar', label: '新建全局变量' }],
+  _cat_constants: [{ action: 'newConstant', label: '新建常量' }],
+  _cat_datatypes: [{ action: 'newDataType', label: '新建自定义数据类型' }],
+  _cat_dllcmds: [
+    { action: 'newDllCmd', label: '新建DLL命令' },
+    { action: 'newPtrCmd', label: '新建指针命令' },
+  ],
+}
 
 interface LibItem {
   name: string
@@ -1668,7 +1686,7 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
   )
 }
 
-function Sidebar({ width, onResize, placement = 'left', selection, activeTab, onTabChange, onSelectControl, onPropertyChange, projectTree, onOpenFile, activeFileId, projectDir, openTabs = [], onEventNavigate, onSaveProject, onCloseProject, onLibraryChange, onLibraryHint, onProjectNodeAction }: SidebarProps): React.JSX.Element {
+function Sidebar({ width, onResize, placement = 'left', selection, activeTab, onTabChange, onSelectControl, onPropertyChange, projectTree, onOpenFile, activeFileId, projectDir, openTabs = [], onEventNavigate, onSaveProject, onCloseProject, onLibraryChange, onLibraryHint, onProjectNodeAction, canPasteWindow = false }: SidebarProps): React.JSX.Element {
   const SIDEBAR_MIN_WIDTH = 150
   const SIDEBAR_MAX_WIDTH = 500
   const SIDEBAR_RESIZE_STEP = 16
@@ -1812,7 +1830,7 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
   })
   const [tabsContextMenu, setTabsContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [projectContextMenu, setProjectContextMenu] = useState<{ x: number; y: number; projectDir: string; projectName: string } | null>(null)
-  const [nodeContextMenu, setNodeContextMenu] = useState<{ x: number; y: number; nodeId: string; nodeLabel: string; kind: 'category' | 'module'; isClassModule: boolean } | null>(null)
+  const [nodeContextMenu, setNodeContextMenu] = useState<{ x: number; y: number; nodeId: string; nodeLabel: string; kind: 'category' | 'module' | 'window'; isClassModule: boolean; categoryId: string } | null>(null)
 
   const { modifiedFileKeys, aiModifiedFileKeys } = useMemo(() => {
     const keys = new Set<string>()
@@ -1960,12 +1978,13 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
     })
   }, [])
 
-  // 程序集分类/程序集/类模块节点的右键菜单
+  // 分类节点（窗口/程序集/全局变量/常量表/数据类型/DLL命令）、程序集/类模块、窗口 节点的右键菜单
   const handleNodeContextMenu = useCallback((event: React.MouseEvent<HTMLElement>, node: TreeNode) => {
     if (!onProjectNodeAction) return
-    const isSourcesCategory = node.type === 'folder' && node.id === '_cat_sources'
+    const isMenuCategory = node.type === 'folder' && node.id in CATEGORY_CONTEXT_MENU_ITEMS
     const isSourceModule = node.type === 'module' && /\.(eyc|ecc)$/i.test(node.id)
-    if (!isSourcesCategory && !isSourceModule) return
+    const isWindowNode = node.type === 'window' && /\.efw$/i.test(node.id)
+    if (!isMenuCategory && !isSourceModule && !isWindowNode) return
     event.preventDefault()
     event.stopPropagation()
     const menuWidth = 240
@@ -1975,8 +1994,9 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
       y: event.clientY,
       nodeId: node.id,
       nodeLabel: node.label,
-      kind: isSourcesCategory ? 'category' : 'module',
+      kind: isMenuCategory ? 'category' : isWindowNode ? 'window' : 'module',
       isClassModule: /\.ecc$/i.test(node.id),
+      categoryId: isMenuCategory ? node.id : '',
     })
   }, [onProjectNodeAction])
 
@@ -2236,21 +2256,47 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
         >
           {nodeContextMenu.kind === 'category' ? (
             <>
+              {(CATEGORY_CONTEXT_MENU_ITEMS[nodeContextMenu.categoryId] || []).map(item => (
+                <button
+                  key={item.action}
+                  type="button"
+                  role="menuitem"
+                  className="sidebar-tabs-context-menu-item"
+                  onClick={() => fireNodeAction(item.action)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </>
+          ) : nodeContextMenu.kind === 'window' ? (
+            <>
               <button
                 type="button"
                 role="menuitem"
                 className="sidebar-tabs-context-menu-item"
-                onClick={() => fireNodeAction('newAssembly')}
+                onClick={() => fireNodeAction('copyWindow')}
               >
-                新建程序集
+                复制窗口（{nodeContextMenu.nodeLabel}）
               </button>
               <button
                 type="button"
                 role="menuitem"
                 className="sidebar-tabs-context-menu-item"
-                onClick={() => fireNodeAction('newClassModule')}
+                disabled={!canPasteWindow}
+                title={canPasteWindow ? undefined : '先复制一个窗口后才能粘贴'}
+                onClick={() => fireNodeAction('pasteWindow')}
               >
-                新建类模块
+                粘贴窗口
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="sidebar-tabs-context-menu-item"
+                disabled={nodeContextMenu.nodeId.replace(/\.efw$/i, '') === '_启动窗口'}
+                title={nodeContextMenu.nodeId.replace(/\.efw$/i, '') === '_启动窗口' ? '启动窗口不能删除' : undefined}
+                onClick={() => fireNodeAction('deleteWindow')}
+              >
+                删除窗口（{nodeContextMenu.nodeLabel}）
               </button>
             </>
           ) : (

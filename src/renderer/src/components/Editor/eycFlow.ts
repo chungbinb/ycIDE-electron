@@ -51,6 +51,48 @@ export const FLOW_LINK_COMMANDS = new Set(['判断开始', '判断', '如果真'
 export const FLOW_BRANCH_KW = new Set(['否则', '默认'])
 export const FLOW_END_KW = new Set(Object.values(FLOW_START))
 
+/**
+ * 为代码片段补齐缺失的流程结束行（复制/粘贴护栏）：
+ * 片段含流程头（如果/判断开始/循环首…）但没有配对结束时，按 LIFO 在末尾补上结束行，
+ * 避免半截结构进入剪贴板/粘贴进文档后破坏流程线。
+ * - 结束行沿用头行的缩进与前导点号；循环尾带空括号（与自动补全格式一致），其余结束标记裸关键字。
+ * - 裸「判断」是判断结构的 case 分支（新键入的判断会被格式化为判断开始），一律不视为可闭合头——
+ *   为无所属结构的裸判断补「判断结束」只会造出孤立结构，保持原样。
+ * - 片段内的结束行按"就近同尾"配对；结束行越过内层未闭合结构时，内层视为被隐式闭合、不再补尾
+ *   （与流程模型 implicitClose 语义一致）。
+ */
+export function appendMissingFlowEnds(lines: string[]): string[] {
+  interface OpenEntry { kw: string; endKw: string; indent: string; hasDot: boolean }
+  const stack: OpenEntry[] = []
+  for (const line of lines) {
+    const kw = extractFlowKw(line)
+    if (!kw) continue
+    if (FLOW_END_KW.has(kw)) {
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i].endKw === kw) {
+          stack.length = i // 弹出匹配项及其上方未闭合内层（内层被该结束隐式闭合）
+          break
+        }
+      }
+      continue
+    }
+    if (FLOW_BRANCH_KW.has(kw)) continue
+    if (kw === '判断') continue
+    const endKw = FLOW_START[kw]
+    if (!endKw) continue
+    const m = line.match(/^( *)(\.?)/)
+    stack.push({ kw, endKw, indent: m?.[1] || '', hasDot: (m?.[2] || '') === '.' })
+  }
+  if (stack.length === 0) return lines
+  const out = [...lines]
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const entry = stack[i]
+    const parens = FLOW_LOOP_KW.has(entry.kw) ? ' ()' : ''
+    out.push(`${entry.indent}${entry.hasDot ? '.' : ''}${entry.endKw}${parens}`)
+  }
+  return out
+}
+
 export const FLOW_AUTO_COMPLETE: Record<string, (string | null)[]> = {
   '如果': [null, '否则', null, '如果结束'],
   '如果真': [null, '如果真结束'],

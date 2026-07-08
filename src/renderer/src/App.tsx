@@ -3840,12 +3840,21 @@ function App(): React.JSX.Element {
   }, [openProjectByEppPath, openWorkspaceFolderByPath, openFileByPath, extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, applyTheme, handleCompile, handleCompileRun, handleStop, handleAppClose, joinPath, projectTree, refreshProjectTree, toggleBreakpoint, isProjectWorkspace, currentProjectDir, breakpointsByFile, targetArch, continueDebugRun, getBaseName, runEProjectImport])
 
   // 项目树节点右键操作：新建程序集/类模块/子程序、删除程序集或类模块
+  // 窗口复制剪贴板：记录被复制窗口的 .efw 文件名（粘贴时按当前内容读取复制体）
+  const [copiedWindowFile, setCopiedWindowFile] = useState<string | null>(null)
+
   const handleProjectNodeAction = useCallback(async (action: ProjectNodeAction, node: { id: string; label: string }) => {
     const dir = currentProjectDirRef.current
     if (!dir) return
 
     if (action === 'newAssembly') { void handleMenuAction('insert:module'); return }
     if (action === 'newClassModule') { void handleMenuAction('insert:classModule'); return }
+    if (action === 'newWindow') { void handleMenuAction('insert:window'); return }
+    if (action === 'newGlobalVar') { void handleMenuAction('insert:globalVar'); return }
+    if (action === 'newConstant') { void handleMenuAction('insert:constant'); return }
+    if (action === 'newDataType') { void handleMenuAction('insert:dataType'); return }
+    if (action === 'newDllCmd') { void handleMenuAction('insert:dllCmd'); return }
+    if (action === 'newPtrCmd') { void handleMenuAction('insert:ptrCmd'); return }
 
     const fileName = node.id
     const filePath = joinPath(dir, fileName)
@@ -3854,6 +3863,121 @@ function App(): React.JSX.Element {
       const liveContent = editorFiles?.[fn]
       if (liveContent !== undefined) return liveContent
       return ((await window.api?.project?.readFile(joinPath(dir, fn))) || '')
+    }
+
+    if (action === 'copyWindow') {
+      setCopiedWindowFile(fileName)
+      return
+    }
+
+    if (action === 'pasteWindow') {
+      const srcEfwFile = copiedWindowFile
+      if (!srcEfwFile) return
+      const srcEfwContent = await readProjectFile(srcEfwFile)
+      if (!srcEfwContent) {
+        window.alert('要粘贴的窗口源文件已不存在。')
+        setCopiedWindowFile(null)
+        return
+      }
+      let srcData: Record<string, unknown> & { name?: string; title?: string; sourceFile?: string }
+      try { srcData = JSON.parse(srcEfwContent) } catch {
+        window.alert('要粘贴的窗口文件内容无效。')
+        return
+      }
+      const srcName = (srcData.name as string) || stripFileExtension(srcEfwFile)
+      // 粘贴的窗口统一命名为 窗口N（取第一个未被占用的序号）
+      const existingWindowFiles = projectTree[0]?.children
+        ?.find(c => c.id === '_cat_windows')?.children?.map(c => c.id) || []
+      let n = 1
+      while (existingWindowFiles.includes(`窗口${n}.efw`)) n++
+      const newName = `窗口${n}`
+      const newEfwFileName = `${newName}.efw`
+      const newEycFileName = `${newName}.eyc`
+
+      const newEfwData = JSON.stringify({
+        ...srcData,
+        name: newName,
+        title: srcData.title === srcName ? newName : (srcData.title || newName),
+        sourceFile: newEycFileName,
+      }, null, 2)
+
+      // 复制关联源码，并把窗口相关引用改到新名。命名约定（与编译器/双击窗体生成一致）：
+      // **程序集名**用剥前导下划线的核心名（_启动窗口 → 窗口程序集_启动窗口，前导下划线兼作分隔符，
+      // 直接拼 srcName 会得到双下划线匹配不上）；**窗口事件名**用原始名（_启动窗口 的事件是
+      // 「__启动窗口_创建完毕」，双下划线合法）；跨窗口成员引用（原名.）用原始名。
+      const stripLeadingUnderscore = (s: string): string => s.replace(/^_+/, '')
+      const srcCore = stripLeadingUnderscore(srcName)
+      const newCore = stripLeadingUnderscore(newName)
+      const srcEycFileName = (srcData.sourceFile as string) || `${srcName}.eyc`
+      let newEycContent = (await readProjectFile(srcEycFileName)).replace(/\r\n/g, '\n')
+      if (!newEycContent) newEycContent = `.版本 2\n.程序集 窗口程序集_${newCore}\n\n`
+      else {
+        newEycContent = newEycContent.split('窗口程序集_' + srcCore).join('窗口程序集_' + newCore)
+        newEycContent = newEycContent.split('_' + srcName + '_').join('_' + newName + '_')
+        newEycContent = newEycContent.split(srcName + '.').join(newName + '.')
+      }
+
+      await window.api?.project?.addFile(dir, newEfwFileName, 'EFW', newEfwData)
+      await window.api?.project?.addFile(dir, newEycFileName, 'EYC', newEycContent)
+
+      setProjectTree(prev => prev.map(root => ({
+        ...root,
+        children: root.children?.map(cat => {
+          if (cat.id === '_cat_windows') {
+            return { ...cat, children: [...(cat.children || []), { id: newEfwFileName, label: newName, type: 'window' as const }] }
+          }
+          if (cat.id === '_cat_sources') {
+            return {
+              ...cat,
+              children: [...(cat.children || []), {
+                id: newEycFileName,
+                label: extractAssemblyLabel(newEycContent) || stripFileExtension(newEycFileName),
+                type: 'module' as const,
+                children: extractSubroutineNodes(newEycContent, newEycFileName),
+                expanded: false,
+              }],
+            }
+          }
+          return cat
+        }),
+      })))
+
+      await openFileByPath(joinPath(dir, newEfwFileName))
+      return
+    }
+
+    if (action === 'deleteWindow') {
+      const winName = stripFileExtension(fileName)
+      if (winName === '_启动窗口') {
+        window.alert('“_启动窗口”是程序的启动窗口，不能删除。')
+        return
+      }
+      // 关联源码文件名以 .efw 里的 sourceFile 为准
+      let eycFileName = `${winName}.eyc`
+      try {
+        const d = JSON.parse(await readProjectFile(fileName))
+        if (d?.sourceFile) eycFileName = d.sourceFile
+      } catch { /* 按同名 .eyc 兜底 */ }
+      const ok = window.confirm(`确定要删除窗口“${winName}”吗？\n“${fileName}”与“${eycFileName}”将移入回收站。`)
+      if (!ok) return
+      await window.api?.project?.removeFile?.(dir, fileName)
+      await window.api?.project?.removeFile?.(dir, eycFileName)
+      editorRef.current?.closeFileTab(filePath)
+      editorRef.current?.closeFileTab(joinPath(dir, eycFileName))
+      setProjectTree(prev => prev.map(root => ({
+        ...root,
+        children: root.children?.map(cat => {
+          if (cat.id === '_cat_windows') {
+            return { ...cat, children: (cat.children || []).filter(c => c.id !== fileName) }
+          }
+          if (cat.id === '_cat_sources') {
+            return { ...cat, children: (cat.children || []).filter(c => c.id !== eycFileName) }
+          }
+          return cat
+        }),
+      })))
+      setCopiedWindowFile(prev => (prev === fileName ? null : prev))
+      return
     }
 
     if (action === 'newSub') {
@@ -3922,7 +4046,7 @@ function App(): React.JSX.Element {
         ),
       })))
     }
-  }, [handleMenuAction, joinPath, projectTree])
+  }, [handleMenuAction, joinPath, projectTree, copiedWindowFile, extractSubroutineNodes, openFileByPath])
 
   useEffect(() => {
     const handleNativeMenuAction = (action: unknown) => {
@@ -4298,7 +4422,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.4-beta.7（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.4-beta.8（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -5396,7 +5520,7 @@ function App(): React.JSX.Element {
           <div className="app-workspace">
             <div className={`app-side${activityBarSide === 'right' ? ' app-side-right' : ''}`}>
               {!sidebarCollapsed && (
-                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} openTabs={openEditorTabs} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onSaveProject={handleSaveSingleProject} onCloseProject={(projectDir) => { void handleCloseSingleProject(projectDir) }} onLibraryChange={handleLibraryChange} onLibraryHint={handleLibraryHint} onProjectNodeAction={(action, node) => { void handleProjectNodeAction(action, node) }} />
+                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} openTabs={openEditorTabs} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onSaveProject={handleSaveSingleProject} onCloseProject={(projectDir) => { void handleCloseSingleProject(projectDir) }} onLibraryChange={handleLibraryChange} onLibraryHint={handleLibraryHint} onProjectNodeAction={(action, node) => { void handleProjectNodeAction(action, node) }} canPasteWindow={copiedWindowFile != null} />
               )}
               <div className="app-main">
                 <Editor

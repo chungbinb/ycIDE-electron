@@ -1743,11 +1743,17 @@ app.whenReady().then(() => {
       } catch { /* ignore */ }
     }
 
-    // 5. 更新磁盘上所有 .eyc 文件的内容引用（跳过已在编辑器中打开的）
+    // 5. 更新磁盘上所有 .eyc 文件的内容引用（跳过已在编辑器中打开的）。
+    // 命名约定：**程序集名**用剥前导下划线的核心名（_启动窗口 → 窗口程序集_启动窗口，
+    // 前导下划线兼作分隔符）；**窗口事件名**用原始名（_启动窗口 的事件是「__启动窗口_创建完毕」，
+    // 双下划线合法）；跨窗口成员引用（旧名.）用原始名。与渲染层 applyWindowRenameToContent 一致。
     const eycFiles = readdirSync(projectDir).filter(f => f.toLowerCase().endsWith('.eyc'))
+    const oldCore = oldName.replace(/^_+/, '')
+    const newCore = newName.replace(/^_+/, '')
     const escapedOldName = oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const escapedOldCore = oldCore.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const ownAssemblyLineRe = new RegExp(
-      '^(\\s*\\.程序集\\s+)(窗口程序集_' + escapedOldName + '|' + escapedOldName + ')(?=\\s|,|$)',
+      '^(\\s*\\.程序集\\s+)(窗口程序集_' + escapedOldCore + '|' + escapedOldName + ')(?=\\s|,|$)',
       'm'
     )
     for (const fileName of eycFiles) {
@@ -1755,13 +1761,13 @@ app.whenReady().then(() => {
       if (openSet.has(filePath)) continue
       let content = readFileSync(filePath, 'utf-8')
       const isOwnRenamedSource = filePath.toLowerCase() === newEyc.toLowerCase()
-      if (!content.includes(oldName) && !isOwnRenamedSource) continue
-      // 更新程序集名：窗口程序集_旧名 → 窗口程序集_新名
-      content = content.split('窗口程序集_' + oldName).join('窗口程序集_' + newName)
+      if (!content.includes(oldName) && !content.includes(oldCore) && !isOwnRenamedSource) continue
+      // 更新程序集名：窗口程序集_旧核心名 → 窗口程序集_新核心名
+      content = content.split('窗口程序集_' + oldCore).join('窗口程序集_' + newCore)
       if (isOwnRenamedSource) {
-        content = content.replace(ownAssemblyLineRe, '$1窗口程序集_' + newName)
+        content = content.replace(ownAssemblyLineRe, '$1窗口程序集_' + newCore)
       }
-      // 更新事件引用：_旧名_ → _新名_
+      // 更新事件引用：_原始旧名_ → _原始新名_
       content = content.split('_' + oldName + '_').join('_' + newName + '_')
       // 更新跨窗口引用：旧名. → 新名.  (如 窗口1.按钮1.禁止)
       content = content.split(oldName + '.').join(newName + '.')
