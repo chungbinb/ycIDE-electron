@@ -200,7 +200,7 @@ const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
   'impl/macos.mm': '798149470018bf45a3e996d82db1db41f473f6a6aca2fd3badf7b8ad1538b4ac',
   'impl/windows.cpp': 'd5bfd1198cb4eb01c09ee8187a96d261d31e7dcf68837cefb75dc7f5b32bb050',
   'krnln.commands.ycmd.json': '839e75869b95f651eeec794e711e313fa39a424ff0542b6d8d3cec89b94c45cd',
-  'krnln.constants.json': 'c71ab45b2573fe6d270257089c19ec6b349a4c920298da91e769eac5411f33ed',
+  'krnln.constants.json': '02e83c81be209c290b335be9daec43df9fa23f5035e204b19280232b7fc894c3',
   'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
   'window-units.json': '9f018a430c8dc9c32cd3ab27412cf69cb0762a88fce394545016fe225cee5bd9',
 }
