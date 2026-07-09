@@ -4,6 +4,9 @@ import MonacoEditor, { OnMount, OnChange, type Monaco } from '@monaco-editor/rea
 import type { editor } from 'monaco-editor'
 import EycTableEditor, { type EycTableEditorHandle, type FileProblem } from './EycTableEditor'
 import { useEditorDiagnosticsProblems } from './editorDiagnostics'
+import type { EditorDiagnosticsProblem } from './editorDiagnosticsShared'
+import { sweepFileDiagnostics, type SweepWindowControl } from './projectDiagnosticsSweep'
+import { buildCompletionCatalog } from './editorCompletionCatalogUtils'
 import VisualDesigner, { type DesignForm, type DesignControl, type SelectionTarget, type LibWindowUnit, type LibUnitEvent } from './VisualDesigner'
 import { eycToInternalFormat, eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
 import { parseLines } from './eycBlocks'
@@ -271,6 +274,7 @@ export interface EditorHandle {
   hasModifiedTabs: () => boolean
   editorAction: (action: string) => void
   getEditorFiles: () => Record<string, string>
+  sweepProjectDiagnostics: () => Promise<Array<{ file: string; problems: EditorDiagnosticsProblem[] }>>
   openFile: (tab: EditorTab) => void
   upsertFile: (tab: EditorTab) => void
   applyDiffHighlight: (tabId: string, diffInfo: DiffLineInfo) => void
@@ -1505,6 +1509,78 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       }
       return files
     },
+    sweepProjectDiagnostics: async () => {
+      // 编译前全项目诊断扫描：项目全部源文件（含未打开的）跑问题面板同款诊断。
+      // 打开的文件用标签页最新内容（含未保存修改），未打开的读盘；关联窗口控件
+      // 同样按「打开的 efw 用最新 formData、未打开的读盘解析」取得。
+      if (!projectDir) return []
+      try {
+        const dirFiles = (await window.api?.file?.readDir(projectDir)) as string[] | undefined
+        const eppFile = dirFiles?.find(f => f.toLowerCase().endsWith('.epp'))
+        if (!eppFile) return []
+        const eppInfo = await window.api?.project?.parseEpp(joinPathByBaseDir(projectDir, eppFile)) as
+          { files?: Array<{ type: string; fileName: string }> } | null
+        if (!eppInfo?.files?.length) return []
+
+        const rawCmds = await window.api.library.getAllCommands(targetPlatform).catch(() => [])
+        const { independentItems } = buildCompletionCatalog(rawCmds || [])
+
+        const tabByName = new Map<string, EditorTab>()
+        for (const t of tabs) {
+          const base = ((t.filePath?.split(/[\\/]/).pop()) || t.label || '').toLowerCase()
+          if (base && !tabByName.has(base)) tabByName.set(base, t)
+        }
+        const readDiskText = async (fileName: string): Promise<string> =>
+          (await window.api?.project?.readFile(joinPathByBaseDir(projectDir, fileName))) || ''
+
+        const forms: Array<{ sourceFile: string; controls: SweepWindowControl[] }> = []
+        for (const f of eppInfo.files) {
+          if (f.type !== 'EFW') continue
+          const tab = tabByName.get(f.fileName.toLowerCase())
+          let fd = tab?.formData || null
+          if (!fd) {
+            try { fd = JSON.parse(await readDiskText(f.fileName)) as typeof fd } catch { fd = null }
+          }
+          if (!fd?.name) continue
+          forms.push({
+            sourceFile: (fd.sourceFile || `${fd.name}.eyc`).toLowerCase(),
+            controls: [
+              { name: fd.name, type: '窗口' },
+              ...(fd.controls || []).map(c => ({ name: c.name, type: c.type, properties: c.properties })),
+            ],
+          })
+        }
+
+        const globalNames = projectGlobalVars.map(v => v.name)
+        const dllItems = projectDllCommands.map(c => ({
+          name: c.name,
+          returnType: c.returnType,
+          params: (c.params || []).map(p => ({ name: p.name, type: p.type, optional: p.optional, isArray: p.isArray })),
+        }))
+
+        const out: Array<{ file: string; problems: EditorDiagnosticsProblem[] }> = []
+        for (const f of eppInfo.files) {
+          if (f.type !== 'EYC' && f.type !== 'EGV' && f.type !== 'ECS' && f.type !== 'EDT' && f.type !== 'ELL') continue
+          const tab = tabByName.get(f.fileName.toLowerCase())
+          // 未打开的文件读盘后按打开同款转换成编辑器内部格式，保证诊断输入与面板一致
+          const text = tab ? tab.value : eycToInternalFormat(await readDiskText(f.fileName))
+          if (!text) continue
+          const form = forms.find(fm => fm.sourceFile === f.fileName.toLowerCase())
+          const problems = sweepFileDiagnostics({
+            text,
+            catalogCommands: independentItems,
+            dllCommands: dllItems,
+            projectGlobalVarNames: globalNames,
+            windowControls: form?.controls || [],
+            windowUnits,
+          }).filter(p => p.severity === 'error')
+          if (problems.length) out.push({ file: f.fileName, problems })
+        }
+        return out
+      } catch {
+        return []
+      }
+    },
     openFile: (tab: EditorTab) => {
       const incoming = normalizeIncomingTab(tab)
       setTabs(prev => {
@@ -1663,7 +1739,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     },
     updateFormProperty,
     navigateToEventSub,
-  }), [saveCurrentFile, saveTabAs, saveAllFiles, saveProjectFiles, closeActiveFile, closeProjectTabs, clearAllTabs, tabs, activeTabId, onOpenTabsChange, syncSidebarByLanguage, updateFormProperty, navigateToEventSub, appendDiffDecorations, clearDiffDecorations, setEycDiffHighlightLines, eycEditorModeTabs, eycFallbackTabs, globalUndo, globalRedo])
+  }), [saveCurrentFile, saveTabAs, saveAllFiles, saveProjectFiles, closeActiveFile, closeProjectTabs, clearAllTabs, tabs, activeTabId, onOpenTabsChange, syncSidebarByLanguage, updateFormProperty, navigateToEventSub, appendDiffDecorations, clearDiffDecorations, setEycDiffHighlightLines, eycEditorModeTabs, eycFallbackTabs, globalUndo, globalRedo, projectDir, targetPlatform, projectGlobalVars, projectDllCommands, windowUnits])
 
   // 接收外部打开的项目文件
   useEffect(() => {
@@ -2443,9 +2519,9 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     return eycToYiFormat(activeTab.value)
   }, [activeTab])
   const activeWindowControls = useMemo(() => {
-    if (!activeTab) return [] as Array<{ name: string; type: string }>
+    if (!activeTab) return [] as Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>
     const isSourceTab = isEycSourceLanguage(activeTab.language)
-    if (!isSourceTab) return [] as Array<{ name: string; type: string }>
+    if (!isSourceTab) return [] as Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>
 
     const sourceFileName = (activeTab.filePath?.split(/[\\/]/).pop() || activeTab.label).toLowerCase()
     const matchedFormTab = tabs.find(t => {
@@ -2454,21 +2530,22 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       return linkedSource === sourceFileName
     })
 
-    if (!matchedFormTab?.formData) return [] as Array<{ name: string; type: string }>
+    if (!matchedFormTab?.formData) return [] as Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>
 
-    const items: Array<{ name: string; type: string }> = []
+    const items: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }> = []
     const seen = new Set<string>()
-    const add = (name: string, type: string): void => {
+    const add = (name: string, type: string, properties?: Record<string, string | number | boolean>): void => {
       const n = (name || '').trim()
       const t = (type || '').trim()
       if (!n || seen.has(n)) return
       seen.add(n)
-      items.push({ name: n, type: t })
+      items.push({ name: n, type: t, properties })
     }
 
     add(matchedFormTab.formData.name, '窗口')
     for (const control of matchedFormTab.formData.controls) {
-      add(control.name, control.type)
+      // 实例属性值随附（如编辑框的「输入方式」），诊断按它折算「内容」的实际类型
+      add(control.name, control.type, control.properties)
     }
     return items
   }, [activeTab, tabs])

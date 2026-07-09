@@ -852,3 +852,156 @@ test('paste sanitize: nested flow in true branch remains visible text', () => {
   assert.equal(out.includes('    如果 ()'), true)
   assert.equal(out.includes('否则'), true)
 })
+
+test('paste utils: selection-replace paste overwrites fully selected same-name sub (no rename)', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
+  })
+
+  const currentText = [
+    '.版本 2',
+    '.程序集 窗口程序集_启动窗口',
+    '.子程序 _按钮1_被单击, , , ',
+    '    旧代码1 ()',
+    '    旧代码2 ()',
+    '.子程序 B',
+    '    返回 (0)',
+  ].join('\n')
+  const clipText = [
+    '.子程序 _按钮1_被单击, , , ',
+    '    新代码 ()',
+  ].join('\n')
+
+  const result = buildMultiLinePasteResult({
+    currentText,
+    clipText,
+    cursorLine: 2,
+    sanitizePastedText: (t) => t,
+    replaceLineIndices: [2, 3, 4],
+  })
+
+  assert.ok(result)
+  assert.equal(result.insertAt, 2)
+  const text = result.nextText
+  assert.equal((text.match(/_按钮1_被单击/g) || []).length, 1)
+  assert.equal(text.includes('_被单击_1'), false)
+  assert.equal(text.includes('新代码'), true)
+  assert.equal(text.includes('旧代码1'), false)
+  assert.equal(text.includes('.子程序 B'), true)
+})
+
+test('paste utils: selection-replace keeps unselected tail lines inside the overwritten sub', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
+  })
+
+  const currentText = [
+    '.版本 2',
+    '.程序集 窗口程序集_启动窗口',
+    '.子程序 _按钮1_被单击, , , ',
+    '    旧代码1 ()',
+    '    旧代码2 ()',
+  ].join('\n')
+  const clipText = [
+    '.子程序 _按钮1_被单击, , , ',
+    '    新代码 ()',
+  ].join('\n')
+
+  const result = buildMultiLinePasteResult({
+    currentText,
+    clipText,
+    cursorLine: 2,
+    sanitizePastedText: (t) => t,
+    replaceLineIndices: [2, 3],
+  })
+
+  assert.ok(result)
+  const lines = result.nextText.split('\n')
+  assert.equal((result.nextText.match(/_按钮1_被单击/g) || []).length, 1)
+  const declIdx = lines.findIndex(l => l.includes('_按钮1_被单击'))
+  const newIdx = lines.findIndex(l => l.includes('新代码'))
+  const tailIdx = lines.findIndex(l => l.includes('旧代码2'))
+  assert.ok(declIdx >= 0 && newIdx > declIdx && tailIdx > newIdx)
+})
+
+test('paste utils: selection elsewhere still renames duplicated pasted sub', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
+  })
+
+  const currentText = [
+    '.版本 2',
+    '.程序集 窗口程序集_启动窗口',
+    '.子程序 _按钮1_被单击, , , ',
+    '    旧代码1 ()',
+    '.子程序 B',
+    '    返回 (0)',
+  ].join('\n')
+  const clipText = [
+    '.子程序 _按钮1_被单击, , , ',
+    '    新代码 ()',
+  ].join('\n')
+
+  const result = buildMultiLinePasteResult({
+    currentText,
+    clipText,
+    cursorLine: 5,
+    sanitizePastedText: (t) => t,
+    replaceLineIndices: [5],
+  })
+
+  assert.ok(result)
+  const text = result.nextText
+  assert.equal(text.includes('_按钮1_被单击_1'), true)
+  assert.equal(text.includes('旧代码1'), true)
+})
+
+test('paste utils: selection-replace deletes selected subs that have no counterpart in clipboard', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
+  })
+
+  const currentText = [
+    '.版本 2',
+    '.程序集 窗口程序集_启动窗口',
+    '.子程序 _子程序1_被单击, , , ',
+    '    旧代码1 ()',
+    '.子程序 _子程序1_被双击, , , ',
+    '    旧代码2 ()',
+    '.子程序 B',
+    '    返回 (0)',
+  ].join('\n')
+  const clipText = [
+    '.子程序 _子程序1_被单击, , , ',
+    '    新代码 ()',
+  ].join('\n')
+
+  const result = buildMultiLinePasteResult({
+    currentText,
+    clipText,
+    cursorLine: 2,
+    sanitizePastedText: (t) => t,
+    replaceLineIndices: [2, 3, 4, 5],
+  })
+
+  assert.ok(result)
+  const text = result.nextText
+  // 被单击：覆盖为剪贴板版本（唯一、不改名、新代码）
+  assert.equal((text.match(/_子程序1_被单击/g) || []).length, 1)
+  assert.equal(text.includes('新代码'), true)
+  assert.equal(text.includes('旧代码1'), false)
+  // 被双击：选中但剪贴板没有对应 → 整个删除
+  assert.equal(text.includes('_子程序1_被双击'), false)
+  assert.equal(text.includes('旧代码2'), false)
+  // 未选中的 B 不受影响
+  assert.equal(text.includes('.子程序 B'), true)
+  assert.equal(text.includes('返回 (0)'), true)
+})

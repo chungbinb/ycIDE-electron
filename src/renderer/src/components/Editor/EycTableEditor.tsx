@@ -74,6 +74,7 @@ import {
   AC_PAGE_SIZE,
   BUILTIN_LITERAL_COMPLETION_ITEMS,
   BUILTIN_TYPE_ITEMS,
+  LOGIC_OPERATOR_ALIASES,
   MEMBER_DELIMITER_REGEX,
   clampNumber,
   colorize,
@@ -102,7 +103,7 @@ import {
   resolveCompletionWordContext,
 } from './editorCompletionInputUtils'
 import { useEditorDiagnosticsProblems } from './editorDiagnostics'
-import type { DiagCommandSignature } from './editorDiagnosticsShared'
+import { buildControlPropTypes, type DiagCommandSignature } from './editorDiagnosticsShared'
 import { useEditorBlocksModel } from './editorBlocksModel'
 
 // ========== 组件 ==========
@@ -131,7 +132,7 @@ interface EycTableEditorProps {
   isClassModule?: boolean
   projectGlobalVars?: Array<{ name: string; type: string }>
   windowControlNames?: string[]
-  windowControlTypes?: Array<{ name: string; type: string }>
+  windowControlTypes?: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>
   windowUnits?: LibWindowUnit[]
   projectConstants?: Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>
   projectDllCommands?: Array<{ name: string; returnType: string; description: string; params: CompletionParam[]; isIndirect?: boolean }>
@@ -415,6 +416,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   // ===== 行选择状态 =====
   const [selectedLines, setSelectedLines] = useState<Set<number>>(new Set())
+  // 粘贴入口经 ref 取最新选区（覆盖粘贴语义），避免把选区塞进各粘贴回调的依赖
+  const selectedLinesRef = useRef(selectedLines)
+  useEffect(() => { selectedLinesRef.current = selectedLines }, [selectedLines])
   const [editorContextMenu, setEditorContextMenu] = useState<{ x: number; y: number; lineIndex: number | null } | null>(null)
   const [contextMenuCanPaste, setContextMenuCanPaste] = useState(false)
   const dragAnchor = useRef<number | null>(null)  // 拖选起点行号
@@ -1509,6 +1513,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             sanitizePastedText: sanitizePastedTextForCurrent,
             extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
             extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+            replaceLineIndices: selectedLinesRef.current.size > 0 ? Array.from(selectedLinesRef.current) : undefined,
           })
           if (!pasteResult) return
           if (pasteResult.routedDeclarations.length > 0) {
@@ -4146,7 +4151,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     classNameCompletionItemsRef.current = classNameCompletionItems
   }, [classNameCompletionItems])
 
-  // 有效命令名集合（支持库命令 + 用户子程序 + 流程关键字 + 变量名）
+  // 有效命令名集合（支持库命令 + 用户子程序 + 流程关键字 + 变量名 + 逻辑运算符别名 且/或）
   const validCommandNames = useMemo(() => {
     const s = new Set<string>()
     for (const c of allCommandsRef.current) s.add(c.name)
@@ -4154,6 +4159,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     for (const n of userSubNames) s.add(n)
     for (const n of allKnownVarNames) s.add(n)
     for (const k of FLOW_KW) s.add(k)
+    for (const a of LOGIC_OPERATOR_ALIASES) s.add(a)
     return s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userSubNames, allKnownVarNames, cmdLoadId, dllCompletionItems])
@@ -4169,12 +4175,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return set
   }, [visibleBlocks])
 
-  // 保留名集合（流程关键字 + 支持库命令 + DLL 命令），变量名/参数名不得与之重名
+  // 保留名集合（流程关键字 + 支持库命令 + DLL 命令 + 逻辑字面量 真/假），变量名/参数名不得与之重名
   const reservedNameSet = useMemo(() => {
     const s = new Set<string>()
     for (const k of FLOW_KW) s.add(k)
     for (const c of allCommandsRef.current) s.add(c.name)
     for (const c of dllCompletionItemsRef.current) s.add(c.name)
+    s.add('真')
+    s.add('假')
     return s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cmdLoadId, dllCompletionItems])
@@ -4207,6 +4215,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cmdLoadId, dllCompletionItems])
 
+  // 控件属性类型表（编辑框「内容」随「输入方式」折算），控件属性赋值的类型检查用
+  const diagControlPropTypes = useMemo(
+    () => buildControlPropTypes(windowControlTypes, windowUnits),
+    [windowControlTypes, windowUnits],
+  )
+
   const diagnosticsProblems = useEditorDiagnosticsProblems({
     text: diagnosticsText,
     hasCommandCatalog: allCommandsRef.current.length > 0,
@@ -4214,6 +4228,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     allKnownVarNames,
     reservedNameSet,
     commandSignatures: diagCommandSignatures,
+    controlPropTypes: diagControlPropTypes,
   })
 
   // 声明重复/同名类错误（局部变量在当前子程序重复定义、与程序集/全局变量同名、子程序重名等）
@@ -5687,6 +5702,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         sanitizePastedText: sanitizePastedTextForCurrent,
         extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
         extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+        replaceLineIndices: selectedLinesRef.current.size > 0 ? Array.from(selectedLinesRef.current) : undefined,
       })
       if (!pasteResult) return
       if (pasteResult.routedDeclarations.length > 0) {
@@ -6304,6 +6320,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         sanitizePastedText: sanitizePastedTextForCurrent,
         extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
         extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+        replaceLineIndices: selectedLinesRef.current.size > 0 ? Array.from(selectedLinesRef.current) : undefined,
       })
       if (!pasteResult) return
       if (pasteResult.routedDeclarations.length > 0) {

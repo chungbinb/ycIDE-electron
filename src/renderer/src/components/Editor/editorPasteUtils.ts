@@ -223,9 +223,39 @@ export function buildMultiLinePasteResult(params: {
   sanitizePastedText: (clipText: string, currentText: string) => string
   extractAssemblyVarLines?: (clipText: string, currentText: string) => string[]
   extractRoutedDeclarationLines?: (clipText: string, currentText: string) => Array<{ language: 'ell' | 'egv' | 'ecs' | 'edt'; lines: string[] }>
+  /**
+   * 行多选状态下粘贴 = 覆盖粘贴：先剔除这些选中行（.程序集 声明行受保护），插入点固定为
+   * 选区首行。重名子程序判定基于剔除后的文档——选区覆盖到声明行的同名子程序因此保留原名
+   * （完整选中 → 完整覆盖；选到一半、尾部残留代码未选中 → 粘贴内容顶上、残留代码自然归入
+   * 该子程序）；未被选中的同名子程序仍走既有改名（原名_1/_2）。无选区时行为不变。
+   */
+  replaceLineIndices?: number[]
 }): MultiLinePasteResult | null {
-  const { currentText, clipText, cursorLine, sanitizePastedText, extractAssemblyVarLines, extractRoutedDeclarationLines } = params
+  const { currentText: originalText, clipText, cursorLine: rawCursorLine, sanitizePastedText, extractAssemblyVarLines, extractRoutedDeclarationLines, replaceLineIndices } = params
   if (!clipText) return null
+
+  // 选区覆盖粘贴：先从文档剔除选中行，后续全部判定（重名/归位/插入点）基于剔除后的文本
+  let currentText = originalText
+  let cursorLine = rawCursorLine
+  let replaceMode = false
+  if (replaceLineIndices && replaceLineIndices.length > 0) {
+    const srcLines = originalText.split('\n')
+    const parsedCur = parseLines(originalText)
+    const del = new Set<number>()
+    for (const i of replaceLineIndices) {
+      if (i < 0 || i >= srcLines.length) continue
+      if (parsedCur[i]?.type === 'assembly') continue
+      del.add(i)
+    }
+    if (del.size > 0) {
+      const minSel = Math.min(...del)
+      const kept = srcLines.filter((_, i) => !del.has(i))
+      currentText = kept.join('\n')
+      // 选区首行之前的行都未被删除，剔除后该位置索引不变；选区吞到文档尾时=EOF 追加位
+      cursorLine = Math.min(minSel, kept.length)
+      replaceMode = true
+    }
+  }
 
   const routedDeclarations = extractRoutedDeclarationLines
     ? extractRoutedDeclarationLines(clipText, currentText)
@@ -336,7 +366,11 @@ export function buildMultiLinePasteResult(params: {
 
   let insertAt = lines.length
   if (hasInlineContent) {
-    if (pastedHasSub) {
+    if (replaceMode && cursorLine >= 0) {
+      // 覆盖粘贴：粘贴内容顶在选区首行原位（不对齐子程序边界——选区后残留的未选中代码
+      // 要能自然接在粘贴的同名子程序之后）
+      insertAt = Math.min(cursorLine, lines.length)
+    } else if (pastedHasSub) {
       insertAt = findInsertAtForPastedSubs(lines, cursorLine)
     } else if (pastedHasDll) {
       insertAt = findInsertAtForPastedDlls(lines)

@@ -15,6 +15,8 @@ interface DiagnosticsWorkerInput {
   reservedNameSet: Set<string>
   // 命令签名表（命令名 → 参数/返回类型），用于实参数据类型匹配检查
   commandSignatures?: Record<string, DiagCommandSignature>
+  // 控件属性类型表（控件名 → 属性名 → 类型名），用于控件属性赋值类型检查
+  controlPropTypes?: Record<string, Record<string, string>>
 }
 
 function createDiagnosticsWorker(): Worker | null {
@@ -39,8 +41,9 @@ export function useEditorDiagnosticsProblems(input: DiagnosticsWorkerInput): Edi
       allKnownVarNames: Array.from(input.allKnownVarNames),
       reservedNames: Array.from(input.reservedNameSet),
       commandSignatures: input.commandSignatures,
+      controlPropTypes: input.controlPropTypes,
     }
-  }, [input.text, input.hasCommandCatalog, input.validCommandNames, input.allKnownVarNames, input.reservedNameSet, input.commandSignatures])
+  }, [input.text, input.hasCommandCatalog, input.validCommandNames, input.allKnownVarNames, input.reservedNameSet, input.commandSignatures, input.controlPropTypes])
 
   useEffect(() => {
     const worker = createDiagnosticsWorker()
@@ -78,6 +81,7 @@ export function useEditorDiagnosticsProblems(input: DiagnosticsWorkerInput): Edi
       allKnownVarNames: normalized.allKnownVarNames,
       reservedNames: normalized.reservedNames,
       commandSignatures: normalized.commandSignatures,
+      controlPropTypes: normalized.controlPropTypes,
     }
     worker.postMessage(payload)
   }, [normalized])

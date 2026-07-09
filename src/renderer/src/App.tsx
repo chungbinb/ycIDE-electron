@@ -1249,6 +1249,31 @@ function App(): React.JSX.Element {
     checkDesignProblems(openTabsRef.current)
   }, [checkDesignProblems, targetPlatform])
 
+  // 编译前全项目诊断扫描：未打开的文件也检查（问题面板只覆盖当前打开文件），
+  // 有错误则拦截编译，并在输出面板按文件列出错误明细。
+  const sweepAndReportProjectErrors = useCallback(async (): Promise<boolean> => {
+    const sweep = (await editorRef.current?.sweepProjectDiagnostics?.()) || []
+    if (!sweep.length) return false
+    const total = sweep.reduce((s, f) => s + f.problems.length, 0)
+    resetOutputMessages()
+    setShowOutput(true)
+    setForceOutputTab('compile')
+    setTimeout(() => setForceOutputTab(null), 100)
+    appendOutputMessage({ type: 'error', text: `编译已取消：${sweep.length} 个文件存在 ${total} 个错误` })
+    let emitted = 0
+    for (const f of sweep) {
+      appendOutputMessage({ type: 'error', text: `${f.file}（${f.problems.length} 个错误）:` })
+      for (const p of f.problems) {
+        if (emitted >= 50) break
+        appendOutputMessage({ type: 'error', text: `    第 ${p.line} 行: ${p.message}` })
+        emitted++
+      }
+      if (emitted >= 50) break
+    }
+    if (total > emitted) appendOutputMessage({ type: 'error', text: `    …其余 ${total - emitted} 个错误未列出（打开对应文件可在问题面板查看）` })
+    return true
+  }, [resetOutputMessages, appendOutputMessage])
+
   // 编译运行
   const handleCompileRun = useCallback(async () => {
     if (!isProjectWorkspace || !currentProjectDir || isCompiling) return
@@ -1268,6 +1293,10 @@ function App(): React.JSX.Element {
     }
     setIsCompiling(true)
     editorRef.current?.save()
+    if (await sweepAndReportProjectErrors()) {
+      setIsCompiling(false)
+      return
+    }
     resetOutputMessages()
     setShowOutput(true)
     setForceOutputTab('compile')
@@ -1280,7 +1309,7 @@ function App(): React.JSX.Element {
     setIsCompiling(false)
     setForceOutputTab(null)
     if (result?.success && targetPlatform !== 'android') setIsRunning(true)
-  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, targetPlatform, fileProblems, designProblems, debugPause, continueDebugRun, breakpointsByFile])
+  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, targetPlatform, fileProblems, designProblems, debugPause, continueDebugRun, breakpointsByFile, sweepAndReportProjectErrors])
 
   // 普通编译
   const handleCompile = useCallback(async () => {
@@ -1293,6 +1322,10 @@ function App(): React.JSX.Element {
     }
     setIsCompiling(true)
     editorRef.current?.save()
+    if (await sweepAndReportProjectErrors()) {
+      setIsCompiling(false)
+      return
+    }
     resetOutputMessages()
     setShowOutput(true)
     setForceOutputTab('compile')
@@ -1300,7 +1333,7 @@ function App(): React.JSX.Element {
     await window.api.compiler.compile(currentProjectDir, editorFiles, targetArch)
     setIsCompiling(false)
     setForceOutputTab(null)
-  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, fileProblems, designProblems])
+  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, fileProblems, designProblems, sweepAndReportProjectErrors])
 
   // 窗口预览：编译运行【当前窗体】作为启动窗口，但跳过所有源代码转译（只出纯 UI 窗口，
   // 事件走 WEAK 空实现）。因不编译源代码，故不受问题面板(代码/设计错误)阻断。
@@ -3370,6 +3403,9 @@ function App(): React.JSX.Element {
       case 'nav:back':
         editorRef.current?.editorAction('navBack')
         break
+      case 'build:compile':
+        handleCompile()
+        break
       case 'build:run':
         handleCompileRun()
         break
@@ -4422,7 +4458,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.4-beta.8（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.4-beta.9（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]

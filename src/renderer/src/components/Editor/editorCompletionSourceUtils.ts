@@ -54,8 +54,11 @@ export function buildMemberCompletionSource(params: {
 
   const completionVarType = userVarCompletionItems.find(item => item.name === objName)?.returnType || ''
   const mappedType = userVarTypeMap.get(objName) || completionVarType || windowControlTypeMap.get(objName)
-  const inferredType = mappedType ? '' : objName.replace(/[0-9]+$/, '')
-  const typeName = normalizeMemberTypeName(mappedType || inferredType || objName)
+  // 对象必须真实存在——关联窗口上的组件/窗口自身（windowControlTypeMap）、或有类型的变量/参数——
+  // 才提供成员补全；不再按「去尾数字」猜类型（设计器没放置 编辑框1 时，敲 编辑框1. 不应弹成员窗）。
+  // 返回空列表（非 null）让调用方直接不弹窗，而不是回退到全量命令列表。
+  if (!mappedType) return []
+  const typeName = normalizeMemberTypeName(mappedType)
 
   const toMemberItem = (
     name: string,

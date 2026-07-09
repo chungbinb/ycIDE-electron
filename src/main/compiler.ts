@@ -115,7 +115,7 @@ interface ConstantDef {
 
 interface SubprogramDef {
   name: string
-  params: Array<{ name: string; type: string }>
+  params: Array<{ name: string; type: string; isByRef?: boolean; isArray?: boolean; optional?: boolean }>
   isClassModule: boolean
   returnType: string
   isPublic: boolean
@@ -252,7 +252,7 @@ interface TranspileCacheFile {
   entries: Record<string, TranspileCacheEntry>
 }
 
-const TRANSPILE_CACHE_VERSION = 8
+const TRANSPILE_CACHE_VERSION = 12
 
 interface BuildArtifactCacheFile {
   version: number
@@ -1654,6 +1654,26 @@ function splitDeclParts(text: string): string[] {
   return text.split(/[\uFF0C,]/).map(s => s.trim())
 }
 
+// 引号感知的声明字段切分：数组尺寸字段形如 "100,100"，内部逗号不能当分隔符
+function splitDeclPartsQuoted(text: string): string[] {
+  const out: string[] = []
+  let cur = ''
+  let inQ = false
+  let qc = ''
+  for (const ch of text) {
+    if (inQ) {
+      cur += ch
+      if ((qc === '"' && ch === '"') || (qc === '“' && ch === '”')) inQ = false
+      continue
+    }
+    if (ch === '"' || ch === '“') { inQ = true; qc = ch; cur += ch; continue }
+    if (ch === ',' || ch === '，') { out.push(cur.trim()); cur = ''; continue }
+    cur += ch
+  }
+  out.push(cur.trim())
+  return out
+}
+
 // \u5265\u79BB\u4EE3\u7801\u884C\u7684\u884C\u5C3E\u5355\u5F15\u53F7\u6CE8\u91CA\uFF08\u5FFD\u7565\u53CC\u5F15\u53F7\u5B57\u7B26\u4E32\u5185\u7684 '\uFF09\u3002
 // \u6574\u884C\u6CE8\u91CA\uFF08\u4EE5 ' \u5F00\u5934\uFF09\u539F\u6837\u4FDD\u7559\uFF0C\u7531\u8C03\u7528\u65B9\u6309\u6CE8\u91CA\u884C\u5904\u7406\u3002
 function stripTrailingEycComment(line: string): string {
@@ -1765,12 +1785,14 @@ function collectLibraryConstants(usedLibraryNames?: Set<string>): LibraryConstan
     const info = libraryManager.getLibInfo(lib.name)
     const constants = (info?.constants || []) as LibConstant[]
     for (const c of constants) {
-      const name = (c.name || '').trim()
+      // 清单里常量名带 # 前缀（如 "#换行符"），#define 与表达式引用（replaceConstantRefs 剥 #）都用裸名
+      const name = (c.name || '').trim().replace(/^#/, '')
       if (!name || seen.has(name)) continue
       seen.add(name)
       result.push({
         name,
-        value: (c.value || '').trim(),
+        // 文本常量的值可能就是空白字符本身（#换行符 = CRLF、#制表符 = TAB），不能 trim
+        value: c.type === 'text' ? (c.value || '') : (c.value || '').trim(),
         type: c.type || 'null',
       })
     }
@@ -2104,7 +2126,8 @@ function collectProjectSubprogramDefs(project: ProjectInfo, editorFiles?: Map<st
         const parts = splitDeclParts(line.substring(3))
         const paramName = (parts[0] || '').trim()
         const paramType = (parts[1] || '整数型').trim()
-        if (paramName) currentSub.params.push({ name: paramName, type: paramType })
+        // 标志字段从 parts[2] 起查（参数名/类型本身可能叫「数组」）
+        if (paramName) currentSub.params.push({ name: paramName, type: paramType, isArray: parts.slice(2).includes('数组'), isByRef: parts.slice(2).includes('传址') })
         continue
       }
       if (line.startsWith('.程序集 ')) {
@@ -2312,9 +2335,9 @@ function parseProjectDllCommands(content: string): ProjectDllCommandDef[] {
       current.params.push({
         name: (parts[0] || '').trim(),
         type: (parts[1] || '整数型').trim(),
-        isByRef: parts.includes('传址'),
-        isArray: parts.includes('数组'),
-        optional: parts.includes('可空'),
+        isByRef: parts.slice(2).includes('传址'),
+        isArray: parts.slice(2).includes('数组'),
+        optional: parts.slice(2).includes('可空'),
       })
     }
   }
@@ -2523,10 +2546,178 @@ function convertFullWidthOps(expr: string): string {
     .replace(/×/g, '*')
     .replace(/÷/g, '/')
     .replace(/％/g, '%')
+    // ＼ 整除：整数操作数下 C 的 / 即截断除法
+    .replace(/＼/g, '/')
 }
 
 function replaceConstantRefs(expr: string): string {
   return expr.replace(/#([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)/g, '$1')
+}
+
+// ===== \u6570\u7ec4\u53d8\u91cf\u652f\u6301 =====
+// \u8fd0\u884c\u65f6\u6570\u7ec4\u7edf\u4e00\u4e3a std::vector<long long>\uff08krnln impl \u7684\u65e2\u5b9a ABI\uff0c\u6307\u9488\u7ecf void* \u4f20\u9012\uff09\u3002
+// \u8f6c\u8bd1\u671f\u8ddf\u8e2a\u5f53\u524d\u53ef\u89c1\u7684\u6570\u7ec4\u53d8\u91cf\u540d\uff1a\u4e0b\u6807\u5f15\u7528\u6539\u5199\u4e3a yc_ary_at(\u540d\u79f0, \u4e00\u57fa\u4e0b\u6807)\uff08\u8fd4\u56de\u5f15\u7528\uff0c
+// \u53ef\u4f5c\u5de6\u503c\uff09\uff0c\u6570\u7ec4\u547d\u4ee4\u5b9e\u53c2\u6539\u4f20 (void*)&\u540d\u79f0\u3002\u8868\u8fbe\u5f0f\u6811\u6309\u62ec\u53f7\u611f\u77e5\u5207\u5206\uff0cyc_ary_at(...) \u7684
+// \u62ec\u53f7\u5f62\u5f0f\u5929\u7136\u517c\u5bb9\uff1b\u65b9\u62ec\u53f7\u539f\u6837\u7559\u7ed9 C++ \u4f1a\u56e0\u53d8\u91cf\u58f0\u660e\u4e0d\u662f\u539f\u751f\u6570\u7ec4\u800c\u7f16\u8bd1\u5931\u8d25\u3002
+const ARRAY_ELEM_INTEGER_TYPES = new Set(['\u5b57\u8282\u578b', '\u77ed\u6574\u6570\u578b', '\u6574\u6570\u578b', '\u957f\u6574\u6570\u578b', '\u903b\u8f91\u578b'])
+// \u6d6e\u70b9\u65cf\u5143\u7d20\u540c\u6837\u5b58\u8fdb vector<long long>\uff1a\u6309 double \u4f4d\u6a21\u5f0f\uff08yc_f64_bits/yc_f64_from_bits\uff09\u8bfb\u5199
+const ARRAY_ELEM_FLOAT_TYPES = new Set(['\u5c0f\u6570\u578b', '\u53cc\u7cbe\u5ea6\u5c0f\u6570\u578b'])
+
+interface TranspileArrayInfo {
+  elemType: string
+  /** \u5404\u7ef4\u5c3a\u5bf8\uff1b\u7a7a\u6570\u7ec4=\u52a8\u6001\u4e00\u7ef4\uff08"0"\uff09\uff0c\u591a\u7ef4\u4e3a\u5b9a\u957f\uff08\u5982 "100,100" \u2192 [100, 100]\uff09\uff0c\u884c\u4e3b\u5e8f\u6241\u5e73\u5b58\u50a8 */
+  dims: number[]
+}
+let currentTranspileArrayVars = new Map<string, TranspileArrayInfo>()
+let fileScopeArrayVars = new Map<string, TranspileArrayInfo>()
+
+function isFloatArrayElem(info: TranspileArrayInfo | undefined): boolean {
+  return !!info && ARRAY_ELEM_FLOAT_TYPES.has(info.elemType)
+}
+
+/** \u58f0\u660e parts \u4e2d\u7684\u6570\u7ec4\u5c3a\u5bf8\u5b57\u6bb5\uff08\u53ef\u7a7a\u3001\u53ef\u5e26\u5f15\u53f7\uff1b"0"=\u52a8\u6001\u4e00\u7ef4\uff0c"100,100"=\u4e8c\u7ef4\u5b9a\u957f\uff09 */
+function parseArrayDimsField(field: string | undefined): { isArray: boolean; dims: number[]; invalid?: string } {
+  const raw = unquoteDeclValue(field || '').trim()
+  if (!raw) return { isArray: false, dims: [] }
+  const parts = raw.split(/[,\uff0c]/).map(s => s.trim())
+  if (parts.length === 1) {
+    const n = Number.parseInt(parts[0], 10)
+    return { isArray: true, dims: Number.isFinite(n) && n > 0 ? [n] : [] }
+  }
+  const dims = parts.map(p => Number.parseInt(p, 10))
+  if (dims.some(n => !Number.isFinite(n) || n <= 0)) {
+    return { isArray: true, dims: [], invalid: `\u591a\u7ef4\u6570\u7ec4\u5404\u7ef4\u5c3a\u5bf8\u5fc5\u987b\u4e3a\u6b63\u6574\u6570\uff08\u6536\u5230 "${raw}"\uff09` }
+  }
+  return { isArray: true, dims }
+}
+
+/** \u591a\u7ef4\u4e0b\u6807\u6298\u7b97\u4e3a\u4e00\u57fa\u7ebf\u6027\u4e0b\u6807\u8868\u8fbe\u5f0f\uff1a((e1)-1)*d2*\u2026*dk + ((e2)-1)*d3*\u2026*dk + \u2026 + (ek) */
+function buildAryLinearIndexExpr(indexExprsC: string[], dims: number[]): string {
+  if (indexExprsC.length <= 1) return indexExprsC[0] || '1'
+  const terms: string[] = []
+  for (let i = 0; i < indexExprsC.length; i++) {
+    let stride = 1
+    for (let d = i + 1; d < dims.length; d++) stride *= dims[d] || 1
+    terms.push(i === indexExprsC.length - 1
+      ? `(${indexExprsC[i]})`
+      : `((${indexExprsC[i]}) - 1) * ${stride}`)
+  }
+  return terms.join(' + ')
+}
+
+/** \u4ece pos \u8d77\u5339\u914d\u4e00\u4e2a\u914d\u5e73\u7684 [ ... ] \u7ec4\uff08\u5f15\u53f7\u611f\u77e5\uff09\uff0c\u8fd4\u56de\u7ed3\u675f\u4f4d\u7f6e\u4e0e\u5185\u5bb9\uff1bpos \u5fc5\u987b\u6307\u5411 '[' */
+function matchBracketGroup(expr: string, pos: number): { inner: string; end: number } | null {
+  let depth = 0
+  let q = false
+  let qc = ''
+  for (let m = pos; m < expr.length; m++) {
+    const c = expr[m]
+    if (q) { if (c === qc) q = false; continue }
+    if (c === '"') { q = true; qc = '"'; continue }
+    if (c === '\u201c') { q = true; qc = '\u201d'; continue }
+    if (c === '[') depth++
+    else if (c === ']') {
+      depth--
+      if (depth === 0) return { inner: expr.slice(pos + 1, m), end: m }
+    }
+  }
+  return null
+}
+
+function rewriteArrayIndexOnce(
+  expr: string,
+  commandMap?: Map<string, ResolvedCommand>,
+  directCallables?: DirectCallableNames,
+  variableTypeResolver?: VariableTypeResolver,
+): string {
+  let inQuote = false
+  let quoteClose = ''
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]
+    if (inQuote) {
+      if (ch === quoteClose) inQuote = false
+      continue
+    }
+    if (ch === '"') { inQuote = true; quoteClose = '"'; continue }
+    if (ch === '\u201c') { inQuote = true; quoteClose = '\u201d'; continue }
+    if (!/[\u4e00-\u9fa5A-Za-z_]/.test(ch)) continue
+
+    let j = i
+    while (j < expr.length && /[\u4e00-\u9fa5A-Za-z0-9_]/.test(expr[j])) j++
+    const name = expr.slice(i, j)
+    const info = currentTranspileArrayVars.get(name)
+    let k = j
+    while (k < expr.length && /\s/.test(expr[k])) k++
+    if (expr[k] !== '[' || !info) {
+      i = j - 1
+      continue
+    }
+    // \u6536\u96c6\u8fde\u7eed\u7684\u4e0b\u6807\u62ec\u53f7\u7ec4\uff08\u591a\u7ef4\u94fe\u5f0f\uff1a\u77e9\u9635A [i] [j]\uff09
+    const groups: string[] = []
+    let cursor = k
+    let lastEnd = -1
+    while (cursor < expr.length && expr[cursor] === '[') {
+      const g = matchBracketGroup(expr, cursor)
+      if (!g) break
+      groups.push(g.inner)
+      lastEnd = g.end
+      let next = g.end + 1
+      while (next < expr.length && /\s/.test(expr[next])) next++
+      cursor = next
+    }
+    if (groups.length === 0 || lastEnd < 0) { i = j - 1; continue }
+    const expectDims = Math.max(1, info.dims.length)
+    if (groups.length !== expectDims) {
+      throw new Error(`\u6570\u7ec4\u201c${name}\u201d\u662f ${expectDims} \u7ef4\uff0c\u4f46\u4e0b\u6807\u7ed9\u4e86 ${groups.length} \u7ec4\uff1a${expr.trim()}`)
+    }
+    // \u6d88\u8d39\u5230\u6700\u540e\u4e00\u4e2a\u4f7f\u7528\u7684\u62ec\u53f7\u7ec4\u672b\u5c3e\uff08\u591a\u4f59\u7684\u76f8\u90bb\u7ec4\u4e0d\u541e\u2014\u2014\u4e0a\u9762\u5df2\u6821\u9a8c\u7ec4\u6570\u4e00\u81f4\uff09
+    const consumedEnd = lastEnd
+    const idxParts = groups.map(g => translateExpressionToC(g, commandMap, directCallables, variableTypeResolver))
+    const linear = buildAryLinearIndexExpr(idxParts, info.dims)
+    const ref = `yc_ary_at(${name}, ${linear})`
+    const wrapped = isFloatArrayElem(info) ? `yc_f64_from_bits(${ref})` : ref
+    return `${expr.slice(0, i)}${wrapped}${expr.slice(consumedEnd + 1)}`
+  }
+  return expr
+}
+
+/** 解析下标赋值语句左值：`名称 [e1] [e2]… ＝ 右值`；非该形态返回 null（是否数组由调用方查表判定） */
+function parseIndexedAssignTarget(line: string): { name: string; indexExprs: string[]; rhs: string } | null {
+  const head = line.match(/^\s*([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)\s*(?=\[)/)
+  if (!head) return null
+  const name = head[1]
+  let cursor = head[0].length
+  const groups: string[] = []
+  while (cursor < line.length && line[cursor] === '[') {
+    const g = matchBracketGroup(line, cursor)
+    if (!g) return null
+    groups.push(g.inner)
+    let next = g.end + 1
+    while (next < line.length && /\s/.test(line[next])) next++
+    cursor = next
+  }
+  if (groups.length === 0) return null
+  if (line[cursor] !== '＝' && line[cursor] !== '=') return null
+  const rhs = line.slice(cursor + 1).trim()
+  if (!rhs) return null
+  return { name, indexExprs: groups, rhs }
+}
+
+/** \u628a\u8868\u8fbe\u5f0f\u4e2d\u6570\u7ec4\u53d8\u91cf\u7684\u4e0b\u6807\u5f15\u7528\uff08\u4e00\u57fa\uff09\u6539\u5199\u4e3a yc_ary_at(\u540d\u79f0, \u4e0b\u6807) \u5f15\u7528\u5f62\u5f0f */
+function rewriteArrayIndexRefs(
+  expr: string,
+  commandMap?: Map<string, ResolvedCommand>,
+  directCallables?: DirectCallableNames,
+  variableTypeResolver?: VariableTypeResolver,
+): string {
+  if (currentTranspileArrayVars.size === 0) return expr
+  let cur = expr
+  for (let guard = 0; guard < 16; guard++) {
+    const next = rewriteArrayIndexOnce(cur, commandMap, directCallables, variableTypeResolver)
+    if (next === cur) break
+    cur = next
+  }
+  return cur
 }
 
 function replaceBooleanLiterals(expr: string): string {
@@ -2596,6 +2787,43 @@ function isBigRawOperand(expr: string, variableTypeResolver?: VariableTypeResolv
 
 function normalizeBuiltinCallName(name: string): string {
   return (name || '').trim().toLowerCase()
+}
+
+// 顶层逻辑运算符（&&/||）切分：优先级低于比较运算，必须先于 findTopLevelComparison 切，
+// 否则 `i ＜ j 且 x ≥ p` 会被切成 `i < (j && x >= p)`（i≥1 时恒假 → 循环体不执行 → 死循环）。
+// 先找 ||（优先级最低），再找 &&；同级取最右切分点（左结合，左半递归续切）。
+function findTopLevelLogical(expr: string): { left: string; operator: '&&' | '||'; right: string } | null {
+  for (const op of ['||', '&&'] as const) {
+    let depth = 0
+    let inString = false
+    let stringChar = ''
+    let found = -1
+    for (let i = 0; i < expr.length; i++) {
+      const ch = expr[i]
+      if (inString) {
+        if ((stringChar === '"' && ch === '"') || (stringChar === '“' && ch === '”')) inString = false
+        continue
+      }
+      if (ch === '"' || ch === '“') {
+        inString = true
+        stringChar = ch
+        continue
+      }
+      if (ch === '(' || ch === '（') { depth++; continue }
+      if (ch === ')' || ch === '）') { depth = Math.max(0, depth - 1); continue }
+      if (depth !== 0) continue
+      if (expr.slice(i, i + 2) === op) {
+        found = i
+        i++
+      }
+    }
+    if (found > 0) {
+      const left = expr.slice(0, found).trim()
+      const right = expr.slice(found + 2).trim()
+      if (left && right) return { left, operator: op, right }
+    }
+  }
+  return null
 }
 
 function findTopLevelComparison(expr: string): { left: string; operator: string; right: string } | null {
@@ -2731,8 +2959,11 @@ function translateExpressionToC(
   variableTypeResolver?: VariableTypeResolver,
   preferBigIntLiteral = false,
 ): string {
-  const trimmed = (expr || '').trim()
+  let trimmed = (expr || '').trim()
   if (!trimmed) return '0'
+  // \u6570\u7ec4\u4e0b\u6807\u5f15\u7528\u5148\u6539\u5199\u4e3a yc_ary_at(\u540d\u79f0, \u4e0b\u6807) \u5f62\u5f0f\uff08\u62ec\u53f7\u5f62\u5f0f\u4e0e\u540e\u7eed\u6309\u62ec\u53f7\u611f\u77e5\u7684
+  // \u8868\u8fbe\u5f0f\u5207\u5206\u517c\u5bb9\uff1b\u65b9\u62ec\u53f7\u5207\u5206\u4e0d\u611f\u77e5\uff0c\u5982 \u6570\u7ec4[j \uff0b 1] \u4f1a\u88ab\u52a0\u6cd5\u5207\u5206\u6495\u88c2\uff09
+  trimmed = rewriteArrayIndexRefs(trimmed, commandMap, directCallables, variableTypeResolver)
 
   // \u6574\u4f53\u5b57\u9762\u91cf\u5224\u5b9a\u5fc5\u987b\u8981\u6c42\u5185\u90e8\u4e0d\u518d\u51fa\u73b0\u540c\u7c7b\u5f15\u53f7\uff1a
   // \u5426\u5219 \u201c\u5171\u201d \uff0b \u5230\u6587\u672c(n) \uff0b \u201c\u4e2a\u201d \u4f1a\u88ab\u8d2a\u5a6a\u5339\u914d\u6574\u4f53\u541e\u6210\u4e00\u4e2a\u5b57\u9762\u91cf\uff0c
@@ -2827,6 +3058,14 @@ function translateExpressionToC(
   translated = replaceBooleanLiterals(translated)
   translated = replaceLogicalOperatorAliases(translated)
   translated = replaceControlTextPropertyRefs(translated)
+
+  // 逻辑运算（且/或 已转 &&/||）优先级最低，必须先于比较运算切分
+  const logical = findTopLevelLogical(translated)
+  if (logical) {
+    const left = translateExpressionToC(logical.left, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    const right = translateExpressionToC(logical.right, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    return `(${left} ${logical.operator} ${right})`
+  }
 
   const comparison = findTopLevelComparison(translated)
   if (comparison && comparison.left && comparison.right) {
@@ -3056,16 +3295,76 @@ function mapYcmdNativeReturnType(typeName: string): { cType: string; expr: (call
   return { cType, expr: callExpr => callExpr, isVoid: false }
 }
 
-function buildYcmdNativeSignature(cmd: ResolvedCommand): { symbol: string; returnType: ReturnType<typeof mapYcmdNativeReturnType>; params: ReturnType<typeof mapYcmdNativeParamType>[] } {
+// 数组类命令的原生 ABI（krnln impl：数组经 void* 传 std::vector<long long>*，值为 long long）。
+// 这些命令的参数在清单里是「通用型」，通用映射会把实参转成文本指针，与 impl 形参错位——按符号显式给定。
+const YCMD_ARRAY_PARAM_KINDS: Record<string, Array<'arrayptr' | 'int' | 'int64'>> = {
+  krnln_AddElement: ['arrayptr', 'int64'],
+  krnln_InsElement: ['arrayptr', 'int', 'int64'],
+  krnln_RemoveElement: ['arrayptr', 'int', 'int'],
+  krnln_RemoveAll: ['arrayptr'],
+  krnln_GetAryElementCount: ['arrayptr'],
+  krnln_UBound: ['arrayptr', 'int'],
+  krnln_ReDim: ['arrayptr', 'int', 'int'],
+  krnln_CopyAry: ['arrayptr', 'arrayptr'],
+  krnln_SortAry: ['arrayptr', 'int'],
+}
+
+function mapYcmdArrayParamKind(kind: 'arrayptr' | 'int' | 'int64', cmdName: string): ReturnType<typeof mapYcmdNativeParamType> {
+  if (kind === 'arrayptr') {
+    return {
+      cType: 'void*',
+      expr: (arg) => {
+        const t = (arg || '').trim()
+        if (!t || !currentTranspileArrayVars.has(t)) {
+          throw new Error(`命令“${cmdName}”需要数组变量作为参数，但收到：${t || '(空)'}`)
+        }
+        return `(void*)&${t}`
+      },
+    }
+  }
+  const cType = kind === 'int64' ? 'long long' : 'int'
   return {
-    symbol: getYcmdNativeSymbol(cmd),
+    cType,
+    expr: (arg, commandMap, directCallables) => `(${cType})(${arg ? formatArgForC(arg, commandMap, directCallables) : '0'})`,
+  }
+}
+
+/** int64 元素值参的浮点变体：按 double 位模式存（加入成员/插入成员 到浮点族数组） */
+function mapYcmdArrayFloatElemParam(): ReturnType<typeof mapYcmdNativeParamType> {
+  return {
+    cType: 'long long',
+    expr: (arg, commandMap, directCallables) => `yc_f64_bits((double)(${arg ? formatArgForC(arg, commandMap, directCallables) : '0'}))`,
+  }
+}
+
+/** 数组命令首参（数组变量）元素是否浮点族；浮点数组的 数组排序 直接拦截（位模式排序会错序） */
+function ycmdArrayCallElemIsFloat(cmd: ResolvedCommand, args: string[]): boolean {
+  const symbol = getYcmdNativeSymbol(cmd)
+  if (!YCMD_ARRAY_PARAM_KINDS[symbol]) return false
+  const info = currentTranspileArrayVars.get((args[0] || '').trim())
+  const isFloat = isFloatArrayElem(info)
+  if (isFloat && symbol === 'krnln_SortAry') {
+    throw new Error(`暂不支持对 ${info?.elemType} 数组使用「${cmd.name || '数组排序'}」（浮点元素按位模式存储，排序会错序）`)
+  }
+  return isFloat
+}
+
+function buildYcmdNativeSignature(cmd: ResolvedCommand, elemIsFloat = false): { symbol: string; returnType: ReturnType<typeof mapYcmdNativeReturnType>; params: ReturnType<typeof mapYcmdNativeParamType>[] } {
+  const symbol = getYcmdNativeSymbol(cmd)
+  const arrayKinds = YCMD_ARRAY_PARAM_KINDS[symbol]
+  return {
+    symbol,
     returnType: mapYcmdNativeReturnType(cmd.returnType || ''),
-    params: (cmd.params || []).map(p => mapYcmdNativeParamType(p.type || '')),
+    params: arrayKinds
+      ? arrayKinds.map(kind => (kind === 'int64' && elemIsFloat
+        ? mapYcmdArrayFloatElemParam()
+        : mapYcmdArrayParamKind(kind, cmd.name || symbol)))
+      : (cmd.params || []).map(p => mapYcmdNativeParamType(p.type || '')),
   }
 }
 
 function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
-  const sig = buildYcmdNativeSignature(cmd)
+  const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemIsFloat(cmd, args))
   const argCount = Math.max(args.length, sig.params.length)
   const callArgs = Array.from({ length: argCount }, (_unused, index) => {
     const param = sig.params[index] || sig.params[sig.params.length - 1] || mapYcmdNativeParamType('')
@@ -3080,7 +3379,13 @@ function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], com
 }
 
 function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
-  const sig = buildYcmdNativeSignature(cmd)
+  const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemIsFloat(cmd, args))
+  // 加入成员 (数组, 值1, 值2, …)：impl 一次收一个值，多值展开为逐次调用
+  if (sig.symbol === 'krnln_AddElement' && args.length > 2) {
+    const arrExpr = sig.params[0].expr(args[0] || '', commandMap, directCallables)
+    const calls = args.slice(1).map(v => `krnln_AddElement(${arrExpr}, ${sig.params[1].expr(v, commandMap, directCallables)});`)
+    return `{ ${calls.join(' ')} }`
+  }
   const argCount = Math.max(args.length, sig.params.length)
   const callArgs = Array.from({ length: argCount }, (_unused, index) => {
     const param = sig.params[index] || sig.params[sig.params.length - 1] || mapYcmdNativeParamType('')
@@ -3247,6 +3552,30 @@ function generateYcGenericCommandAssign(cmd: LibCommand & { libraryName: string;
   lines.push(`${leftExpr} = ${retMapped.expr};`)
   lines.push('}')
   return lines.join(' ')
+}
+
+function generateYcGenericCommandTextExpr(cmd: LibCommand & { libraryName: string; libraryFileName: string }, args: string[]): string {
+  // 控件文本属性赋值专用：把通用支持库命令调用包成返回 wchar_t* 的表达式
+  //（与 ycmd 原生命令的 lambda 同款），非文本返回值经 yc_value_to_text 转文本。
+  const n = args.length
+  const lines: string[] = []
+  lines.push('YC_MDATA_INF __yc_ret = {};')
+  if (n > 0) {
+    lines.push(`YC_MDATA_INF __yc_args[${n}] = {};`)
+    for (let i = 0; i < n; i++) {
+      const p = resolveYcCommandParamSpec(cmd.params, i)
+      const mapped = mapParamTypeToYcDataType(p?.type || '')
+      const valueExpr = formatArgForYcCommand(args[i], mapped.field)
+      lines.push(`__yc_args[${i}].m_dtDataType = ${mapped.dtConst};`)
+      lines.push(`__yc_args[${i}].${mapped.field} = ${valueExpr};`)
+    }
+  }
+  const libNameEscaped = (cmd.libraryFileName || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  lines.push(`yc_invoke_support_cmd("${libNameEscaped}", ${cmd.commandIndex}, &__yc_ret, ${n}, ${n > 0 ? '__yc_args' : 'NULL'});`)
+  const retMapped = mapReturnTypeToYcField(cmd.returnType || '')
+  const retExpr = (cmd.returnType || '') === '文本型' ? retMapped.expr : `yc_value_to_text(${retMapped.expr})`
+  lines.push(`return ${retExpr};`)
+  return `([&]() -> wchar_t* { ${lines.join(' ')} })()`
 }
 
 function resolveYcCommandParamSpec(
@@ -3464,12 +3793,24 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   )
   for (const dllCmd of projectDllCommands) directCallables.add(dllCmd.name)
 
+  currentTranspileArrayVars = new Map()
+  fileScopeArrayVars = new Map()
+
   const lines = eycContent.split('\n')
   let result = `/* 由 ycIDE 自动从 ${fileName} 生成 */\n`
   result += '#include <windows.h>\n#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <direct.h>\n#include <wchar.h>\n#include <wctype.h>\n#include <string.h>\n#include <filesystem>\n#include <vector>\n#include <string>\n#include <algorithm>\n#include <fstream>\n\n'
   result += generateYcmdNativeDeclarations(targetPlatform)
   result += 'namespace ycfs = std::filesystem;\n\n'
   result += 'typedef std::vector<unsigned char> YC_BIN;\n\n'
+  // 易语言数组下标为一基；越界回落到哑元引用（读得 0、写被丢弃），不崩溃
+  result += 'static long long yc_ary_dummy_slot = 0;\n'
+  result += 'static inline long long& yc_ary_at(std::vector<long long>& a, long long idx1) {\n'
+  result += '    if (idx1 < 1 || (size_t)idx1 > a.size()) { yc_ary_dummy_slot = 0; return yc_ary_dummy_slot; }\n'
+  result += '    return a[(size_t)(idx1 - 1)];\n'
+  result += '}\n\n'
+  // 浮点族数组元素按 double 位模式存进 vector<long long>，读写经位转换
+  result += 'static inline long long yc_f64_bits(double v) { long long r; memcpy(&r, &v, 8); return r; }\n'
+  result += 'static inline double yc_f64_from_bits(long long b) { double r; memcpy(&r, &b, 8); return r; }\n\n'
   result += 'struct YC_BIG {\n'
   result += '    bool neg;\n'
   result += '    std::string digits;\n'
@@ -4428,9 +4769,9 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     list.push(sub)
     classMethodsByName.set(sub.className, list)
   }
-  const buildMethodSignature = (params: Array<{ name: string; type: string }>): string => {
+  const buildMethodSignature = (params: Array<{ name: string; type: string; isArray?: boolean }>): string => {
     if (params.length === 0) return 'void'
-    return params.map(p => `${mapTypeToCType(p.type)} ${p.name}`).join(', ')
+    return params.map(p => (p.isArray ? `std::vector<long long>& ${p.name}` : `${mapTypeToCType(p.type)} ${p.name}`)).join(', ')
   }
   const methodReturnC = (returnType: string): string => (returnType ? mapTypeToCType(returnType) : 'void')
   if (projectClassModules.length > 0) {
@@ -4456,7 +4797,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     for (const sub of externalSubprograms) {
       const params = sub.params.length === 0
         ? 'void'
-        : sub.params.map(p => `${mapTypeToCType(p.type)} ${p.name}`).join(', ')
+        : sub.params.map(p => (p.isArray ? `std::vector<long long>& ${p.name}` : `${mapTypeToCType(p.type)} ${p.name}`)).join(', ')
       result += `extern ${methodReturnC(sub.returnType)} ${sub.name}(${params});\n`
     }
     result += '\n'
@@ -4512,7 +4853,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   let subReturnType = ''
   let currentClassName = ''
   const localClassSubNames = new Set<string>()
-  let subParams: Array<{ name: string; type: string }> = []
+  let subParams: Array<{ name: string; type: string; isArray?: boolean }> = []
   let subBody = ''
   let blockIndent = 1
   let flowStack: Array<{ name: string; lineNo: number; hasElse: boolean }> = []
@@ -4520,9 +4861,9 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   let pendingBreakpointLine: number | null = null
   let visibleDebugVars: Array<{ name: string; type: string }> = []
 
-  const buildSubSignature = (_name: string, params: Array<{ name: string; type: string }>): string => {
+  const buildSubSignature = (_name: string, params: Array<{ name: string; type: string; isArray?: boolean }>): string => {
     if (params.length === 0) return 'void'
-    return params.map(p => `${mapTypeToCType(p.type)} ${p.name}`).join(', ')
+    return params.map(p => (p.isArray ? `std::vector<long long>& ${p.name}` : `${mapTypeToCType(p.type)} ${p.name}`)).join(', ')
   }
 
   const flushCurrentSub = (): void => {
@@ -4607,10 +4948,22 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     if (line === '') continue
 
     if (!inSub && line.startsWith('.程序集变量 ')) {
-      const parts = splitDeclParts(line.substring(6))
+      const parts = splitDeclPartsQuoted(line.substring(6))
       const varName = parts[0] || 'assemblyVar'
-      assemblyVars.push({ name: varName, type: parts[1] || '整数型' })
       const varType = parts[1] || '整数型'
+      // parts[2]=公开，parts[3]=数组尺寸
+      const dims = parseArrayDimsField(parts[3])
+      if (dims.isArray && !isClassModuleSource) {
+        if (dims.invalid) throwSourceError(lineIndex + 1, dims.invalid)
+        if (!ARRAY_ELEM_INTEGER_TYPES.has(varType) && !ARRAY_ELEM_FLOAT_TYPES.has(varType)) {
+          throwSourceError(lineIndex + 1, `暂不支持 ${varType} 数组（当前支持整数族/小数族元素）`)
+        }
+        const dimTotal = dims.dims.reduce((acc, n) => acc * n, 1)
+        result += `static std::vector<long long> ${varName}${dims.dims.length > 0 ? `(${dimTotal}, 0)` : ''};\n`
+        fileScopeArrayVars.set(varName, { elemType: varType, dims: dims.dims })
+        continue
+      }
+      assemblyVars.push({ name: varName, type: varType })
       if (!isClassModuleSource) {
         result += `static ${mapTypeToCType(varType)} ${varName};\n`
       }
@@ -4640,6 +4993,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       blockIndent = 1
       flowStack = []
       inSub = true
+      currentTranspileArrayVars = new Map(fileScopeArrayVars)
       visibleDebugVars = [
         ...projectGlobals.map(gv => ({ name: gv.name, type: gv.type })),
         ...assemblyVars.map(av => ({ name: av.name, type: av.type })),
@@ -4648,20 +5002,41 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     }
 
     if (inSub && line.startsWith('.参数 ')) {
-      const parts = splitDeclParts(line.substring(3))
+      const parts = splitDeclPartsQuoted(line.substring(3))
       const paramName = (parts[0] || '').trim()
       const paramType = (parts[1] || '整数型').trim()
       if (paramName) {
-        subParams.push({ name: paramName, type: paramType })
-        pushVisibleDebugVar(paramName, paramType)
+        const isArrayParam = parts.slice(2).includes('数组')
+        if (isArrayParam && !ARRAY_ELEM_INTEGER_TYPES.has(paramType) && !ARRAY_ELEM_FLOAT_TYPES.has(paramType)) {
+          throwSourceError(lineIndex + 1, `暂不支持 ${paramType} 数组参数（当前支持整数族/小数族元素）`)
+        }
+        subParams.push({ name: paramName, type: paramType, isArray: isArrayParam })
+        if (isArrayParam) {
+          // 参数维度未知，按动态一维处理（多维数组传参时在被调方按线性一基访问）
+          currentTranspileArrayVars.set(paramName, { elemType: paramType, dims: [] })
+        } else {
+          pushVisibleDebugVar(paramName, paramType)
+        }
       }
       continue
     }
 
     if (line.startsWith('.局部变量 ')) {
-      const parts = splitDeclParts(line.substring(5))
+      const parts = splitDeclPartsQuoted(line.substring(5))
       const varName = parts[0] || 'v'
       const varType = parts[1] || '整数型'
+      // parts[2]=静态，parts[3]=数组尺寸（"0"=动态数组）
+      const dims = parseArrayDimsField(parts[3])
+      if (dims.isArray) {
+        if (dims.invalid) throwSourceError(lineIndex + 1, dims.invalid)
+        if (!ARRAY_ELEM_INTEGER_TYPES.has(varType) && !ARRAY_ELEM_FLOAT_TYPES.has(varType)) {
+          throwSourceError(lineIndex + 1, `暂不支持 ${varType} 数组（当前支持整数族/小数族元素）`)
+        }
+        const dimTotal = dims.dims.reduce((acc, n) => acc * n, 1)
+        emitSubLine(`std::vector<long long> ${varName}${dims.dims.length > 0 ? `(${dimTotal}, 0)` : ''};`)
+        currentTranspileArrayVars.set(varName, { elemType: varType, dims: dims.dims })
+        continue
+      }
       emitSubLine(`${mapTypeToCType(varType)} ${varName} = ${getTypeDefaultInitializer(varType)};`)
       pushVisibleDebugVar(varName, varType)
       continue
@@ -4829,6 +5204,25 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         continue
       }
 
+      // 数组下标赋值：数组 [i] ＝ 右值 / 矩阵 [i] [j] ＝ 右值 → yc_ary_at 引用做左值（一基，
+      // 多维链式下标折算行主序线性下标；浮点族元素经 yc_f64_bits 存位模式）
+      const idxAssignTarget = parseIndexedAssignTarget(line)
+      if (idxAssignTarget) {
+        const info = currentTranspileArrayVars.get(idxAssignTarget.name)
+        if (info) {
+          const expectDims = Math.max(1, info.dims.length)
+          if (idxAssignTarget.indexExprs.length !== expectDims) {
+            throwSourceError(lineIndex + 1, `数组“${idxAssignTarget.name}”是 ${expectDims} 维，但下标给了 ${idxAssignTarget.indexExprs.length} 组`)
+          }
+          const idxParts = idxAssignTarget.indexExprs.map(g => translateExpressionToC(g, commandMap, directCallables, resolveVisibleVarType))
+          const linear = buildAryLinearIndexExpr(idxParts, info.dims)
+          const rhsC = translateExpressionToC(idxAssignTarget.rhs, commandMap, directCallables, resolveVisibleVarType)
+          const valueExpr = isFloatArrayElem(info) ? `yc_f64_bits((double)(${rhsC}))` : `(long long)(${rhsC})`
+          emitSubLine(`yc_ary_at(${idxAssignTarget.name}, ${linear}) = ${valueExpr};`)
+          continue
+        }
+      }
+
       // 赋值表达式：支持全角/半角等号
       const assignMatch = line.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)\s*[＝=]\s*(.+)$/)
       if (assignMatch) {
@@ -4852,6 +5246,16 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
             } else {
               emitSubLine(`${left} = ${expr};`)
             }
+            continue
+          }
+          if (propMatch && isTextProp) {
+            // 控件文本属性做左值时不能把 `编辑框1.内容` 原样当 C++ 左值发射（undeclared identifier），
+            // 与上方 exprGenerator 分支同款改走 yc_set_control_text。
+            const rhsExpr = isYcmdNativeCommand(rhsResolved)
+              ? generateYcmdNativeCommandExpr(rhsResolved, rhsCall.args || [], commandMap, directCallables)
+              : generateYcGenericCommandTextExpr(rhsResolved, rhsCall.args || [])
+            const textArg = isTextExpression(rhsExpr) ? rhsExpr : `yc_value_to_text(${rhsExpr})`
+            emitSubLine(`yc_set_control_text(L"${escapeCString(propMatch[1])}", ${textArg});`)
             continue
           }
           const assignCode = isYcmdNativeCommand(rhsResolved)

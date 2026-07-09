@@ -200,7 +200,7 @@ const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
   'impl/macos.mm': '798149470018bf45a3e996d82db1db41f473f6a6aca2fd3badf7b8ad1538b4ac',
   'impl/windows.cpp': 'd5bfd1198cb4eb01c09ee8187a96d261d31e7dcf68837cefb75dc7f5b32bb050',
   'krnln.commands.ycmd.json': '839e75869b95f651eeec794e711e313fa39a424ff0542b6d8d3cec89b94c45cd',
-  'krnln.constants.json': '8183767cf86c0348054a810511b2639bdfe7636c7efeacf096ecb8bfbf4a6fa0',
+  'krnln.constants.json': 'c71ab45b2573fe6d270257089c19ec6b349a4c920298da91e769eac5411f33ed',
   'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
   'window-units.json': '9f018a430c8dc9c32cd3ab27412cf69cb0762a88fce394545016fe225cee5bd9',
 }
@@ -596,6 +596,7 @@ class LibraryManager {
       join(folderPath, `${name}.identity.json`),
       join(folderPath, `${name}.protocol.json`),
       join(folderPath, `${name}.compile-protocol.json`),
+      join(folderPath, `${name}.constants.json`),
       join(folderPath, 'library.json'),
       join(folderPath, 'identity.json'),
       join(folderPath, 'window-units.json'),
@@ -881,7 +882,11 @@ class LibraryManager {
     for (const candidate of this.getMetadataFileCandidates(name, folderPath)) {
       if (!existsSync(candidate)) continue
       try {
-        const raw = JSON.parse(readFileSync(candidate, 'utf-8')) as LibraryMetadataFile
+        const parsedJson = JSON.parse(readFileSync(candidate, 'utf-8')) as unknown
+        // *.constants.json 是裸常量数组（如 krnln.constants.json），包一层适配统一解析
+        const raw = (Array.isArray(parsedJson)
+          ? { constants: parsedJson }
+          : parsedJson) as LibraryMetadataFile
         hasMetadata = true
         parsed.guid = this.mergeTextField(parsed.guid, raw.guid)
         parsed.description = this.mergeTextField(parsed.description, raw.description)

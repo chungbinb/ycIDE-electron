@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  buildControlPropTypes,
   buildEditorDiagnosticsProblems,
   type DiagCommandSignature,
 } from '@/components/Editor/editorDiagnosticsShared'
@@ -18,6 +19,7 @@ const signatures: Record<string, DiagCommandSignature> = {
   '延时': { params: [{ name: '欲延时的时间', type: '整数型' }], returnType: '' },
   '调试输出': { params: [{ name: '欲输出的内容', type: '通用型', repeatable: true }], returnType: '' },
   '如果真': { params: [{ name: '条件', type: '逻辑型' }], returnType: '' },
+  '到文本': { params: [{ name: '欲转换的数值', type: '通用型' }], returnType: '文本型' },
 }
 
 function run(text: string): ReturnType<typeof buildEditorDiagnosticsProblems> {
@@ -133,5 +135,178 @@ describe('数字开头的裸语句', () => {
     const problems = run(`${SUB_HEAD}延时 (100)
 整数变量 ＝ 123`)
     expect(problems.filter(p => p.message.includes('无效语句'))).toHaveLength(0)
+  })
+})
+
+describe('字符串开头的裸语句', () => {
+  it('整行只写字符串 → 无效语句（用户场景："编辑框1.内容"）', () => {
+    const problems = run(`${SUB_HEAD}"编辑框1.内容"`)
+    const hit = problems.find(p => p.message.includes('字符串不能单独作为语句'))
+    expect(hit).toBeTruthy()
+    const full = run(`${SUB_HEAD}“编辑框1.内容”`)
+    expect(full.some(p => p.message.includes('字符串不能单独作为语句'))).toBe(true)
+  })
+
+  it('字符串作参数/赋值右值不误报', () => {
+    const problems = run(`${SUB_HEAD}调试输出 (“文本”)
+文本变量 ＝ “内容”`)
+    expect(problems.filter(p => p.message.includes('字符串不能单独作为语句'))).toHaveLength(0)
+  })
+})
+
+describe('成员引用的对象必须真实存在', () => {
+  it('设计器没放置 编辑框1 → 编辑框1.内容 报未定义（用户场景）', () => {
+    const problems = run(`${SUB_HEAD}编辑框1.内容`)
+    const hit = problems.find(p => p.message.includes('未定义的窗口组件或对象'))
+    expect(hit).toBeTruthy()
+    expect(hit!.message).toContain('编辑框1')
+  })
+
+  it('对象是已知变量/控件（allKnownVarNames 含控件名）→ 不报', () => {
+    const problems = run(`${SUB_HEAD}文本变量.内容`)
+    expect(problems.filter(p => p.message.includes('未定义的窗口组件或对象'))).toHaveLength(0)
+  })
+
+  it('字符串里的 对象.成员 不误报；链式只查首段', () => {
+    const problems = run(`${SUB_HEAD}调试输出 (“编辑框9.内容”)
+文本变量.子级.再子级`)
+    expect(problems.filter(p => p.message.includes('未定义的窗口组件或对象'))).toHaveLength(0)
+  })
+})
+
+describe('行内括号配平', () => {
+  it('多余右括号 → 报数量（用户场景：编辑框1.内容 ＝ 到文本(n)))）', () => {
+    const problems = run(`${SUB_HEAD}文本变量 ＝ 到字节集(1)))`)
+    const hit = problems.find(p => p.message.includes('括号不匹配'))
+    expect(hit).toBeTruthy()
+    expect(hit!.message).toContain('多余 2 个右括号')
+  })
+
+  it('缺少右括号 → 报数量', () => {
+    const problems = run(`${SUB_HEAD}调试输出 (到字节集(1)`)
+    const hit = problems.find(p => p.message.includes('缺少'))
+    expect(hit).toBeTruthy()
+    expect(hit!.message).toContain('缺少 1 个右括号')
+  })
+
+  it('字符串内括号与行尾注释里的括号不计', () => {
+    const problems = run(`${SUB_HEAD}调试输出 (“(((”) ' 注释里有 )))`)
+    expect(problems.filter(p => p.message.includes('括号不匹配'))).toHaveLength(0)
+  })
+})
+
+// ===== 控件属性赋值的数据类型检查（内容 随 输入方式 折算） =====
+
+const EDIT_UNIT = {
+  name: '编辑框',
+  properties: [
+    { name: '内容', typeName: '文本型', pickOptions: [] as string[] },
+    { name: '宽度', typeName: '整数型', pickOptions: [] as string[] },
+    {
+      name: '输入方式', typeName: '选择整数', defaultValue: 0,
+      pickOptions: ['通常方式', '只读文本', '密码输入', '整数文本输入', '小数文本输入', '输入字节', '输入短整数', '输入整数', '输入长整数', '输入小数', '输入双精度小数', '输入日期时间'],
+    },
+  ],
+}
+
+function runCtl(text: string, inputMode?: number): ReturnType<typeof buildEditorDiagnosticsProblems> {
+  const controls = [{ name: '编辑框1', type: '编辑框', properties: inputMode === undefined ? {} : { 输入方式: inputMode } }]
+  return buildEditorDiagnosticsProblems({
+    text,
+    hasCommandCatalog: true,
+    validCommandNames: [...Object.keys(signatures), '真', '假'],
+    allKnownVarNames: ['a', '文本变量', '整数变量', '编辑框1'],
+    reservedNames: ['真', '假'],
+    commandSignatures: signatures,
+    controlPropTypes: buildControlPropTypes(controls, [EDIT_UNIT]),
+  })
+}
+
+describe('buildControlPropTypes：输入方式折算 内容 类型', () => {
+  it('输入方式=输入整数(7) → 内容为整数型；宽度保持整数型', () => {
+    const m = buildControlPropTypes([{ name: '编辑框1', type: '编辑框', properties: { 输入方式: 7 } }], [EDIT_UNIT])!
+    expect(m['编辑框1']['内容']).toBe('整数型')
+    expect(m['编辑框1']['宽度']).toBe('整数型')
+  })
+
+  it('缺省/文本类输入方式 → 内容保持文本型；未知单元的控件不入表', () => {
+    const m = buildControlPropTypes([
+      { name: '编辑框1', type: '编辑框', properties: {} },
+      { name: '编辑框2', type: '编辑框', properties: { 输入方式: 3 } },
+      { name: '神秘1', type: '神秘组件', properties: {} },
+    ], [EDIT_UNIT])!
+    expect(m['编辑框1']['内容']).toBe('文本型')
+    expect(m['编辑框2']['内容']).toBe('文本型')
+    expect(m['神秘1']).toBeUndefined()
+  })
+})
+
+describe('控件属性赋值类型检查', () => {
+  it('用户场景：输入方式=输入整数 时 编辑框1.内容 ＝ 到文本(n) → 报类型不匹配', () => {
+    const problems = runCtl(`${SUB_HEAD}编辑框1.内容 ＝ 到文本 (整数变量)`, 7)
+    const hit = problems.find(p => p.message.includes('编辑框1.内容') && p.message.includes('类型不匹配'))
+    expect(hit).toBeTruthy()
+    expect(hit!.message).toContain('需要 整数型')
+    expect(hit!.message).toContain('文本型')
+  })
+
+  it('输入方式=输入整数 时 编辑框1.内容 ＝ 整数变量 → 不报', () => {
+    const problems = runCtl(`${SUB_HEAD}编辑框1.内容 ＝ 整数变量`, 7)
+    expect(problems.filter(p => p.message.includes('编辑框1.内容'))).toHaveLength(0)
+  })
+
+  it('缺省输入方式（内容=文本型）：赋数值报、赋 到文本(...) 不报', () => {
+    const bad = runCtl(`${SUB_HEAD}编辑框1.内容 ＝ 整数变量`)
+    expect(bad.some(p => p.message.includes('编辑框1.内容') && p.message.includes('需要 文本型'))).toBe(true)
+    const ok = runCtl(`${SUB_HEAD}编辑框1.内容 ＝ 到文本 (整数变量)`)
+    expect(ok.filter(p => p.message.includes('编辑框1.内容'))).toHaveLength(0)
+  })
+
+  it('其他属性同样检查：编辑框1.宽度 ＝ 文本字面量 → 报；右值无法推断 → 保守不报', () => {
+    const bad = runCtl(`${SUB_HEAD}编辑框1.宽度 ＝ “abc”`, 7)
+    expect(bad.some(p => p.message.includes('编辑框1.宽度') && p.message.includes('需要 整数型'))).toBe(true)
+    const unknown = runCtl(`${SUB_HEAD}编辑框1.内容 ＝ 神秘变量甲`, 7)
+    expect(unknown.filter(p => p.message.includes('编辑框1.内容'))).toHaveLength(0)
+  })
+})
+
+describe('逻辑运算符别名 且/或', () => {
+  it('用户场景：流程条件里的 且 不报未知命令（并且 的运算符别名，不依赖命令目录）', () => {
+    const problems = run(`${SUB_HEAD}.判断循环首 (整数变量 ＜ a 且 整数变量 ≥ a)
+.判断循环尾 ()`)
+    expect(problems.filter(p => p.message.includes('未知命令'))).toHaveLength(0)
+  })
+
+  it('或 同样豁免；真正的未知命令仍照报', () => {
+    const problems = run(`${SUB_HEAD}.如果真 (整数变量 ＜ a 或 整数变量 ＞ a)
+神秘命令 (1)
+.如果真结束`)
+    expect(problems.some(p => p.message.includes('未知命令') && p.message.includes('或'))).toBe(false)
+    expect(problems.some(p => p.message.includes('未知命令"神秘命令"'))).toBe(true)
+  })
+})
+
+describe('逻辑字面量 真/假 的词边界', () => {
+  it('用户场景：重定义数组 (排序数组, 假, 数组大小) / 数组排序 (排序数组, 真) 不报未定义变量', () => {
+    // 不给 真/假 任何豁免（validCommandNames/reservedNames 都不含），验证着色器把它们认成常量字面量
+    const problems = buildEditorDiagnosticsProblems({
+      text: '.子程序 测试子程序\n.局部变量 排序数组, 整数型, , "0"\n.局部变量 数组大小, 整数型\n重定义数组 (排序数组, 假, 数组大小)\n数组排序 (排序数组, 真)',
+      hasCommandCatalog: true,
+      validCommandNames: ['重定义数组', '数组排序', '排序数组', '数组大小'],
+      allKnownVarNames: ['排序数组', '数组大小'],
+      reservedNames: [],
+    })
+    expect(problems.filter(p => p.message.includes('未定义变量'))).toHaveLength(0)
+  })
+
+  it('半角括号紧跟的 或/且 同样不误报（词边界统一修复）', () => {
+    const problems = buildEditorDiagnosticsProblems({
+      text: '.子程序 测试子程序\n.局部变量 a, 整数型\n.如果真 (a ＜ 1 或 a ＞ 2)\n.如果真结束',
+      hasCommandCatalog: true,
+      validCommandNames: ['如果真', '如果真结束', 'a'],
+      allKnownVarNames: ['a'],
+      reservedNames: [],
+    })
+    expect(problems.filter(p => p.message.includes('未知命令') || p.message.includes('未定义变量'))).toHaveLength(0)
   })
 })

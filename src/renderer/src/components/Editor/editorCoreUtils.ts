@@ -122,6 +122,10 @@ export function formatOps(val: string): string {
   return s
 }
 
+/** 逻辑运算符别名（并且→且、或者→或）：着色按命令色处理，但它们是语言级运算符
+ *（编译器直接转 &&/||，与命令目录无关），诊断不得按「未知命令」上报。 */
+export const LOGIC_OPERATOR_ALIASES: ReadonlySet<string> = new Set(['且', '或'])
+
 export function colorize(raw: string): Span[] {
   const trimmed = raw.replace(/[\r\t]/g, '')
   let stripped = trimmed.replace(/^ +/, '')
@@ -243,14 +247,15 @@ function colorExpr(expr: string): Span[] {
       continue
     }
 
-    const bm = r.match(/^(真|假)(?=[\s(（），=＝]|$)/)
+    // 词边界=后面不是标识符字符：半角 ,、) 等也算边界（如 数组排序 (排序数组, 真) 的 真）
+    const bm = r.match(/^(真|假)(?=$|[^一-龥A-Za-z0-9_])/)
     if (bm) {
       out.push({ text: bm[0], cls: 'conscolor' })
       r = r.slice(bm[0].length)
       continue
     }
 
-    const lm = r.match(/^(且|或)(?=[\s(（），]|$)/)
+    const lm = r.match(/^(且|或)(?=$|[^一-龥A-Za-z0-9_])/)
     if (lm) {
       out.push({ text: lm[0], cls: 'funccolor' })
       r = r.slice(lm[0].length)
