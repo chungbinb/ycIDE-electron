@@ -658,6 +658,70 @@
   outline-offset: 1px;
 }
 
+/* 边框样式（窗口「边框」属性）：0 无边框 — 去标题栏阴影，虚线轮廓仅作设计期边界提示 */
+.vd-form-border-0 {
+  border-radius: 0;
+  box-shadow: 0 0 0 1px transparent;
+  outline: 1px dashed var(--vd-form-border, #9ca3af);
+  outline-offset: 0;
+}
+.vd-form-border-0.vd-form-wrapper-selected {
+  outline: 1px dashed var(--accent);
+}
+/* 1 单线边框 / 4 工具窗：直角细边 */
+.vd-form-border-1,
+.vd-form-border-4 {
+  border-radius: 0;
+}
+/* 3 对话框边框：直角 + 粗描边模拟 DLGMODALFRAME */
+.vd-form-border-3 {
+  border-radius: 0;
+  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.2), 0 0 0 3px var(--vd-form-title-bg, #e9edf2), 0 0 0 4px var(--vd-form-border, #9ca3af);
+}
+
+/* 工具窗标题栏（边框=4/5）：更窄、小字、无图标 */
+.vd-form-titlebar-tool {
+  height: 22px;
+  padding: 0 4px 0 8px;
+}
+.vd-form-titlebar-tool .vd-form-titlebar-text {
+  font-size: 11px;
+}
+.vd-form-titlebar-tool .vd-form-btn {
+  width: 30px;
+  height: 22px;
+  font-size: 9px;
+}
+.vd-form-titlebar-tool .vd-form-titlebar-btns {
+  margin-right: -4px;
+}
+
+/* 最大化/最小化按钮被禁用（属性=假但另一个=真）：灰显 */
+.vd-form-btn-off {
+  opacity: 0.35;
+}
+
+/* 窗口本体层（标题栏+客户区）：承载「外形」裁剪，尺寸由内容撑开；调整句柄在其外部不被裁 */
+.vd-form-body {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* 外形（窗口「外形」属性）：1 圆角矩形 / 2 椭圆形（0 矩形不加类由默认矩形） —
+   置于边框样式规则之后，同特异性下覆盖边框的 border-radius:0 */
+.vd-form-shape-1 {
+  border-radius: var(--vd-form-corner-radius, 14px);
+}
+.vd-form-shape-2 {
+  border-radius: 50%;
+}
+/* 仅本体层做溢出裁剪，把标题栏/画布的方角切成外形轮廓 */
+.vd-form-body.vd-form-shape-1,
+.vd-form-body.vd-form-shape-2 {
+  overflow: hidden;
+}
+
 /* 窗口标题栏 (Win11) */
 .vd-form-titlebar {
   display: flex;
@@ -676,6 +740,12 @@
   color: var(--vd-form-title-text, #111827);
   display: flex;
   align-items: center;
+}
+.vd-form-titlebar-icon-img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  display: block;
 }
 
 .vd-form-titlebar-text {
@@ -728,6 +798,16 @@
     radial-gradient(circle, var(--vd-form-grid, #c5c9d1) 0.5px, transparent 0.5px);
   background-size: 8px 8px;
   background-position: 4px 4px;
+}
+
+/* 底图：按「底图方式」显示，覆盖网格（图片层用 CSS 变量，网格层恒定） */
+.vd-form-canvas-bgimage {
+  background-image:
+    var(--vd-form-bg-image, none),
+    radial-gradient(circle, var(--vd-form-grid, #c5c9d1) 0.5px, transparent 0.5px);
+  background-size: var(--vd-form-bg-size, 100% 100%), 8px 8px;
+  background-position: var(--vd-form-bg-position, 0 0), 4px 4px;
+  background-repeat: var(--vd-form-bg-repeat, no-repeat), repeat;
 }
 
 .vd-crosshair {
@@ -796,20 +876,39 @@
   width: 100%;
   height: 100%;
   box-sizing: border-box;
-  font-size: 12px;
-  font-family: var(--font-family);
+  /* 控件「字体」属性经 .vd-control 上的变量注入；未设时回落默认外观 */
+  font-size: var(--vd-control-font-size, 12px);
+  font-family: var(--vd-control-font-family, var(--font-family));
+  font-weight: var(--vd-control-font-weight, normal);
+  font-style: var(--vd-control-font-style, normal);
+  text-decoration: var(--vd-control-font-deco, none);
+  color: var(--vd-control-color, inherit);
   overflow: hidden;
 }
 
 .vd-preview-button {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: var(--vd-preview-align-items, center);
+  justify-content: var(--vd-preview-justify, center);
   background: var(--vd-preview-bg, var(--bg-input));
   border: 1px solid var(--vd-preview-border, var(--border-color));
   border-radius: 3px;
-  color: var(--vd-preview-text, var(--text-primary));
+  /* 字体文本颜色优先，否则控件前景色 */
+  color: var(--vd-control-color, var(--vd-preview-text, var(--text-primary)));
   cursor: default;
+  padding: 2px 4px;
+  overflow: hidden;
+}
+/* 类型=默认：加粗深色边框（Win32 默认按钮外观） */
+.vd-preview-button-default {
+  border-width: 2px;
+  border-color: var(--accent, #0078d4);
+}
+.vd-preview-button-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 .vd-preview-input {
@@ -827,6 +926,41 @@
   word-break: break-all;
 }
 
+/* 调节器：编辑框右侧上下箭头（有调节器时显示） */
+.vd-preview-input-spin {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+}
+.vd-preview-input-spin .vd-preview-input-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  align-self: center;
+  text-overflow: ellipsis;
+}
+.vd-preview-spin {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 13px;
+  margin: -2px -4px -2px 3px;
+  border-left: 1px solid var(--vd-preview-border, var(--border-color));
+}
+.vd-preview-spin-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 7px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary, #e8e8e8);
+}
+.vd-preview-spin-btn:first-child {
+  border-bottom: 1px solid var(--vd-preview-border, var(--border-color));
+}
+
 .vd-preview-input-borderless {
   border-color: transparent;
 }
@@ -838,10 +972,14 @@
 
 .vd-preview-label {
   display: flex;
-  align-items: center;
-  color: var(--text-primary);
-  background: transparent;
+  align-items: var(--vd-preview-align-items, flex-start);
+  justify-content: var(--vd-preview-justify, flex-start);
+  color: var(--vd-preview-text, var(--text-primary));
+  background: var(--vd-preview-bg, transparent);
 }
+.vd-preview-label.vd-preview-label-sunken { border: 1px solid; border-color: var(--vd-border-dark, #808080) var(--vd-border-light, #fff) var(--vd-border-light, #fff) var(--vd-border-dark, #808080); }
+.vd-preview-label.vd-preview-label-raised { border: 1px solid; border-color: var(--vd-border-light, #fff) var(--vd-border-dark, #808080) var(--vd-border-dark, #808080) var(--vd-border-light, #fff); }
+.vd-preview-label.vd-preview-label-bordered { border: 1px solid var(--vd-border-dark, #808080); }
 
 /* 网页按钮/网页编辑框预览：与 lib/webview2/impl/windows.cpp 的 HTML 模板样式一致，改动需双侧同步 */
 .vd-preview-webbutton {
@@ -914,12 +1052,47 @@
 }
 
 .vd-preview-image {
-  background: var(--bg-primary);
+  background: var(--vd-preview-bg, var(--bg-primary));
   border: 1px solid var(--border-color);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-disabled);
+  overflow: hidden;
+}
+.vd-preview-image.vd-preview-label-sunken,
+.vd-preview-image.vd-preview-label-raised,
+.vd-preview-image.vd-preview-label-bordered { border: none; }
+.vd-preview-shape {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.vd-preview-drawpanel {
+  width: 100%;
+  height: 100%;
+  background-color: var(--vd-preview-bg, var(--bg-primary));
+  background-image: var(--vd-preview-bgimg, none);
+  background-repeat: var(--vd-preview-bgrepeat, no-repeat);
+  background-position: var(--vd-preview-bgpos, left top);
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  position: relative;
+}
+.vd-preview-drawpanel.vd-preview-label-sunken { border: 1px solid; border-color: var(--vd-border-dark, #808080) var(--vd-border-light, #fff) var(--vd-border-light, #fff) var(--vd-border-dark, #808080); }
+.vd-preview-drawpanel.vd-preview-label-raised { border: 1px solid; border-color: var(--vd-border-light, #fff) var(--vd-border-dark, #808080) var(--vd-border-dark, #808080) var(--vd-border-light, #fff); }
+.vd-preview-drawpanel.vd-preview-label-bordered { border: 1px solid var(--vd-border-dark, #808080); }
+.vd-preview-drawpanel-label {
+  position: absolute;
+  left: 3px;
+  top: 2px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-disabled);
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
 }
 
 .vd-preview-list {
@@ -954,8 +1127,18 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  color: var(--text-primary);
-  background: transparent;
+  color: var(--vd-preview-text, var(--text-primary));
+  background: var(--vd-preview-bg, transparent);
+}
+.vd-preview-check-like.vd-preview-check-leftcap {
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+}
+.vd-preview-checkbox.vd-preview-check-on,
+.vd-preview-radio.vd-preview-check-on {
+  background: var(--accent-color, #0a68d8);
+  border-color: var(--accent-color, #0a68d8);
+  box-shadow: inset 0 0 0 2px var(--bg-primary);
 }
 
 .vd-preview-checkbox,
@@ -976,13 +1159,15 @@
   border-radius: 3px;
   padding-top: 14px;
   position: relative;
-  background: transparent;
+  background: var(--vd-preview-bg, transparent);
 }
 
 .vd-preview-group-title {
   position: absolute;
   top: -8px;
   left: 8px;
+  right: 8px;
+  text-align: var(--vd-preview-group-textalign, left);
   background: var(--bg-primary);
   padding: 0 4px;
   color: var(--text-primary);
@@ -1008,10 +1193,41 @@
 }
 
 .vd-preview-progress-fill {
-  width: 40%;
+  width: var(--vd-preview-fill, 40%);
   height: 100%;
   background: linear-gradient(180deg, var(--success) 0%, color-mix(in srgb, var(--success) 85%, var(--bg-primary)) 100%);
 }
+.vd-preview-progress-vert { display: flex; align-items: flex-end; }
+.vd-preview-progress-vert .vd-preview-progress-fill { width: 100%; height: var(--vd-preview-fill, 40%); }
+.vd-preview-progress-fill-blocks { background: repeating-linear-gradient(90deg, var(--success) 0, var(--success) 8px, transparent 8px, transparent 10px); }
+.vd-preview-progress-vert .vd-preview-progress-fill-blocks { background: repeating-linear-gradient(0deg, var(--success) 0, var(--success) 8px, transparent 8px, transparent 10px); }
+/* 滑块条 */
+.vd-preview-slider { background: transparent; }
+/* 滚动条 */
+.vd-preview-scrollbar { display: flex; align-items: stretch; background: var(--bg-hover); overflow: hidden; font-size: 8px; }
+.vd-preview-scrollbar-vert { flex-direction: column; }
+.vd-preview-scrollbar-btn { display: flex; align-items: center; justify-content: center; color: var(--text-secondary); background: var(--button-secondary-bg, var(--bg-hover)); flex-shrink: 0; min-width: 12px; min-height: 12px; }
+.vd-preview-scrollbar-track { position: relative; flex: 1; overflow: hidden; }
+.vd-preview-scrollbar-thumb { position: absolute; background: var(--button-secondary-border); border-radius: 2px; }
+.vd-preview-scrollbar:not(.vd-preview-scrollbar-vert) .vd-preview-scrollbar-thumb { top: 1px; bottom: 1px; left: var(--vd-preview-thumb-pos, 0); width: var(--vd-preview-thumb-size, 30%); }
+.vd-preview-scrollbar-vert .vd-preview-scrollbar-thumb { left: 1px; right: 1px; top: var(--vd-preview-thumb-pos, 0); height: var(--vd-preview-thumb-size, 30%); }
+/* 月历 */
+.vd-preview-monthcal { display: flex; flex-direction: column; background: #fff; color: #000; border: 1px solid var(--button-secondary-border); overflow: hidden; font-size: 9px; }
+.vd-preview-monthcal-title { text-align: center; background: #2a6099; color: #fff; padding: 1px 0; font-size: 9px; }
+.vd-preview-monthcal-grid { display: grid; grid-template-columns: repeat(7, 1fr); flex: 1; }
+.vd-preview-monthcal-head { text-align: center; color: #888; font-size: 8px; }
+.vd-preview-monthcal-day { text-align: center; font-size: 8px; }
+.vd-preview-monthcal-today { outline: 1px solid #c00; border-radius: 50%; }
+/* 列表框 */
+.vd-preview-listbox { display: flex; flex-direction: column; background: var(--vd-preview-bg, #fff); color: var(--vd-preview-text, #000); border: 1px solid var(--vd-preview-border, var(--button-secondary-border)); overflow: hidden; }
+.vd-preview-listbox-item { padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; line-height: 1.4; }
+.vd-preview-listbox-item-sel { background: #2a6099; color: #fff; }
+/* 选择夹 */
+.vd-preview-tab { display: flex; flex-direction: column; }
+.vd-preview-tab-headers { display: flex; gap: 1px; }
+.vd-preview-tab-header { padding: 1px 8px; font-size: 11px; background: var(--bg-hover); border: 1px solid var(--button-secondary-border); border-bottom: none; border-radius: 3px 3px 0 0; }
+.vd-preview-tab-header-active { background: var(--bg-primary); font-weight: 600; }
+.vd-preview-tab-body { flex: 1; border: 1px solid var(--button-secondary-border); }
 
 .vd-preview-compact {
   background: var(--bg-input);

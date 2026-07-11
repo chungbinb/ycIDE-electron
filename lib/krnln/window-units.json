@@ -233,12 +233,200 @@
       "emitBuilder": "check"
     }
   ],
+  "controlMethodBindings": [
+    {"unit": "组合框", "member": "加入项目", "call": "krnln_ll_add_item({h}, {0}, {1|0})"},
+    {"unit": "组合框", "member": "插入项目", "call": "krnln_ll_insert_item({h}, {0}, {1}, {2|0})"},
+    {"unit": "组合框", "member": "删除项目", "call": "krnln_ll_delete_item({h}, {0})"},
+    {"unit": "组合框", "member": "清空", "call": "krnln_ll_clear({h})"},
+    {"unit": "组合框", "member": "取项目数", "call": "krnln_ll_count({h})"},
+    {"unit": "组合框", "member": "取项目文本", "call": "yc_ll_get_text({h}, {0})"},
+    {"unit": "组合框", "member": "置项目文本", "call": "krnln_ll_set_text({h}, {0}, {1})"},
+    {"unit": "组合框", "member": "取项目数值", "call": "krnln_ll_get_data({h}, {0})"},
+    {"unit": "组合框", "member": "置项目数值", "call": "krnln_ll_set_data({h}, {0}, {1})"},
+    {"unit": "组合框", "member": "取顶端可见项目", "call": "krnln_ll_get_top({h})"},
+    {"unit": "组合框", "member": "置顶端可见项目", "call": "krnln_ll_set_top({h}, {0})"},
+    {"unit": "组合框", "member": "选择", "call": "krnln_ll_select({h}, {0})"},
+    {"unit": "列表框", "member": "删除项目", "call": "krnln_ll_delete_item({h}, {0})"},
+    {"unit": "列表框", "member": "加入项目", "call": "krnln_ll_add_item({h}, {0}, {1|0})"},
+    {"unit": "列表框", "member": "取已选择项目数", "call": "krnln_lb_sel_count({h})"},
+    {"unit": "列表框", "member": "取所有被选择项目", "call": "yc_lb_get_sel_items({h})"},
+    {"unit": "列表框", "member": "取焦点项目", "call": "krnln_lb_caret({h})"},
+    {"unit": "列表框", "member": "取顶端可见项目", "call": "krnln_ll_get_top({h})"},
+    {"unit": "列表框", "member": "取项目数", "call": "krnln_ll_count({h})"},
+    {"unit": "列表框", "member": "取项目数值", "call": "krnln_ll_get_data({h}, {0})"},
+    {"unit": "列表框", "member": "取项目文本", "call": "yc_ll_get_text({h}, {0})"},
+    {"unit": "列表框", "member": "插入项目", "call": "krnln_ll_insert_item({h}, {0}, {1}, {2|0})"},
+    {"unit": "列表框", "member": "是否被选择", "call": "krnln_lb_is_selected({h}, {0})"},
+    {"unit": "列表框", "member": "清空", "call": "krnln_ll_clear({h})"},
+    {"unit": "列表框", "member": "置焦点项目", "call": "krnln_lb_set_caret({h}, {0})"},
+    {"unit": "列表框", "member": "置顶端可见项目", "call": "krnln_ll_set_top({h}, {0})"},
+    {"unit": "列表框", "member": "置项目数值", "call": "krnln_ll_set_data({h}, {0}, {1})"},
+    {"unit": "列表框", "member": "置项目文本", "call": "krnln_ll_set_text({h}, {0}, {1})"},
+    {"unit": "列表框", "member": "选择", "call": "krnln_ll_select({h}, {0})"},
+    {"unit": "列表框", "member": "选择项目", "call": "krnln_lb_select_item({h}, {0}, {1|1})"},
+    {"unit": "选择列表框", "member": "取顶端可见项目", "call": "krnln_ll_get_top({h})"},
+    {"unit": "选择列表框", "member": "置顶端可见项目", "call": "krnln_ll_set_top({h}, {0})"},
+    {"unit": "选择列表框", "member": "取项目数", "call": "krnln_ll_count({h})"},
+    {"unit": "选择列表框", "member": "取项目数值", "call": "krnln_ll_get_data({h}, {0})"},
+    {"unit": "选择列表框", "member": "置项目数值", "call": "krnln_ll_set_data({h}, {0}, {1})"},
+    {"unit": "选择列表框", "member": "取项目文本", "call": "yc_ll_get_text({h}, {0})"},
+    {"unit": "选择列表框", "member": "置项目文本", "call": "krnln_ll_set_text({h}, {0}, {1})"},
+    {"unit": "选择列表框", "member": "加入项目", "call": "krnln_ll_add_item({h}, {0}, {1|0})"},
+    {"unit": "选择列表框", "member": "插入项目", "call": "krnln_ll_insert_item({h}, {0}, {1}, {2|0})"},
+    {"unit": "选择列表框", "member": "删除项目", "call": "krnln_ll_delete_item({h}, {0})"},
+    {"unit": "选择列表框", "member": "清空", "call": "krnln_ll_clear({h})"},
+    {"unit": "选择列表框", "member": "选择", "call": "krnln_ll_select({h}, {0})"},
+    {"unit": "选择列表框", "member": "是否被选中", "call": "yc_chk_is_checked({n}, {0})"},
+    {"unit": "选择列表框", "member": "选中项目", "call": "yc_chk_set_checked({n}, {0}, {1|1})"},
+    {"unit": "选择列表框", "member": "是否被允许", "call": "yc_chk_is_enabled({n}, {0})"},
+    {"unit": "选择列表框", "member": "允许", "call": "yc_chk_enable({n}, {0}, {1|1})"},
+    {"unit": "选择夹", "member": "取子夹数目", "call": "yc_tab_count({n})"},
+    {"unit": "选择夹", "member": "取子夹名称", "call": "yc_tab_get_name({n}, {0})"},
+    {"unit": "选择夹", "member": "置子夹名称", "call": "yc_tab_set_name({n}, {0}, {1})"},
+    {"unit": "超级链接框", "member": "跳转", "call": "yc_hyperlink_jump({n})"}
+  ],
+  "controlMemberBindings": [
+    {"unit": "*", "member": "标题", "memberEnglishName": "caption", "get": "yc_ctrl_get_text({h})", "set": "krnln_ctrl_set_text({h}, {vtext})"},
+    {"unit": "*", "member": "内容", "memberEnglishName": "content", "get": "yc_ctrl_get_text({h})", "set": "krnln_ctrl_set_text({h}, {vtext})"},
+    {"unit": "*", "member": "文本", "memberEnglishName": "text", "get": "yc_ctrl_get_text({h})", "set": "krnln_ctrl_set_text({h}, {vtext})"},
+    {"unit": "*", "member": "标记", "memberEnglishName": "tag", "get": "yc_ctrl_get_tag({h})", "set": "krnln_ctrl_set_tag({h}, {vtext})"},
+    {"unit": "*", "member": "可视", "memberEnglishName": "visible", "get": "krnln_ctrl_get_number({h}, L\"可视\")", "set": "krnln_ctrl_set_number({h}, L\"可视\", (long long)({v}))"},
+    {"unit": "*", "member": "禁止", "memberEnglishName": "disable", "get": "krnln_ctrl_get_number({h}, L\"禁止\")", "set": "krnln_ctrl_set_number({h}, L\"禁止\", (long long)({v}))"},
+    {"unit": "*", "member": "左边", "memberEnglishName": "left", "get": "krnln_ctrl_get_number({h}, L\"左边\")", "set": "krnln_ctrl_set_number({h}, L\"左边\", (long long)({v}))"},
+    {"unit": "*", "member": "顶边", "memberEnglishName": "top", "get": "krnln_ctrl_get_number({h}, L\"顶边\")", "set": "krnln_ctrl_set_number({h}, L\"顶边\", (long long)({v}))"},
+    {"unit": "*", "member": "宽度", "memberEnglishName": "width", "get": "krnln_ctrl_get_number({h}, L\"宽度\")", "set": "krnln_ctrl_set_number({h}, L\"宽度\", (long long)({v}))"},
+    {"unit": "*", "member": "高度", "memberEnglishName": "height", "get": "krnln_ctrl_get_number({h}, L\"高度\")", "set": "krnln_ctrl_set_number({h}, L\"高度\", (long long)({v}))"},
+    {"unit": "进度条", "member": "位置", "memberEnglishName": "pos", "get": "krnln_ctrl_get_number({h}, L\"位置\")", "set": "krnln_ctrl_set_number({h}, L\"位置\", (long long)({v}))"},
+    {"unit": "进度条", "member": "最小位置", "memberEnglishName": "MinPos", "get": "krnln_ctrl_get_number({h}, L\"最小位置\")", "set": "krnln_ctrl_set_number({h}, L\"最小位置\", (long long)({v}))"},
+    {"unit": "进度条", "member": "最大位置", "memberEnglishName": "MaxPos", "get": "krnln_ctrl_get_number({h}, L\"最大位置\")", "set": "krnln_ctrl_set_number({h}, L\"最大位置\", (long long)({v}))"},
+    {"unit": "滑块条", "member": "位置", "memberEnglishName": "pos", "get": "krnln_ctrl_get_number({h}, L\"位置\")", "set": "krnln_ctrl_set_number({h}, L\"位置\", (long long)({v}))"},
+    {"unit": "滑块条", "member": "最小位置", "memberEnglishName": "MinPos", "get": "krnln_ctrl_get_number({h}, L\"最小位置\")", "set": "krnln_ctrl_set_number({h}, L\"最小位置\", (long long)({v}))"},
+    {"unit": "滑块条", "member": "最大位置", "memberEnglishName": "MaxPos", "get": "krnln_ctrl_get_number({h}, L\"最大位置\")", "set": "krnln_ctrl_set_number({h}, L\"最大位置\", (long long)({v}))"},
+    {"unit": "滑块条", "member": "页改变值", "memberEnglishName": "PageChange", "get": "krnln_ctrl_get_number({h}, L\"页改变值\")", "set": "krnln_ctrl_set_number({h}, L\"页改变值\", (long long)({v}))"},
+    {"unit": "滑块条", "member": "行改变值", "memberEnglishName": "LineChange", "get": "krnln_ctrl_get_number({h}, L\"行改变值\")", "set": "krnln_ctrl_set_number({h}, L\"行改变值\", (long long)({v}))"},
+    {"unit": "横向滚动条", "member": "位置", "memberEnglishName": "pos", "get": "krnln_ctrl_get_number({h}, L\"位置\")", "set": "krnln_ctrl_set_number({h}, L\"位置\", (long long)({v}))"},
+    {"unit": "横向滚动条", "member": "最小位置", "memberEnglishName": "MinPos", "get": "krnln_ctrl_get_number({h}, L\"最小位置\")", "set": "krnln_ctrl_set_number({h}, L\"最小位置\", (long long)({v}))"},
+    {"unit": "横向滚动条", "member": "最大位置", "memberEnglishName": "MaxPos", "get": "krnln_ctrl_get_number({h}, L\"最大位置\")", "set": "krnln_ctrl_set_number({h}, L\"最大位置\", (long long)({v}))"},
+    {"unit": "纵向滚动条", "member": "位置", "memberEnglishName": "pos", "get": "krnln_ctrl_get_number({h}, L\"位置\")", "set": "krnln_ctrl_set_number({h}, L\"位置\", (long long)({v}))"},
+    {"unit": "纵向滚动条", "member": "最小位置", "memberEnglishName": "MinPos", "get": "krnln_ctrl_get_number({h}, L\"最小位置\")", "set": "krnln_ctrl_set_number({h}, L\"最小位置\", (long long)({v}))"},
+    {"unit": "纵向滚动条", "member": "最大位置", "memberEnglishName": "MaxPos", "get": "krnln_ctrl_get_number({h}, L\"最大位置\")", "set": "krnln_ctrl_set_number({h}, L\"最大位置\", (long long)({v}))"},
+    {"unit": "选择框", "member": "选中", "memberEnglishName": "check", "get": "krnln_ctrl_get_number({h}, L\"选中\")", "set": "krnln_ctrl_set_number({h}, L\"选中\", (long long)({v}))"},
+    {"unit": "单选框", "member": "选中", "memberEnglishName": "check", "get": "krnln_ctrl_get_number({h}, L\"选中\")", "set": "krnln_ctrl_set_number({h}, L\"选中\", (long long)({v}))"},
+    {"unit": "组合框", "member": "现行选中项", "memberEnglishName": "CurSel", "get": "krnln_ctrl_get_number({h}, L\"现行选中项\")", "set": "krnln_ctrl_set_number({h}, L\"现行选中项\", (long long)({v}))"},
+    {"unit": "列表框", "member": "现行选中项", "memberEnglishName": "CurSel", "get": "krnln_ctrl_get_number({h}, L\"现行选中项\")", "set": "krnln_ctrl_set_number({h}, L\"现行选中项\", (long long)({v}))"},
+    {"unit": "选择列表框", "member": "现行选中项", "memberEnglishName": "CurSel", "get": "krnln_ctrl_get_number({h}, L\"现行选中项\")", "set": "krnln_ctrl_set_number({h}, L\"现行选中项\", (long long)({v}))"},
+    {"unit": "日期框", "member": "今天", "memberEnglishName": "today", "get": "yc_ctrl_get_date({h}, L\"今天\")", "set": "krnln_ctrl_set_date({h}, L\"今天\", {vtext})"},
+    {"unit": "日期框", "member": "最小日期", "memberEnglishName": "MinDate", "get": "yc_ctrl_get_date({h}, L\"最小日期\")", "set": "krnln_ctrl_set_date({h}, L\"最小日期\", {vtext})"},
+    {"unit": "日期框", "member": "最大日期", "memberEnglishName": "MaxDate", "get": "yc_ctrl_get_date({h}, L\"最大日期\")", "set": "krnln_ctrl_set_date({h}, L\"最大日期\", {vtext})"},
+    {"unit": "月历", "member": "今天", "memberEnglishName": "today", "get": "yc_ctrl_get_date({h}, L\"今天\")", "set": "krnln_ctrl_set_date({h}, L\"今天\", {vtext})"},
+    {"unit": "月历", "member": "最小日期", "memberEnglishName": "MinDate", "get": "yc_ctrl_get_date({h}, L\"最小日期\")", "set": "krnln_ctrl_set_date({h}, L\"最小日期\", {vtext})"},
+    {"unit": "月历", "member": "最大日期", "memberEnglishName": "MaxDate", "get": "yc_ctrl_get_date({h}, L\"最大日期\")", "set": "krnln_ctrl_set_date({h}, L\"最大日期\", {vtext})"},
+    {"unit": "月历", "member": "首选择日", "memberEnglishName": "SelStart", "get": "yc_ctrl_get_date({h}, L\"首选择日\")", "set": "krnln_ctrl_set_date({h}, L\"首选择日\", {vtext})"},
+    {"unit": "月历", "member": "尾选择日", "memberEnglishName": "SelEnd", "get": "yc_ctrl_get_date({h}, L\"尾选择日\")", "set": "krnln_ctrl_set_date({h}, L\"尾选择日\", {vtext})"}
+  ],
   "windowUnits": [
     {
       "name": "窗口",
       "englishName": "Window",
       "description": "基础窗口。",
       "properties": [
+        {
+          "name": "备注",
+          "englishName": "memo",
+          "description": "窗口备注说明（仅设计期使用）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "左边",
+          "englishName": "left",
+          "description": "窗口初始左边位置（「位置」为通常时生效）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "顶边",
+          "englishName": "top",
+          "description": "窗口初始顶边位置（「位置」为通常时生效）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "标记",
+          "englishName": "tag",
+          "description": "窗口标记文本。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "可视",
+          "englishName": "visible",
+          "description": "窗口是否可视。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": true
+        },
+        {
+          "name": "禁止",
+          "englishName": "disable",
+          "description": "窗口是否禁止（禁止后不响应用户输入）。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "鼠标指针",
+          "englishName": "MousePointer",
+          "description": "鼠标移入窗口时的指针形状。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "0.默认型",
+            "1.标准箭头型",
+            "2.十字型",
+            "3.文本编辑型",
+            "4.沙漏型",
+            "5.箭头问号型",
+            "6.箭头及沙漏型",
+            "7.禁止符型",
+            "8.四向箭头型",
+            "9.北向箭头型",
+            "10.北<->南箭头型",
+            "11.东<->西箭头型",
+            "12.西北<->东南箭头型",
+            "13.东北<->西南箭头型",
+            "14.手型",
+            "15.自定义型"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "标题",
+          "englishName": "title",
+          "description": "窗口标题文本。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
         {
           "name": "边框",
           "englishName": "border",
@@ -253,7 +441,87 @@
             "对话框边框",
             "工具窗口边框",
             "可调工具窗口边框"
-          ]
+          ],
+          "defaultValue": 2
+        },
+        {
+          "name": "外形",
+          "englishName": "shape",
+          "description": "窗口外形。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "0.矩形",
+            "1.圆角矩形",
+            "2.椭圆形"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "圆角半径",
+          "englishName": "cornerRadius",
+          "description": "圆角矩形外形的圆角半径（像素）；仅「外形=圆角矩形」时生效。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 20
+        },
+        {
+          "name": "底色",
+          "englishName": "backColor",
+          "description": "窗口客户区底色；0 表示默认底色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "底图",
+          "englishName": "backImage",
+          "description": "窗口背景图片（拉伸铺满客户区）。",
+          "type": 0,
+          "typeName": "图片",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "底图方式",
+          "englishName": "backImageMode",
+          "description": "底图显示方式；仅设置了底图时生效。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "0.图片平铺",
+            "1.图片居左上",
+            "2.图片居中",
+            "3.图片居右下",
+            "4.缩放图片"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "图标",
+          "englishName": "icon",
+          "description": "窗口标题栏与任务栏显示的图标。",
+          "type": 0,
+          "typeName": "图片",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "控制按钮",
+          "englishName": "controlBox",
+          "description": "是否显示控制按钮。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": []
         },
         {
           "name": "最大化按钮",
@@ -274,13 +542,66 @@
           "pickOptions": []
         },
         {
-          "name": "控制按钮",
-          "englishName": "controlBox",
-          "description": "是否显示控制按钮。",
+          "name": "位置",
+          "englishName": "startPos",
+          "description": "窗口初始位置。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [
+            "手工",
+            "居中"
+          ]
+        },
+        {
+          "name": "可否移动",
+          "englishName": "movable",
+          "description": "窗口是否可被拖动移动。",
           "type": 0,
           "typeName": "逻辑型",
           "isReadOnly": false,
-          "pickOptions": []
+          "pickOptions": [],
+          "defaultValue": true
+        },
+        {
+          "name": "回车下移焦点",
+          "englishName": "enterAsTab",
+          "description": "按回车键时焦点是否移动到下一个控件。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "Esc键关闭",
+          "englishName": "escClose",
+          "description": "按 Esc 键是否关闭窗口。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "在任务条中显示",
+          "englishName": "showInTaskbar",
+          "description": "窗口是否在任务栏显示图标。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": true
+        },
+        {
+          "name": "随意移动",
+          "englishName": "dragMove",
+          "description": "是否允许按住客户区拖动窗口。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
         },
         {
           "name": "总在最前",
@@ -292,16 +613,54 @@
           "pickOptions": []
         },
         {
-          "name": "位置",
-          "englishName": "startPos",
-          "description": "窗口初始位置。",
+          "name": "保持标题条激活",
+          "englishName": "keepCaptionActive",
+          "description": "失去焦点时标题条是否保持激活外观。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "窗口类名",
+          "englishName": "wndClassName",
+          "description": "注册窗口类使用的类名（留空使用默认）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "帮助文件名",
+          "englishName": "helpFile",
+          "description": "按 F1 时打开的帮助文件（.chm/.hlp）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "帮助标志值",
+          "englishName": "helpContextId",
+          "description": "帮助文件中对应的帮助主题标志值。",
           "type": 0,
           "typeName": "整数型",
           "isReadOnly": false,
-          "pickOptions": [
-            "手工",
-            "居中"
-          ]
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "F1键打开帮助",
+          "englishName": "f1Help",
+          "description": "是否允许按 F1 键打开帮助文件。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
         }
       ],
       "events": [
@@ -422,7 +781,109 @@
       "description": "标准按钮控件。",
       "className": "BUTTON",
       "style": "WS_CHILD | BS_PUSHBUTTON",
-      "properties": [],
+      "properties": [
+        {
+          "name": "备注",
+          "englishName": "memo",
+          "description": "按钮备注（仅设计期使用）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "可停留焦点",
+          "englishName": "canFocus",
+          "description": "按钮是否可通过 Tab 键停留获得焦点。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": true
+        },
+        {
+          "name": "停留顺序",
+          "englishName": "tabOrder",
+          "description": "Tab 键在本窗口内停留到该按钮的先后顺序（数值小者靠前）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "图片",
+          "englishName": "pic",
+          "description": "显示在按钮上的图片；设置后标题无效。",
+          "type": 0,
+          "typeName": "图片",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "类型",
+          "englishName": "style",
+          "description": "按钮类型；「默认」按钮响应窗口回车键，一个窗口应只有一个。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "0.通常",
+            "1.默认"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "底色",
+          "englishName": "backColor",
+          "description": "按钮背景颜色；0 表示默认按钮底色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "横向对齐方式",
+          "englishName": "HorzAlign",
+          "description": "按钮标题的横向对齐方式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "左边",
+            "居中",
+            "右边"
+          ],
+          "defaultValue": 1
+        },
+        {
+          "name": "纵向对齐方式",
+          "englishName": "VertAlign",
+          "description": "按钮标题的纵向对齐方式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "顶边",
+            "居中",
+            "底边"
+          ],
+          "defaultValue": 1
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "按钮标题的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        }
+      ],
       "events": [
         {
           "name": "被单击",
@@ -454,7 +915,244 @@
       "description": "标准标签控件。",
       "className": "STATIC",
       "style": "WS_CHILD | SS_LEFT | SS_NOTIFY",
-      "properties": [],
+      "properties": [
+        {
+          "name": "效果",
+          "englishName": "effect",
+          "description": "标签显示效果；设为“透明”时背景颜色不起作用。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "通常",
+            "凹入",
+            "凸出",
+            "阴影",
+            "透明"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "边框",
+          "englishName": "border",
+          "description": "标签边框样式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无边框",
+            "凹入式",
+            "凸出式",
+            "浅凹入式",
+            "镜框式",
+            "单线边框式",
+            "渐变镜框式"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "渐变边框宽度",
+          "englishName": "",
+          "description": "边框为“渐变镜框式”时的渐变边框宽度。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "渐变边框颜色1",
+          "englishName": "",
+          "description": "渐变镜框边框的渐变颜色1。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "渐变边框颜色2",
+          "englishName": "",
+          "description": "渐变镜框边框的渐变颜色2。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "渐变边框颜色3",
+          "englishName": "",
+          "description": "渐变镜框边框的渐变颜色3。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "标签文本的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "文本颜色",
+          "englishName": "TextColor",
+          "description": "标签文本颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "背景颜色",
+          "englishName": "BackColor",
+          "description": "标签背景颜色；效果为透明时不起作用。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "底图",
+          "englishName": "BackPic",
+          "description": "标签背景底图。",
+          "type": 0,
+          "typeName": "图片",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "底图方式",
+          "englishName": "BackPicMode",
+          "description": "底图显示方式（设定底图后有效）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "图片居左上",
+            "图片平铺",
+            "图片居中"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "渐变背景方式",
+          "englishName": "",
+          "description": "未设定底图时的渐变背景方向。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无渐变背景",
+            "从上到下",
+            "从左到右",
+            "从左上到右下",
+            "从右上到左下",
+            "从下到上",
+            "从右到左",
+            "从右下到左上",
+            "从左下到右上"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "渐变背景颜色1",
+          "englishName": "",
+          "description": "渐变背景的渐变颜色1。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "渐变背景颜色2",
+          "englishName": "",
+          "description": "渐变背景的渐变颜色2。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "渐变背景颜色3",
+          "englishName": "",
+          "description": "渐变背景的渐变颜色3。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "横向对齐方式",
+          "englishName": "HorzAlignMode",
+          "description": "标签文本横向对齐方式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "左对齐",
+            "居中",
+            "右对齐"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "是否自动折行",
+          "englishName": "",
+          "description": "文本超出右界后是否自动换行显示。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "纵向对齐方式",
+          "englishName": "VertAlignMode",
+          "description": "标签文本纵向对齐方式（自动折行时无效）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "顶对齐",
+            "居中",
+            "底对齐"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "数据源",
+          "englishName": "DataSource",
+          "description": "指定提供数据的数据源组件名。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "数据列",
+          "englishName": "DataCol",
+          "description": "指定数据源中的数据列（列名或以1开始的列序号）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        }
+      ],
       "events": [
         {
           "name": "被单击",
@@ -489,8 +1187,25 @@
           "type": 0,
           "typeName": "选择整数",
           "isReadOnly": false,
-          "pickOptions": ["无边框", "单线边框", "凹入式"],
-          "defaultValue": 2
+          "pickOptions": [
+            "无边框",
+            "凹入式",
+            "凸出式",
+            "浅凹入式",
+            "镜框式",
+            "单线边框式"
+          ],
+          "defaultValue": 1
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "编辑框文本的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
         },
         {
           "name": "文本颜色",
@@ -549,8 +1264,33 @@
           "type": 0,
           "typeName": "选择整数",
           "isReadOnly": false,
-          "pickOptions": ["无", "横向滚动条", "纵向滚动条", "横向和纵向"],
+          "pickOptions": [
+            "无",
+            "横向滚动条",
+            "纵向滚动条",
+            "横向和纵向"
+          ],
           "defaultValue": 0
+        },
+        {
+          "name": "数据源",
+          "englishName": "dataSource",
+          "description": "数据绑定的数据源（数据库功能，暂声明）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "数据列",
+          "englishName": "dataColumn",
+          "description": "数据绑定的数据列（数据库功能，暂声明）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
         },
         {
           "name": "对齐方式",
@@ -559,7 +1299,11 @@
           "type": 0,
           "typeName": "选择整数",
           "isReadOnly": false,
-          "pickOptions": ["左对齐", "居中对齐", "右对齐"],
+          "pickOptions": [
+            "左对齐",
+            "居中",
+            "右对齐"
+          ],
           "defaultValue": 0
         },
         {
@@ -569,7 +1313,20 @@
           "type": 0,
           "typeName": "选择整数",
           "isReadOnly": false,
-          "pickOptions": ["通常方式", "只读文本", "密码输入", "整数文本输入", "小数文本输入", "输入字节", "输入短整数", "输入整数", "输入长整数", "输入小数", "输入双精度小数", "输入日期时间"],
+          "pickOptions": [
+            "通常方式",
+            "只读方式",
+            "密码输入",
+            "整数文本输入",
+            "小数文本输入",
+            "输入字节",
+            "输入短整数",
+            "输入整数",
+            "输入长整数",
+            "输入小数",
+            "输入双精度小数",
+            "输入日期时间"
+          ],
           "defaultValue": 0
         },
         {
@@ -589,17 +1346,25 @@
           "type": 0,
           "typeName": "选择整数",
           "isReadOnly": false,
-          "pickOptions": ["无", "转换为大写", "转换为小写"],
+          "pickOptions": [
+            "无",
+            "大写->小写",
+            "小写->大写"
+          ],
           "defaultValue": 0
         },
         {
           "name": "调节器方式",
           "englishName": "spinMode",
-          "description": "是否附加数值调节器（上下箭头）。",
+          "description": "编辑框右侧数值调节器：自动=上下键在上下限内自动增减内容；手动=只触发事件由程序处理。",
           "type": 0,
           "typeName": "选择整数",
           "isReadOnly": false,
-          "pickOptions": ["无调节器", "数值调节器"],
+          "pickOptions": [
+            "无调节器",
+            "自动调节器",
+            "手动调节器"
+          ],
           "defaultValue": 0
         },
         {
@@ -641,6 +1406,16 @@
           "isReadOnly": false,
           "pickOptions": [],
           "defaultValue": 0
+        },
+        {
+          "name": "被选择文本",
+          "englishName": "selText",
+          "description": "当前被选中的文本（读写选区，暂声明）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
         },
         {
           "name": "可停留焦点",
@@ -704,7 +1479,136 @@
       "description": "选择框控件。",
       "className": "BUTTON",
       "style": "WS_CHILD | BS_AUTOCHECKBOX",
-      "properties": [],
+      "properties": [
+        {
+          "name": "图片",
+          "englishName": "pic",
+          "description": "显示在选择框上的图片。",
+          "type": 0,
+          "typeName": "图片",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "按钮形式",
+          "englishName": "PushLike",
+          "description": "选择框以按钮（按下/弹起）形式显示。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "平面",
+          "englishName": "flat",
+          "description": "选择框以平面样式显示。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "标题居左",
+          "englishName": "LeftCaption",
+          "description": "标题显示在勾选框左侧。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "横向对齐方式",
+          "englishName": "HorzAlign",
+          "description": "内容横向对齐方式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "左边",
+            "居中",
+            "右边"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "纵向对齐方式",
+          "englishName": "VertAlign",
+          "description": "内容纵向对齐方式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "顶边",
+            "居中",
+            "底边"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "文本颜色",
+          "englishName": "TextColor",
+          "description": "选择框文本颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "背景颜色",
+          "englishName": "BackColor",
+          "description": "选择框背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "选择框文本的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "选中",
+          "englishName": "Checked",
+          "description": "选择框是否处于选中状态。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "数据源",
+          "englishName": "DataSource",
+          "description": "指定提供数据的数据源组件名。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "数据列",
+          "englishName": "DataCol",
+          "description": "指定数据源中的数据列（列名或以1开始的列序号）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        }
+      ],
       "events": [
         {
           "name": "被单击",
@@ -736,7 +1640,116 @@
       "description": "单选框控件。",
       "className": "BUTTON",
       "style": "WS_CHILD | BS_AUTORADIOBUTTON",
-      "properties": [],
+      "properties": [
+        {
+          "name": "图片",
+          "englishName": "pic",
+          "description": "显示在单选框上的图片。",
+          "type": 0,
+          "typeName": "图片",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "按钮形式",
+          "englishName": "PushLike",
+          "description": "单选框以按钮（按下/弹起）形式显示。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "平面",
+          "englishName": "flat",
+          "description": "单选框以平面样式显示。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "标题居左",
+          "englishName": "LeftCaption",
+          "description": "标题显示在勾选框左侧。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "横向对齐方式",
+          "englishName": "HorzAlign",
+          "description": "内容横向对齐方式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "左边",
+            "居中",
+            "右边"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "纵向对齐方式",
+          "englishName": "VertAlign",
+          "description": "内容纵向对齐方式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "顶边",
+            "居中",
+            "底边"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "文本颜色",
+          "englishName": "TextColor",
+          "description": "单选框文本颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "背景颜色",
+          "englishName": "BackColor",
+          "description": "单选框背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "单选框文本的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "选中",
+          "englishName": "Checked",
+          "description": "单选框是否处于选中状态。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        }
+      ],
       "events": [
         {
           "name": "被单击",
@@ -768,7 +1781,145 @@
       "description": "列表框控件。",
       "className": "LISTBOX",
       "style": "WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY",
-      "properties": [],
+      "properties": [
+        {
+          "name": "边框",
+          "englishName": "border",
+          "description": "列表框边框样式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无边框",
+            "凹入式",
+            "凸出式",
+            "浅凹入式",
+            "镜框式",
+            "单线边框式"
+          ],
+          "defaultValue": 1
+        },
+        {
+          "name": "自动排序",
+          "englishName": "sort",
+          "description": "是否按字母顺序自动排序列表项目。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "多列",
+          "englishName": "MultiCol",
+          "description": "是否以多列横向排列列表项目。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "行间距",
+          "englishName": "RowExtra",
+          "description": "各列表项目行之间的额外间距尺寸（像素）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "文本颜色",
+          "englishName": "TextColor",
+          "description": "列表项目文本颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "背景颜色",
+          "englishName": "BackColor",
+          "description": "列表框背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "列表项目文本的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "允许选择多项",
+          "englishName": "AllowMutiSel",
+          "description": "是否允许用户同时选择列表框中的多个列表项。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "现行选中项",
+          "englishName": "CurSel",
+          "description": "现行被选中列表项的位置（从0起，-1为无）；「允许选择多项」为真时本属性无效恒为-1。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": -1
+        },
+        {
+          "name": "列表项目",
+          "englishName": "",
+          "description": "各列表项目文本。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "项目数值",
+          "englishName": "",
+          "description": "与各列表项目关联的整数数值，程序中可取出或修改。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "数据源",
+          "englishName": "DataSource",
+          "description": "提供数据的数据源组件名（数据库功能，暂声明）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "数据列",
+          "englishName": "DataCol",
+          "description": "数据源中的数据列，可为列名或以1开始的列序号文本（数据库功能，暂声明）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        }
+      ],
       "events": [
         {
           "name": "选择项被改变",
@@ -807,7 +1958,93 @@
       "description": "选择夹控件。",
       "className": "SysTabControl32",
       "style": "WS_CHILD | WS_CLIPSIBLINGS",
-      "properties": [],
+      "properties": [
+        {
+          "name": "表头方向",
+          "englishName": "HeaderWay",
+          "description": "选择夹表头（标签栏）所在的方向。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "上",
+            "下",
+            "左",
+            "右"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "允许多行表头",
+          "englishName": "AllowMultiLines",
+          "description": "表头一行排不下时是否分多行显示。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "表头标签文字所用的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "子夹标题",
+          "englishName": "tabs",
+          "description": "子夹（选项卡页）标题列表，换行分隔。点击「编辑…」打开子夹管理弹窗增删改名。",
+          "type": 0,
+          "typeName": "子夹表",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "现行子夹",
+          "englishName": "CurTab",
+          "description": "现行被选中子夹的索引（0 起始，设计时不可用）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "隐藏自身",
+          "englishName": "HideMe",
+          "description": "作为隐形容器，用现行子夹切换同一位置的多组子组件（选择夹自身不显示）。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "是否填充背景",
+          "englishName": "FillBack",
+          "description": "隐藏自身时是否用背景颜色填充自身区域（用于解决子组件刷新问题）。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "背景颜色",
+          "englishName": "BackColor",
+          "description": "填充被隐藏选择夹背景所用的颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        }
+      ],
       "events": [
         {
           "name": "选择项被改变",
@@ -839,7 +2076,172 @@
       "description": "组合框控件。",
       "className": "COMBOBOX",
       "style": "WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL",
-      "properties": [],
+      "properties": [
+        {
+          "name": "类型",
+          "englishName": "style",
+          "description": "组合框的样式：可编辑列表式、可编辑下拉式或不可编辑下拉式（修改会以静态项目覆盖动态项目）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "可编辑列表式",
+            "可编辑下拉式",
+            "不可编辑下拉式"
+          ],
+          "defaultValue": 2
+        },
+        {
+          "name": "内容",
+          "englishName": "context",
+          "description": "下拉框编辑部分显示的文本内容（当类型为不可编辑下拉式时本属性无效）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "最大文本长度",
+          "englishName": "TextLimit",
+          "description": "编辑部分允许输入的最大文本长度，为 0 表示不限制（不可编辑下拉式时无效）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "起始选择位置",
+          "englishName": "SelStart",
+          "description": "所选择文本的起始点，0 为位置一；设为 -1 时把光标移到文本尾部（不可编辑下拉式时无效）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "被选择字符数",
+          "englishName": "SelLength",
+          "description": "所选择的字符数，设为 -1 时选择全部文本（不可编辑下拉式时无效）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "被选择文本",
+          "englishName": "SelText",
+          "description": "编辑部分当前被选中的文本，设计时不可用、运行时可读可写（不可编辑下拉式时无效）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "自动排序",
+          "englishName": "sort",
+          "description": "是否让组合框自动对列表项目排序。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "行间距",
+          "englishName": "RowExtra",
+          "description": "各列表项目行之间的间距尺寸。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "文本颜色",
+          "englishName": "TextColor",
+          "description": "组合框文本颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "背景颜色",
+          "englishName": "BackColor",
+          "description": "组合框背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "组合框文本的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "现行选中项",
+          "englishName": "CurSel",
+          "description": "当前被选中列表项的位置，从 0 开始，-1 表示现行没有被选中的列表项。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": -1
+        },
+        {
+          "name": "列表项目",
+          "englishName": "",
+          "description": "各列表项目（静态项目表；运行时项目增删需项目表基础设施，暂声明）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "项目数值",
+          "englishName": "",
+          "description": "与各列表项目相关联的数值，程序中可取出或修改（需项目表基础设施，暂声明）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "数据源",
+          "englishName": "DataSource",
+          "description": "提供数据的数据源组件名（数据库数据绑定，暂声明）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "数据列",
+          "englishName": "DataCol",
+          "description": "数据源中的数据列，可以是列名或以 1 开始的列序号文本（数据库数据绑定，暂声明）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        }
+      ],
       "events": [
         {
           "name": "选择项被改变",
@@ -878,7 +2280,143 @@
       "description": "滑块条控件。",
       "className": "msctls_trackbar32",
       "style": "WS_CHILD | TBS_AUTOTICKS",
-      "properties": [],
+      "properties": [
+        {
+          "name": "边框",
+          "englishName": "border",
+          "description": "滑块条的边框样式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无边框",
+            "凹入式",
+            "凸出式",
+            "浅凹入式",
+            "镜框式",
+            "单线边框式"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "方向",
+          "englishName": "orient",
+          "description": "滑块条的排列方向（横向或纵向）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "横向",
+            "纵向"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "刻度类型",
+          "englishName": "TickStyle",
+          "description": "刻度线的显示位置。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无",
+            "上/左",
+            "下/右",
+            "双向"
+          ],
+          "defaultValue": 2
+        },
+        {
+          "name": "单位刻度值",
+          "englishName": "TickFreq",
+          "description": "相邻两条刻度线之间相差的位置数值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 1
+        },
+        {
+          "name": "允许选择",
+          "englishName": "AllowSel",
+          "description": "是否在滑块条上显示可选择的范围区间（高亮带）。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "首选择位置",
+          "englishName": "SelStart",
+          "description": "选择区间的起始位置。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "选择长度",
+          "englishName": "SelLength",
+          "description": "选择区间的长度。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "页改变值",
+          "englishName": "PageChange",
+          "description": "用户在空隙处单击后滑块位置的增减数值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "行改变值",
+          "englishName": "LineChange",
+          "description": "用户拖动滑块或按方向键时滑块位置的每次增减数值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "最小位置",
+          "englishName": "MinPos",
+          "description": "滑块条可取的最小位置值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "最大位置",
+          "englishName": "MaxPos",
+          "description": "滑块条可取的最大位置值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 100
+        },
+        {
+          "name": "位置",
+          "englishName": "pos",
+          "description": "滑块条的现行位置。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        }
+      ],
       "events": [
         {
           "name": "值被改变",
@@ -895,7 +2433,68 @@
       "description": "横向滚动条控件。",
       "className": "SCROLLBAR",
       "style": "WS_CHILD | SBS_HORZ",
-      "properties": [],
+      "properties": [
+        {
+          "name": "最小位置",
+          "englishName": "MinPos",
+          "description": "设定滚动条位置可到达的下限值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "最大位置",
+          "englishName": "MaxPos",
+          "description": "设定滚动条位置可到达的上限值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 100
+        },
+        {
+          "name": "页改变值",
+          "englishName": "PageChange",
+          "description": "用户在滚动条空隙处单击时位置的增减量。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 10
+        },
+        {
+          "name": "行改变值",
+          "englishName": "LineChange",
+          "description": "用户单击左右箭头按钮时位置的增减量。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 1
+        },
+        {
+          "name": "位置",
+          "englishName": "pos",
+          "description": "滚动条的现行位置。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "允许拖动跟踪",
+          "englishName": "AllowTrack",
+          "description": "拖动滑块过程中是否持续触发位置被改变事件。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        }
+      ],
       "events": [
         {
           "name": "滚动",
@@ -912,7 +2511,81 @@
       "description": "进度条控件。",
       "className": "msctls_progress32",
       "style": "WS_CHILD",
-      "properties": [],
+      "properties": [
+        {
+          "name": "边框",
+          "englishName": "border",
+          "description": "进度条边框样式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无边框",
+            "凹入式",
+            "凸出式",
+            "浅凹入式",
+            "镜框式",
+            "单线边框式"
+          ],
+          "defaultValue": 1
+        },
+        {
+          "name": "方向",
+          "englishName": "orient",
+          "description": "进度条的填充方向（横向或纵向）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "横向",
+            "纵向"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "显示方式",
+          "englishName": "DrawMode",
+          "description": "进度条填充的显示方式（分块或连续）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "分块",
+            "连续"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "最小位置",
+          "englishName": "MinPos",
+          "description": "进度条可表示的最小位置值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "最大位置",
+          "englishName": "MaxPos",
+          "description": "进度条可表示的最大位置值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 100
+        },
+        {
+          "name": "位置",
+          "englishName": "pos",
+          "description": "进度条的现行位置。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        }
+      ],
       "events": [],
       "icon": "icon/BlueIcons/ProgressBar_16x.png"
     },
@@ -922,7 +2595,52 @@
       "description": "分组框控件。",
       "className": "BUTTON",
       "style": "WS_CHILD | BS_GROUPBOX",
-      "properties": [],
+      "properties": [
+        {
+          "name": "对齐方式",
+          "englishName": "AlignMode",
+          "description": "分组框标题的对齐方式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "左边",
+            "居中",
+            "右边"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "文本颜色",
+          "englishName": "TextColor",
+          "description": "分组框标题文本颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "背景颜色",
+          "englishName": "BackColor",
+          "description": "分组框背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "分组框标题的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        }
+      ],
       "events": [],
       "icon": "icon/BlueIcons/GroupBox_16x.png"
     },
@@ -932,7 +2650,89 @@
       "description": "图片框控件。",
       "className": "STATIC",
       "style": "WS_CHILD | SS_LEFT",
-      "properties": [],
+      "properties": [
+        {
+          "name": "边框",
+          "englishName": "border",
+          "description": "图片框边框样式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无边框",
+            "凹入式",
+            "凸出式",
+            "浅凹入式",
+            "镜框式",
+            "单线边框式"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "背景颜色",
+          "englishName": "BackColor",
+          "description": "图片框背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "图片",
+          "englishName": "pic",
+          "description": "显示在图片框中的图片。",
+          "type": 0,
+          "typeName": "图片",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "显示方式",
+          "englishName": "PicDrawMode",
+          "description": "图片显示方式（设定图片后有效）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "图片居左上",
+            "缩放图片",
+            "图片居中"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "播放动画",
+          "englishName": "PlayGif",
+          "description": "是否播放 GIF 动画。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "数据源",
+          "englishName": "DataSource",
+          "description": "指定提供数据的数据源组件名。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "数据列",
+          "englishName": "DataCol",
+          "description": "指定数据源中的数据列（列名或以1开始的列序号）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        }
+      ],
       "events": [
         {
           "name": "被单击",
@@ -950,7 +2750,68 @@
       "description": "纵向滚动条控件。",
       "className": "SCROLLBAR",
       "style": "WS_CHILD | SBS_VERT",
-      "properties": [],
+      "properties": [
+        {
+          "name": "最小位置",
+          "englishName": "MinPos",
+          "description": "滚动条可滚动范围的最小位置值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "最大位置",
+          "englishName": "MaxPos",
+          "description": "滚动条可滚动范围的最大位置值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 100
+        },
+        {
+          "name": "页改变值",
+          "englishName": "PageChange",
+          "description": "在滚动条空隙处单击时位置的增减量，同时决定滑块的比例大小。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 10
+        },
+        {
+          "name": "行改变值",
+          "englishName": "LineChange",
+          "description": "单击滚动条两端箭头按钮时位置的增减量。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 1
+        },
+        {
+          "name": "位置",
+          "englishName": "pos",
+          "description": "滚动条滑块的当前位置。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "允许拖动跟踪",
+          "englishName": "AllowTrack",
+          "description": "拖动滑块过程中是否持续触发「位置被改变」事件（否则仅松手时触发）。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        }
+      ],
       "events": [
         {
           "name": "滚动",
@@ -983,9 +2844,100 @@
       "name": "外形框",
       "englishName": "ShapeBox",
       "description": "外形框控件。",
-      "className": "",
-      "style": "",
-      "properties": [],
+      "className": "STATIC",
+      "style": "WS_CHILD | SS_OWNERDRAW",
+      "properties": [
+        {
+          "name": "背景颜色",
+          "englishName": "BackColor",
+          "description": "外形框背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "外形",
+          "englishName": "shape",
+          "description": "外形框形状。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "矩形",
+            "正方形",
+            "椭圆",
+            "圆",
+            "圆角矩形",
+            "圆角正方形",
+            "横向线",
+            "纵向线"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "线条效果",
+          "englishName": "effect",
+          "description": "外形框线条立体效果。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "通常",
+            "凹入",
+            "凸出"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "线型",
+          "englishName": "LineStyle",
+          "description": "外形框边框线型。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无",
+            "直线",
+            "划线",
+            "点线",
+            "点划线",
+            "双点划线"
+          ],
+          "defaultValue": 1
+        },
+        {
+          "name": "线宽",
+          "englishName": "LineWidth",
+          "description": "外形框边框线宽（像素）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 1
+        },
+        {
+          "name": "线条颜色",
+          "englishName": "LineColor",
+          "description": "外形框边框线条颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "填充颜色",
+          "englishName": "FillColor",
+          "description": "外形框内部填充颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        }
+      ],
       "events": [],
       "icon": "icon/BlueIcons/Panel_16x.png"
     },
@@ -993,19 +2945,399 @@
       "name": "画板",
       "englishName": "DrawPanel",
       "description": "画板控件。",
-      "className": "",
-      "style": "",
-      "properties": [],
-      "events": [],
+      "className": "YCDRAWPANEL",
+      "style": "WS_CHILD",
+      "properties": [
+        {
+          "name": "边框",
+          "englishName": "border",
+          "description": "画板边框样式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无边框",
+            "凹入式",
+            "凸出式",
+            "浅凹入式",
+            "镜框式",
+            "单线边框式"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "画板背景色",
+          "englishName": "BackColor",
+          "description": "画板背景颜色（自动重画为真时不支持透明色）。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "底图",
+          "englishName": "pic",
+          "description": "显示在画板背景上的图片。",
+          "type": 0,
+          "typeName": "图片",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "底图方式",
+          "englishName": "BackPicMode",
+          "description": "画板背景上底图的显示方式（设定底图后有效）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "图片居左上",
+            "图片平铺",
+            "图片居中"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "自动重画",
+          "englishName": "AutoRedraw",
+          "description": "为真则绘制结果保存到内存、重画时直接复制且不再产生「绘画」事件；为假则重画时产生「绘画」事件。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "绘画单位",
+          "englishName": "unit",
+          "description": "绘画时所使用的单位（X 轴从左到右、Y 轴从上到下）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "像素点",
+            "0.1毫米",
+            "0.01毫米",
+            "0.01英寸",
+            "0.001英寸",
+            "1/1440英寸"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "画笔类型",
+          "englishName": "PenStyle",
+          "description": "绘制线条时画笔的类型。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "空笔",
+            "直线",
+            "划线",
+            "点线",
+            "点划线",
+            "双点划线",
+            "内直线"
+          ],
+          "defaultValue": 1
+        },
+        {
+          "name": "画出方式",
+          "englishName": "DrawRop2",
+          "description": "绘制内容与画板已有内容的组合方式（ROP2）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "黑色",
+            "非或笔",
+            "与非笔",
+            "非复制笔",
+            "与笔非",
+            "反转",
+            "异或笔",
+            "非与笔",
+            "与笔",
+            "非异或笔",
+            "无操作",
+            "或非笔",
+            "复制笔",
+            "或笔非",
+            "或笔",
+            "白色"
+          ],
+          "defaultValue": 12
+        },
+        {
+          "name": "画笔粗细",
+          "englishName": "PenWidth",
+          "description": "画笔粗细（现行绘画单位，0 表示 1 个像素点；虚线类画笔时始终为 1 像素）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "画笔颜色",
+          "englishName": "PenColor",
+          "description": "画笔颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "刷子类型",
+          "englishName": "BrushStyle",
+          "description": "填充图形时刷子的类型（格式刷子使用当前文本背景颜色作为背景）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "空刷子",
+            "颜色刷子",
+            "右斜线",
+            "直交叉线",
+            "斜交叉线",
+            "左斜线",
+            "横线",
+            "竖线",
+            "5%色点",
+            "10%色点",
+            "20%色点",
+            "25%色点",
+            "30%色点",
+            "40%色点",
+            "50%色点",
+            "60%色点",
+            "70%色点",
+            "75%色点",
+            "80%色点",
+            "90%色点",
+            "浅色上对角线",
+            "浅色下对角线",
+            "深色上对角线",
+            "深色下对角线",
+            "宽上对角线",
+            "宽下对角线",
+            "浅色竖线",
+            "浅色横线",
+            "窄竖线",
+            "窄横线",
+            "深色竖线",
+            "深色横线",
+            "上对角虚线",
+            "下对角虚线",
+            "横虚线",
+            "竖虚线",
+            "小纸屑",
+            "大纸屑",
+            "之字形",
+            "波浪线",
+            "对角砖形",
+            "横向砖形",
+            "纺织物",
+            "方格呢",
+            "草皮",
+            "虚格线",
+            "点式菱形",
+            "瓦形",
+            "棚架",
+            "球体",
+            "小网格",
+            "大网格",
+            "小棋盘",
+            "大棋盘",
+            "空心菱形",
+            "实心菱形"
+          ],
+          "defaultValue": 1
+        },
+        {
+          "name": "刷子颜色",
+          "englishName": "BrushColor",
+          "description": "刷子颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "文本颜色",
+          "englishName": "TextColor",
+          "description": "写出文本时的文本颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "文本背景颜色",
+          "englishName": "TextBackColor",
+          "description": "写出文本时的文本背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "写出文本时所用的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        }
+      ],
+      "events": [
+        {
+          "name": "绘画",
+          "description": "画板中的全部或一部分区域需要被重新绘制时触发（自动重画为假时产生）。",
+          "args": [
+            {
+              "name": "重画区左边",
+              "description": "需更新矩形区域的左边（现行绘画单位）。",
+              "dataType": "整数型",
+              "isByRef": false
+            },
+            {
+              "name": "重画区上边",
+              "description": "需更新矩形区域的顶边（现行绘画单位）。",
+              "dataType": "整数型",
+              "isByRef": false
+            },
+            {
+              "name": "重画区右边",
+              "description": "需更新矩形区域的右边（现行绘画单位）。",
+              "dataType": "整数型",
+              "isByRef": false
+            },
+            {
+              "name": "重画区下边",
+              "description": "需更新矩形区域的底边（现行绘画单位）。",
+              "dataType": "整数型",
+              "isByRef": false
+            }
+          ]
+        }
+      ],
       "icon": "icon/BlueIcons/PaintBrush_16x.png"
     },
     {
       "name": "选择列表框",
       "englishName": "ChkListBox",
       "description": "选择列表框控件。",
-      "className": "",
-      "style": "",
-      "properties": [],
+      "className": "LISTBOX",
+      "style": "WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_HASSTRINGS",
+      "properties": [
+        {
+          "name": "边框",
+          "englishName": "border",
+          "description": "列表框边框样式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无边框",
+            "凹入式",
+            "凸出式",
+            "浅凹入式",
+            "镜框式",
+            "单线边框式"
+          ],
+          "defaultValue": 1
+        },
+        {
+          "name": "自动排序",
+          "englishName": "sort",
+          "description": "列表项目是否按字母自动排序。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "多列",
+          "englishName": "MultiCol",
+          "description": "列表项目是否多列横向排布。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "行间距",
+          "englishName": "RowExtra",
+          "description": "各列表项目行之间的额外间距尺寸。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "单选",
+          "englishName": "OnlyPickOne",
+          "description": "是否只允许勾选一项列表项。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "列表项目文本的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "现行选中项",
+          "englishName": "CurSel",
+          "description": "当前被选中列表项的位置，从0开始，-1表示无选中。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": -1
+        },
+        {
+          "name": "列表项目",
+          "englishName": "",
+          "description": "各初始列表项目的文本。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "项目数值",
+          "englishName": "",
+          "description": "与各列表项目相关联的整数数值。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        }
+      ],
       "events": [],
       "icon": "icon/BlueIcons/CheckboxList_16x.png"
     },
@@ -1013,9 +3345,110 @@
       "name": "日期框",
       "englishName": "DatePicker",
       "description": "日期框控件。",
-      "className": "",
-      "style": "",
-      "properties": [],
+      "className": "SysDateTimePick32",
+      "style": "WS_CHILD | WS_TABSTOP",
+      "properties": [
+        {
+          "name": "允许编辑",
+          "englishName": "AllowEdit",
+          "description": "是否允许在日期框内用键盘直接编辑日期文本。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "附件类型",
+          "englishName": "SubType",
+          "description": "日期框的附件形式：下拉月历或右侧上下调节器。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "下拉月历",
+            "调节器"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "今天",
+          "englishName": "today",
+          "description": "指定或读取现行日期，如果不设定则自动取系统现行日期。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "最小日期",
+          "englishName": "MinDate",
+          "description": "可被选择或显示的最小日期。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "最大日期",
+          "englishName": "MaxDate",
+          "description": "可被选择或显示的最大日期。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "日期框显示文本的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "边框",
+          "englishName": "border",
+          "description": "日期框边框样式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无边框",
+            "凹入式",
+            "凸出式",
+            "浅凹入式",
+            "镜框式",
+            "单线边框式"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "数据源",
+          "englishName": "DataSource",
+          "description": "指定提供数据的数据源组件名。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "数据列",
+          "englishName": "DataCol",
+          "description": "指定数据源中的数据列，可以是列名或以 1 开始的列序号文本。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        }
+      ],
       "events": [],
       "icon": "icon/BlueIcons/DatePicker_16x.png"
     },
@@ -1023,9 +3456,225 @@
       "name": "月历",
       "englishName": "MonthCalendar",
       "description": "月历控件。",
-      "className": "",
-      "style": "",
-      "properties": [],
+      "className": "SysMonthCal32",
+      "style": "WS_CHILD",
+      "properties": [
+        {
+          "name": "不显示今天",
+          "englishName": "NoToday",
+          "description": "是否不在月历底部显示“今天”日期行。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "不圈注今天",
+          "englishName": "NoTodayCircel",
+          "description": "是否不在当天日期上画圈标注。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "开始星期首日",
+          "englishName": "StartOfWeek",
+          "description": "指定每周从哪一天开始。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "星期一",
+            "星期二",
+            "星期三",
+            "星期四",
+            "星期五",
+            "星期六",
+            "星期日"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "显示星期序号",
+          "englishName": "ShowWeekNumbers",
+          "description": "是否在左侧显示每周在一年中的序号。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "滚动月数",
+          "englishName": "ScrollRate",
+          "description": "按滚动按钮改变当前显示月时，一次跳过的月数。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "今天",
+          "englishName": "today",
+          "description": "指定现行日期；不设定则自动取系统当前日期。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "最小日期",
+          "englishName": "MinDate",
+          "description": "能被显示的最小日期。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "最大日期",
+          "englishName": "MaxDate",
+          "description": "能被显示的最大日期。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "允许选择多天",
+          "englishName": "AllowMultiSel",
+          "description": "是否允许选择连续多天。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "最多选择天数",
+          "englishName": "MaxSelCount",
+          "description": "允许选择的最大天数（允许选择多天时有效）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 7
+        },
+        {
+          "name": "首选择日",
+          "englishName": "MinSelDay",
+          "description": "现行被选择区域的首日期；不允许选择多天时即为当前选中日期。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "尾选择日",
+          "englishName": "MaxSelDay",
+          "description": "现行被选择区域的尾日期（不允许选择多天时无效）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "月历文字所用字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "文本颜色",
+          "englishName": "TextColor",
+          "description": "日期文字颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "背景颜色",
+          "englishName": "BackColor",
+          "description": "组件整体背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "内背景颜色",
+          "englishName": "MonthBackColor",
+          "description": "实际显示月历部分（日期网格）的背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "标题颜色",
+          "englishName": "TitleColor",
+          "description": "标题（月份年份）文字颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "标题背景颜色",
+          "englishName": "TitleBackColor",
+          "description": "标题栏背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "非本月颜色",
+          "englishName": "TrailingColor",
+          "description": "非本月（上下月补位）日期的文字颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "边框",
+          "englishName": "border",
+          "description": "组件边框样式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无边框",
+            "凹入式",
+            "凸出式",
+            "浅凹入式",
+            "镜框式",
+            "单线边框式"
+          ],
+          "defaultValue": 0
+        }
+      ],
       "events": [],
       "icon": "icon/BlueIcons/MonthCalendar_16x.png"
     },
@@ -1073,9 +3722,110 @@
       "name": "超级链接框",
       "englishName": "HyperLinker",
       "description": "超级链接框控件。",
-      "className": "",
-      "style": "",
-      "properties": [],
+      "className": "SysLink",
+      "style": "WS_CHILD | WS_TABSTOP",
+      "properties": [
+        {
+          "name": "类型",
+          "englishName": "type",
+          "description": "链接类型：决定点击/跳转时打开电子信箱地址还是 Internet 地址。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "电子信箱地址",
+            "Internet地址"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "电子信箱地址",
+          "englishName": "email",
+          "description": "当“类型”为“电子信箱地址”时，点击或调用“跳转”所打开的邮件地址。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "Internet地址",
+          "englishName": "url",
+          "description": "当“类型”为“Internet地址”时，点击或调用“跳转”所打开的网址。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "文本颜色",
+          "englishName": "TextColor",
+          "description": "正常状态下的链接文本颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "访问后的颜色",
+          "englishName": "VisitedColor",
+          "description": "链接被点击访问过后的文本颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "热点颜色",
+          "englishName": "HotColor",
+          "description": "鼠标悬停在链接上时的文本颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        },
+        {
+          "name": "背景颜色",
+          "englishName": "BackColor",
+          "description": "链接框背景颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 16777215
+        },
+        {
+          "name": "边框",
+          "englishName": "border",
+          "description": "链接框边框样式。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "无边框",
+            "凹入式",
+            "凸出式",
+            "浅凹入式",
+            "镜框式",
+            "单线边框式"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "字体",
+          "englishName": "font",
+          "description": "链接文本的字体。",
+          "type": 0,
+          "typeName": "字体",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        }
+      ],
       "events": [],
       "icon": "icon/BlueIcons/LinkButton_16x.png"
     },
@@ -1105,7 +3855,18 @@
       "description": "时钟控件。",
       "className": "",
       "style": "",
-      "properties": [],
+      "properties": [
+        {
+          "name": "时钟周期",
+          "englishName": "elapse",
+          "description": "指定时钟事件产生的周期，单位为毫秒；设为 0 则不产生时钟事件（即停用定时器）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0
+        }
+      ],
       "events": [],
       "icon": "icon/BlueIcons/Timer_16x.png"
     },

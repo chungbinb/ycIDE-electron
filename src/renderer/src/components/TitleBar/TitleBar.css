@@ -3,7 +3,7 @@
   align-items: center;
   justify-content: space-between;
   height: var(--titlebar-height);
-  background: var(--titlebar-bg);
+  background: var(--titlebar-bg-gradient, var(--titlebar-bg));
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }

@@ -133,6 +133,8 @@ interface EycTableEditorProps {
   projectGlobalVars?: Array<{ name: string; type: string }>
   windowControlNames?: string[]
   windowControlTypes?: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>
+  // 项目内所有窗口的控件+子程序（供跨窗口成员补全：在本窗口代码里引用另一窗口名）
+  projectWindows?: Array<{ name: string; controls: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>; subs: string[] }>
   windowUnits?: LibWindowUnit[]
   projectConstants?: Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>
   projectDllCommands?: Array<{ name: string; returnType: string; description: string; params: CompletionParam[]; isIndirect?: boolean }>
@@ -300,7 +302,7 @@ function ensureMinimalFlowBodies(lines: string[]): string[] {
   return out
 }
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onGlobalUndo, onGlobalRedo, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>(), diffDeletedTextAfterLines, showVarSummaryPanel = true }, ref) {
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], projectWindows = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onGlobalUndo, onGlobalRedo, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>(), diffDeletedTextAfterLines, showVarSummaryPanel = true }, ref) {
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
@@ -419,6 +421,39 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   // 粘贴入口经 ref 取最新选区（覆盖粘贴语义），避免把选区塞进各粘贴回调的依赖
   const selectedLinesRef = useRef(selectedLines)
   useEffect(() => { selectedLinesRef.current = selectedLines }, [selectedLines])
+
+  // 悬停命令说明窗（照易语言）：鼠标停在命令名上稍候弹出签名+解释的浮动提示
+  const [cmdHoverTip, setCmdHoverTip] = useState<{ cmd: CompletionItem; x: number; y: number } | null>(null)
+  const cmdHoverTimerRef = useRef<number | null>(null)
+  const clearCmdHoverTip = useCallback(() => {
+    if (cmdHoverTimerRef.current !== null) {
+      window.clearTimeout(cmdHoverTimerRef.current)
+      cmdHoverTimerRef.current = null
+    }
+    setCmdHoverTip(prev => (prev ? null : prev))
+  }, [])
+  const resolveHoverCommand = useCallback((spanText: string, isMember: boolean): CompletionItem | null => {
+    const raw = (spanText || '').trim()
+    if (!raw) return null
+    if (isMember) {
+      const tail = raw.split(/[.．。]/).pop() || ''
+      return memberCommandsRef.current.find(c => c.name === tail) || null
+    }
+    return allCommandsRef.current.find(c => c.name === raw)
+      || dllCompletionItemsRef.current.find(c => c.name === raw)
+      || null
+  }, [])
+  const scheduleCmdHoverTip = useCallback((e: React.MouseEvent, spanText: string, isMember: boolean) => {
+    const target = e.currentTarget as HTMLElement
+    if (cmdHoverTimerRef.current !== null) window.clearTimeout(cmdHoverTimerRef.current)
+    cmdHoverTimerRef.current = window.setTimeout(() => {
+      cmdHoverTimerRef.current = null
+      const cmd = resolveHoverCommand(spanText, isMember)
+      if (!cmd) return
+      const rect = target.getBoundingClientRect()
+      setCmdHoverTip({ cmd, x: rect.left, y: rect.bottom + 4 })
+    }, 420)
+  }, [resolveHoverCommand])
   const [editorContextMenu, setEditorContextMenu] = useState<{ x: number; y: number; lineIndex: number | null } | null>(null)
   const [contextMenuCanPaste, setContextMenuCanPaste] = useState(false)
   const dragAnchor = useRef<number | null>(null)  // 拖选起点行号
@@ -835,6 +870,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const onScroll = (): void => {
       scheduleMinimapViewportUpdate()
       scheduleVisibleLineWindowUpdate()
+      clearCmdHoverTip()
     }
     wrapper.addEventListener('scroll', onScroll, { passive: true })
     const onResize = (): void => {
@@ -863,7 +899,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       window.removeEventListener('resize', onResize)
       resizeObserver?.disconnect()
     }
-  }, [scheduleMinimapViewportUpdate, scheduleVisibleLineWindowUpdate])
+  }, [scheduleMinimapViewportUpdate, scheduleVisibleLineWindowUpdate, clearCmdHoverTip])
 
   const focusWrapper = useCallback(() => {
     const wrapper = wrapperRef.current
@@ -1701,6 +1737,20 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return map
   }, [windowControlTypes])
 
+  // 项目内所有窗口 名称→{控件,子程序}，供跨窗口成员补全（引用别的窗口名）。
+  const projectWindowMemberMap = useMemo(() => {
+    const map = new Map<string, { controls: Array<{ name: string; type: string }>; subs: string[] }>()
+    for (const w of projectWindows) {
+      const name = (w?.name || '').trim()
+      if (!name) continue
+      map.set(name, {
+        controls: (w.controls || []).map(c => ({ name: (c.name || '').trim(), type: (c.type || '').trim() })).filter(c => c.name),
+        subs: (w.subs || []).map(s => (s || '').trim()).filter(Boolean),
+      })
+    }
+    return map
+  }, [projectWindows])
+
   const parsedLinesForCurrentText = useMemo(() => parseLines(currentText), [currentText])
 
   const userVarTypeMap = useMemo(() => {
@@ -1957,6 +2007,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         classMethodMap,
         memberCommands: memberCommandsRef.current,
         allCommands: allCommandsRef.current,
+        windowSubNames: userSubNamesRef.current,
+        projectWindowMemberMap,
       },
     })
 
@@ -2176,8 +2228,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     // 中文输入法里的单引号起始（‘/’）按注释前缀处理。
     next = next.replace(/^(\s*)[‘’]/, "$1'")
 
-    // 统一为 `'<space>注释内容`，便于后续自动排版。
-    next = next.replace(/^(\s*)'(?!\s|$)/, "$1' ")
+    // 注意：`'` 后的空格归一（'内容 → ' 内容）只在编辑结束落盘时做（formatCommandLine），
+    // 编辑期间强补会把「删除该空格」的操作立即还原，光标行为诡异（删不掉的空格）。
 
     return next
   }, [])
@@ -2185,7 +2237,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   /** 代码行编辑结束时自动补全括号（格式化命令），返回 [主行, ...需要插入的后续行] */
   const formatCommandLine = useCallback((val: string, options?: { preferJudgeBranch?: boolean }): string[] => {
     const trimmed = val.trimStart()
-    if (!trimmed || trimmed.startsWith("'")) return [val]
+    if (!trimmed) return [val]
+    if (trimmed.startsWith("'")) {
+      // 注释落盘时统一为 `'<space>内容`（编辑期间不强补，删空格才能真删掉）
+      return [val.replace(/^(\s*)'(?!\s|$)/, "$1' ")]
+    }
 
     // 赋值表达式：identifier = expr → 格式化运算符
     const assignM = trimmed.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)\s*(?:=(?!=)|＝)/)
@@ -7551,7 +7607,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             return (
               <div
                 key={bi}
-                className="eyc-block-row"
+                className={`eyc-block-row${blk.tableType === 'localVar' ? ' eyc-localvar-block' : ''}`}
                 onMouseDown={(e) => handleTableBlockMouseDown(e, tableLineIndices)}
               >
                 <div className="eyc-line-gutter">
@@ -7900,6 +7956,16 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           }
                         }
                         const v = normalizeCodeLineInput(raw)
+                        if (v !== raw && v === old) {
+                          // 归一化把用户的修改完全还原（如删掉注释 ' 后的空格立即被补回）：
+                          // state 不变不会触发受控重渲染，若走常规路径，liveUpdate 改文档后的
+                          // 回流才把 DOM 同步回 v，届时光标被重置到行尾。这里直接写回 DOM 并复位光标。
+                          e.target.value = v
+                          const pos = normalizeCodeLineInput(raw.slice(0, rawPos)).length
+                          e.target.setSelectionRange(pos, pos)
+                          updateCompletion(v, pos)
+                          return
+                        }
                         setEditVal(v)
                         scheduleLiveUpdate(v)
                         // 归一化改写了输入值（如 “”→"）时，受控 input 会把光标重置到末尾，
@@ -7964,10 +8030,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           const displayText = (shouldAliasJudgeStartInTableMode && isFlowKw && s.text === '判断开始') ? '判断' : s.text
                           if (isFunc || isObjMethod || isFlowKw || isAssignTarget) {
                             const className = `${isAssignTarget ? 'Variablescolor' : (isUserSubRef ? 'eyc-subrefcolor' : s.cls)}${(isInvalid || isLineSyntaxInvalid) ? ' eyc-cmd-invalid' : ''}`
+                            const hoverable = (isFunc || isObjMethod) && !isUserSubRef && !isInvalid
                             return (
                               <span
                                 key={si}
                                 className={className}
+                                onMouseEnter={hoverable ? (e) => scheduleCmdHoverTip(e, s.text, isObjMethod) : undefined}
+                                onMouseLeave={hoverable ? clearCmdHoverTip : undefined}
                               >{renderDebugAwareSpan(displayText, className, `code-${blk.lineIndex}-${si}`)}</span>
                             )
                           }
@@ -7975,7 +8044,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           const isUndefinedVarRef = s.cls === '' && hasCommandCatalog
                             && /^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(s.text)
                             && !validCommandNames.has(s.text) && !allKnownVarNames.has(s.text) && !reservedNameSet.has(s.text)
-                          const className = `${s.cls}${(isLineSyntaxInvalid || isUndefinedVarRef) ? ' eyc-cmd-invalid' : ''}`
+                          // 已知变量的引用上变量色、数字字面量上数字色（主题「变量/数字」token 生效）
+                          const refCls = s.cls === '' && allKnownVarNames.has(s.text) ? 'Variablescolor'
+                            : s.cls === '' && /^[0-9０-９]+(?:[.．][0-9０-９]+)?$/.test(s.text.trim()) && s.text.trim() !== '' ? 'eyc-numcolor'
+                            : s.cls
+                          const className = `${refCls}${(isLineSyntaxInvalid || isUndefinedVarRef) ? ' eyc-cmd-invalid' : ''}`
                           return <span key={si} className={className}>{renderDebugAwareSpan(displayText, className, `code-${blk.lineIndex}-${si}`)}</span>
                         })}
                       </>
@@ -8508,6 +8581,34 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           })()}
         </div>
       )}
+      {cmdHoverTip && (() => {
+        const cmd = cmdHoverTip.cmd
+        const sig = cmd.params.map(p => {
+          const core = `${p.type} ${p.name}`
+          return p.optional ? `［${core}］` : core
+        }).join('，')
+        // 防右溢出：贴视口右缘回收
+        const maxLeft = Math.max(8, window.innerWidth - 560)
+        return (
+          <div
+            className="eyc-cmd-hover-tip"
+            ref={(element) => setCssVars(element, {
+              '--eyc-cmd-hover-left': `${Math.min(cmdHoverTip.x, maxLeft)}px`,
+              '--eyc-cmd-hover-top': `${cmdHoverTip.y}px`,
+            })}
+          >
+            <div className="eyc-cmd-hover-sig">
+              {cmd.returnType ? <span className="eyc-cmd-hover-type">&lt;{cmd.returnType}&gt;</span> : null}
+              <span className="eyc-cmd-hover-name"> {cmd.name} </span>
+              <span>（</span>
+              <span className="eyc-cmd-hover-params">{sig}</span>
+              <span>）</span>
+              {cmd.libraryName ? <span className="eyc-cmd-hover-lib"> - {cmd.libraryName}</span> : null}
+            </div>
+            {cmd.description && <div className="eyc-cmd-hover-desc">解释：{cmd.description}</div>}
+          </div>
+        )
+      })()}
       {editorContextMenu && (
         <div
           className="eyc-editor-context-menu"

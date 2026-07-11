@@ -33,7 +33,7 @@ import {
   type ThemeTokenPayload
 } from '../../shared/theme'
 import { createThemeDraftSession, type ThemeDraftSession } from '../../shared/theme-draft'
-import { THEME_TOKEN_GROUPS, type FlowLineMode, type FlowLineMultiConfig, type ThemeTokenGroupId } from '../../shared/theme-tokens'
+import { THEME_TOKEN_GROUPS, DEFAULT_THEME_GROUP_GRADIENT, buildThemeGradientCss, type FlowLineMode, type FlowLineMultiConfig, type ThemeGradientsConfig, type ThemeGradientType, type ThemeTokenGroupId } from '../../shared/theme-tokens'
 import { DEFAULT_IDE_SETTINGS, resolveIDESettings, type IDESettings } from '../../shared/settings'
 import { useUiLayoutStore } from './stores/uiLayoutStore'
 import { useSettingsStore } from './stores/settingsStore'
@@ -796,6 +796,9 @@ function App(): React.JSX.Element {
   const [themeTokenValues, setThemeTokenValues] = useState<Record<string, string>>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.tokenValues })
   const [themeFlowLine, setThemeFlowLine] = useState<ThemeTokenPayload['flowLine']>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.flowLine })
   const [themeIconConfig, setThemeIconConfig] = useState<ThemeTokenPayload['icon']>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.icon })
+  const [themeGradients, setThemeGradients] = useState<ThemeGradientsConfig>({})
+  // 上次主题写入根节点的颜色键集：切换到键更少的主题时清掉多余键，避免残留上一主题的值
+  const appliedThemeColorKeysRef = useRef<Set<string>>(new Set())
   const [themeDraftSession, setThemeDraftSession] = useState<ThemeDraftSession | null>(null)
   const [themeSaveFeedback, setThemeSaveFeedback] = useState<string | null>(null)
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
@@ -1636,6 +1639,28 @@ function App(): React.JSX.Element {
     }
   }, [])
 
+  // 分组渐变应用：为每个 token 生成 `<token>-gradient`（背景/文字消费点回落纯色）与
+  // `<token>-fill`（文字渐变经 background-clip:text 时置 transparent）；关闭时移除即回落纯色。
+  const applyThemeGradientsToRoot = useCallback((gradients: ThemeGradientsConfig, tokenValues: Record<string, string>) => {
+    const root = document.documentElement
+    for (const group of THEME_TOKEN_GROUPS) {
+      const cfg = gradients[group.id]
+      for (const item of group.items) {
+        const gradientKey = `${item.tokenKey}-gradient`
+        const fillKey = `${item.tokenKey}-fill`
+        if (cfg?.enabled) {
+          const main = tokenValues[item.tokenKey] || '#000000'
+          const second = cfg.secondColors[item.tokenKey] || main
+          root.style.setProperty(gradientKey, buildThemeGradientCss(cfg.type, second, main))
+          root.style.setProperty(fillKey, 'transparent')
+        } else {
+          root.style.removeProperty(gradientKey)
+          root.style.removeProperty(fillKey)
+        }
+      }
+    }
+  }, [])
+
   const applyFlowLineConfigToRoot = useCallback((flowLine: ThemeTokenPayload['flowLine']) => {
     const root = document.documentElement
     const mode = flowLine.mode === 'multi' ? 'multi' : 'single'
@@ -1679,10 +1704,24 @@ function App(): React.JSX.Element {
 
     // 内置主题始终以主题文件色值为准，避免历史 payload 覆盖标题栏等关键令牌。
     if (isBuiltinThemeId(name)) {
-      payload = resolveThemeTokenPayload({ tokenValues: theme.colors, flowLine: payload.flowLine, icon: payload.icon }, theme.colors)
+      payload = resolveThemeTokenPayload({ tokenValues: theme.colors, flowLine: payload.flowLine, icon: payload.icon, gradients: payload.gradients }, theme.colors)
+    }
+
+    // 主题文件自带渐变：该主题尚无用户渐变配置时作为初始值（用户改过则以其为准）
+    if ((!payload.gradients || Object.keys(payload.gradients).length === 0) && theme.gradients) {
+      payload = resolveThemeTokenPayload({ ...payload, gradients: theme.gradients }, theme.colors)
     }
 
     const root = document.documentElement
+    // 键集不同的主题切换（如 59 键 → 31 键）会把上一主题多出的界面变量留在根上，
+    // 表现为切主题后局部残留旧配色、重启才恢复——先清掉新主题没有的旧键。
+    const nextColorKeys = new Set(Object.keys(theme.colors))
+    for (const staleKey of appliedThemeColorKeysRef.current) {
+      if (!nextColorKeys.has(staleKey)) {
+        try { root.style.removeProperty(staleKey) } catch { /* ignore */ }
+      }
+    }
+    appliedThemeColorKeysRef.current = nextColorKeys
     let appliedCount = 0
     for (const [key, value] of Object.entries(theme.colors)) {
       try {
@@ -1694,9 +1733,11 @@ function App(): React.JSX.Element {
     }
     applyThemeTokenValuesToRoot(payload.tokenValues)
     applyFlowLineConfigToRoot(payload.flowLine)
+    applyThemeGradientsToRoot(payload.gradients || {}, payload.tokenValues)
     setThemeTokenValues(payload.tokenValues)
     setThemeFlowLine(payload.flowLine)
     setThemeIconConfig(payload.icon)
+    setThemeGradients(payload.gradients || {})
     setCurrentTheme(name)
 
     const missingRequired = REQUIRED_THEME_COLOR_KEYS.filter(key => !(key in theme.colors))
@@ -1708,7 +1749,7 @@ function App(): React.JSX.Element {
     }
     if (themeRepairMessage) setThemeRepairMessage(null)
     return payload
-  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, persistCurrentThemePayload, pushThemeNotice, themeRepairMessage])
+  }, [applyFlowLineConfigToRoot, applyThemeGradientsToRoot, applyThemeTokenValuesToRoot, persistCurrentThemePayload, pushThemeNotice, themeRepairMessage])
 
   const syncThemeLifecycleState = useCallback(async (
     payload: ThemeLifecycleSyncPayload,
@@ -1726,16 +1767,18 @@ function App(): React.JSX.Element {
   const applyThemeDraftChange = useCallback((nextThemePayload: ThemeTokenPayload, targetThemeId?: string) => {
     const workingThemeId = targetThemeId || currentTheme
     if (!workingThemeId) return
-    const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, themeTokenValues)
+    const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues)
     if (!themeDraftSession) {
       setThemeDraftSession(createThemeDraftSession(workingThemeId, payload))
     }
     const nextPayload = resolveThemeTokenPayload(nextThemePayload, nextThemePayload.tokenValues)
     applyThemeTokenValuesToRoot(nextPayload.tokenValues)
     applyFlowLineConfigToRoot(nextPayload.flowLine)
+    applyThemeGradientsToRoot(nextPayload.gradients || {}, nextPayload.tokenValues)
     setThemeTokenValues(nextPayload.tokenValues)
     setThemeFlowLine(nextPayload.flowLine)
     setThemeIconConfig(nextPayload.icon)
+    setThemeGradients(nextPayload.gradients || {})
     setThemeDraftSession(prev => {
       const baseSession = prev ?? createThemeDraftSession(workingThemeId, payload)
       const nextHistory = baseSession.history
@@ -1750,7 +1793,7 @@ function App(): React.JSX.Element {
         historyCursor: nextHistory.length - 1,
       }
     })
-  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, themeDraftSession, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, themeDraftSession, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const buildAutoCopiedThemeName = useCallback((baseThemeId: string): string => {
     const normalizedBase = `${baseThemeId}-副本`
@@ -1771,7 +1814,7 @@ function App(): React.JSX.Element {
     const saveResult = await window.api?.theme?.saveAsCustom({
       name: autoThemeName,
       sourceThemeId: currentTheme,
-      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, themeTokenValues),
+      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues),
     }) as SaveAsCustomThemeResult | undefined
     if (!saveResult) {
       setThemeSaveFeedback('创建内置主题副本失败，请稍后重试。')
@@ -1792,7 +1835,7 @@ function App(): React.JSX.Element {
     setThemeDraftSession(createThemeDraftSession(saveResult.themeId, payload))
     setThemeSaveFeedback(`已自动基于“${currentTheme}”创建可编辑副本“${saveResult.themeId}”。`)
     return saveResult.themeId
-  }, [applyTheme, buildAutoCopiedThemeName, currentTheme, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyTheme, buildAutoCopiedThemeName, currentTheme, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const canUndoThemeDraft = (themeDraftSession?.historyCursor ?? 0) > 0
 
@@ -1838,10 +1881,10 @@ function App(): React.JSX.Element {
       const editableThemeId = await ensureEditableThemeId()
       if (!editableThemeId) return
       const nextTokenValues = { ...themeTokenValues, [tokenKey]: value }
-      const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, nextTokenValues)
+      const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, nextTokenValues)
       applyThemeDraftChange(payload, editableThemeId)
     })()
-  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeFlowLineModeChange = useCallback((mode: FlowLineMode) => {
     void (async () => {
@@ -1857,10 +1900,10 @@ function App(): React.JSX.Element {
       for (const tokenKey of FLOW_LINE_TOKEN_KEYS) {
         nextTokenValues[tokenKey] = currentMainColor
       }
-      const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine, icon: themeIconConfig }, nextTokenValues)
+      const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine, icon: themeIconConfig, gradients: themeGradients }, nextTokenValues)
       applyThemeDraftChange(payload, editableThemeId)
     })()
-  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeFlowLineMainColorChange = useCallback((value: string) => {
     void (async () => {
@@ -1873,10 +1916,10 @@ function App(): React.JSX.Element {
       for (const tokenKey of FLOW_LINE_TOKEN_KEYS) {
         nextTokenValues[tokenKey] = value
       }
-      const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine, icon: themeIconConfig }, nextTokenValues)
+      const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine, icon: themeIconConfig, gradients: themeGradients }, nextTokenValues)
       applyThemeDraftChange(payload, editableThemeId)
     })()
-  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeFlowLineDepthStepChange = useCallback((key: keyof FlowLineMultiConfig, value: number) => {
     if (!Number.isFinite(value)) return
@@ -1890,10 +1933,10 @@ function App(): React.JSX.Element {
           [key]: value,
         },
       }
-      const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: nextFlowLine, icon: themeIconConfig }, themeTokenValues)
+      const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: nextFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues)
       applyThemeDraftChange(payload, editableThemeId)
     })()
-  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handlePreserveToolbarIconOriginalColorsChange = useCallback((value: boolean) => {
     void (async () => {
@@ -1912,7 +1955,7 @@ function App(): React.JSX.Element {
       )
       applyThemeDraftChange(payload, editableThemeId)
     })()
-  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeTokenResetItem = useCallback(async (_groupId: ThemeTokenGroupId, tokenKey: string) => {
     const editableThemeId = await ensureEditableThemeId()
@@ -1920,9 +1963,27 @@ function App(): React.JSX.Element {
     const defaults = await getDefaultThemePayload(editableThemeId)
     const resetValue = defaults.tokenValues[tokenKey] || themeTokenValues[tokenKey] || '#000000'
     const nextTokenValues = { ...themeTokenValues, [tokenKey]: resetValue }
-    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, nextTokenValues)
+    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, nextTokenValues)
     applyThemeDraftChange(payload, editableThemeId)
-  }, [applyThemeDraftChange, ensureEditableThemeId, getDefaultThemePayload, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, getDefaultThemePayload, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
+
+  // 分组渐变配置变更（开关/类型/某行第二色），走草稿链路实时预览
+  const handleThemeGradientChange = useCallback((groupId: ThemeTokenGroupId, patch: { enabled?: boolean; type?: ThemeGradientType; secondColor?: { tokenKey: string; value: string } }) => {
+    void (async () => {
+      const editableThemeId = await ensureEditableThemeId()
+      if (!editableThemeId) return
+      const prev = themeGradients[groupId] || DEFAULT_THEME_GROUP_GRADIENT
+      const next = {
+        enabled: patch.enabled ?? prev.enabled,
+        type: patch.type ?? prev.type,
+        secondColors: { ...prev.secondColors },
+      }
+      if (patch.secondColor) next.secondColors[patch.secondColor.tokenKey] = patch.secondColor.value
+      const nextGradients = { ...themeGradients, [groupId]: next }
+      const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: nextGradients }, themeTokenValues)
+      applyThemeDraftChange(payload, editableThemeId)
+    })()
+  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeTokenResetGroup = useCallback(async (groupId: ThemeTokenGroupId) => {
     if (!window.confirm('确定重置该分组令牌吗?')) return
@@ -1953,9 +2014,12 @@ function App(): React.JSX.Element {
       }
     }
 
-    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine, icon: themeIconConfig }, nextTokenValues)
+    // 重置本组同时关闭该组渐变
+    const nextGradients = { ...themeGradients }
+    delete nextGradients[groupId]
+    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine, icon: themeIconConfig, gradients: nextGradients }, nextTokenValues)
     applyThemeDraftChange(payload, editableThemeId)
-  }, [applyThemeDraftChange, ensureEditableThemeId, getDefaultThemePayload, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, getDefaultThemePayload, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeTokenResetAll = useCallback(async () => {
     if (!window.confirm('确定恢复全部主题令牌默认值吗?')) return
@@ -1986,8 +2050,8 @@ function App(): React.JSX.Element {
   }, [handleThemeSelect])
 
   const getCurrentThemePayloadForManager = useCallback(() => (
-    resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, themeTokenValues)
-  ), [themeFlowLine, themeIconConfig, themeTokenValues])
+    resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues)
+  ), [themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeManagerCreateFromCurrent = useCallback(async (name: string): Promise<{ success: boolean; message?: string }> => {
     const validation = validateCustomThemeName(name)
@@ -2087,7 +2151,7 @@ function App(): React.JSX.Element {
     if (themeId !== currentTheme) {
       return { success: false, message: '请先将该主题设为当前，再进行保存。' }
     }
-    const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, themeTokenValues)
+    const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues)
     const config = await window.api?.theme?.saveCurrent(themeId, payload)
     if (!config) {
       return { success: false, message: '保存主题失败，请稍后重试。' }
@@ -2095,7 +2159,7 @@ function App(): React.JSX.Element {
     setThemeDraftSession(createThemeDraftSession(themeId, payload))
     setThemeSaveFeedback(null)
     return { success: true, message: `主题“${themeId}”已保存。` }
-  }, [currentTheme, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [currentTheme, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeManagerSaveAsTheme = useCallback(async (sourceThemeId: string, name: string): Promise<{ success: boolean; message?: string }> => {
     if (!sourceThemeId) return { success: false, message: '请选择要另存为的主题。' }
@@ -2112,7 +2176,7 @@ function App(): React.JSX.Element {
     const saveResult = await window.api?.theme?.saveAsCustom({
       name: validation.normalizedName,
       sourceThemeId,
-      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, themeTokenValues),
+      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues),
     }) as SaveAsCustomThemeResult | undefined
     if (!saveResult) {
       const message = '保存主题失败，请稍后重试。'
@@ -2136,7 +2200,7 @@ function App(): React.JSX.Element {
     setThemeDraftSession(createThemeDraftSession(saveResult.themeId, payload))
     setThemeSaveFeedback(null)
     return { success: true, message: `已另存为“${saveResult.themeId}”。` }
-  }, [applyTheme, currentTheme, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyTheme, currentTheme, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeManagerImportPrepare = useCallback(async (): Promise<ThemeManagerImportPrepareResult> => {
     const testImportPrepare = (window as Window & {
@@ -2220,7 +2284,7 @@ function App(): React.JSX.Element {
     const saveResult = await window.api?.theme?.saveAsCustom({
       name: validation.normalizedName,
       sourceThemeId: currentTheme,
-      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, themeTokenValues),
+      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues),
     }) as SaveAsCustomThemeResult | undefined
     if (!saveResult) {
       const message = '保存主题失败，请稍后重试。'
@@ -2244,7 +2308,7 @@ function App(): React.JSX.Element {
     setThemeDraftSession(createThemeDraftSession(saveResult.themeId, payload))
     setThemeSaveFeedback(null)
     return { success: true }
-  }, [applyTheme, currentTheme, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyTheme, currentTheme, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeSettingsClose = useCallback(() => {
     setThemeDraftSession(null)
@@ -4458,7 +4522,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.4-beta.9（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.5-beta.3（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -5728,6 +5792,8 @@ function App(): React.JSX.Element {
         onSelectTheme={async (themeId) => { await handleThemeManagerPreviewTheme(themeId) }}
         onApplyTheme={async (themeId) => { await handleThemeManagerApplyTheme(themeId) }}
         onTokenChange={handleThemeTokenChange}
+        gradients={themeGradients}
+        onGradientChange={handleThemeGradientChange}
         onFlowLineModeChange={handleThemeFlowLineModeChange}
         onFlowLineMainColorChange={handleThemeFlowLineMainColorChange}
         onFlowLineDepthStepChange={handleThemeFlowLineDepthStepChange}

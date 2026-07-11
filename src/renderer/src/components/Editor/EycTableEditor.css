@@ -458,32 +458,32 @@ td.eyc-cell-bool-focus {
 
 /* 行选中高亮 */
 .eyc-line-selected {
-  background-color: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 .eyc-line-selected .eyc-gutter-linenum {
   color: var(--table-header-text, var(--text-primary, #e0e0e0));
 }
 .eyc-gutter-cell.eyc-line-selected {
-  background-color: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 /* 选中行时覆盖 gutter 的不透明背景，保持选中色可见 */
 .eyc-block-row.eyc-line-selected > .eyc-line-gutter {
-  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 
 /* 正在编辑（获得焦点）的行：焦点背景，gutter 一并着色（与行选中同款焦点色） */
 .eyc-line-editing {
-  background-color: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 .eyc-gutter-cell.eyc-line-editing {
-  background-color: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 .eyc-block-row.eyc-line-editing > .eyc-line-gutter {
-  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 /* 调试/diff 高亮行的 gutter 保持对应背景 */
 .eyc-debug-line > .eyc-line-gutter {
-  background: var(--table-row-hover-bg, var(--bg-hover, rgba(78, 201, 176, 0.12)));
+  background: var(--table-row-hover-bg-gradient, var(--table-row-hover-bg, var(--bg-hover, rgba(78, 201, 176, 0.12))));
 }
 .eyc-block-row-wrap.eyc-diff-highlight > .eyc-line-gutter {
   /* 行背景已由 .eyc-block-row-wrap.eyc-diff-highlight 提供，此处保持透明避免 26% 绿叠加变深 */
@@ -580,7 +580,7 @@ td.eyc-cell-bool-focus {
 }
 
 .eyc-debug-line .eyc-code-line {
-  background-color: var(--table-row-hover-bg, var(--bg-hover, rgba(78, 201, 176, 0.12)));
+  background: var(--table-row-hover-bg-gradient, var(--table-row-hover-bg, var(--bg-hover, rgba(78, 201, 176, 0.12))));
 }
 
 .eyc-debug-line .eyc-gutter-linenum {
@@ -1180,7 +1180,7 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 }
 .eyc-param-expand-inner {
   --vline-offset: calc(-20px + 1.5ch);
-  background: var(--table-header-bg, var(--bg-secondary, #252526));
+  background: var(--table-header-bg-gradient, var(--table-header-bg, var(--bg-secondary, #252526)));
   border-left: none;
   margin: 0 0 2px 0;
   padding: 2px 8px;
@@ -1337,7 +1337,7 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 
 /* ===== 默认配色 (ebackcolor1 暗色适配) ===== */
 .ebackcolor1 {
-  background: var(--table-bg, var(--bg-primary, #1e1e1e));
+  background: var(--table-bg-gradient, var(--table-bg, var(--bg-primary, #1e1e1e)));
   color: var(--table-text, var(--text-primary, #d4d4d4));
 }
 
@@ -1371,19 +1371,19 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   cursor: pointer;
 }
 .eyc-data-row:hover {
-  background: var(--table-row-hover-bg, var(--bg-hover, rgba(255, 255, 255, 0.04)));
+  background: var(--table-row-hover-bg-gradient, var(--table-row-hover-bg, var(--bg-hover, rgba(255, 255, 255, 0.04))));
 }
 .eyc-data-row.eyc-line-selected {
-  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 .eyc-data-row.eyc-line-selected:hover {
-  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 /* Rowheight 在 td 上定义了默认背景；选中时需要覆盖到单元格本体，
    否则会出现“只有行号区和右侧补色有选中背景”。 */
 .eyc-data-row.eyc-line-selected > td.Rowheight,
 .eyc-data-row.eyc-line-selected:hover > td.Rowheight {
-  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 /* 保持表格本身不拉伸，只给选中行右侧空白区域补背景 */
 .eyc-data-row.eyc-line-selected > td:last-child {
@@ -1396,18 +1396,18 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   top: -1px;
   bottom: -1px;
   width: 100vw;
-  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
   pointer-events: none;
 }
 
 /* 正在编辑（获得焦点）的表格行：与选中同款焦点背景（含 td 本体覆盖与右侧补色） */
 .eyc-data-row.eyc-line-editing,
 .eyc-data-row.eyc-line-editing:hover {
-  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 .eyc-data-row.eyc-line-editing > td.Rowheight,
 .eyc-data-row.eyc-line-editing:hover > td.Rowheight {
-  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 .eyc-data-row.eyc-line-editing > td:last-child {
   position: relative;
@@ -1419,7 +1419,7 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   top: -1px;
   bottom: -1px;
   width: 100vw;
-  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
   pointer-events: none;
 }
 
@@ -1427,13 +1427,13 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 /* 默认表头（子程序、常量、DLL等）— 灰绿色 */
 .eHeadercolor {
   color: var(--table-header-text, var(--text-primary, #e0e0e0));
-  background-color: var(--table-header-bg, var(--bg-secondary, #2d3a2d));
+  background: var(--table-header-bg-gradient, var(--table-header-bg, var(--bg-secondary, #2d3a2d)));
 }
 
 /* 变量表头 — 蓝色 */
 .eVariableheadcolor {
   color: var(--table-header-text, var(--text-primary, #e0e0e0));
-  background-color: var(--table-header-bg, var(--bg-secondary, #263545));
+  background: var(--table-header-bg-gradient, var(--table-header-bg, var(--bg-secondary, #263545)));
 }
 
 /* 程序集表头 — 深灰 */
@@ -1445,13 +1445,19 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 /* ===== 单元格文字颜色 ===== */
 
 /* 自定义类型/子程序名称 — 藏蓝色 */
+/* 程序集名/子程序名单元格 — 表格内容文本色（主题「表格文本」，回落编辑器文本色） */
 .eProcolor {
-  color: var(--syntax-keyword, #4fc1ff);
+  color: var(--table-cell-text, var(--table-text, var(--text-primary, #d4d4d4)));
 }
 
 /* 变量名 — 白色 */
 .Variablescolor {
-  color: var(--table-text, var(--text-primary, #d4d4d4));
+  color: var(--syntax-variable, #9cdcfe);
+}
+
+/* 声明表格内的名称列用「表格文本」色（语法「变量」色只用于代码行） */
+.eyc-decl-table .Variablescolor {
+  color: var(--table-cell-text, var(--table-text, var(--text-primary, #d4d4d4)));
 }
 
 /* 数据类型(整数型/文本型) — 蓝色 */
@@ -1472,7 +1478,7 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 
 /* 数组成员数 — 白色 */
 .eArraycolor {
-  color: var(--table-text, var(--text-primary, #d4d4d4));
+  color: var(--table-cell-text, var(--table-text, var(--text-primary, #d4d4d4)));
 }
 
 /* 常量值 — 青色 */
@@ -1513,7 +1519,7 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   white-space: pre;
 }
 .eyc-code-line:hover {
-  background: var(--table-row-hover-bg, var(--bg-hover, rgba(255, 255, 255, 0.04)));
+  background: var(--table-row-hover-bg-gradient, var(--table-row-hover-bg, var(--bg-hover, rgba(255, 255, 255, 0.04))));
 }
 
 /* 删除占位行在 hover 时保持删除红色，不被普通悬停背景覆盖 */
@@ -1530,13 +1536,13 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
 /* 已选中行在 hover 时保持选中背景，不被悬停色覆盖 */
 .eyc-line-selected .eyc-code-line,
 .eyc-line-selected .eyc-code-line:hover {
-  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 
 /* 正在编辑的行在 hover 时保持焦点背景，不被悬停色覆盖（否则悬停色盖住编辑背景显得错乱） */
 .eyc-line-editing .eyc-code-line,
 .eyc-line-editing .eyc-code-line:hover {
-  background: var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2)));
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 
 .eyc-code-line.eyc-code-line-error .eyc-code-spans {
@@ -1588,9 +1594,9 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
   text-underline-offset: 2px;
 }
 
-/* 对象.方法 调用 — 对象颜色 */
+/* 对象.方法 调用 — 函数族颜色 */
 .cometwolr {
-  color: var(--syntax-string, #ce9178);
+  color: var(--syntax-function, #dcdcaa);
 }
 
 /* 引号内的文字 — 青色 */
@@ -1607,7 +1613,7 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
 /* 标点符号（括号/运算符/逗号）— 与 conscolor 同色但不加粗，
    保持与编辑态 input 中的括号/运算符粗细一致，避免进入/离开编辑态时抖动变粗变细 */
 .eyc-punct {
-  color: var(--syntax-keyword, #4fc1ff);
+  color: var(--syntax-operator, var(--syntax-keyword, #4fc1ff));
   font-weight: normal;
 }
 
@@ -1778,7 +1784,7 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
 }
 
 .eyc-ac-item:hover {
-  background: var(--table-row-hover-bg, #2a2d2e);
+  background: var(--table-row-hover-bg-gradient, var(--table-row-hover-bg, #2a2d2e));
 }
 .eyc-ac-item-active:hover {
   background: var(--bg-selection, #04395e);
@@ -2317,4 +2323,129 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
 
 .eyc-diff-deleted-placeholder-cell {
   padding: 0 6px;
+}
+
+/* 局部变量表与上方的子程序表（含参数行）之间留几像素间距，视觉分组更清晰 */
+.eyc-localvar-block {
+  margin-top: 4px;
+}
+
+/* ===== 悬停命令说明窗（照易语言米黄 tooltip） ===== */
+.eyc-cmd-hover-tip {
+  position: fixed;
+  left: var(--eyc-cmd-hover-left, 0);
+  top: var(--eyc-cmd-hover-top, 0);
+  z-index: 240;
+  max-width: 560px;
+  background: #ffffe1;
+  color: #1a1a1a;
+  border: 1px solid #8a8a6a;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+  padding: 6px 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  pointer-events: none;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.eyc-cmd-hover-sig .eyc-cmd-hover-type {
+  color: #0b39c9;
+}
+
+.eyc-cmd-hover-sig .eyc-cmd-hover-name {
+  font-weight: 700;
+}
+
+.eyc-cmd-hover-sig .eyc-cmd-hover-params {
+  color: #333;
+}
+
+.eyc-cmd-hover-sig .eyc-cmd-hover-lib {
+  color: #8a6d3b;
+}
+
+.eyc-cmd-hover-desc {
+  margin-top: 3px;
+  border-top: 1px dashed #b9b98f;
+  padding-top: 3px;
+}
+
+/* 数字字面量 — 主题「数字」色 */
+.eyc-numcolor {
+  color: var(--syntax-number, #b5cea8);
+}
+
+/* ===== 语法文字渐变（主题分组渐变启用时生效） =====
+   启用时 JS 注入 --syntax-*-gradient 与 --syntax-*-fill: transparent，
+   文字经 background-clip: text 显示双色渐变；未启用回落 currentColor 零成本。 */
+.funccolor {
+  background-image: var(--syntax-function-gradient, none);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: var(--syntax-function-fill, currentColor);
+}
+
+.comecolor {
+  background-image: var(--syntax-keyword-gradient, none);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: var(--syntax-keyword-fill, currentColor);
+}
+
+.conscolor {
+  background-image: var(--syntax-keyword-gradient, none);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: var(--syntax-keyword-fill, currentColor);
+}
+
+.eyc-punct {
+  background-image: var(--syntax-operator-gradient, none);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: var(--syntax-operator-fill, currentColor);
+}
+
+.eTxtcolor {
+  background-image: var(--syntax-string-gradient, none);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: var(--syntax-string-fill, currentColor);
+}
+
+.eyc-numcolor {
+  background-image: var(--syntax-number-gradient, none);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: var(--syntax-number-fill, currentColor);
+}
+
+.Remarkscolor {
+  background-image: var(--syntax-comment-gradient, none);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: var(--syntax-comment-fill, currentColor);
+}
+
+.eTypecolor {
+  background-image: var(--syntax-type-gradient, none);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: var(--syntax-type-fill, currentColor);
+}
+
+.cometwolr {
+  background-image: var(--syntax-function-gradient, none);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: var(--syntax-function-fill, currentColor);
+}
+
+/* 代码行内的变量（含引用）走「变量」渐变；表格内名称列不参与（表格文本独立配置） */
+.eyc-code-line .Variablescolor {
+  background-image: var(--syntax-variable-gradient, none);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: var(--syntax-variable-fill, currentColor);
 }

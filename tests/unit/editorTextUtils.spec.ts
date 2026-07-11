@@ -1,3 +1,4 @@
+import { formatOps } from '@/components/Editor/editorCoreUtils'
 import { describe, it, expect } from 'vitest'
 import {
   balanceArgParens,
@@ -154,5 +155,38 @@ describe('回归：未配平参数值实时写回导致重复追加（写到文�
     const committed = replaceCallArg('写到文件 (1.txt,到字节集)', 1, balanceArgParens('到字节集('))
     expect(committed).toBe('写到文件 (1.txt,到字节集())')
     expect(parseCallArgs(committed)).toEqual(['1.txt', '到字节集()'])
+  })
+})
+
+describe('数组字面量 { } 的参数切分与配平', () => {
+  it('parseCallArgs：{ 1, 2, 3 } 是一个参数（花括号内逗号不切）', () => {
+    expect(parseCallArgs('调试输出 ({ 1, 2, 3 })')).toEqual(['{ 1, 2, 3 }'])
+    expect(parseCallArgs('调试输出 ({ 1, 2 }, 甲)')).toEqual(['{ 1, 2 }', '甲'])
+  })
+
+  it('replaceCallArg：替换含字面量的参数不撕裂', () => {
+    expect(replaceCallArg('调试输出 ({ 1, 2, 3 }, 甲)', 1, '乙')).toBe('调试输出 ({ 1, 2, 3 },乙)')
+    expect(replaceCallArg('调试输出 ({ 1, 2, 3 })', 0, '{ 4, 5 }')).toBe('调试输出 ({ 4, 5 })')
+  })
+
+  it('isArgParensBalanced/balanceArgParens：花括号计配平', () => {
+    expect(isArgParensBalanced('{ 1, 2 }')).toBe(true)
+    expect(isArgParensBalanced('{ 1')).toBe(false)
+    expect(balanceArgParens('{ 1, 2')).toBe('{ 1, 2}')
+  })
+})
+
+describe('formatOps 数组字面量间距（照易语言）', () => {
+  it('赋值右值：{“文本1”,“文本2”} → { “文本1”, “文本2” }', () => {
+    expect(formatOps('变量 = {“文本1”,“文本2”}')).toBe('变量 ＝ { “文本1”, “文本2” }')
+    expect(formatOps('变量2={1,2}')).toBe('变量2 ＝ { 1, 2 }')
+  })
+
+  it('字符串内的花括号与逗号不受影响', () => {
+    expect(formatOps('变量 = “a{1,2}b”')).toBe('变量 ＝ “a{1,2}b”')
+  })
+
+  it('参数区逗号统一为逗号+空格', () => {
+    expect(formatOps('1,2, 3 ,4')).toBe('1, 2, 3, 4')
   })
 })

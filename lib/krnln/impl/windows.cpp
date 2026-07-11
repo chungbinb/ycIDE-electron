@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <commctrl.h>
 
 #include <algorithm>
 #include <cmath>
@@ -1573,6 +1574,207 @@ extern "C" double krnln_GetTimePart(double date) {
 }
 
 
+// ==== 控件成员运行时（ycIDE 声明式控件成员协议后端）====
+// 编译器只传 HWND（名字→HWND 解析留在生成的 main.cpp，属项目专属逻辑）；本处只依赖 HWND，与项目解耦。
+// window-units.json 的属性 access.get/set 模板调用这些函数；第三方支持库照此在自己的 impl 里实现同名/自定义 helper。
+extern "C" long long krnln_ctrl_get_number(HWND h, const wchar_t* prop) {
+  if (!h || !prop) return 0;
+  wchar_t cls[32] = L""; GetClassNameW(h, cls, 32);
+  // 通用属性（任意控件）：显隐/禁用/位置/尺寸（左边/顶边为相对父窗客户区坐标）
+  if (_wcsicmp(prop, L"可视") == 0) return IsWindowVisible(h) ? 1 : 0;
+  if (_wcsicmp(prop, L"禁止") == 0) return IsWindowEnabled(h) ? 0 : 1;
+  if (_wcsicmp(prop, L"左边") == 0 || _wcsicmp(prop, L"顶边") == 0 || _wcsicmp(prop, L"宽度") == 0 || _wcsicmp(prop, L"高度") == 0) {
+    RECT r; GetWindowRect(h, &r); POINT p = { r.left, r.top }; HWND par = GetParent(h); if (par) ScreenToClient(par, &p);
+    if (_wcsicmp(prop, L"左边") == 0) return p.x;
+    if (_wcsicmp(prop, L"顶边") == 0) return p.y;
+    if (_wcsicmp(prop, L"宽度") == 0) return r.right - r.left;
+    return r.bottom - r.top;
+  }
+  if (_wcsicmp(cls, L"BUTTON") == 0) {
+    if (_wcsicmp(prop, L"选中") == 0) return SendMessageW(h, BM_GETCHECK, 0, 0) == BST_CHECKED ? 1 : 0;
+    return 0;
+  }
+  if (_wcsicmp(cls, L"COMBOBOX") == 0 || _wcsicmp(cls, L"LISTBOX") == 0) {
+    int cb = _wcsicmp(cls, L"COMBOBOX") == 0;
+    if (_wcsicmp(prop, L"现行选中项") == 0) return (long long)SendMessageW(h, cb ? CB_GETCURSEL : LB_GETCURSEL, 0, 0);
+    return 0;
+  }
+  if (_wcsicmp(cls, L"msctls_progress32") == 0) {
+    if (_wcsicmp(prop, L"位置") == 0) return (long long)SendMessageW(h, PBM_GETPOS, 0, 0);
+    if (_wcsicmp(prop, L"最小位置") == 0) return (long long)SendMessageW(h, PBM_GETRANGE, (WPARAM)TRUE, 0);
+    if (_wcsicmp(prop, L"最大位置") == 0) return (long long)SendMessageW(h, PBM_GETRANGE, (WPARAM)FALSE, 0);
+    return 0;
+  }
+  if (_wcsicmp(cls, L"msctls_trackbar32") == 0) {
+    if (_wcsicmp(prop, L"位置") == 0) return (long long)SendMessageW(h, TBM_GETPOS, 0, 0);
+    if (_wcsicmp(prop, L"最小位置") == 0) return (long long)SendMessageW(h, TBM_GETRANGEMIN, 0, 0);
+    if (_wcsicmp(prop, L"最大位置") == 0) return (long long)SendMessageW(h, TBM_GETRANGEMAX, 0, 0);
+    if (_wcsicmp(prop, L"页改变值") == 0) return (long long)SendMessageW(h, TBM_GETPAGESIZE, 0, 0);
+    if (_wcsicmp(prop, L"行改变值") == 0) return (long long)SendMessageW(h, TBM_GETLINESIZE, 0, 0);
+    return 0;
+  }
+  if (_wcsicmp(cls, L"SCROLLBAR") == 0) {
+    SCROLLINFO si; ZeroMemory(&si, sizeof(si)); si.cbSize = sizeof(si); si.fMask = SIF_RANGE | SIF_POS;
+    if (!GetScrollInfo(h, SB_CTL, &si)) return 0;
+    if (_wcsicmp(prop, L"位置") == 0) return (long long)si.nPos;
+    if (_wcsicmp(prop, L"最小位置") == 0) return (long long)si.nMin;
+    if (_wcsicmp(prop, L"最大位置") == 0) return (long long)si.nMax;
+    return 0;
+  }
+  return 0;
+}
+
+extern "C" void krnln_ctrl_set_number(HWND h, const wchar_t* prop, long long value) {
+  if (!h || !prop) return;
+  int v = (int)value;
+  wchar_t cls[32] = L""; GetClassNameW(h, cls, 32);
+  // 通用属性（任意控件）
+  if (_wcsicmp(prop, L"可视") == 0) { ShowWindow(h, v ? SW_SHOW : SW_HIDE); return; }
+  if (_wcsicmp(prop, L"禁止") == 0) { EnableWindow(h, v ? FALSE : TRUE); return; }
+  if (_wcsicmp(prop, L"左边") == 0 || _wcsicmp(prop, L"顶边") == 0 || _wcsicmp(prop, L"宽度") == 0 || _wcsicmp(prop, L"高度") == 0) {
+    RECT r; GetWindowRect(h, &r); POINT p = { r.left, r.top }; HWND par = GetParent(h); if (par) ScreenToClient(par, &p);
+    int x = p.x, y = p.y, w = r.right - r.left, ht = r.bottom - r.top;
+    if (_wcsicmp(prop, L"左边") == 0) x = v; else if (_wcsicmp(prop, L"顶边") == 0) y = v; else if (_wcsicmp(prop, L"宽度") == 0) w = v; else ht = v;
+    SetWindowPos(h, NULL, x, y, w, ht, SWP_NOZORDER | SWP_NOACTIVATE);
+    return;
+  }
+  if (_wcsicmp(cls, L"BUTTON") == 0) {
+    if (_wcsicmp(prop, L"选中") == 0) { SendMessageW(h, BM_SETCHECK, (WPARAM)(v ? BST_CHECKED : BST_UNCHECKED), 0); return; }
+    return;
+  }
+  if (_wcsicmp(cls, L"COMBOBOX") == 0 || _wcsicmp(cls, L"LISTBOX") == 0) {
+    int cb = _wcsicmp(cls, L"COMBOBOX") == 0;
+    if (_wcsicmp(prop, L"现行选中项") == 0) { SendMessageW(h, cb ? CB_SETCURSEL : LB_SETCURSEL, (WPARAM)v, 0); return; }
+    return;
+  }
+  if (_wcsicmp(cls, L"msctls_progress32") == 0) {
+    if (_wcsicmp(prop, L"位置") == 0) { SendMessageW(h, PBM_SETPOS, (WPARAM)v, 0); return; }
+    if (_wcsicmp(prop, L"最小位置") == 0) { int mx = (int)SendMessageW(h, PBM_GETRANGE, (WPARAM)FALSE, 0); SendMessageW(h, PBM_SETRANGE32, (WPARAM)v, (LPARAM)mx); return; }
+    if (_wcsicmp(prop, L"最大位置") == 0) { int mn = (int)SendMessageW(h, PBM_GETRANGE, (WPARAM)TRUE, 0); SendMessageW(h, PBM_SETRANGE32, (WPARAM)mn, (LPARAM)v); return; }
+    return;
+  }
+  if (_wcsicmp(cls, L"msctls_trackbar32") == 0) {
+    if (_wcsicmp(prop, L"位置") == 0) { SendMessageW(h, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)v); return; }
+    if (_wcsicmp(prop, L"最小位置") == 0) { SendMessageW(h, TBM_SETRANGEMIN, (WPARAM)TRUE, (LPARAM)v); return; }
+    if (_wcsicmp(prop, L"最大位置") == 0) { SendMessageW(h, TBM_SETRANGEMAX, (WPARAM)TRUE, (LPARAM)v); return; }
+    if (_wcsicmp(prop, L"页改变值") == 0) { SendMessageW(h, TBM_SETPAGESIZE, 0, (LPARAM)v); return; }
+    if (_wcsicmp(prop, L"行改变值") == 0) { SendMessageW(h, TBM_SETLINESIZE, 0, (LPARAM)v); return; }
+    return;
+  }
+  if (_wcsicmp(cls, L"SCROLLBAR") == 0) {
+    SCROLLINFO si; ZeroMemory(&si, sizeof(si)); si.cbSize = sizeof(si);
+    if (_wcsicmp(prop, L"位置") == 0) { si.fMask = SIF_POS; si.nPos = v; SetScrollInfo(h, SB_CTL, &si, TRUE); return; }
+    if (_wcsicmp(prop, L"最小位置") == 0 || _wcsicmp(prop, L"最大位置") == 0) { si.fMask = SIF_RANGE; GetScrollInfo(h, SB_CTL, &si); if (_wcsicmp(prop, L"最小位置") == 0) si.nMin = v; else si.nMax = v; SetScrollInfo(h, SB_CTL, &si, TRUE); return; }
+    return;
+  }
+}
+
+extern "C" void krnln_ctrl_set_text(HWND h, const wchar_t* text) {
+  if (!h) return;
+  SetWindowTextW(h, text ? text : L"");
+}
+
+// 文本读取：返回 malloc 的独占宽串拷贝（易语言文本型「赋值即拷贝」值语义），调用方（编译器生成的包装）负责 krnln_ctrl_free_text 释放。
+extern "C" wchar_t* krnln_ctrl_get_text(HWND h) {
+  int len = h ? GetWindowTextLengthW(h) : 0;
+  if (len < 0) len = 0;
+  wchar_t* buf = (wchar_t*)malloc((size_t)(len + 1) * sizeof(wchar_t));
+  if (!buf) return nullptr;
+  int got = (h && len > 0) ? GetWindowTextW(h, buf, len + 1) : 0;
+  if (got < 0) got = 0;
+  buf[got] = L'\0';
+  return buf;
+}
+
+extern "C" void krnln_ctrl_free_text(wchar_t* p) { if (p) free(p); }
+
+// 控件「标记」(tag)：易语言的应用级 per-控件 字符串存储（非 Win32 概念），用 HWND→wstring 表；释放复用 krnln_ctrl_free_text。
+static std::unordered_map<HWND, std::wstring> g_ycCtrlTags;
+extern "C" void krnln_ctrl_set_tag(HWND h, const wchar_t* t) { if (h) g_ycCtrlTags[h] = (t ? t : L""); }
+extern "C" wchar_t* krnln_ctrl_get_tag(HWND h) {
+  const wchar_t* src = L"";
+  auto it = g_ycCtrlTags.find(h);
+  if (it != g_ycCtrlTags.end()) src = it->second.c_str();
+  size_t n = wcslen(src);
+  wchar_t* b = (wchar_t*)malloc((n + 1) * sizeof(wchar_t));
+  if (!b) return nullptr;
+  wcscpy(b, src);
+  return b;
+}
+
+// 日期框(SysDateTimePick32)/月历(SysMonthCal32) 日期属性运行时读写：文本「年/月/日 [时:分:秒]」<->SYSTEMTIME。
+static int krnln_parse_date(const wchar_t* s, SYSTEMTIME* st) {
+  if (!s || !st || !s[0]) return 0; ZeroMemory(st, sizeof(SYSTEMTIME));
+  int y = 0, mo = 0, d = 0, h = 0, mi = 0, se = 0;
+  int n = swscanf(s, L"%d%*[-/.]%d%*[-/.]%d %d:%d:%d", &y, &mo, &d, &h, &mi, &se);
+  if (n < 3 || y < 1601 || mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
+  st->wYear = (WORD)y; st->wMonth = (WORD)mo; st->wDay = (WORD)d; st->wHour = (WORD)h; st->wMinute = (WORD)mi; st->wSecond = (WORD)se;
+  return 1;
+}
+static wchar_t* krnln_fmt_date(const SYSTEMTIME* st) {
+  wchar_t* b = (wchar_t*)malloc(40 * sizeof(wchar_t));
+  if (!b) return nullptr;
+  swprintf(b, 40, L"%04d/%02d/%02d %02d:%02d:%02d", st->wYear, st->wMonth, st->wDay, st->wHour, st->wMinute, st->wSecond);
+  return b;
+}
+extern "C" void krnln_ctrl_set_date(HWND h, const wchar_t* prop, const wchar_t* text) {
+  if (!h || !prop) return;
+  SYSTEMTIME st; if (!krnln_parse_date(text, &st)) return;
+  wchar_t cls[32] = L""; GetClassNameW(h, cls, 32);
+  if (_wcsicmp(cls, L"SysDateTimePick32") == 0) {
+    if (_wcsicmp(prop, L"今天") == 0) { SendMessageW(h, DTM_SETSYSTEMTIME, GDT_VALID, (LPARAM)&st); return; }
+    if (_wcsicmp(prop, L"最小日期") == 0 || _wcsicmp(prop, L"最大日期") == 0) {
+      SYSTEMTIME r[2]; ZeroMemory(r, sizeof(r)); DWORD f = (DWORD)SendMessageW(h, DTM_GETRANGE, 0, (LPARAM)r);
+      if (_wcsicmp(prop, L"最小日期") == 0) { r[0] = st; f |= GDTR_MIN; } else { r[1] = st; f |= GDTR_MAX; }
+      SendMessageW(h, DTM_SETRANGE, f, (LPARAM)r); return;
+    }
+    return;
+  }
+  if (_wcsicmp(cls, L"SysMonthCal32") == 0) {
+    if (_wcsicmp(prop, L"今天") == 0) { SendMessageW(h, MCM_SETTODAY, 0, (LPARAM)&st); return; }
+    if (_wcsicmp(prop, L"首选择日") == 0 || _wcsicmp(prop, L"尾选择日") == 0) { SendMessageW(h, MCM_SETCURSEL, 0, (LPARAM)&st); return; }
+    if (_wcsicmp(prop, L"最小日期") == 0 || _wcsicmp(prop, L"最大日期") == 0) {
+      SYSTEMTIME r[2]; ZeroMemory(r, sizeof(r)); DWORD f = (DWORD)SendMessageW(h, MCM_GETRANGE, 0, (LPARAM)r);
+      if (_wcsicmp(prop, L"最小日期") == 0) { r[0] = st; f |= GDTR_MIN; } else { r[1] = st; f |= GDTR_MAX; }
+      SendMessageW(h, MCM_SETRANGE, f, (LPARAM)r); return;
+    }
+    return;
+  }
+}
+extern "C" wchar_t* krnln_ctrl_get_date(HWND h, const wchar_t* prop) {
+  SYSTEMTIME st; ZeroMemory(&st, sizeof(st));
+  if (h && prop) {
+    wchar_t cls[32] = L""; GetClassNameW(h, cls, 32);
+    if (_wcsicmp(cls, L"SysDateTimePick32") == 0 && _wcsicmp(prop, L"今天") == 0) {
+      if (SendMessageW(h, DTM_GETSYSTEMTIME, 0, (LPARAM)&st) == GDT_VALID) return krnln_fmt_date(&st);
+    } else if (_wcsicmp(cls, L"SysMonthCal32") == 0) {
+      if (_wcsicmp(prop, L"今天") == 0) { if (SendMessageW(h, MCM_GETTODAY, 0, (LPARAM)&st)) return krnln_fmt_date(&st); }
+      else if (_wcsicmp(prop, L"首选择日") == 0 || _wcsicmp(prop, L"尾选择日") == 0) { if (SendMessageW(h, MCM_GETCURSEL, 0, (LPARAM)&st)) return krnln_fmt_date(&st); }
+    }
+  }
+  wchar_t* b = (wchar_t*)malloc(sizeof(wchar_t)); if (b) b[0] = 0; return b;
+}
+
+// ==== 组合框/列表框 项目成员方法运行时（HWND 版；运行期按类名 COMBOBOX/LISTBOX 分派 CB_*/LB_*）====
+static int krnln_ll_iscombo(HWND h){ wchar_t c[24]=L""; if(h) GetClassNameW(h,c,24); return _wcsicmp(c,L"COMBOBOX")==0; }
+extern "C" int krnln_ll_add_item(HWND h, const wchar_t* t, int data){ if(!h) return -1; int cb=krnln_ll_iscombo(h); int i=(int)SendMessageW(h, cb?CB_ADDSTRING:LB_ADDSTRING, 0, (LPARAM)(t?t:L"")); if(i>=0) SendMessageW(h, cb?CB_SETITEMDATA:LB_SETITEMDATA, (WPARAM)i, (LPARAM)data); return i; }
+extern "C" int krnln_ll_insert_item(HWND h, int pos, const wchar_t* t, int data){ if(!h) return -1; int cb=krnln_ll_iscombo(h); int i=(int)SendMessageW(h, cb?CB_INSERTSTRING:LB_INSERTSTRING, (WPARAM)pos, (LPARAM)(t?t:L"")); if(i>=0) SendMessageW(h, cb?CB_SETITEMDATA:LB_SETITEMDATA, (WPARAM)i, (LPARAM)data); return i; }
+extern "C" int krnln_ll_delete_item(HWND h, int idx){ if(!h) return 0; int cb=krnln_ll_iscombo(h); return ((int)SendMessageW(h, cb?CB_DELETESTRING:LB_DELETESTRING, (WPARAM)idx, 0) >= 0) ? 1 : 0; }
+extern "C" void krnln_ll_clear(HWND h){ if(!h) return; SendMessageW(h, krnln_ll_iscombo(h)?CB_RESETCONTENT:LB_RESETCONTENT, 0, 0); }
+extern "C" int krnln_ll_count(HWND h){ if(!h) return 0; return (int)SendMessageW(h, krnln_ll_iscombo(h)?CB_GETCOUNT:LB_GETCOUNT, 0, 0); }
+extern "C" wchar_t* krnln_ll_get_text(HWND h, int idx){ if(!h){ wchar_t* e=(wchar_t*)malloc(sizeof(wchar_t)); if(e) e[0]=0; return e; } int cb=krnln_ll_iscombo(h); int len=(int)SendMessageW(h, cb?CB_GETLBTEXTLEN:LB_GETTEXTLEN, (WPARAM)idx, 0); if(len<0) len=0; wchar_t* b=(wchar_t*)malloc((size_t)(len+1)*sizeof(wchar_t)); if(!b) return nullptr; int got = len>0 ? (int)SendMessageW(h, cb?CB_GETLBTEXT:LB_GETTEXT, (WPARAM)idx, (LPARAM)b) : 0; if(got<0) got=0; b[got]=L'\0'; return b; }
+extern "C" int krnln_ll_set_text(HWND h, int idx, const wchar_t* t){ if(!h) return 0; int cb=krnln_ll_iscombo(h); int data=(int)SendMessageW(h, cb?CB_GETITEMDATA:LB_GETITEMDATA, (WPARAM)idx, 0); SendMessageW(h, cb?CB_DELETESTRING:LB_DELETESTRING, (WPARAM)idx, 0); int ni=(int)SendMessageW(h, cb?CB_INSERTSTRING:LB_INSERTSTRING, (WPARAM)idx, (LPARAM)(t?t:L"")); if(ni>=0) SendMessageW(h, cb?CB_SETITEMDATA:LB_SETITEMDATA, (WPARAM)ni, (LPARAM)data); return ni>=0?1:0; }
+extern "C" int krnln_ll_get_data(HWND h, int idx){ if(!h) return -1; return (int)SendMessageW(h, krnln_ll_iscombo(h)?CB_GETITEMDATA:LB_GETITEMDATA, (WPARAM)idx, 0); }
+extern "C" int krnln_ll_set_data(HWND h, int idx, int data){ if(!h) return 0; SendMessageW(h, krnln_ll_iscombo(h)?CB_SETITEMDATA:LB_SETITEMDATA, (WPARAM)idx, (LPARAM)data); return 1; }
+extern "C" int krnln_ll_get_top(HWND h){ if(!h) return -1; return (int)SendMessageW(h, krnln_ll_iscombo(h)?CB_GETTOPINDEX:LB_GETTOPINDEX, 0, 0); }
+extern "C" int krnln_ll_set_top(HWND h, int idx){ if(!h) return 0; SendMessageW(h, krnln_ll_iscombo(h)?CB_SETTOPINDEX:LB_SETTOPINDEX, (WPARAM)idx, 0); return 1; }
+extern "C" int krnln_ll_select(HWND h, const wchar_t* t){ if(!h) return -1; int cb=krnln_ll_iscombo(h); int i=(int)SendMessageW(h, cb?CB_FINDSTRING:LB_FINDSTRING, (WPARAM)-1, (LPARAM)(t?t:L"")); if(i>=0) SendMessageW(h, cb?CB_SETCURSEL:LB_SETCURSEL, (WPARAM)i, 0); return i; }
+extern "C" int krnln_lb_sel_count(HWND h){ return h?(int)SendMessageW(h, LB_GETSELCOUNT, 0, 0):0; }
+extern "C" int krnln_lb_caret(HWND h){ return h?(int)SendMessageW(h, LB_GETCARETINDEX, 0, 0):-1; }
+extern "C" int krnln_lb_set_caret(HWND h, int idx){ if(!h) return 0; SendMessageW(h, LB_SETCARETINDEX, (WPARAM)idx, 0); SendMessageW(h, LB_SETCURSEL, (WPARAM)idx, 0); return 1; }
+extern "C" int krnln_lb_is_selected(HWND h, int idx){ return (h && (int)SendMessageW(h, LB_GETSEL, (WPARAM)idx, 0) > 0) ? 1 : 0; }
+extern "C" int krnln_lb_select_item(HWND h, int idx, int state){ if(!h) return 0; SendMessageW(h, LB_SETSEL, (WPARAM)(state?TRUE:FALSE), (LPARAM)idx); return 1; }
+
 // --- AUTO-GENERATED KRLN STUBS BEGIN ---
 // 由脚本根据 krnln.commands.ycmd.json 自动生成：补齐未实现导出函数，避免链接缺符号。
 // 注意：以下为默认桩实现，后续应按命令语义逐步替换为真实实现。
@@ -1634,7 +1836,17 @@ extern "C" void krnln_CounterLoop(...) { touchNonStub(); }
 
 extern "C" void krnln_next(...) { touchNonStub(); }
 
-extern "C" void krnln_OutputDebugText(...) { touchNonStub(); }
+// 输出调试文本：写 stdout（IDE 运行时捕获子进程管道显示到输出面板）+ 系统调试器通道
+extern "C" void krnln_OutputDebugText(const char* text) {
+  touchNonStub();
+  const char* s = text ? text : "";
+  fputs(s, stdout);
+  fputc('\n', stdout);
+  fflush(stdout);
+  std::wstring wide = utf8ToWide(s);
+  OutputDebugStringW(wide.c_str());
+  OutputDebugStringW(L"\r\n");
+}
 
 extern "C" void krnln_stop(...) { touchNonStub(); }
 

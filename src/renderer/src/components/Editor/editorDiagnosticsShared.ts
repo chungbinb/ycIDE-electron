@@ -372,8 +372,9 @@ function splitTopLevelArgs(argsText: string): Array<{ text: string; offset: numb
       continue
     }
     if (ch === '"' || ch === '“') { inStr = true; continue }
-    if (ch === '(' || ch === '（') depth++
-    else if (ch === ')' || ch === '）') depth--
+    // 花括号也计深度：数组字面量 { 1, 2, 3 } 内的逗号不是参数分隔符
+    if (ch === '(' || ch === '（' || ch === '{' || ch === '｛') depth++
+    else if (ch === ')' || ch === '）' || ch === '}' || ch === '｝') depth--
     else if ((ch === ',' || ch === '，') && depth === 0) {
       out.push({ text: argsText.slice(start, i), offset: start })
       start = i + 1

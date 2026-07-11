@@ -51,6 +51,7 @@ export const THEME_TOKEN_GROUPS: ThemeTokenGroup[] = [
     items: [
       { id: 'table-bg', label: '编辑器背景', preview: 'color-chip', tokenKey: '--table-bg' },
       { id: 'table-text', label: '编辑器文本', preview: 'color-chip', tokenKey: '--table-text' },
+      { id: 'table-cell-text', label: '表格文本', preview: 'color-chip', tokenKey: '--table-cell-text' },
       { id: 'table-border', label: '表格边框', preview: 'color-chip', tokenKey: '--table-border' },
       { id: 'table-header-bg', label: '表头背景', preview: 'color-chip', tokenKey: '--table-header-bg' },
       { id: 'table-header-text', label: '表头文本', preview: 'color-chip', tokenKey: '--table-header-text' },
@@ -112,4 +113,59 @@ export const DEFAULT_FLOW_LINE_MODE_CONFIG: FlowLineModeConfig = {
     depthSaturationStep: -4,
     depthLightnessStep: 5,
   },
+}
+
+// ===== 分组渐变配置 =====
+// 每个令牌分组可启用双色渐变：行主色 + 行第二色 组成渐变，渐变类型按组选择。
+export type ThemeGradientType = 'linear-right' | 'linear-down' | 'linear-diagonal' | 'radial'
+
+export interface ThemeGroupGradient {
+  enabled: boolean
+  type: ThemeGradientType
+  /** tokenKey → 第二色（缺省回落该行主色，即视觉上无渐变） */
+  secondColors: Record<string, string>
+}
+
+export type ThemeGradientsConfig = Partial<Record<ThemeTokenGroupId, ThemeGroupGradient>>
+
+export const THEME_GRADIENT_TYPE_OPTIONS: Array<{ value: ThemeGradientType; label: string }> = [
+  { value: 'linear-right', label: '水平渐变' },
+  { value: 'linear-down', label: '垂直渐变' },
+  { value: 'linear-diagonal', label: '对角渐变' },
+  { value: 'radial', label: '径向渐变' },
+]
+
+export const DEFAULT_THEME_GROUP_GRADIENT: ThemeGroupGradient = {
+  enabled: false,
+  type: 'linear-right',
+  secondColors: {},
+}
+
+export function buildThemeGradientCss(type: ThemeGradientType, from: string, to: string): string {
+  switch (type) {
+    case 'linear-down': return `linear-gradient(180deg, ${from}, ${to})`
+    case 'linear-diagonal': return `linear-gradient(135deg, ${from}, ${to})`
+    case 'radial': return `radial-gradient(circle, ${from}, ${to})`
+    default: return `linear-gradient(90deg, ${from}, ${to})`
+  }
+}
+
+export function normalizeThemeGradients(value: unknown): ThemeGradientsConfig {
+  if (!value || typeof value !== 'object') return {}
+  const out: ThemeGradientsConfig = {}
+  for (const group of THEME_TOKEN_GROUPS) {
+    const raw = (value as Record<string, unknown>)[group.id]
+    if (!raw || typeof raw !== 'object') continue
+    const g = raw as Partial<ThemeGroupGradient>
+    const type: ThemeGradientType = (g.type === 'linear-down' || g.type === 'linear-diagonal' || g.type === 'radial') ? g.type : 'linear-right'
+    const secondColors: Record<string, string> = {}
+    if (g.secondColors && typeof g.secondColors === 'object') {
+      for (const item of group.items) {
+        const v = (g.secondColors as Record<string, unknown>)[item.tokenKey]
+        if (typeof v === 'string' && v) secondColors[item.tokenKey] = v
+      }
+    }
+    out[group.id] = { enabled: !!g.enabled, type, secondColors }
+  }
+  return out
 }

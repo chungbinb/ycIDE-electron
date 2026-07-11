@@ -62,10 +62,10 @@ export function parseCallArgs(codeLine: string): string[] {
       inStr = true
       continue
     }
-    if (ch === open || ch === '(' || ch === '（') {
+    if (ch === open || ch === '(' || ch === '（' || ch === '{' || ch === '｛') {
       if (depth === 0) start = i + 1
       depth++
-    } else if (ch === close || ch === ')' || ch === '）') {
+    } else if (ch === close || ch === ')' || ch === '）' || ch === '}' || ch === '｝') {
       depth--
       if (depth === 0) {
         args.push(codeLine.slice(start, i).trim())
@@ -95,8 +95,8 @@ export function isArgParensBalanced(val: string): boolean {
       continue
     }
     if (ch === '"' || ch === '“') { inStr = true; continue }
-    if (ch === '(' || ch === '（') depth++
-    else if (ch === ')' || ch === '）') {
+    if (ch === '(' || ch === '（' || ch === '{' || ch === '｛') depth++
+    else if (ch === ')' || ch === '）' || ch === '}' || ch === '｝') {
       depth--
       if (depth < 0) return false
     }
@@ -122,7 +122,9 @@ export function balanceArgParens(val: string): string {
     if (ch === '“') { inStr = true; strClose = '”'; continue }
     if (ch === '(') stack.push(')')
     else if (ch === '（') stack.push('）')
-    else if (ch === ')' || ch === '）') {
+    else if (ch === '{') stack.push('}')
+    else if (ch === '｛') stack.push('｝')
+    else if (ch === ')' || ch === '）' || ch === '}' || ch === '｝') {
       if (stack.length === 0) return val // 深度为负：不修，交给诊断
       stack.pop()
     }
@@ -156,10 +158,10 @@ export function replaceCallArg(codeLine: string, argIdx: number, newVal: string)
           continue
         }
       }
-      if (ch === '(' || ch === '（') {
+      if (ch === '(' || ch === '（' || ch === '{' || ch === '｛') {
         if (depth === 0) start = i + 1
         depth++
-      } else if (ch === ')' || ch === '）') {
+      } else if (ch === ')' || ch === '）' || ch === '}' || ch === '｝') {
         depth--
         if (depth === 0) {
           ranges.push({ start, end: i })

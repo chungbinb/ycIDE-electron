@@ -2518,19 +2518,59 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     if (!activeTab || !isEycSourceLanguage(activeTab.language)) return ''
     return eycToYiFormat(activeTab.value)
   }, [activeTab])
+  // 项目内所有窗口的控件表+子程序（读盘）：供「.eyc 代码打开但对应 .efw 未打开」时解析窗口成员，
+  // 以及「在任意窗口代码里引用另一个窗口名」的跨窗口成员补全。
+  type WinControlEntry = { name: string; controls: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>; subs: string[] }
+  const [projectWindowControlsMap, setProjectWindowControlsMap] = useState<Map<string, WinControlEntry>>(new Map())
+  const [projectWindows, setProjectWindows] = useState<WinControlEntry[]>([])
+  useEffect(() => {
+    if (!projectDir) { setProjectWindowControlsMap(new Map()); setProjectWindows([]); return }
+    let cancelled = false
+    ;(async () => {
+      const map = new Map<string, WinControlEntry>()
+      const list: WinControlEntry[] = []
+      const files = await window.api?.file?.readDir(projectDir)
+      if (files) {
+        for (const f of files as string[]) {
+          if (!f.toLowerCase().endsWith('.efw')) continue
+          const content = await window.api?.project?.readFile(projectDir + '\\' + f)
+          if (!content) continue
+          try {
+            const data = JSON.parse(content)
+            const name = (data.name || data.formName || f.replace(/\.efw$/i, '')).trim()
+            if (!name) continue
+            const controls = (Array.isArray(data.controls) ? data.controls : [])
+              .map((c: { name?: string; type?: string; properties?: Record<string, string | number | boolean> }) => ({ name: (c.name || '').trim(), type: (c.type || '').trim(), properties: c.properties }))
+              .filter((c: { name: string }) => c.name)
+            // 关联 .eyc 里提取子程序名（`.子程序 名, ...`）
+            const eycName = (data.sourceFile || `${name}.eyc`)
+            const subs: string[] = []
+            const eycContent = await window.api?.project?.readFile(projectDir + '\\' + eycName)
+            if (eycContent) {
+              for (const rawLine of eycContent.split(/\r?\n/)) {
+                const m = /^\s*\.子程序\s+([^,，\n]+)/.exec(rawLine)
+                if (m) { const sn = m[1].trim(); if (sn) subs.push(sn) }
+              }
+            }
+            const entry: WinControlEntry = { name, controls, subs }
+            list.push(entry)
+            map.set((data.sourceFile || `${name}.eyc`).toLowerCase(), entry)
+            map.set(`${name}.eyc`.toLowerCase(), entry)  // 名字兜底
+            map.set(f.toLowerCase().replace(/\.efw$/i, '.eyc'), entry)  // 文件名兜底
+          } catch { /* 跳过无法解析的 .efw */ }
+        }
+      }
+      if (!cancelled) { setProjectWindowControlsMap(map); setProjectWindows(list) }
+    })()
+    return () => { cancelled = true }
+  }, [projectDir, debouncedTabs])
+
   const activeWindowControls = useMemo(() => {
     if (!activeTab) return [] as Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>
     const isSourceTab = isEycSourceLanguage(activeTab.language)
     if (!isSourceTab) return [] as Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>
 
     const sourceFileName = (activeTab.filePath?.split(/[\\/]/).pop() || activeTab.label).toLowerCase()
-    const matchedFormTab = tabs.find(t => {
-      if (t.language !== 'efw' || !t.formData) return false
-      const linkedSource = (t.formData.sourceFile || `${t.formData.name}.eyc`).toLowerCase()
-      return linkedSource === sourceFileName
-    })
-
-    if (!matchedFormTab?.formData) return [] as Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>
 
     const items: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }> = []
     const seen = new Set<string>()
@@ -2541,14 +2581,28 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       seen.add(n)
       items.push({ name: n, type: t, properties })
     }
-
-    add(matchedFormTab.formData.name, '窗口')
-    for (const control of matchedFormTab.formData.controls) {
-      // 实例属性值随附（如编辑框的「输入方式」），诊断按它折算「内容」的实际类型
-      add(control.name, control.type, control.properties)
+    const buildFrom = (winName: string, controls: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>): typeof items => {
+      add(winName, '窗口')
+      for (const control of controls) add(control.name, control.type, control.properties)
+      return items
     }
+
+    // 1) 优先用已打开的 .efw 标签页（含未落盘的实时编辑）。
+    const matchedFormTab = tabs.find(t => {
+      if (t.language !== 'efw' || !t.formData) return false
+      const linkedSource = (t.formData.sourceFile || `${t.formData.name}.eyc`).toLowerCase()
+      return linkedSource === sourceFileName
+    })
+    if (matchedFormTab?.formData) {
+      return buildFrom(matchedFormTab.formData.name, matchedFormTab.formData.controls)
+    }
+
+    // 2) .efw 未打开：从读盘的项目窗口控件表按关联源文件名解析（用户即使不开设计器也能补全窗口成员）。
+    const diskEntry = projectWindowControlsMap.get(sourceFileName)
+    if (diskEntry) return buildFrom(diskEntry.name, diskEntry.controls)
+
     return items
-  }, [activeTab, tabs])
+  }, [activeTab, tabs, projectWindowControlsMap])
 
   const activeWindowControlNames = useMemo(() => {
     return activeWindowControls.map(c => c.name)
@@ -3045,6 +3099,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
                 projectGlobalVars={projectGlobalVars}
                 windowControlNames={activeWindowControlNames}
                 windowControlTypes={activeWindowControls}
+                projectWindows={projectWindows}
                 windowUnits={windowUnits}
                 projectConstants={projectConstants}
                 projectDllCommands={projectDllCommands}

@@ -4,7 +4,7 @@
   justify-content: space-between;
   height: var(--statusbar-height);
   padding: 0 var(--spacing-md);
-  background: var(--statusbar-bg);
+  background: var(--statusbar-bg-gradient, var(--statusbar-bg));
   color: var(--statusbar-text);
   font-size: var(--font-size-small);
   flex-shrink: 0;
