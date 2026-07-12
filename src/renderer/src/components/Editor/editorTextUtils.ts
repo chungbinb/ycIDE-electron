@@ -62,10 +62,10 @@ export function parseCallArgs(codeLine: string): string[] {
       inStr = true
       continue
     }
-    if (ch === open || ch === '(' || ch === '（') {
+    if (ch === open || ch === '(' || ch === '（' || ch === '{' || ch === '｛') {
       if (depth === 0) start = i + 1
       depth++
-    } else if (ch === close || ch === ')' || ch === '）') {
+    } else if (ch === close || ch === ')' || ch === '）' || ch === '}' || ch === '｝') {
       depth--
       if (depth === 0) {
         args.push(codeLine.slice(start, i).trim())
@@ -77,6 +77,62 @@ export function parseCallArgs(codeLine: string): string[] {
     }
   }
   return args
+}
+
+/**
+ * 参数值的括号/引号是否配平（字符串字面量内不计）。
+ * 用于展开参数编辑的实时写回守卫：值处于「到字节集(」这类中间态时若写回主命令行，
+ * 未配平的开括号会吞掉外层调用自身的右括号，随后 replaceCallArg 在破行上找不到
+ * 参数边界、走"追加"分支，每敲一键在行尾多出一组重复参数（级联损坏）。
+ */
+export function isArgParensBalanced(val: string): boolean {
+  let depth = 0
+  let inStr = false
+  for (let i = 0; i < val.length; i++) {
+    const ch = val[i]
+    if (inStr) {
+      if (ch === '"' || ch === '”') inStr = false
+      continue
+    }
+    if (ch === '"' || ch === '“') { inStr = true; continue }
+    if (ch === '(' || ch === '（' || ch === '{' || ch === '｛') depth++
+    else if (ch === ')' || ch === '）' || ch === '}' || ch === '｝') {
+      depth--
+      if (depth < 0) return false
+    }
+  }
+  return !inStr && depth === 0
+}
+
+/**
+ * 为参数值补齐缺失的右括号/右引号（提交时兜底）：按开括号的半/全角逐个补相应的闭括号；
+ * 引号未闭合先补引号。深度为负（多余的右括号）无法可靠修复，原样返回交给诊断标红。
+ */
+export function balanceArgParens(val: string): string {
+  const stack: string[] = []
+  let inStr = false
+  let strClose = ''
+  for (let i = 0; i < val.length; i++) {
+    const ch = val[i]
+    if (inStr) {
+      if (ch === '"' || ch === '”') inStr = false
+      continue
+    }
+    if (ch === '"') { inStr = true; strClose = '"'; continue }
+    if (ch === '“') { inStr = true; strClose = '”'; continue }
+    if (ch === '(') stack.push(')')
+    else if (ch === '（') stack.push('）')
+    else if (ch === '{') stack.push('}')
+    else if (ch === '｛') stack.push('｝')
+    else if (ch === ')' || ch === '）' || ch === '}' || ch === '｝') {
+      if (stack.length === 0) return val // 深度为负：不修，交给诊断
+      stack.pop()
+    }
+  }
+  let out = val
+  if (inStr) out += strClose
+  while (stack.length > 0) out += stack.pop()
+  return out
 }
 
 export function replaceCallArg(codeLine: string, argIdx: number, newVal: string): string {
@@ -102,10 +158,10 @@ export function replaceCallArg(codeLine: string, argIdx: number, newVal: string)
           continue
         }
       }
-      if (ch === '(' || ch === '（') {
+      if (ch === '(' || ch === '（' || ch === '{' || ch === '｛') {
         if (depth === 0) start = i + 1
         depth++
-      } else if (ch === ')' || ch === '）') {
+      } else if (ch === ')' || ch === '）' || ch === '}' || ch === '｝') {
         depth--
         if (depth === 0) {
           ranges.push({ start, end: i })

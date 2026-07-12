@@ -34,10 +34,15 @@
   color: var(--toolbar-icon-color) !important;
 }
 .toolbar-btn:hover {
-  background: var(--bg-hover);
+  /* 与设计器对齐工具条一致：悬停画一圈亮色圆角边框（inset box-shadow 跟随 border-radius:4px、
+     不撑大盒子），不再填背景 */
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--border-focus, #2f9bff) 70%, white);
 }
 .toolbar-btn:active {
-  background: var(--bg-active);
+  /* 按下时描边略加粗，作为按压反馈（仍是圆角边框、无背景填充） */
+  background: transparent;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--border-focus, #2f9bff) 70%, white);
 }
 .toolbar-btn:disabled {
   opacity: 1;

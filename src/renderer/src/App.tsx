@@ -16,7 +16,7 @@ import ThemeSettingsDialog from './components/ThemeSettingsDialog/ThemeSettingsD
 import ThemeManager from './components/ThemeManager/ThemeManager'
 import SettingsDialog from './components/SettingsDialog/SettingsDialog'
 import AIAssistantPanel from './components/AIAssistantPanel/AIAssistantPanel'
-import type { SelectionTarget, AlignAction, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
+import type { SelectionTarget, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
 import { mountIdeActionLogger } from './utils/ideActionLogger'
@@ -33,7 +33,7 @@ import {
   type ThemeTokenPayload
 } from '../../shared/theme'
 import { createThemeDraftSession, type ThemeDraftSession } from '../../shared/theme-draft'
-import { THEME_TOKEN_GROUPS, type FlowLineMode, type FlowLineMultiConfig, type ThemeTokenGroupId } from '../../shared/theme-tokens'
+import { THEME_TOKEN_GROUPS, DEFAULT_THEME_GROUP_GRADIENT, buildThemeGradientCss, type FlowLineMode, type FlowLineMultiConfig, type ThemeGradientsConfig, type ThemeGradientType, type ThemeTokenGroupId } from '../../shared/theme-tokens'
 import { DEFAULT_IDE_SETTINGS, resolveIDESettings, type IDESettings } from '../../shared/settings'
 import { useUiLayoutStore } from './stores/uiLayoutStore'
 import { useSettingsStore } from './stores/settingsStore'
@@ -780,8 +780,6 @@ function App(): React.JSX.Element {
   const [selection, setSelection] = useState<SelectionTarget>(null)
   const sidebarTab = useUiLayoutStore(s => s.sidebarTab)
   const setSidebarTab = useUiLayoutStore(s => s.setSidebarTab)
-  const [alignAction, setAlignAction] = useState<AlignAction>(null)
-  const [multiSelectCount, setMultiSelectCount] = useState(0)
   const [fileEncodingByPath, setFileEncodingByPath] = useState<Record<string, string>>({})
 
   const [openProjectFiles, setOpenProjectFiles] = useState<EditorTab[]>()
@@ -798,6 +796,9 @@ function App(): React.JSX.Element {
   const [themeTokenValues, setThemeTokenValues] = useState<Record<string, string>>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.tokenValues })
   const [themeFlowLine, setThemeFlowLine] = useState<ThemeTokenPayload['flowLine']>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.flowLine })
   const [themeIconConfig, setThemeIconConfig] = useState<ThemeTokenPayload['icon']>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.icon })
+  const [themeGradients, setThemeGradients] = useState<ThemeGradientsConfig>({})
+  // 上次主题写入根节点的颜色键集：切换到键更少的主题时清掉多余键，避免残留上一主题的值
+  const appliedThemeColorKeysRef = useRef<Set<string>>(new Set())
   const [themeDraftSession, setThemeDraftSession] = useState<ThemeDraftSession | null>(null)
   const [themeSaveFeedback, setThemeSaveFeedback] = useState<string | null>(null)
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
@@ -1251,6 +1252,31 @@ function App(): React.JSX.Element {
     checkDesignProblems(openTabsRef.current)
   }, [checkDesignProblems, targetPlatform])
 
+  // 编译前全项目诊断扫描：未打开的文件也检查（问题面板只覆盖当前打开文件），
+  // 有错误则拦截编译，并在输出面板按文件列出错误明细。
+  const sweepAndReportProjectErrors = useCallback(async (): Promise<boolean> => {
+    const sweep = (await editorRef.current?.sweepProjectDiagnostics?.()) || []
+    if (!sweep.length) return false
+    const total = sweep.reduce((s, f) => s + f.problems.length, 0)
+    resetOutputMessages()
+    setShowOutput(true)
+    setForceOutputTab('compile')
+    setTimeout(() => setForceOutputTab(null), 100)
+    appendOutputMessage({ type: 'error', text: `编译已取消：${sweep.length} 个文件存在 ${total} 个错误` })
+    let emitted = 0
+    for (const f of sweep) {
+      appendOutputMessage({ type: 'error', text: `${f.file}（${f.problems.length} 个错误）:` })
+      for (const p of f.problems) {
+        if (emitted >= 50) break
+        appendOutputMessage({ type: 'error', text: `    第 ${p.line} 行: ${p.message}` })
+        emitted++
+      }
+      if (emitted >= 50) break
+    }
+    if (total > emitted) appendOutputMessage({ type: 'error', text: `    …其余 ${total - emitted} 个错误未列出（打开对应文件可在问题面板查看）` })
+    return true
+  }, [resetOutputMessages, appendOutputMessage])
+
   // 编译运行
   const handleCompileRun = useCallback(async () => {
     if (!isProjectWorkspace || !currentProjectDir || isCompiling) return
@@ -1270,6 +1296,10 @@ function App(): React.JSX.Element {
     }
     setIsCompiling(true)
     editorRef.current?.save()
+    if (await sweepAndReportProjectErrors()) {
+      setIsCompiling(false)
+      return
+    }
     resetOutputMessages()
     setShowOutput(true)
     setForceOutputTab('compile')
@@ -1282,7 +1312,7 @@ function App(): React.JSX.Element {
     setIsCompiling(false)
     setForceOutputTab(null)
     if (result?.success && targetPlatform !== 'android') setIsRunning(true)
-  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, targetPlatform, fileProblems, designProblems, debugPause, continueDebugRun, breakpointsByFile])
+  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, targetPlatform, fileProblems, designProblems, debugPause, continueDebugRun, breakpointsByFile, sweepAndReportProjectErrors])
 
   // 普通编译
   const handleCompile = useCallback(async () => {
@@ -1295,6 +1325,10 @@ function App(): React.JSX.Element {
     }
     setIsCompiling(true)
     editorRef.current?.save()
+    if (await sweepAndReportProjectErrors()) {
+      setIsCompiling(false)
+      return
+    }
     resetOutputMessages()
     setShowOutput(true)
     setForceOutputTab('compile')
@@ -1302,7 +1336,23 @@ function App(): React.JSX.Element {
     await window.api.compiler.compile(currentProjectDir, editorFiles, targetArch)
     setIsCompiling(false)
     setForceOutputTab(null)
-  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, fileProblems, designProblems])
+  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, fileProblems, designProblems, sweepAndReportProjectErrors])
+
+  // 窗口预览：编译运行【当前窗体】作为启动窗口，但跳过所有源代码转译（只出纯 UI 窗口，
+  // 事件走 WEAK 空实现）。因不编译源代码，故不受问题面板(代码/设计错误)阻断。
+  const handlePreviewWindow = useCallback(async (efwFileName: string) => {
+    if (!isProjectWorkspace || !currentProjectDir || isCompiling) return
+    setIsCompiling(true)
+    editorRef.current?.save()
+    resetOutputMessages()
+    setShowOutput(true)
+    setForceOutputTab('compile')
+    const editorFiles = editorRef.current?.getEditorFiles()
+    const result = await window.api.compiler.run(currentProjectDir, editorFiles, targetArch, { previewWindow: efwFileName })
+    setIsCompiling(false)
+    setForceOutputTab(null)
+    if (result?.success && targetPlatform !== 'android') setIsRunning(true)
+  }, [isProjectWorkspace, currentProjectDir, isCompiling, targetArch, targetPlatform])
 
   // 停止运行
   const handleStop = useCallback(() => {
@@ -1589,6 +1639,28 @@ function App(): React.JSX.Element {
     }
   }, [])
 
+  // 分组渐变应用：为每个 token 生成 `<token>-gradient`（背景/文字消费点回落纯色）与
+  // `<token>-fill`（文字渐变经 background-clip:text 时置 transparent）；关闭时移除即回落纯色。
+  const applyThemeGradientsToRoot = useCallback((gradients: ThemeGradientsConfig, tokenValues: Record<string, string>) => {
+    const root = document.documentElement
+    for (const group of THEME_TOKEN_GROUPS) {
+      const cfg = gradients[group.id]
+      for (const item of group.items) {
+        const gradientKey = `${item.tokenKey}-gradient`
+        const fillKey = `${item.tokenKey}-fill`
+        if (cfg?.enabled) {
+          const main = tokenValues[item.tokenKey] || '#000000'
+          const second = cfg.secondColors[item.tokenKey] || main
+          root.style.setProperty(gradientKey, buildThemeGradientCss(cfg.type, second, main))
+          root.style.setProperty(fillKey, 'transparent')
+        } else {
+          root.style.removeProperty(gradientKey)
+          root.style.removeProperty(fillKey)
+        }
+      }
+    }
+  }, [])
+
   const applyFlowLineConfigToRoot = useCallback((flowLine: ThemeTokenPayload['flowLine']) => {
     const root = document.documentElement
     const mode = flowLine.mode === 'multi' ? 'multi' : 'single'
@@ -1632,10 +1704,24 @@ function App(): React.JSX.Element {
 
     // 内置主题始终以主题文件色值为准，避免历史 payload 覆盖标题栏等关键令牌。
     if (isBuiltinThemeId(name)) {
-      payload = resolveThemeTokenPayload({ tokenValues: theme.colors, flowLine: payload.flowLine, icon: payload.icon }, theme.colors)
+      payload = resolveThemeTokenPayload({ tokenValues: theme.colors, flowLine: payload.flowLine, icon: payload.icon, gradients: payload.gradients }, theme.colors)
+    }
+
+    // 主题文件自带渐变：该主题尚无用户渐变配置时作为初始值（用户改过则以其为准）
+    if ((!payload.gradients || Object.keys(payload.gradients).length === 0) && theme.gradients) {
+      payload = resolveThemeTokenPayload({ ...payload, gradients: theme.gradients }, theme.colors)
     }
 
     const root = document.documentElement
+    // 键集不同的主题切换（如 59 键 → 31 键）会把上一主题多出的界面变量留在根上，
+    // 表现为切主题后局部残留旧配色、重启才恢复——先清掉新主题没有的旧键。
+    const nextColorKeys = new Set(Object.keys(theme.colors))
+    for (const staleKey of appliedThemeColorKeysRef.current) {
+      if (!nextColorKeys.has(staleKey)) {
+        try { root.style.removeProperty(staleKey) } catch { /* ignore */ }
+      }
+    }
+    appliedThemeColorKeysRef.current = nextColorKeys
     let appliedCount = 0
     for (const [key, value] of Object.entries(theme.colors)) {
       try {
@@ -1647,9 +1733,11 @@ function App(): React.JSX.Element {
     }
     applyThemeTokenValuesToRoot(payload.tokenValues)
     applyFlowLineConfigToRoot(payload.flowLine)
+    applyThemeGradientsToRoot(payload.gradients || {}, payload.tokenValues)
     setThemeTokenValues(payload.tokenValues)
     setThemeFlowLine(payload.flowLine)
     setThemeIconConfig(payload.icon)
+    setThemeGradients(payload.gradients || {})
     setCurrentTheme(name)
 
     const missingRequired = REQUIRED_THEME_COLOR_KEYS.filter(key => !(key in theme.colors))
@@ -1661,7 +1749,7 @@ function App(): React.JSX.Element {
     }
     if (themeRepairMessage) setThemeRepairMessage(null)
     return payload
-  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, persistCurrentThemePayload, pushThemeNotice, themeRepairMessage])
+  }, [applyFlowLineConfigToRoot, applyThemeGradientsToRoot, applyThemeTokenValuesToRoot, persistCurrentThemePayload, pushThemeNotice, themeRepairMessage])
 
   const syncThemeLifecycleState = useCallback(async (
     payload: ThemeLifecycleSyncPayload,
@@ -1679,16 +1767,18 @@ function App(): React.JSX.Element {
   const applyThemeDraftChange = useCallback((nextThemePayload: ThemeTokenPayload, targetThemeId?: string) => {
     const workingThemeId = targetThemeId || currentTheme
     if (!workingThemeId) return
-    const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, themeTokenValues)
+    const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues)
     if (!themeDraftSession) {
       setThemeDraftSession(createThemeDraftSession(workingThemeId, payload))
     }
     const nextPayload = resolveThemeTokenPayload(nextThemePayload, nextThemePayload.tokenValues)
     applyThemeTokenValuesToRoot(nextPayload.tokenValues)
     applyFlowLineConfigToRoot(nextPayload.flowLine)
+    applyThemeGradientsToRoot(nextPayload.gradients || {}, nextPayload.tokenValues)
     setThemeTokenValues(nextPayload.tokenValues)
     setThemeFlowLine(nextPayload.flowLine)
     setThemeIconConfig(nextPayload.icon)
+    setThemeGradients(nextPayload.gradients || {})
     setThemeDraftSession(prev => {
       const baseSession = prev ?? createThemeDraftSession(workingThemeId, payload)
       const nextHistory = baseSession.history
@@ -1703,7 +1793,7 @@ function App(): React.JSX.Element {
         historyCursor: nextHistory.length - 1,
       }
     })
-  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, themeDraftSession, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyFlowLineConfigToRoot, applyThemeTokenValuesToRoot, currentTheme, themeDraftSession, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const buildAutoCopiedThemeName = useCallback((baseThemeId: string): string => {
     const normalizedBase = `${baseThemeId}-副本`
@@ -1724,7 +1814,7 @@ function App(): React.JSX.Element {
     const saveResult = await window.api?.theme?.saveAsCustom({
       name: autoThemeName,
       sourceThemeId: currentTheme,
-      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, themeTokenValues),
+      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues),
     }) as SaveAsCustomThemeResult | undefined
     if (!saveResult) {
       setThemeSaveFeedback('创建内置主题副本失败，请稍后重试。')
@@ -1745,7 +1835,7 @@ function App(): React.JSX.Element {
     setThemeDraftSession(createThemeDraftSession(saveResult.themeId, payload))
     setThemeSaveFeedback(`已自动基于“${currentTheme}”创建可编辑副本“${saveResult.themeId}”。`)
     return saveResult.themeId
-  }, [applyTheme, buildAutoCopiedThemeName, currentTheme, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyTheme, buildAutoCopiedThemeName, currentTheme, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const canUndoThemeDraft = (themeDraftSession?.historyCursor ?? 0) > 0
 
@@ -1791,10 +1881,10 @@ function App(): React.JSX.Element {
       const editableThemeId = await ensureEditableThemeId()
       if (!editableThemeId) return
       const nextTokenValues = { ...themeTokenValues, [tokenKey]: value }
-      const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, nextTokenValues)
+      const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, nextTokenValues)
       applyThemeDraftChange(payload, editableThemeId)
     })()
-  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeFlowLineModeChange = useCallback((mode: FlowLineMode) => {
     void (async () => {
@@ -1810,10 +1900,10 @@ function App(): React.JSX.Element {
       for (const tokenKey of FLOW_LINE_TOKEN_KEYS) {
         nextTokenValues[tokenKey] = currentMainColor
       }
-      const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine, icon: themeIconConfig }, nextTokenValues)
+      const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine, icon: themeIconConfig, gradients: themeGradients }, nextTokenValues)
       applyThemeDraftChange(payload, editableThemeId)
     })()
-  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeFlowLineMainColorChange = useCallback((value: string) => {
     void (async () => {
@@ -1826,10 +1916,10 @@ function App(): React.JSX.Element {
       for (const tokenKey of FLOW_LINE_TOKEN_KEYS) {
         nextTokenValues[tokenKey] = value
       }
-      const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine, icon: themeIconConfig }, nextTokenValues)
+      const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine, icon: themeIconConfig, gradients: themeGradients }, nextTokenValues)
       applyThemeDraftChange(payload, editableThemeId)
     })()
-  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeFlowLineDepthStepChange = useCallback((key: keyof FlowLineMultiConfig, value: number) => {
     if (!Number.isFinite(value)) return
@@ -1843,10 +1933,10 @@ function App(): React.JSX.Element {
           [key]: value,
         },
       }
-      const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: nextFlowLine, icon: themeIconConfig }, themeTokenValues)
+      const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: nextFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues)
       applyThemeDraftChange(payload, editableThemeId)
     })()
-  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handlePreserveToolbarIconOriginalColorsChange = useCallback((value: boolean) => {
     void (async () => {
@@ -1865,7 +1955,7 @@ function App(): React.JSX.Element {
       )
       applyThemeDraftChange(payload, editableThemeId)
     })()
-  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeTokenResetItem = useCallback(async (_groupId: ThemeTokenGroupId, tokenKey: string) => {
     const editableThemeId = await ensureEditableThemeId()
@@ -1873,9 +1963,27 @@ function App(): React.JSX.Element {
     const defaults = await getDefaultThemePayload(editableThemeId)
     const resetValue = defaults.tokenValues[tokenKey] || themeTokenValues[tokenKey] || '#000000'
     const nextTokenValues = { ...themeTokenValues, [tokenKey]: resetValue }
-    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, nextTokenValues)
+    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, nextTokenValues)
     applyThemeDraftChange(payload, editableThemeId)
-  }, [applyThemeDraftChange, ensureEditableThemeId, getDefaultThemePayload, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, getDefaultThemePayload, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
+
+  // 分组渐变配置变更（开关/类型/某行第二色），走草稿链路实时预览
+  const handleThemeGradientChange = useCallback((groupId: ThemeTokenGroupId, patch: { enabled?: boolean; type?: ThemeGradientType; secondColor?: { tokenKey: string; value: string } }) => {
+    void (async () => {
+      const editableThemeId = await ensureEditableThemeId()
+      if (!editableThemeId) return
+      const prev = themeGradients[groupId] || DEFAULT_THEME_GROUP_GRADIENT
+      const next = {
+        enabled: patch.enabled ?? prev.enabled,
+        type: patch.type ?? prev.type,
+        secondColors: { ...prev.secondColors },
+      }
+      if (patch.secondColor) next.secondColors[patch.secondColor.tokenKey] = patch.secondColor.value
+      const nextGradients = { ...themeGradients, [groupId]: next }
+      const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: nextGradients }, themeTokenValues)
+      applyThemeDraftChange(payload, editableThemeId)
+    })()
+  }, [applyThemeDraftChange, ensureEditableThemeId, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeTokenResetGroup = useCallback(async (groupId: ThemeTokenGroupId) => {
     if (!window.confirm('确定重置该分组令牌吗?')) return
@@ -1906,9 +2014,12 @@ function App(): React.JSX.Element {
       }
     }
 
-    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine, icon: themeIconConfig }, nextTokenValues)
+    // 重置本组同时关闭该组渐变
+    const nextGradients = { ...themeGradients }
+    delete nextGradients[groupId]
+    const payload = resolveThemeTokenPayload({ tokenValues: nextTokenValues, flowLine: nextFlowLine, icon: themeIconConfig, gradients: nextGradients }, nextTokenValues)
     applyThemeDraftChange(payload, editableThemeId)
-  }, [applyThemeDraftChange, ensureEditableThemeId, getDefaultThemePayload, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyThemeDraftChange, ensureEditableThemeId, getDefaultThemePayload, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeTokenResetAll = useCallback(async () => {
     if (!window.confirm('确定恢复全部主题令牌默认值吗?')) return
@@ -1939,8 +2050,8 @@ function App(): React.JSX.Element {
   }, [handleThemeSelect])
 
   const getCurrentThemePayloadForManager = useCallback(() => (
-    resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, themeTokenValues)
-  ), [themeFlowLine, themeIconConfig, themeTokenValues])
+    resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues)
+  ), [themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeManagerCreateFromCurrent = useCallback(async (name: string): Promise<{ success: boolean; message?: string }> => {
     const validation = validateCustomThemeName(name)
@@ -2040,7 +2151,7 @@ function App(): React.JSX.Element {
     if (themeId !== currentTheme) {
       return { success: false, message: '请先将该主题设为当前，再进行保存。' }
     }
-    const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, themeTokenValues)
+    const payload = resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues)
     const config = await window.api?.theme?.saveCurrent(themeId, payload)
     if (!config) {
       return { success: false, message: '保存主题失败，请稍后重试。' }
@@ -2048,7 +2159,7 @@ function App(): React.JSX.Element {
     setThemeDraftSession(createThemeDraftSession(themeId, payload))
     setThemeSaveFeedback(null)
     return { success: true, message: `主题“${themeId}”已保存。` }
-  }, [currentTheme, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [currentTheme, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeManagerSaveAsTheme = useCallback(async (sourceThemeId: string, name: string): Promise<{ success: boolean; message?: string }> => {
     if (!sourceThemeId) return { success: false, message: '请选择要另存为的主题。' }
@@ -2065,7 +2176,7 @@ function App(): React.JSX.Element {
     const saveResult = await window.api?.theme?.saveAsCustom({
       name: validation.normalizedName,
       sourceThemeId,
-      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, themeTokenValues),
+      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues),
     }) as SaveAsCustomThemeResult | undefined
     if (!saveResult) {
       const message = '保存主题失败，请稍后重试。'
@@ -2089,7 +2200,7 @@ function App(): React.JSX.Element {
     setThemeDraftSession(createThemeDraftSession(saveResult.themeId, payload))
     setThemeSaveFeedback(null)
     return { success: true, message: `已另存为“${saveResult.themeId}”。` }
-  }, [applyTheme, currentTheme, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyTheme, currentTheme, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeManagerImportPrepare = useCallback(async (): Promise<ThemeManagerImportPrepareResult> => {
     const testImportPrepare = (window as Window & {
@@ -2173,7 +2284,7 @@ function App(): React.JSX.Element {
     const saveResult = await window.api?.theme?.saveAsCustom({
       name: validation.normalizedName,
       sourceThemeId: currentTheme,
-      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig }, themeTokenValues),
+      themePayload: resolveThemeTokenPayload({ tokenValues: themeTokenValues, flowLine: themeFlowLine, icon: themeIconConfig, gradients: themeGradients }, themeTokenValues),
     }) as SaveAsCustomThemeResult | undefined
     if (!saveResult) {
       const message = '保存主题失败，请稍后重试。'
@@ -2197,7 +2308,7 @@ function App(): React.JSX.Element {
     setThemeDraftSession(createThemeDraftSession(saveResult.themeId, payload))
     setThemeSaveFeedback(null)
     return { success: true }
-  }, [applyTheme, currentTheme, themeFlowLine, themeIconConfig, themeTokenValues])
+  }, [applyTheme, currentTheme, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const handleThemeSettingsClose = useCallback(() => {
     setThemeDraftSession(null)
@@ -2258,7 +2369,6 @@ function App(): React.JSX.Element {
     })()
   }, [applyTheme, handleThemeWarning])
 
-  const handleAlignDone = useCallback(() => setAlignAction(null), [])
 
   useEffect(() => {
     if (!showThemeManager) {
@@ -2883,6 +2993,7 @@ function App(): React.JSX.Element {
         height: efwData.height || 384,
         sourceFile: efwData.sourceFile,
         properties: efwData.properties || undefined,
+        menu: Array.isArray(efwData.menu) ? efwData.menu : undefined,
         controls: (efwData.controls || []).map((c: any) => ({
           id: c.id, type: c.type, name: c.name,
           left: c.x ?? c.left ?? 0, top: c.y ?? c.top ?? 0,
@@ -3352,6 +3463,12 @@ function App(): React.JSX.Element {
       case 'edit:find':
       case 'edit:replace':
         editorRef.current?.editorAction(action.split(':')[1])
+        break
+      case 'nav:back':
+        editorRef.current?.editorAction('navBack')
+        break
+      case 'build:compile':
+        handleCompile()
         break
       case 'build:run':
         handleCompileRun()
@@ -3823,12 +3940,21 @@ function App(): React.JSX.Element {
   }, [openProjectByEppPath, openWorkspaceFolderByPath, openFileByPath, extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, applyTheme, handleCompile, handleCompileRun, handleStop, handleAppClose, joinPath, projectTree, refreshProjectTree, toggleBreakpoint, isProjectWorkspace, currentProjectDir, breakpointsByFile, targetArch, continueDebugRun, getBaseName, runEProjectImport])
 
   // 项目树节点右键操作：新建程序集/类模块/子程序、删除程序集或类模块
+  // 窗口复制剪贴板：记录被复制窗口的 .efw 文件名（粘贴时按当前内容读取复制体）
+  const [copiedWindowFile, setCopiedWindowFile] = useState<string | null>(null)
+
   const handleProjectNodeAction = useCallback(async (action: ProjectNodeAction, node: { id: string; label: string }) => {
     const dir = currentProjectDirRef.current
     if (!dir) return
 
     if (action === 'newAssembly') { void handleMenuAction('insert:module'); return }
     if (action === 'newClassModule') { void handleMenuAction('insert:classModule'); return }
+    if (action === 'newWindow') { void handleMenuAction('insert:window'); return }
+    if (action === 'newGlobalVar') { void handleMenuAction('insert:globalVar'); return }
+    if (action === 'newConstant') { void handleMenuAction('insert:constant'); return }
+    if (action === 'newDataType') { void handleMenuAction('insert:dataType'); return }
+    if (action === 'newDllCmd') { void handleMenuAction('insert:dllCmd'); return }
+    if (action === 'newPtrCmd') { void handleMenuAction('insert:ptrCmd'); return }
 
     const fileName = node.id
     const filePath = joinPath(dir, fileName)
@@ -3837,6 +3963,121 @@ function App(): React.JSX.Element {
       const liveContent = editorFiles?.[fn]
       if (liveContent !== undefined) return liveContent
       return ((await window.api?.project?.readFile(joinPath(dir, fn))) || '')
+    }
+
+    if (action === 'copyWindow') {
+      setCopiedWindowFile(fileName)
+      return
+    }
+
+    if (action === 'pasteWindow') {
+      const srcEfwFile = copiedWindowFile
+      if (!srcEfwFile) return
+      const srcEfwContent = await readProjectFile(srcEfwFile)
+      if (!srcEfwContent) {
+        window.alert('要粘贴的窗口源文件已不存在。')
+        setCopiedWindowFile(null)
+        return
+      }
+      let srcData: Record<string, unknown> & { name?: string; title?: string; sourceFile?: string }
+      try { srcData = JSON.parse(srcEfwContent) } catch {
+        window.alert('要粘贴的窗口文件内容无效。')
+        return
+      }
+      const srcName = (srcData.name as string) || stripFileExtension(srcEfwFile)
+      // 粘贴的窗口统一命名为 窗口N（取第一个未被占用的序号）
+      const existingWindowFiles = projectTree[0]?.children
+        ?.find(c => c.id === '_cat_windows')?.children?.map(c => c.id) || []
+      let n = 1
+      while (existingWindowFiles.includes(`窗口${n}.efw`)) n++
+      const newName = `窗口${n}`
+      const newEfwFileName = `${newName}.efw`
+      const newEycFileName = `${newName}.eyc`
+
+      const newEfwData = JSON.stringify({
+        ...srcData,
+        name: newName,
+        title: srcData.title === srcName ? newName : (srcData.title || newName),
+        sourceFile: newEycFileName,
+      }, null, 2)
+
+      // 复制关联源码，并把窗口相关引用改到新名。命名约定（与编译器/双击窗体生成一致）：
+      // **程序集名**用剥前导下划线的核心名（_启动窗口 → 窗口程序集_启动窗口，前导下划线兼作分隔符，
+      // 直接拼 srcName 会得到双下划线匹配不上）；**窗口事件名**用原始名（_启动窗口 的事件是
+      // 「__启动窗口_创建完毕」，双下划线合法）；跨窗口成员引用（原名.）用原始名。
+      const stripLeadingUnderscore = (s: string): string => s.replace(/^_+/, '')
+      const srcCore = stripLeadingUnderscore(srcName)
+      const newCore = stripLeadingUnderscore(newName)
+      const srcEycFileName = (srcData.sourceFile as string) || `${srcName}.eyc`
+      let newEycContent = (await readProjectFile(srcEycFileName)).replace(/\r\n/g, '\n')
+      if (!newEycContent) newEycContent = `.版本 2\n.程序集 窗口程序集_${newCore}\n\n`
+      else {
+        newEycContent = newEycContent.split('窗口程序集_' + srcCore).join('窗口程序集_' + newCore)
+        newEycContent = newEycContent.split('_' + srcName + '_').join('_' + newName + '_')
+        newEycContent = newEycContent.split(srcName + '.').join(newName + '.')
+      }
+
+      await window.api?.project?.addFile(dir, newEfwFileName, 'EFW', newEfwData)
+      await window.api?.project?.addFile(dir, newEycFileName, 'EYC', newEycContent)
+
+      setProjectTree(prev => prev.map(root => ({
+        ...root,
+        children: root.children?.map(cat => {
+          if (cat.id === '_cat_windows') {
+            return { ...cat, children: [...(cat.children || []), { id: newEfwFileName, label: newName, type: 'window' as const }] }
+          }
+          if (cat.id === '_cat_sources') {
+            return {
+              ...cat,
+              children: [...(cat.children || []), {
+                id: newEycFileName,
+                label: extractAssemblyLabel(newEycContent) || stripFileExtension(newEycFileName),
+                type: 'module' as const,
+                children: extractSubroutineNodes(newEycContent, newEycFileName),
+                expanded: false,
+              }],
+            }
+          }
+          return cat
+        }),
+      })))
+
+      await openFileByPath(joinPath(dir, newEfwFileName))
+      return
+    }
+
+    if (action === 'deleteWindow') {
+      const winName = stripFileExtension(fileName)
+      if (winName === '_启动窗口') {
+        window.alert('“_启动窗口”是程序的启动窗口，不能删除。')
+        return
+      }
+      // 关联源码文件名以 .efw 里的 sourceFile 为准
+      let eycFileName = `${winName}.eyc`
+      try {
+        const d = JSON.parse(await readProjectFile(fileName))
+        if (d?.sourceFile) eycFileName = d.sourceFile
+      } catch { /* 按同名 .eyc 兜底 */ }
+      const ok = window.confirm(`确定要删除窗口“${winName}”吗？\n“${fileName}”与“${eycFileName}”将移入回收站。`)
+      if (!ok) return
+      await window.api?.project?.removeFile?.(dir, fileName)
+      await window.api?.project?.removeFile?.(dir, eycFileName)
+      editorRef.current?.closeFileTab(filePath)
+      editorRef.current?.closeFileTab(joinPath(dir, eycFileName))
+      setProjectTree(prev => prev.map(root => ({
+        ...root,
+        children: root.children?.map(cat => {
+          if (cat.id === '_cat_windows') {
+            return { ...cat, children: (cat.children || []).filter(c => c.id !== fileName) }
+          }
+          if (cat.id === '_cat_sources') {
+            return { ...cat, children: (cat.children || []).filter(c => c.id !== eycFileName) }
+          }
+          return cat
+        }),
+      })))
+      setCopiedWindowFile(prev => (prev === fileName ? null : prev))
+      return
     }
 
     if (action === 'newSub') {
@@ -3905,7 +4146,7 @@ function App(): React.JSX.Element {
         ),
       })))
     }
-  }, [handleMenuAction, joinPath, projectTree])
+  }, [handleMenuAction, joinPath, projectTree, copiedWindowFile, extractSubroutineNodes, openFileByPath])
 
   useEffect(() => {
     const handleNativeMenuAction = (action: unknown) => {
@@ -4115,6 +4356,7 @@ function App(): React.JSX.Element {
       // 编辑菜单
       else if (ctrl && !shift && code === 'KeyZ') action = 'edit:undo'
       else if (isRedoShortcut(e, runtimePlatform)) action = 'edit:redo'
+      else if (ctrl && !shift && code === 'KeyJ') action = 'nav:back'  // 跳回先前位置
       else if (ctrl && !shift && code === 'KeyX') action = 'edit:cut'
       else if (ctrl && !shift && code === 'KeyC') action = 'edit:copy'
       else if (ctrl && !shift && code === 'KeyV') action = 'edit:paste'
@@ -4280,7 +4522,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.4-beta.5（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.5-beta.3（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -5272,8 +5514,6 @@ function App(): React.JSX.Element {
         canCompileRun={canCompileRunCurrentTab}
         runtimePlatform={runtimePlatform}
         preserveOriginalIconColors={themeIconConfig.preserveToolbarIconOriginalColors}
-        hasControlSelected={multiSelectCount >= 2}
-        onAlign={setAlignAction}
         onCompileRun={handleCompileRun}
         onStop={handleStop}
         onDebugStepOver={handleDebugStepOver}
@@ -5380,17 +5620,15 @@ function App(): React.JSX.Element {
           <div className="app-workspace">
             <div className={`app-side${activityBarSide === 'right' ? ' app-side-right' : ''}`}>
               {!sidebarCollapsed && (
-                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} openTabs={openEditorTabs} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onSaveProject={handleSaveSingleProject} onCloseProject={(projectDir) => { void handleCloseSingleProject(projectDir) }} onLibraryChange={handleLibraryChange} onLibraryHint={handleLibraryHint} onProjectNodeAction={(action, node) => { void handleProjectNodeAction(action, node) }} />
+                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} openTabs={openEditorTabs} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onSaveProject={handleSaveSingleProject} onCloseProject={(projectDir) => { void handleCloseSingleProject(projectDir) }} onLibraryChange={handleLibraryChange} onLibraryHint={handleLibraryHint} onProjectNodeAction={(action, node) => { void handleProjectNodeAction(action, node) }} canPasteWindow={copiedWindowFile != null} />
               )}
               <div className="app-main">
                 <Editor
                   ref={editorRef}
                   onSelectControl={setSelection}
                   onSidebarTab={setSidebarTab}
+                  onPreviewWindow={handlePreviewWindow}
                   selection={selection}
-                  alignAction={alignAction}
-                  onAlignDone={handleAlignDone}
-                  onMultiSelectChange={setMultiSelectCount}
                   openProjectFiles={openProjectFiles}
                   onOpenTabsChange={handleOpenTabsChange}
                   onActiveTabChange={setActiveFileId}
@@ -5554,6 +5792,8 @@ function App(): React.JSX.Element {
         onSelectTheme={async (themeId) => { await handleThemeManagerPreviewTheme(themeId) }}
         onApplyTheme={async (themeId) => { await handleThemeManagerApplyTheme(themeId) }}
         onTokenChange={handleThemeTokenChange}
+        gradients={themeGradients}
+        onGradientChange={handleThemeGradientChange}
         onFlowLineModeChange={handleThemeFlowLineModeChange}
         onFlowLineMainColorChange={handleThemeFlowLineMainColorChange}
         onFlowLineDepthStepChange={handleThemeFlowLineDepthStepChange}

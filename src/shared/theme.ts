@@ -1,7 +1,9 @@
 import {
   DEFAULT_FLOW_LINE_MODE_CONFIG,
   THEME_TOKEN_GROUPS,
-  type FlowLineModeConfig
+  normalizeThemeGradients,
+  type FlowLineModeConfig,
+  type ThemeGradientsConfig
 } from './theme-tokens'
 
 export const THEME_CONFIG_VERSION = 2 as const
@@ -14,12 +16,16 @@ const CUSTOM_THEME_NAME_RESERVED_CHARS = /[\\/:*?"<>|]/
 export interface ThemeDefinition {
   name: ThemeId
   colors: Record<string, string>
+  /** 主题自带的分组渐变（可选）：该主题尚无用户 payload 时作为初始渐变配置 */
+  gradients?: ThemeGradientsConfig
 }
 
 export interface ThemeTokenPayload {
   tokenValues: Record<string, string>
   flowLine: FlowLineModeConfig
   icon: ThemeIconConfig
+  /** 分组渐变配置（可选，旧主题缺省为空对象=全部关闭） */
+  gradients?: ThemeGradientsConfig
 }
 
 export interface ThemeIconConfig {
@@ -193,6 +199,7 @@ const DEFAULT_THEME_TOKEN_VALUES: Record<string, string> = {
   '--syntax-operator': '#d4d4d4',
   '--table-bg': '#1e1e1e',
   '--table-text': '#d4d4d4',
+  '--table-cell-text': '#d4d4d4',
   '--table-border': '#3c3c3c',
   '--table-header-bg': '#252526',
   '--table-header-text': '#ffffff',
@@ -239,6 +246,7 @@ export function createDefaultThemeTokenPayload(defaultValues?: Record<string, st
     icon: {
       preserveToolbarIconOriginalColors: false,
     },
+    gradients: {},
   }
 }
 
@@ -257,6 +265,7 @@ export function resolveThemeTokenPayload(payload: unknown, fallbackValues?: Reco
     icon: {
       preserveToolbarIconOriginalColors: !!data.icon?.preserveToolbarIconOriginalColors,
     },
+    gradients: normalizeThemeGradients(data.gradients),
   }
 }
 

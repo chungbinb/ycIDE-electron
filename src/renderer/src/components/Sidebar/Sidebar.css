@@ -239,6 +239,12 @@
   background: var(--bg-hover, rgba(255, 255, 255, 0.08));
 }
 
+.sidebar-tabs-context-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+  background: transparent;
+}
+
 /* Library icon */
 .tree-icon-lib {
   background: var(--tree-lib-bg);
@@ -319,8 +325,14 @@
   color: var(--text-secondary);
   white-space: nowrap;
   width: 80px;
+  text-align: left;
   border-bottom: 1px solid var(--table-divider);
   border-right: 1px solid var(--border-color);
+}
+
+/* 控制按钮的下级选项（最大化/最小化按钮）：右缩进表示从属关系 */
+.prop-name-sub {
+  padding-left: 26px;
 }
 
 .prop-value {
@@ -397,6 +409,238 @@
   text-overflow: ellipsis;
 }
 
+/* 可输入/粘贴/复制的十六进制值输入 */
+.prop-color-hex,
+.prop-font-color-hex {
+  width: 74px;
+  min-width: 0;
+  padding: 1px 4px;
+  font-family: var(--font-family-mono, Consolas, monospace);
+  font-size: var(--font-size);
+  color: var(--text-primary);
+  background: var(--bg-input, var(--bg-primary));
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+}
+.prop-color-hex:focus,
+.prop-font-color-hex:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* 图片属性单元格：缩略图 + 选择/清除按钮 */
+.prop-image-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+}
+.prop-image-input {
+  display: none;
+}
+.prop-image-thumb {
+  width: 24px;
+  height: 18px;
+  object-fit: cover;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  flex-shrink: 0;
+  /* 棋盘格底衬托透明图 */
+  background-image:
+    linear-gradient(45deg, var(--bg-tertiary) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--bg-tertiary) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--bg-tertiary) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--bg-tertiary) 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+.prop-image-btn {
+  padding: 1px 8px;
+  font-size: var(--font-size);
+  color: var(--text-primary);
+  background: var(--button-secondary-bg, var(--bg-tertiary));
+  border: 1px solid var(--button-secondary-border, var(--border-color));
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.prop-image-btn:hover {
+  background: var(--button-secondary-hover, var(--bg-hover));
+}
+.prop-image-clear {
+  color: var(--text-secondary);
+}
+
+/* 字体属性单元格：摘要按钮 + 弹层选择器 */
+.prop-font-cell {
+  position: relative;
+  width: 100%;
+}
+.prop-font-btn {
+  width: 100%;
+  text-align: left;
+  padding: 1px 6px;
+  font-size: var(--font-size);
+  color: var(--text-primary);
+  background: var(--bg-input, var(--bg-secondary));
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prop-font-btn:hover {
+  border-color: var(--accent);
+}
+/* 可拖动的浮动字体对话框：portal 到 body，fixed 定位，不被侧栏裁剪、可随意移动 */
+.prop-font-dialog {
+  position: fixed;
+  z-index: 3000;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  background: var(--dialog-bg, var(--bg-secondary));
+  border: 1px solid var(--dialog-border, var(--border-color));
+  border-radius: 6px;
+  box-shadow: 0 8px 32px var(--dialog-shadow, rgba(0, 0, 0, 0.4));
+  overflow: hidden;
+}
+.prop-font-dialog-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 12px;
+  font-size: calc(var(--font-size) + 1px);
+  font-weight: 600;
+  color: var(--titlebar-text, var(--text-primary));
+  background: var(--titlebar-bg, var(--bg-tertiary));
+  cursor: move;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.prop-font-close {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.prop-font-close:hover {
+  background: var(--danger, #e81123);
+  color: #fff;
+}
+.prop-font-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 14px;
+}
+.prop-font-color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.prop-font-color input[type="color"] {
+  width: 32px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+}
+.prop-font-color-reset {
+  padding: 1px 8px;
+  font-size: var(--font-size);
+  color: var(--text-secondary);
+  background: var(--button-secondary-bg, var(--bg-tertiary));
+  border: 1px solid var(--button-secondary-border, var(--border-color));
+  border-radius: 3px;
+  cursor: pointer;
+}
+.prop-font-preview {
+  margin-top: 4px;
+  padding: 10px 8px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--text-primary);
+  background: var(--bg-input, var(--bg-primary));
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.prop-font-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.prop-font-ok {
+  padding: 3px 14px;
+  font-size: var(--font-size);
+  color: var(--menu-text-on-accent, #fff);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.prop-font-ok:hover {
+  background: var(--accent-hover, var(--accent));
+}
+.prop-font-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--font-size);
+  color: var(--text-primary);
+}
+.prop-font-row select,
+.prop-font-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
+  background: var(--bg-input, var(--bg-primary));
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+}
+.prop-font-styles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+}
+.prop-font-styles label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.prop-font-reset {
+  padding: 3px 10px;
+  font-size: var(--font-size);
+  color: var(--text-secondary);
+  background: var(--button-secondary-bg, var(--bg-tertiary));
+  border: 1px solid var(--button-secondary-border, var(--border-color));
+  border-radius: 3px;
+  cursor: pointer;
+}
+.prop-font-reset:hover {
+  background: var(--button-secondary-hover, var(--bg-hover));
+}
+
 .prop-edit-select {
   width: 100%;
   box-sizing: border-box;
@@ -412,6 +656,16 @@
 }
 .prop-edit-select:focus {
   border-color: var(--accent);
+}
+.prop-edit-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* 禁用的数值属性（如非圆角矩形时的圆角半径）：灰显、不可点 */
+.prop-value-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .prop-value-bool {

@@ -198,11 +198,11 @@ const CORE_LIBRARY_GUID = 'D09F2340818511D396F6AE4C17150413'
 const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
   'impl/linux.cpp': '088edd74d09dac6c9e70da4feed932e3e0d4aceba36b6aab5d9fb152077aef34',
   'impl/macos.mm': '798149470018bf45a3e996d82db1db41f473f6a6aca2fd3badf7b8ad1538b4ac',
-  'impl/windows.cpp': 'd5bfd1198cb4eb01c09ee8187a96d261d31e7dcf68837cefb75dc7f5b32bb050',
+  'impl/windows.cpp': 'cbfd7c0250ba69140c46e45e8f756f4b3fa3cd14e0f89d6476fcfbea443673b2',
   'krnln.commands.ycmd.json': '839e75869b95f651eeec794e711e313fa39a424ff0542b6d8d3cec89b94c45cd',
-  'krnln.constants.json': '8183767cf86c0348054a810511b2639bdfe7636c7efeacf096ecb8bfbf4a6fa0',
+  'krnln.constants.json': '02e83c81be209c290b335be9daec43df9fa23f5035e204b19280232b7fc894c3',
   'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
-  'window-units.json': '9f018a430c8dc9c32cd3ab27412cf69cb0762a88fce394545016fe225cee5bd9',
+  'window-units.json': '3c835d4a7cb5864c4aed9d13a3056d01d3888cc2582d9028259f42ff4e5868d4',
 }
 
 const DEFAULT_PROTOCOL_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [
@@ -596,6 +596,7 @@ class LibraryManager {
       join(folderPath, `${name}.identity.json`),
       join(folderPath, `${name}.protocol.json`),
       join(folderPath, `${name}.compile-protocol.json`),
+      join(folderPath, `${name}.constants.json`),
       join(folderPath, 'library.json'),
       join(folderPath, 'identity.json'),
       join(folderPath, 'window-units.json'),
@@ -881,7 +882,11 @@ class LibraryManager {
     for (const candidate of this.getMetadataFileCandidates(name, folderPath)) {
       if (!existsSync(candidate)) continue
       try {
-        const raw = JSON.parse(readFileSync(candidate, 'utf-8')) as LibraryMetadataFile
+        const parsedJson = JSON.parse(readFileSync(candidate, 'utf-8')) as unknown
+        // *.constants.json 是裸常量数组（如 krnln.constants.json），包一层适配统一解析
+        const raw = (Array.isArray(parsedJson)
+          ? { constants: parsedJson }
+          : parsedJson) as LibraryMetadataFile
         hasMetadata = true
         parsed.guid = this.mergeTextField(parsed.guid, raw.guid)
         parsed.description = this.mergeTextField(parsed.description, raw.description)

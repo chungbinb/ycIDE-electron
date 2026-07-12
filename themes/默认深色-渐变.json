@@ -1,8 +1,8 @@
 {
-  "name": "默认深色-副本",
+  "name": "默认深色-渐变",
   "colors": {
     "--text-primary": "#cccccc",
-    "--text-secondary": "#a5a5a5",
+    "--text-secondary": "#969696",
     "--bg-primary": "#1e1e1e",
     "--bg-secondary": "#252526",
     "--bg-tertiary": "#2d2d2d",
@@ -60,5 +60,38 @@
     "--button-secondary-bg": "#3c3c3c",
     "--button-secondary-border": "#555555",
     "--button-secondary-hover": "#4c4c4c"
+  },
+  "gradients": {
+    "base": {
+      "enabled": true,
+      "type": "linear-right",
+      "secondColors": {
+        "--titlebar-bg": "#2d5a8a",
+        "--statusbar-bg": "#33c2ff"
+      }
+    },
+    "table-header": {
+      "enabled": true,
+      "type": "linear-right",
+      "secondColors": {
+        "--table-header-bg": "#3a4f68",
+        "--table-selection-bg": "#4585c4",
+        "--table-row-hover-bg": "#3a4148"
+      }
+    },
+    "syntax": {
+      "enabled": true,
+      "type": "linear-right",
+      "secondColors": {
+        "--syntax-keyword": "#85c2f7",
+        "--syntax-string": "#ecb49a",
+        "--syntax-number": "#d5eac8",
+        "--syntax-comment": "#8fc077",
+        "--syntax-function": "#f7f7cc",
+        "--syntax-type": "#7fe8d2",
+        "--syntax-variable": "#c7ecff",
+        "--syntax-operator": "#f0f0f0"
+      }
+    }
   }
 }

@@ -408,3 +408,33 @@
   color: var(--text-primary);
   padding: 0 6px;
 }
+
+/* 分组渐变控件 */
+.theme-manager-gradient-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  margin-right: 8px;
+}
+
+.theme-manager-gradient-toggle {
+  white-space: nowrap;
+}
+
+.theme-manager-gradient-type {
+  background: var(--bg-secondary, #252526);
+  color: var(--text-primary, #d4d4d4);
+  border: 1px solid var(--border-color, #454545);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.theme-manager-gradient-second {
+  width: 44px;
+  height: 24px;
+  padding: 0 2px;
+  border: 1px solid var(--border-color, #454545);
+  background: transparent;
+}

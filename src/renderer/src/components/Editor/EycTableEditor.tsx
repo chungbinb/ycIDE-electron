@@ -15,6 +15,7 @@ import {
   FLOW_KW,
   FLOW_LOOP_KW,
   FLOW_START,
+  appendMissingFlowEnds,
   computeFlowLines,
   extractFlowKw,
   getFlowStructureAround,
@@ -29,6 +30,8 @@ import EycResourcePreview from './EycResourcePreview'
 import { resolveFlowLineColors } from './flowLineTheme'
 import { useCodeLineEditor, type CodeLineNavigationAction, type EmptyCodeLineDeleteAction, type ParenScopedKeyAction } from './useCodeLineEditor'
 import {
+  balanceArgParens,
+  isArgParensBalanced,
   isQuotedTextLiteral,
   parseAssignmentDetail,
   parseAssignmentLineParts,
@@ -59,7 +62,7 @@ import {
   renderFlowContinuationLine,
   renderFlowSegsLine,
 } from './editorFlowRenderUtils'
-import { buildMultiLinePasteResult } from './editorPasteUtils'
+import { buildMultiLinePasteResult, relocateMisplacedLocalVarLines } from './editorPasteUtils'
 import { useEditorInteractionHandlers } from './useEditorInteractionHandlers'
 import {
   getCmdIconClass,
@@ -71,6 +74,7 @@ import {
   AC_PAGE_SIZE,
   BUILTIN_LITERAL_COMPLETION_ITEMS,
   BUILTIN_TYPE_ITEMS,
+  LOGIC_OPERATOR_ALIASES,
   MEMBER_DELIMITER_REGEX,
   clampNumber,
   colorize,
@@ -99,6 +103,7 @@ import {
   resolveCompletionWordContext,
 } from './editorCompletionInputUtils'
 import { useEditorDiagnosticsProblems } from './editorDiagnostics'
+import { buildControlPropTypes, type DiagCommandSignature } from './editorDiagnosticsShared'
 import { useEditorBlocksModel } from './editorBlocksModel'
 
 // ========== 组件 ==========
@@ -127,7 +132,9 @@ interface EycTableEditorProps {
   isClassModule?: boolean
   projectGlobalVars?: Array<{ name: string; type: string }>
   windowControlNames?: string[]
-  windowControlTypes?: Array<{ name: string; type: string }>
+  windowControlTypes?: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>
+  // 项目内所有窗口的控件+子程序（供跨窗口成员补全：在本窗口代码里引用另一窗口名）
+  projectWindows?: Array<{ name: string; controls: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>; subs: string[] }>
   windowUnits?: LibWindowUnit[]
   projectConstants?: Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>
   projectDllCommands?: Array<{ name: string; returnType: string; description: string; params: CompletionParam[]; isIndirect?: boolean }>
@@ -135,6 +142,9 @@ interface EycTableEditorProps {
   projectClassNames?: Array<{ name: string; methods?: Array<{ name: string; returnType: string; description: string; params: Array<{ name: string; type: string }> }> }>
   onClassNameRename?: (oldName: string, newName: string) => void
   onChange: (value: string) => void
+  // 全局撤销/重做：编辑器区域内按 Ctrl+Z / Ctrl+Y 时上抛给外层统一的全局撤销栈处理（不再各自维护）
+  onGlobalUndo?: () => void
+  onGlobalRedo?: () => void
   onCommandClick?: (commandName: string, paramIndex?: number) => void
   onCommandClear?: () => void
   onProblemsChange?: (problems: FileProblem[]) => void
@@ -160,12 +170,28 @@ export interface FileProblem {
   severity: 'error' | 'warning'
 }
 
+/** 可勾切换格（公开/静态/传址/参考/可空/数组）的 cellIndex 集合——与 tryToggleTableBooleanCell 的判定一一对应 */
+function getBooleanToggleCellIndexes(lineType: string, tableType?: string): Set<number> {
+  switch (lineType) {
+    case 'dll': return new Set([2])
+    case 'ptrCmd': return new Set([2])
+    case 'sub': return new Set([2])
+    case 'localVar': return new Set([2])
+    case 'globalVar': return new Set([3])
+    case 'dataTypeMember': return new Set([2])
+    case 'subParam':
+      return (tableType === 'dll' || tableType === 'ptrcmd') ? new Set([2, 3]) : new Set([2, 3, 4])
+    default: return new Set()
+  }
+}
+
 interface EditState {
   lineIndex: number
   cellIndex: number
   fieldIdx: number    // -1 表示无字段映射（代码行编辑整行）
   sliceField: boolean
   isVirtual?: boolean // 虚拟代码行（编辑时插入而非替换）
+  booleanCell?: boolean // 打勾格（公开/静态/传址…）键盘焦点态：无输入框，空格切换、方向键导航
   paramIdx?: number   // 展开参数编辑：第几个参数 (0-based)
   exprPath?: number[] // 嵌套表达式行编辑：从顶层参数值出发的子节点路径（加法拆分 0/1 或子命令参数序号）
 }
@@ -276,7 +302,7 @@ function ensureMinimalFlowBodies(lines: string[]): string[] {
   return out
 }
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>(), diffDeletedTextAfterLines, showVarSummaryPanel = true }, ref) {
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], projectWindows = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onGlobalUndo, onGlobalRedo, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>(), diffDeletedTextAfterLines, showVarSummaryPanel = true }, ref) {
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
@@ -392,9 +418,58 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   // ===== 行选择状态 =====
   const [selectedLines, setSelectedLines] = useState<Set<number>>(new Set())
+  // 粘贴入口经 ref 取最新选区（覆盖粘贴语义），避免把选区塞进各粘贴回调的依赖
+  const selectedLinesRef = useRef(selectedLines)
+  useEffect(() => { selectedLinesRef.current = selectedLines }, [selectedLines])
+
+  // 悬停命令说明窗（照易语言）：鼠标停在命令名上稍候弹出签名+解释的浮动提示
+  const [cmdHoverTip, setCmdHoverTip] = useState<{ cmd: CompletionItem; x: number; y: number } | null>(null)
+  const cmdHoverTimerRef = useRef<number | null>(null)
+  const clearCmdHoverTip = useCallback(() => {
+    if (cmdHoverTimerRef.current !== null) {
+      window.clearTimeout(cmdHoverTimerRef.current)
+      cmdHoverTimerRef.current = null
+    }
+    setCmdHoverTip(prev => (prev ? null : prev))
+  }, [])
+  const resolveHoverCommand = useCallback((spanText: string, isMember: boolean): CompletionItem | null => {
+    const raw = (spanText || '').trim()
+    if (!raw) return null
+    if (isMember) {
+      const tail = raw.split(/[.．。]/).pop() || ''
+      return memberCommandsRef.current.find(c => c.name === tail) || null
+    }
+    return allCommandsRef.current.find(c => c.name === raw)
+      || dllCompletionItemsRef.current.find(c => c.name === raw)
+      || null
+  }, [])
+  const scheduleCmdHoverTip = useCallback((e: React.MouseEvent, spanText: string, isMember: boolean) => {
+    const target = e.currentTarget as HTMLElement
+    if (cmdHoverTimerRef.current !== null) window.clearTimeout(cmdHoverTimerRef.current)
+    cmdHoverTimerRef.current = window.setTimeout(() => {
+      cmdHoverTimerRef.current = null
+      const cmd = resolveHoverCommand(spanText, isMember)
+      if (!cmd) return
+      const rect = target.getBoundingClientRect()
+      setCmdHoverTip({ cmd, x: rect.left, y: rect.bottom + 4 })
+    }, 420)
+  }, [resolveHoverCommand])
   const [editorContextMenu, setEditorContextMenu] = useState<{ x: number; y: number; lineIndex: number | null } | null>(null)
   const [contextMenuCanPaste, setContextMenuCanPaste] = useState(false)
   const dragAnchor = useRef<number | null>(null)  // 拖选起点行号
+  // 打勾格键盘态从 window keydown 接管按键：经 ref 调用，避免把大函数塞进监听 effect 依赖
+  const applyArrowNavigationKeyRef = useRef<((params: { key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight'; cursorPos: number }) => { handled: boolean; preventDefault: boolean }) | null>(null)
+  const tryToggleTableBooleanCellRef = useRef<((tableType: string | undefined, lineIndex: number, cellIndex: number) => boolean) | null>(null)
+  // 未知标识符回车 → 「插入变量」提示框：{ 名称, 所在行 }
+  const [insertVarPrompt, setInsertVarPrompt] = useState<{ name: string; anchorLine: number } | null>(null)
+  useEffect(() => {
+    if (!insertVarPrompt) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') { e.stopPropagation(); setInsertVarPrompt(null) }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [insertVarPrompt])
   const isDragging = useRef(false)
   const dragStartPos = useRef<{ x: number; y: number } | null>(null)
   const wasDragSelect = useRef(false)
@@ -508,6 +583,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return null
     })
   }, [applySingleLineUpdate])
+  tryToggleTableBooleanCellRef.current = tryToggleTableBooleanCell
 
   // ===== 行选择：拖选逻辑 =====
   // 从行号到实际元素的映射（用于鼠标位置判定）
@@ -794,6 +870,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const onScroll = (): void => {
       scheduleMinimapViewportUpdate()
       scheduleVisibleLineWindowUpdate()
+      clearCmdHoverTip()
     }
     wrapper.addEventListener('scroll', onScroll, { passive: true })
     const onResize = (): void => {
@@ -822,7 +899,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       window.removeEventListener('resize', onResize)
       resizeObserver?.disconnect()
     }
-  }, [scheduleMinimapViewportUpdate, scheduleVisibleLineWindowUpdate])
+  }, [scheduleMinimapViewportUpdate, scheduleVisibleLineWindowUpdate, clearCmdHoverTip])
 
   const focusWrapper = useCallback(() => {
     const wrapper = wrapperRef.current
@@ -1184,6 +1261,30 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     focusWrapper()
   }, [focusWrapper, rangeSet])
 
+  // 行号区按下：单击=整行选中、按住拖动=整行多选（不进入编辑态）；Shift+单击扩展选择。
+  // 折叠按钮自带 stopPropagation 不会到这；断点圆点无独立交互、一并按整行选中处理。
+  const handleGutterMouseDown = useCallback((e: React.MouseEvent, lineIndex: number) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation() // 不冒泡到行 mousedown，避免乐观进入编辑态
+    optimisticLineEditRef.current = null
+    if (editCellRef.current) commitRef.current()
+    lineTextDragCandidateRef.current = null
+    lineTextSelectDragRef.current = null
+    dragStartPos.current = { x: e.clientX, y: e.clientY }
+    if (e.shiftKey && dragAnchor.current !== null) {
+      setSelectedLines(rangeSet(dragAnchor.current, lineIndex))
+    } else {
+      dragAnchor.current = lineIndex
+      setSelectedLines(new Set([lineIndex]))
+    }
+    // 点击即选中整行；置 wasDragSelect 让后续拖动直接走 onMove 的 rangeSet 多选、
+    // 并吞掉随后的 click（不触发点击进编辑）。
+    wasDragSelect.current = true
+    isDragging.current = true
+    focusWrapper()
+  }, [focusWrapper, rangeSet])
+
   // mousemove 和 mouseup 全局监听
   useEffect(() => {
     const onMove = (e: MouseEvent): void => {
@@ -1391,6 +1492,31 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
       const ctrl = e.ctrlKey || e.metaKey
 
+      // 打勾格（公开/静态/传址…）键盘焦点态：空格切换、方向键继续导航、Esc 退出。
+      // 该状态下焦点在 wrapper（无输入框），按键从这里接管。
+      if (editCellRef.current?.booleanCell) {
+        const bc = editCellRef.current
+        if (e.key === ' ' && !ctrl) {
+          e.preventDefault()
+          let boolTableType: string | undefined
+          for (const b of blocksRef.current) {
+            if (b.kind !== 'table') continue
+            if (b.rows.some(r => !r.isHeader && r.lineIndex === bc.lineIndex)) { boolTableType = b.tableType; break }
+          }
+          tryToggleTableBooleanCellRef.current?.(boolTableType, bc.lineIndex, bc.cellIndex)
+          return
+        }
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          e.preventDefault()
+          applyArrowNavigationKeyRef.current?.({ key: e.key, cursorPos: 0 })
+          return
+        }
+        if (e.key === 'Escape') {
+          setEditCell(null)
+          return
+        }
+      }
+
       // Ctrl+A：全选所有行（只要焦点在编辑器区域）
       if (ctrl && e.key === 'a' && inEditor) {
         e.preventDefault()
@@ -1402,26 +1528,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         return
       }
 
-      // Ctrl+Z / Ctrl+Y：撤销/重做（编辑器区域内）
-      const key = e.key.toLowerCase()
-      if (ctrl && key === 'z' && !e.shiftKey && inEditor) {
-        e.preventDefault()
-        if (undoStack.current.length > 0) {
-          const prev = undoStack.current.pop()!
-          redoStack.current.push(prevRef.current)
-          setCurrentText(prev); prevRef.current = prev; onChange(prev)
-        }
-        return
-      }
-      if (ctrl && (key === 'y' || (e.shiftKey && key === 'z')) && inEditor) {
-        e.preventDefault()
-        if (redoStack.current.length > 0) {
-          const next = redoStack.current.pop()!
-          undoStack.current.push(prevRef.current)
-          setCurrentText(next); prevRef.current = next; onChange(next)
-        }
-        return
-      }
+      // Ctrl+Z / Ctrl+Y（撤销/重做）不在此 window 监听里处理：
+      // 焦点在编辑器区域(非输入框)时，App 的全局快捷键会派发 editorAction('undo'/'redo')
+      // → 外层全局撤销栈统一处理；若此处再处理会与 App 的 window 监听重复触发（双重撤销）。
+      // 输入框内的 Ctrl+Z 由各输入框的 onKey / handleParamInputCtrlKey 上抛全局栈。
 
       // Ctrl+V：粘贴多行内容
       if (ctrl && e.key === 'v' && inEditor) {
@@ -1439,6 +1549,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             sanitizePastedText: sanitizePastedTextForCurrent,
             extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
             extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+            replaceLineIndices: selectedLinesRef.current.size > 0 ? Array.from(selectedLinesRef.current) : undefined,
           })
           if (!pasteResult) return
           if (pasteResult.routedDeclarations.length > 0) {
@@ -1462,7 +1573,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         e.preventDefault()
         const sorted = [...selectedLines].sort((a, b) => a - b)
         const ls = currentText.split('\n')
-        const selectedText = eycToYiFormat(filterClipboardSelectionIndices(ls, sorted.filter(i => i >= 0 && i < ls.length)).map(i => ls[i]).join('\n'))
+        const selectedText = eycToYiFormat(appendMissingFlowEnds(filterClipboardSelectionIndices(ls, sorted.filter(i => i >= 0 && i < ls.length)).map(i => ls[i])).join('\n'))
         navigator.clipboard.writeText(selectedText)
         return
       }
@@ -1471,7 +1582,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const ls = currentText.split('\n')
         const { deletable: rawDeletable, sorted } = getDeletableSelection(ls, selectedLines)
         if (sorted.length === 0) return
-        const selectedText = eycToYiFormat(filterClipboardSelectionIndices(ls, sorted).map(i => ls[i]).join('\n'))
+        const selectedText = eycToYiFormat(appendMissingFlowEnds(filterClipboardSelectionIndices(ls, sorted).map(i => ls[i])).join('\n'))
         navigator.clipboard.writeText(selectedText)
         // 删除选中行
         const { deletable, forceBlank } = applySubAnchorDeleteRule(ls, rawDeletable)
@@ -1500,7 +1611,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         setSelectedLines(new Set())
         return
       }
-      if (e.key === 'Delete' || e.key === 'Backspace') {
+      // 空格 = 删除：易语言代码里没有空格语义，行多选状态下按空格等同 Delete（同一套
+      // 最小结构保护/溶解逻辑）。仅在有行选区时劫持空格；输入框内的空格不受影响（本
+      // 监听器开头已对 INPUT/TEXTAREA 提前返回，正常文本编辑照常输入空格）。
+      if (e.key === 'Delete' || e.key === 'Backspace' || (e.key === ' ' && !ctrl && selectedLines.size > 0)) {
         e.preventDefault()
         const ls = currentText.split('\n')
         const { deletable: rawDeletable, sorted: sortedSel } = getDeletableSelection(ls, selectedLines)
@@ -1534,7 +1648,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection])
+  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo])
 
   // ===== 自动补全状态 =====
   const [acItems, setAcItems] = useState<AcDisplayItem[]>([])
@@ -1622,6 +1736,20 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     return map
   }, [windowControlTypes])
+
+  // 项目内所有窗口 名称→{控件,子程序}，供跨窗口成员补全（引用别的窗口名）。
+  const projectWindowMemberMap = useMemo(() => {
+    const map = new Map<string, { controls: Array<{ name: string; type: string }>; subs: string[] }>()
+    for (const w of projectWindows) {
+      const name = (w?.name || '').trim()
+      if (!name) continue
+      map.set(name, {
+        controls: (w.controls || []).map(c => ({ name: (c.name || '').trim(), type: (c.type || '').trim() })).filter(c => c.name),
+        subs: (w.subs || []).map(s => (s || '').trim()).filter(Boolean),
+      })
+    }
+    return map
+  }, [projectWindows])
 
   const parsedLinesForCurrentText = useMemo(() => parseLines(currentText), [currentText])
 
@@ -1879,6 +2007,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         classMethodMap,
         memberCommands: memberCommandsRef.current,
         allCommands: allCommandsRef.current,
+        windowSubNames: userSubNamesRef.current,
+        projectWindowMemberMap,
       },
     })
 
@@ -1899,9 +2029,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     const matches = paginateCompletionDisplayItems(fullMatches, AC_PAGE_SIZE)
 
-    // 计算弹窗位置（词首像素偏移记入 ref，供弹窗打开期间的位置跟踪复用）
-    if (inputRef.current) {
-      const popupPos = computeCompletionPopupPosition(inputRef.current, val, wordStart, eycScale)
+    // 计算弹窗位置（词首像素偏移记入 ref，供弹窗打开期间的位置跟踪复用）。
+    // 展开参数编辑时锚定到参数输入框（inputRef 是代码行输入框、此时未渲染）。
+    const anchorInput = editCell.paramIdx !== undefined ? paramInputRef.current : inputRef.current
+    if (anchorInput) {
+      const popupPos = computeCompletionPopupPosition(anchorInput, val, wordStart, eycScale)
       acWordLeftOffsetRef.current = popupPos.leftOffset
       setAcPos({ left: popupPos.left, top: popupPos.top })
     }
@@ -1917,7 +2049,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const item = displayItem.cmd
     const wordStart = acWordStartRef.current
     const prefix = acPrefixRef.current
-    const cursorPos = inputRef.current?.selectionStart ?? editVal.length
+    // 展开参数编辑时活动输入框是 paramInputRef（inputRef 是代码行输入框、此时未渲染）
+    const isParamExprEdit = !!editCell && editCell.paramIdx !== undefined
+    const activeInput = isParamExprEdit ? paramInputRef.current : inputRef.current
+    const cursorPos = activeInput?.selectionStart ?? editVal.length
     const before = editVal.slice(0, prefix ? Math.max(0, wordStart - 1) : wordStart)
     const after = editVal.slice(cursorPos)
 
@@ -1927,7 +2062,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       ...memberCommandsRef.current,
     ]
     const isCodeLineEdit = !!editCell && editCell.cellIndex === -1 && editCell.paramIdx === undefined
-    const isCallable = isCodeLineEdit && (
+    // 参数值是表达式，命令（如 到字节集）同样可调用、自动补括号
+    const isCallable = (isCodeLineEdit || isParamExprEdit) && (
       commandPool.some(c => c.name === item.name)
       || userSubNamesRef.current.has(item.name)
       // 项目类的公开方法（对象.方法）同样可调用
@@ -1958,17 +2094,43 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setEditVal(newVal)
     setAcVisible(false)
     setTimeout(() => {
-      if (inputRef.current) {
+      const target = isParamExprEdit ? paramInputRef.current : inputRef.current
+      if (target) {
         const newPos = before.length + prefix.length + item.name.length + caretExtra
         try {
-          inputRef.current.focus({ preventScroll: true })
+          target.focus({ preventScroll: true })
         } catch {
-          inputRef.current.focus()
+          target.focus()
         }
-        inputRef.current.setSelectionRange(newPos, newPos)
+        target.setSelectionRange(newPos, newPos)
       }
     }, 0)
   }, [editVal, editCell])
+
+  // 编辑态结束（blur 提交 / Esc / 提交后 setEditCell(null) 等路径）统一关掉补全弹窗，
+  // 避免参数输入框 blur 提交后弹窗残留在原位。
+  useEffect(() => {
+    if (!editCell) setAcVisible(false)
+  }, [editCell])
+
+  // 手工输入的 .局部变量 自动归位：编辑会话结束时把错位的局部变量声明（子程序正文中敲出的、
+  // 会形成第二张局部变量表）归位到所属子程序头部声明区。只在"确有编辑发生后"的会话结束时跑，
+  // 打开文件不触发；会话进行中不动（正在编辑的行不能被抽走，行号也不能在编辑态下平移）。
+  const hadEditSessionRef = useRef(false)
+  useEffect(() => {
+    if (editCell) {
+      hadEditSessionRef.current = true
+      return
+    }
+    if (!hadEditSessionRef.current) return
+    hadEditSessionRef.current = false
+    const nt = relocateMisplacedLocalVarLines(prevRef.current)
+    if (nt != null && nt !== prevRef.current) {
+      setCurrentText(nt)
+      prevRef.current = nt
+      onChange(nt)
+    }
+  }, [editCell, onChange])
 
   const expandMoreCompletion = useCallback((index: number) => {
     setAcItems(prev => {
@@ -2066,8 +2228,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     // 中文输入法里的单引号起始（‘/’）按注释前缀处理。
     next = next.replace(/^(\s*)[‘’]/, "$1'")
 
-    // 统一为 `'<space>注释内容`，便于后续自动排版。
-    next = next.replace(/^(\s*)'(?!\s|$)/, "$1' ")
+    // 注意：`'` 后的空格归一（'内容 → ' 内容）只在编辑结束落盘时做（formatCommandLine），
+    // 编辑期间强补会把「删除该空格」的操作立即还原，光标行为诡异（删不掉的空格）。
 
     return next
   }, [])
@@ -2075,7 +2237,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   /** 代码行编辑结束时自动补全括号（格式化命令），返回 [主行, ...需要插入的后续行] */
   const formatCommandLine = useCallback((val: string, options?: { preferJudgeBranch?: boolean }): string[] => {
     const trimmed = val.trimStart()
-    if (!trimmed || trimmed.startsWith("'")) return [val]
+    if (!trimmed) return [val]
+    if (trimmed.startsWith("'")) {
+      // 注释落盘时统一为 `'<space>内容`（编辑期间不强补，删空格才能真删掉）
+      return [val.replace(/^(\s*)'(?!\s|$)/, "$1' ")]
+    }
 
     // 赋值表达式：identifier = expr → 格式化运算符
     const assignM = trimmed.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)\s*(?:=(?!=)|＝)/)
@@ -3008,6 +3174,31 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           }
         }
 
+        // 「判断」case 行之后 body 多行时的内侧线向下延续：
+        // 上方循环只标到 case 行、隐藏默认的延续段只从「默认的上一可见行」开始标，
+        // body 多于一行时中间行两段都不覆盖 → 内侧竖线在 case 下一行断开。
+        // 这里从 case 行的下一可见行起逐行补 hasInnerVert，直到接上已标记的锚行
+        // （默认/下一 case 的上一可见行）或遇到同深度的下一 case/结束边界为止。
+        {
+          let li = lineIndex + 1
+          while (li < lines.length) {
+            if (!visibleCodeLineSet.has(li)) { li++; continue }
+            const segsAtLi = map.get(li) || []
+            const sameDepthSegs = segsAtLi.filter(seg => seg.depth === startSeg.depth)
+            if (sameDepthSegs.length === 0) break // 已出结构范围
+            // 下一 case / 结束 / 新起始：边界，交给它们自己的衔接逻辑
+            if (sameDepthSegs.some(seg => seg.type === 'branch' || seg.type === 'start' || seg.type === 'end')) break
+            // 已被隐藏默认的延续段标记：链路接上，停止
+            if (sameDepthSegs.every(seg => seg.hasInnerVert)) break
+            for (const seg of sameDepthSegs) {
+              seg.hasInnerVert = true
+              seg.hasInnerVertFromAbove = true
+            }
+            map.set(li, segsAtLi)
+            li++
+          }
+        }
+
         const nextVisibleLine = findNextVisibleCodeLine(lineIndex + 1)
         if (nextVisibleLine == null) continue
 
@@ -3600,7 +3791,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const sorted = [...selectedLines].sort((a, b) => a - b)
     const ls = currentText.split('\n')
     const kept = filterClipboardSelectionIndices(ls, sorted.filter(i => i >= 0 && i < ls.length))
-    return eycToYiFormat(kept.map(i => ls[i]).join('\n'))
+    // 复制护栏：选区含流程头但没选到配对结束时，剪贴板自动补齐结束行（粘贴不破坏流程线）
+    return eycToYiFormat(appendMissingFlowEnds(kept.map(i => ls[i])).join('\n'))
   }, [selectedLines, currentText])
 
   const getMouseRangeSelectedSourceText = useCallback((): string | null => {
@@ -4015,7 +4207,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     classNameCompletionItemsRef.current = classNameCompletionItems
   }, [classNameCompletionItems])
 
-  // 有效命令名集合（支持库命令 + 用户子程序 + 流程关键字 + 变量名）
+  // 有效命令名集合（支持库命令 + 用户子程序 + 流程关键字 + 变量名 + 逻辑运算符别名 且/或）
   const validCommandNames = useMemo(() => {
     const s = new Set<string>()
     for (const c of allCommandsRef.current) s.add(c.name)
@@ -4023,6 +4215,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     for (const n of userSubNames) s.add(n)
     for (const n of allKnownVarNames) s.add(n)
     for (const k of FLOW_KW) s.add(k)
+    for (const a of LOGIC_OPERATOR_ALIASES) s.add(a)
     return s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userSubNames, allKnownVarNames, cmdLoadId, dllCompletionItems])
@@ -4038,12 +4231,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return set
   }, [visibleBlocks])
 
-  // 保留名集合（流程关键字 + 支持库命令 + DLL 命令），变量名/参数名不得与之重名
+  // 保留名集合（流程关键字 + 支持库命令 + DLL 命令 + 逻辑字面量 真/假），变量名/参数名不得与之重名
   const reservedNameSet = useMemo(() => {
     const s = new Set<string>()
     for (const k of FLOW_KW) s.add(k)
     for (const c of allCommandsRef.current) s.add(c.name)
     for (const c of dllCompletionItemsRef.current) s.add(c.name)
+    s.add('真')
+    s.add('假')
     return s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cmdLoadId, dllCompletionItems])
@@ -4061,13 +4256,48 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return set
   }, [parsedLinesForCurrentText, reservedNameSet])
 
+  // 命令签名表（命令名 → 参数/返回类型），供诊断做实参数据类型匹配检查。
+  // 只收支持库命令 + DLL 命令（用户子程序的补全项无参数类型信息，天然跳过不误报）。
+  const diagCommandSignatures = useMemo(() => {
+    const map: Record<string, DiagCommandSignature> = {}
+    for (const c of [...allCommandsRef.current, ...dllCompletionItemsRef.current]) {
+      if (!c.name || c.isMember) continue
+      map[c.name] = {
+        params: c.params.map(p => ({ name: p.name, type: p.type, optional: p.optional, isArray: p.isArray, repeatable: p.repeatable })),
+        returnType: c.returnType || '',
+      }
+    }
+    return map
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cmdLoadId, dllCompletionItems])
+
+  // 控件属性类型表（编辑框「内容」随「输入方式」折算），控件属性赋值的类型检查用
+  const diagControlPropTypes = useMemo(
+    () => buildControlPropTypes(windowControlTypes, windowUnits),
+    [windowControlTypes, windowUnits],
+  )
+
   const diagnosticsProblems = useEditorDiagnosticsProblems({
     text: diagnosticsText,
     hasCommandCatalog: allCommandsRef.current.length > 0,
     validCommandNames,
     allKnownVarNames,
     reservedNameSet,
+    commandSignatures: diagCommandSignatures,
+    controlPropTypes: diagControlPropTypes,
   })
+
+  // 声明重复/同名类错误（局部变量在当前子程序重复定义、与程序集/全局变量同名、子程序重名等）
+  // 的行集合 → 声明表格的名称格标红，与问题面板一致（此前只有面板报、表格行内无提示）。
+  const duplicateDeclLineSet = useMemo(() => {
+    const set = new Set<number>()
+    for (const p of diagnosticsProblems) {
+      if (p.severity === 'error' && (p.message.includes('重复定义') || p.message.includes('同名'))) {
+        set.add(p.line - 1)
+      }
+    }
+    return set
+  }, [diagnosticsProblems])
 
   // 问题列表由 worker 异步计算，主线程仅分发结果。
   useEffect(() => {
@@ -4090,6 +4320,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   const commit = useCallback((overrideVal?: string) => {
     if (!editCell || commitGuardRef.current) return
+    // 打勾格焦点态没有文本可提交，直接退出编辑态
+    if (editCell.booleanCell) { setEditCell(null); return }
     commitGuardRef.current = true
     setAcVisible(false)
 
@@ -4112,6 +4344,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     // 参数值编辑 / 赋值语句右值编辑
     if (editCell.paramIdx !== undefined) {
+      // 提交兜底：补齐缺失的右括号/引号（如「到字节集(」→「到字节集()」），
+      // 避免未配平的值写回后吞掉外层调用的右括号、破坏整行括号结构。
+      effectiveVal = balanceArgParens(effectiveVal)
       if (editCell.paramIdx >= 0) {
         const codeLine = lines[editCell.lineIndex]
         const formattedVal = formatParamOperators(effectiveVal)
@@ -5523,6 +5758,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         sanitizePastedText: sanitizePastedTextForCurrent,
         extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
         extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+        replaceLineIndices: selectedLinesRef.current.size > 0 ? Array.from(selectedLinesRef.current) : undefined,
       })
       if (!pasteResult) return
       if (pasteResult.routedDeclarations.length > 0) {
@@ -5567,7 +5803,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       onApplyCompletion: applyCompletion,
       onHidePopup: () => setAcVisible(false),
     })
-    if (handled && (key === 'ArrowUp' || key === 'ArrowDown')) {
+    if (handled && (key === 'ArrowUp' || key === 'ArrowDown') && editCellRef.current?.paramIdx === undefined) {
+      // 代码行输入框需要重新聚焦；参数输入框按键时焦点本就在自身，不抢焦点
       const pos = inputRef.current?.selectionStart ?? editVal.length
       focusInlineInputAt(pos)
     }
@@ -5588,6 +5825,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (editCell && editCell.cellIndex < 0) {
       const before = editVal.slice(0, cursorPos)
       const after = editVal.slice(cursorPos)
+
+      // 整行是裸的未知标识符（如「我是」）→ 回车后弹「插入变量」提示（照易语言）。
+      // 已知命令/变量/流程关键字/保留字不弹；正常回车流程继续执行，弹窗叠加其上。
+      if (editCell.paramIdx === undefined) {
+        const bareName = editVal.trim()
+        if (/^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(bareName)
+          && !validCommandNames.has(bareName)
+          && !allKnownVarNames.has(bareName)
+          && !reservedNameSet.has(bareName)) {
+          setInsertVarPrompt({ name: bareName, anchorLine: editCell.lineIndex })
+        }
+      }
 
       // ===== 流程命令自动格式化：输入流程命令后按回车自动展开结构 =====
       const autoExpand = getFlowAutoExpandCandidate({ editValue: editVal, trailingText: after })
@@ -5617,6 +5866,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     applyFlowAutoExpandOnEnter,
     applyTableRowEnterInsert,
     getFlowAutoExpandCandidate,
+    validCommandNames,
+    allKnownVarNames,
+    reservedNameSet,
   ])
 
   const applyEmptyDeleteKey = useCallback((key: 'Backspace' | 'Delete'): { handled: boolean; preventDefault: boolean } => {
@@ -5665,11 +5917,181 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return { handled: true, preventDefault: true }
   }, [applyCodeLineNavigation, applyEmptyCodeLineDelete, editCell, editVal, getEmptyCodeLineDeleteAction, lines])
 
+  // 可编辑行序列（文档序）：非虚拟代码行 + 表格非表头行（含该行可编辑单元格清单），
+  // 供方向键在 代码行↔表格单元格 之间穿行导航使用。
+  type EditableNavEntry =
+    | { line: number; kind: 'code' }
+    | { line: number; kind: 'cell'; cells: Array<{ ci: number; fieldIdx?: number; text: string; sliceField?: boolean; boolean?: boolean }> }
+  const buildEditableNavEntries = useCallback((): EditableNavEntry[] => {
+    const entries: EditableNavEntry[] = []
+    const parsedAll = parseLines(prevRef.current)
+    for (const blk of blocksRef.current) {
+      if (blk.kind === 'codeline') {
+        if (!blk.isVirtual) entries.push({ line: blk.lineIndex, kind: 'code' })
+      } else if (blk.kind === 'table') {
+        for (const row of blk.rows) {
+          if (row.isHeader) continue
+          const boolCis = getBooleanToggleCellIndexes(parsedAll[row.lineIndex]?.type || '', blk.tableType)
+          entries.push({
+            line: row.lineIndex,
+            kind: 'cell',
+            cells: row.cells.map((c, ci) => ({ ci, fieldIdx: c.fieldIdx, text: c.text || '', sliceField: c.sliceField, boolean: boolCis.has(ci) || undefined })),
+          })
+        }
+      }
+    }
+    return entries
+  }, [])
+
+  // 进入导航目标单元格：打勾格进键盘焦点态（无输入框、焦点在 wrapper、空格切换），普通格进文本编辑
+  const enterNavCell = useCallback((line: number, cell: { ci: number; fieldIdx?: number; text: string; sliceField?: boolean; boolean?: boolean }) => {
+    if (cell.boolean) {
+      setSelectedLines(new Set())
+      lastFocusedLine.current = line
+      setEditVal('')
+      setEditCell({ lineIndex: line, cellIndex: cell.ci, fieldIdx: -1, sliceField: false, booleanCell: true })
+      focusWrapper()
+      return
+    }
+    startEditCell(line, cell.ci, cell.text, cell.fieldIdx, cell.sliceField)
+  }, [startEditCell, focusWrapper])
+
+  // 提交后按最新 blocks 定位并进入目标（代码行 / 同列单元格）
+  const navigateEditableVertical = useCallback((fromLine: number, dir: -1 | 1, wantFieldIdx: number | undefined, keepHorizontalPos: number, wantCi?: number) => {
+    commit()
+    setTimeout(() => {
+      const entries = buildEditableNavEntries()
+      const idx = entries.findIndex(en => en.line === fromLine)
+      if (idx < 0) return
+      // 文档边界（无相邻可编辑行）：重新进入当前行，保证提交后光标不消失
+      const target = entries[idx + dir] ?? entries[idx]
+      if (!target) return
+      if (target.kind === 'code') {
+        startEditLine(target.line)
+        focusInlineInputAt(keepHorizontalPos)
+        return
+      }
+      const editableCells = target.cells.filter(c => c.fieldIdx !== undefined || c.boolean)
+      if (editableCells.length === 0) return
+      const cell = (wantFieldIdx !== undefined && wantFieldIdx >= 0 ? editableCells.find(c => c.fieldIdx === wantFieldIdx) : undefined)
+        || (wantCi !== undefined ? editableCells.find(c => c.ci === wantCi) : undefined)
+        || editableCells[0]
+      enterNavCell(target.line, cell)
+    }, 0)
+  }, [commit, buildEditableNavEntries, startEditLine, focusInlineInputAt, enterNavCell])
+
+  // 「插入变量」提示框执行：局部/程序集变量插入对应声明区，全局变量路由到 .egv 文件。
+  // 插入后按位移恢复正在编辑的行（回车后正编辑下一行，插入声明会使其行号 +1）。
+  const applyInsertVariable = useCallback((scope: 'local' | 'assembly' | 'global') => {
+    const prompt = insertVarPrompt
+    if (!prompt) return
+    setInsertVarPrompt(null)
+    const resumeLine = editCellRef.current?.lineIndex ?? null
+    const resumeIsVirtual = editCellRef.current?.isVirtual
+    if (editCellRef.current) commitRef.current()
+    if (scope === 'global') {
+      onRouteDeclarationPaste?.([{ language: 'egv', lines: [`.全局变量 ${prompt.name}, 整数型`] }])
+      if (resumeLine != null) {
+        setTimeout(() => { startEditLine(resumeLine, undefined, undefined, resumeIsVirtual); focusInlineInputAt('end') }, 0)
+      }
+      return
+    }
+    setTimeout(() => {
+      const ls = prevRef.current.split('\n')
+      const parsed = parseLines(prevRef.current)
+      let insertAt = -1
+      if (scope === 'local') {
+        let subLine = -1
+        for (let i = Math.min(prompt.anchorLine, parsed.length - 1); i >= 0; i--) {
+          const t = parsed[i]?.type
+          if (t === 'sub') { subLine = i; break }
+          if (t === 'assembly') break
+        }
+        if (subLine < 0) return
+        insertAt = subLine + 1
+        while (insertAt < parsed.length && (parsed[insertAt].type === 'subParam' || parsed[insertAt].type === 'localVar')) insertAt++
+        ls.splice(insertAt, 0, `.局部变量 ${prompt.name}, 整数型`)
+      } else {
+        let asmLine = -1
+        for (let i = 0; i < parsed.length; i++) {
+          if (parsed[i].type === 'assembly') { asmLine = i; break }
+        }
+        if (asmLine < 0) return
+        insertAt = asmLine + 1
+        while (insertAt < parsed.length && parsed[insertAt].type === 'assemblyVar') insertAt++
+        ls.splice(insertAt, 0, `.程序集变量 ${prompt.name}, 整数型`)
+      }
+      const nt = ls.join('\n')
+      setCurrentText(nt)
+      prevRef.current = nt
+      onChange(nt)
+      if (resumeLine != null) {
+        const adjusted = insertAt <= resumeLine ? resumeLine + 1 : resumeLine
+        setTimeout(() => { startEditLine(adjusted, undefined, undefined, resumeIsVirtual); focusInlineInputAt('end') }, 0)
+      }
+    }, 0)
+  }, [insertVarPrompt, onRouteDeclarationPaste, onChange, startEditLine, focusInlineInputAt])
+
   const applyArrowNavigationKey = useCallback((params: {
     key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight'
     cursorPos: number
   }): { handled: boolean; preventDefault: boolean } => {
     const { key, cursorPos } = params
+    // 表格单元格编辑：↑/↓ 提交并移动到相邻可编辑行（相邻表格行取同 fieldIdx 单元格、
+    // 相邻代码行进入行编辑）；→ 在文本末尾跨到本行下一可编辑格、← 在行首跨到上一格，
+    // 其余情况保持输入框原生水平移动。
+    if (editCell && editCell.cellIndex >= 0) {
+      if (key === 'ArrowUp' || key === 'ArrowDown') {
+        navigateEditableVertical(editCell.lineIndex, key === 'ArrowUp' ? -1 : 1, editCell.fieldIdx, 0, editCell.cellIndex)
+        return { handled: true, preventDefault: true }
+      }
+      // ←/→：仅在文本边界处跨列（打勾格无文本，任意 ←/→ 都跨列）
+      const atStart = editCell.booleanCell ? true : cursorPos === 0
+      const atEnd = editCell.booleanCell ? true : cursorPos >= editVal.length
+      if ((key === 'ArrowRight' && !atEnd) || (key === 'ArrowLeft' && !atStart)) {
+        return { handled: false, preventDefault: false }
+      }
+      const hDir = key === 'ArrowRight' ? 1 : -1
+      const fromLine = editCell.lineIndex
+      const fromCi = editCell.cellIndex
+      commit()
+      setTimeout(() => {
+        const entries = buildEditableNavEntries()
+        const rowEntry = entries.find(en => en.line === fromLine && en.kind === 'cell') as Extract<EditableNavEntry, { kind: 'cell' }> | undefined
+        if (!rowEntry) return
+        const editableCells = rowEntry.cells.filter(c => c.fieldIdx !== undefined || c.boolean)
+        const pos = editableCells.findIndex(c => c.ci === fromCi)
+        if (pos < 0) return
+        const next = editableCells[pos + hDir]
+        if (!next) {
+          // 行首/行末继续按 → 跨行：→ 进下一可编辑行（表格行取首格、代码行进行首），
+          // ← 进上一行（表格行取末格、代码行进行尾）；文档边界重新进入当前格（光标不消失）。
+          const idx = entries.findIndex(en => en.line === fromLine)
+          const target = idx >= 0 ? entries[idx + hDir] : undefined
+          if (!target) {
+            const cur = editableCells[pos]
+            enterNavCell(fromLine, cur)
+            if (!cur.boolean) pendingInputCaretRef.current = hDir === 1 ? cur.text.length : 0
+            return
+          }
+          if (target.kind === 'code') {
+            startEditLine(target.line)
+            focusInlineInputAt(hDir === 1 ? 0 : 'end')
+            return
+          }
+          const targetCells = target.cells.filter(c => c.fieldIdx !== undefined || c.boolean)
+          if (targetCells.length === 0) return
+          const cell2 = hDir === 1 ? targetCells[0] : targetCells[targetCells.length - 1]
+          enterNavCell(target.line, cell2)
+          if (!cell2.boolean) pendingInputCaretRef.current = hDir === 1 ? 0 : cell2.text.length
+          return
+        }
+        enterNavCell(fromLine, next)
+        // → 进入下一格光标置行首、← 进入上一格光标置行尾（打勾格无输入框不需要）
+        if (!next.boolean) pendingInputCaretRef.current = hDir === 1 ? 0 : next.text.length
+      }, 0)
+      return { handled: true, preventDefault: true }
+    }
     if (!(editCell && editCell.cellIndex < 0)) {
       return { handled: false, preventDefault: false }
     }
@@ -5682,9 +6104,23 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })
     if (!navAction) return { handled: false, preventDefault: false }
 
+    // 代码行 ↑/↓：相邻可编辑行若是表格行，进入其单元格（旧路径只认代码行、会整表跳过）；
+    // 相邻仍是代码行则走原 applyCodeLineNavigation（保留隐藏行解析与水平位保持等语义）。
+    if (navAction.type === 'upOrDown' && !editCell.isVirtual) {
+      const dir: -1 | 1 = key === 'ArrowUp' ? -1 : 1
+      const entries = buildEditableNavEntries()
+      const idx = entries.findIndex(en => en.line === editCell.lineIndex)
+      const target = idx >= 0 ? entries[idx + dir] : undefined
+      if (target && target.kind === 'cell') {
+        navigateEditableVertical(editCell.lineIndex, dir, 0, cursorPos)
+        return { handled: true, preventDefault: true }
+      }
+    }
+
     applyCodeLineNavigation(navAction)
     return { handled: true, preventDefault: true }
-  }, [applyCodeLineNavigation, editCell, editVal, getCodeLineNavigationAction])
+  }, [applyCodeLineNavigation, editCell, editVal, getCodeLineNavigationAction, commit, enterNavCell, startEditLine, focusInlineInputAt, buildEditableNavEntries, navigateEditableVertical])
+  applyArrowNavigationKeyRef.current = applyArrowNavigationKey
 
   const applyParenScopedKey = useCallback((params: {
     key: string
@@ -5721,26 +6157,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (!(e.ctrlKey || e.metaKey)) return false
     const key = e.key.toLowerCase()
     if (key !== 'z' && key !== 'y') return false
-    const action = dispatchCtrlShortcutWithHistory({
-      key,
-      shiftKey: e.shiftKey,
-      undoStack: undoStack.current,
-      redoStack: redoStack.current,
-      currentText: prevRef.current,
-      applyTextChange: (next) => {
-        // 先关编辑再应用文本，保证撤销后 onBlur 的 commit 不会写回旧值。
-        setEditCell(null)
-        applyTextChange(next)
-      },
-      onSelectAll: () => { /* 参数输入框内 Ctrl+A 交给浏览器原生 */ },
-      onPaste: () => false,
-    })
-    if (action.handled) {
-      if (action.preventDefault) e.preventDefault()
-      return true
-    }
-    return false
-  }, [applyTextChange])
+    // 参数展开小输入框内的 Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z → 全局撤销栈；
+    // 先关编辑，保证撤销后 onBlur 的 commit 不会把旧 editVal 写回覆盖已回退的文本。
+    e.preventDefault()
+    setEditCell(null)
+    if (key === 'z' && !e.shiftKey) onGlobalUndo?.()
+    else onGlobalRedo?.()
+    return true
+  }, [onGlobalUndo, onGlobalRedo])
 
   const onKey = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     const cursorPos = e.currentTarget.selectionStart ?? 0
@@ -5752,30 +6176,40 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       shiftKey: e.shiftKey,
       onTypeCellSpaceGuard: applyTypeCellSpaceGuard,
       onCompletionPopupKey: applyCompletionPopupKey,
-      onCtrlShortcut: ({ key, shiftKey }) => dispatchCtrlShortcutWithHistory({
-        key,
-        shiftKey,
-        undoStack: undoStack.current,
-        redoStack: redoStack.current,
-        currentText: prevRef.current,
-        applyTextChange: (next) => {
-          // Ctrl+Z/Y 命中文档栈时先结束当前输入态，避免 blur 后旧 editVal 被再次提交。
+      onCtrlShortcut: ({ key, shiftKey }) => {
+        const k = key.toLowerCase()
+        // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z：统一上抛给外层全局撤销栈；先结束当前输入态，
+        // 避免撤销后 blur 把旧 editVal 提交回去覆盖已回退的文本。
+        if (k === 'z' || k === 'y') {
           setEditCell(null)
-          applyTextChange(next)
-        },
-        onSelectAll: () => {
-          // 全选基于最新文本快照，避免使用过期闭包内容。
-          const ls = prevRef.current.split('\n')
-          const all = new Set<number>()
-          for (let i = 0; i < ls.length; i++) all.add(i)
-          setSelectedLines(all)
-          dragAnchor.current = 0
-          setAcVisible(false)
-          setEditCell(null)
-          focusWrapper()
-        },
-        onPaste: () => applyCustomPasteShortcut(),
-      }),
+          if (k === 'z' && !shiftKey) onGlobalUndo?.()
+          else onGlobalRedo?.()
+          return { handled: true, preventDefault: true }
+        }
+        return dispatchCtrlShortcutWithHistory({
+          key,
+          shiftKey,
+          undoStack: undoStack.current,
+          redoStack: redoStack.current,
+          currentText: prevRef.current,
+          applyTextChange: (next) => {
+            setEditCell(null)
+            applyTextChange(next)
+          },
+          onSelectAll: () => {
+            // 全选基于最新文本快照，避免使用过期闭包内容。
+            const ls = prevRef.current.split('\n')
+            const all = new Set<number>()
+            for (let i = 0; i < ls.length; i++) all.add(i)
+            setSelectedLines(all)
+            dragAnchor.current = 0
+            setAcVisible(false)
+            setEditCell(null)
+            focusWrapper()
+          },
+          onPaste: () => applyCustomPasteShortcut(),
+        })
+      },
       onParenScopedKey: applyParenScopedKey,
     })
     if (preAction.handled) {
@@ -5807,6 +6241,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     applyTextChange,
     applyCustomPasteShortcut,
     focusWrapper,
+    onGlobalUndo,
+    onGlobalRedo,
   ])
 
   // 插入子程序：在当前光标所处子程序后方插入，无光标时插入到末尾
@@ -5940,6 +6376,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         sanitizePastedText: sanitizePastedTextForCurrent,
         extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
         extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+        replaceLineIndices: selectedLinesRef.current.size > 0 ? Array.from(selectedLinesRef.current) : undefined,
       })
       if (!pasteResult) return
       if (pasteResult.routedDeclarations.length > 0) {
@@ -6007,25 +6444,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return
     }
     if (action === 'undo') {
-      if (undoStack.current.length > 0) {
-        const prev = undoStack.current.pop()!
-        redoStack.current.push(prevRef.current)
-        setCurrentText(prev)
-        prevRef.current = prev
-        onChange(prev)
-      }
+      // 右键菜单撤销 → 全局撤销栈（与 Ctrl+Z 一致）
       setEditorContextMenu(null)
+      onGlobalUndo?.()
       return
     }
     if (action === 'redo') {
-      if (redoStack.current.length > 0) {
-        const next = redoStack.current.pop()!
-        undoStack.current.push(prevRef.current)
-        setCurrentText(next)
-        prevRef.current = next
-        onChange(next)
-      }
       setEditorContextMenu(null)
+      onGlobalRedo?.()
       return
     }
     if (action === 'copy') {
@@ -6092,10 +6518,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setSelectedLines(all)
     dragAnchor.current = 0
     setEditorContextMenu(null)
-  }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine])
+  }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine, onGlobalUndo, onGlobalRedo])
 
-  const canUndoContextAction = undoStack.current.length > 0
-  const canRedoContextAction = redoStack.current.length > 0
+  // 撤销/重做统一走外层全局撤销栈：只要外层接了全局处理器就允许点击，
+  // 是否真有可撤销/重做项由全局栈在点击时决定（无项则空操作）。
+  const canUndoContextAction = !!onGlobalUndo
+  const canRedoContextAction = !!onGlobalRedo
   const hasLineSelection = selectedLines.size > 0
   const hasCopySelection = hasLineSelection || (getMouseRangeSelectedSourceText() || '').length > 0
   const canCutContextAction = hasLineSelection
@@ -6805,13 +7233,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                       className="eyc-param-val-input"
                       aria-label={`编辑参数 ${item.name}`}
                       value={editVal}
-                      onChange={e => setEditVal(e.target.value)}
+                      onChange={e => { const v = e.target.value; setEditVal(v); updateCompletion(v, e.currentTarget.selectionStart ?? v.length) }}
                       onBlur={() => {
                         if (shouldSuppressBlurCommit()) return
                         commit()
                       }}
                       onKeyDown={e => {
                         if (handleParamInputCtrlKey(e)) return
+                        if (applyCompletionPopupKey(e.key)) { e.preventDefault(); return }
                         if (e.key === 'Enter') { e.preventDefault(); commit() }
                         else if (e.key === 'Escape') setEditCell(null)
                       }}
@@ -6828,7 +7257,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         })}
       </div>
     )
-  }, [commit, editCell, editVal, findOwnerAssemblyName, flowLineModeConfig, focusParamInputAt, handleParamInputCtrlKey, onCommandClick, shouldSuppressBlurCommit])
+  }, [commit, editCell, editVal, findOwnerAssemblyName, flowLineModeConfig, focusParamInputAt, handleParamInputCtrlKey, onCommandClick, shouldSuppressBlurCommit, applyCompletionPopupKey, updateCompletion])
 
 
   // 查找代码行中第一个命令名（不要求有参数）
@@ -6865,6 +7294,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     // 参数值编辑
     if (editCell.paramIdx !== undefined) {
+      // 括号/引号未配平的中间态（如正敲「到字节集(」）不写回：未配平的开括号会吞掉外层
+      // 调用自身的右括号，下一键 replaceCallArg 在破行上找不到参数边界、走"追加"分支，
+      // 每敲一键行尾多出一组重复参数。输入框本地照常编辑，配平后再同步。
+      if (!isArgParensBalanced(val)) return
       if (editCell.paramIdx >= 0) {
         // 嵌套表达式行编辑不做实时同步：实时改写会让路径解析跑在中间态文本上，提交时一次性替换
         if (editCell.exprPath && editCell.exprPath.length > 0) return
@@ -7174,7 +7607,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             return (
               <div
                 key={bi}
-                className="eyc-block-row"
+                className={`eyc-block-row${blk.tableType === 'localVar' ? ' eyc-localvar-block' : ''}`}
                 onMouseDown={(e) => handleTableBlockMouseDown(e, tableLineIndices)}
               >
                 <div className="eyc-line-gutter">
@@ -7199,7 +7632,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                             key={`gutter-row-${ri}-${renderIndex}`}
                             className={row.isHeader
                               ? 'eyc-gutter-cell'
-                              : `eyc-gutter-cell${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                              : `eyc-gutter-cell${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${editCell && editCell.lineIndex === row.lineIndex ? ' eyc-line-editing' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                            onMouseDown={row.isHeader ? undefined : (e) => handleGutterMouseDown(e, row.lineIndex)}
                           >
                             {(() => {
                               const actualLine = row.isHeader ? 0 : (lineNumMaps.tableRowNumMap.get(`${bi}:${ri}`) ?? row.lineIndex + 1)
@@ -7267,17 +7701,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           : (
                               <tr
                                 key={`tbl-row-${ri}-${renderIndex}`}
-                                className={row.isHeader ? 'eyc-hdr-row' : `eyc-data-row${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                                className={row.isHeader ? 'eyc-hdr-row' : `eyc-data-row${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${editCell && editCell.lineIndex === row.lineIndex ? ' eyc-line-editing' : ''}${diffClassSuffixFor(row.lineIndex)}`}
                                 {...(!row.isHeader ? { 'data-line-index': row.lineIndex } : {})}
                                 onMouseDown={row.isHeader ? undefined : (e) => handleTableRowMouseDown(e, row.lineIndex)}
                               >
                             {row.cells.map((cell, ci) => (
                               (() => {
-                                const isInvalidVarNameCell = !row.isHeader && cell.fieldIdx === 0 && invalidVarNameLineSet.has(row.lineIndex)
+                                const isInvalidVarNameCell = !row.isHeader && cell.fieldIdx === 0 && (invalidVarNameLineSet.has(row.lineIndex) || duplicateDeclLineSet.has(row.lineIndex))
                                 return (
                               <td
                                 key={ci}
-                                className={`${cell.cls} Rowheight${cell.align ? ' eyc-cell-align-center' : ''}${isInvalidVarNameCell ? ' eyc-cell-invalid' : ''}`}
+                                className={`${cell.cls} Rowheight${cell.align ? ' eyc-cell-align-center' : ''}${isInvalidVarNameCell ? ' eyc-cell-invalid' : ''}${editCell && editCell.booleanCell && editCell.lineIndex === row.lineIndex && editCell.cellIndex === ci ? ' eyc-cell-bool-focus' : ''}`}
                                 colSpan={cell.colSpan}
                                 onMouseDown={handleTableCellMouseDown}
                                 onClick={(e) => handleTableCellClick(e, {
@@ -7414,12 +7848,15 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           return (
             <Fragment key={bi}>
             <div
-              className={`eyc-block-row eyc-block-row-wrap${isLineSelected ? ' eyc-line-selected' : ''}${isDebugLine ? ' eyc-debug-line' : ''}${diffClassSuffixFor(blk.lineIndex)}`}
+              className={`eyc-block-row eyc-block-row-wrap${isLineSelected ? ' eyc-line-selected' : ''}${editCell && editCell.lineIndex === blk.lineIndex && editCell.isVirtual === blk.isVirtual ? ' eyc-line-editing' : ''}${isDebugLine ? ' eyc-debug-line' : ''}${diffClassSuffixFor(blk.lineIndex)}`}
               data-line-index={blk.lineIndex}
               onMouseDown={(e) => handleCodeBlockMouseDown(e, blk.lineIndex, blk.isVirtual)}
             >
               <div className="eyc-line-gutter">
-                <div className="eyc-gutter-cell">
+                <div
+                  className="eyc-gutter-cell"
+                  onMouseDown={blk.isVirtual ? undefined : (e) => handleGutterMouseDown(e, blk.lineIndex)}
+                >
                   <span className={`eyc-breakpoint-dot${hasBreakpoint ? ' active' : ''}`}>●</span>
                   <span className="eyc-gutter-linenum">{blk.isVirtual ? '' : actualLine}</span>
                   <span className="eyc-gutter-fold-area">
@@ -7519,6 +7956,16 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           }
                         }
                         const v = normalizeCodeLineInput(raw)
+                        if (v !== raw && v === old) {
+                          // 归一化把用户的修改完全还原（如删掉注释 ' 后的空格立即被补回）：
+                          // state 不变不会触发受控重渲染，若走常规路径，liveUpdate 改文档后的
+                          // 回流才把 DOM 同步回 v，届时光标被重置到行尾。这里直接写回 DOM 并复位光标。
+                          e.target.value = v
+                          const pos = normalizeCodeLineInput(raw.slice(0, rawPos)).length
+                          e.target.setSelectionRange(pos, pos)
+                          updateCompletion(v, pos)
+                          return
+                        }
                         setEditVal(v)
                         scheduleLiveUpdate(v)
                         // 归一化改写了输入值（如 “”→"）时，受控 input 会把光标重置到末尾，
@@ -7583,10 +8030,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           const displayText = (shouldAliasJudgeStartInTableMode && isFlowKw && s.text === '判断开始') ? '判断' : s.text
                           if (isFunc || isObjMethod || isFlowKw || isAssignTarget) {
                             const className = `${isAssignTarget ? 'Variablescolor' : (isUserSubRef ? 'eyc-subrefcolor' : s.cls)}${(isInvalid || isLineSyntaxInvalid) ? ' eyc-cmd-invalid' : ''}`
+                            const hoverable = (isFunc || isObjMethod) && !isUserSubRef && !isInvalid
                             return (
                               <span
                                 key={si}
                                 className={className}
+                                onMouseEnter={hoverable ? (e) => scheduleCmdHoverTip(e, s.text, isObjMethod) : undefined}
+                                onMouseLeave={hoverable ? clearCmdHoverTip : undefined}
                               >{renderDebugAwareSpan(displayText, className, `code-${blk.lineIndex}-${si}`)}</span>
                             )
                           }
@@ -7594,7 +8044,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           const isUndefinedVarRef = s.cls === '' && hasCommandCatalog
                             && /^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(s.text)
                             && !validCommandNames.has(s.text) && !allKnownVarNames.has(s.text) && !reservedNameSet.has(s.text)
-                          const className = `${s.cls}${(isLineSyntaxInvalid || isUndefinedVarRef) ? ' eyc-cmd-invalid' : ''}`
+                          // 已知变量的引用上变量色、数字字面量上数字色（主题「变量/数字」token 生效）
+                          const refCls = s.cls === '' && allKnownVarNames.has(s.text) ? 'Variablescolor'
+                            : s.cls === '' && /^[0-9０-９]+(?:[.．][0-9０-９]+)?$/.test(s.text.trim()) && s.text.trim() !== '' ? 'eyc-numcolor'
+                            : s.cls
+                          const className = `${refCls}${(isLineSyntaxInvalid || isUndefinedVarRef) ? ' eyc-cmd-invalid' : ''}`
                           return <span key={si} className={className}>{renderDebugAwareSpan(displayText, className, `code-${blk.lineIndex}-${si}`)}</span>
                         })}
                       </>
@@ -7689,13 +8143,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                     className="eyc-param-val-input"
                                     aria-label={`编辑参数 ${p.name}`}
                                     value={editVal}
-                                    onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
+                                    onChange={e => { const v = e.target.value; setEditVal(v); scheduleLiveUpdate(v); updateCompletion(v, e.currentTarget.selectionStart ?? v.length) }}
                                     onBlur={() => {
                                       if (shouldSuppressBlurCommit()) return
                                       commit()
                                     }}
                                     onKeyDown={e => {
                                       if (handleParamInputCtrlKey(e)) return
+                                      if (applyCompletionPopupKey(e.key)) { e.preventDefault(); return }
                                       if (e.key === 'Enter') { e.preventDefault(); commit() }
                                       else if (e.key === 'Escape') setEditCell(null)
                                     }}
@@ -7775,13 +8230,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                             className="eyc-param-val-input"
                             aria-label="编辑赋值内容"
                             value={editVal}
-                            onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
+                            onChange={e => { const v = e.target.value; setEditVal(v); scheduleLiveUpdate(v); updateCompletion(v, e.currentTarget.selectionStart ?? v.length) }}
                             onBlur={() => {
                               if (shouldSuppressBlurCommit()) return
                               commit()
                             }}
                             onKeyDown={e => {
                               if (handleParamInputCtrlKey(e)) return
+                              if (applyCompletionPopupKey(e.key)) { e.preventDefault(); return }
                               if (e.key === 'Enter') { e.preventDefault(); commit() }
                               else if (e.key === 'Escape') setEditCell(null)
                             }}
@@ -7823,13 +8279,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                     className="eyc-param-val-input"
                                     aria-label={`编辑赋值命令参数 ${p.name}`}
                                     value={editVal}
-                                    onChange={e => { setEditVal(e.target.value); scheduleLiveUpdate(e.target.value) }}
+                                    onChange={e => { const v = e.target.value; setEditVal(v); scheduleLiveUpdate(v); updateCompletion(v, e.currentTarget.selectionStart ?? v.length) }}
                                     onBlur={() => {
                                       if (shouldSuppressBlurCommit()) return
                                       commit()
                                     }}
                                     onKeyDown={e => {
                                       if (handleParamInputCtrlKey(e)) return
+                                      if (applyCompletionPopupKey(e.key)) { e.preventDefault(); return }
                                       if (e.key === 'Enter') { e.preventDefault(); commit() }
                                       else if (e.key === 'Escape') setEditCell(null)
                                     }}
@@ -8124,6 +8581,34 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           })()}
         </div>
       )}
+      {cmdHoverTip && (() => {
+        const cmd = cmdHoverTip.cmd
+        const sig = cmd.params.map(p => {
+          const core = `${p.type} ${p.name}`
+          return p.optional ? `［${core}］` : core
+        }).join('，')
+        // 防右溢出：贴视口右缘回收
+        const maxLeft = Math.max(8, window.innerWidth - 560)
+        return (
+          <div
+            className="eyc-cmd-hover-tip"
+            ref={(element) => setCssVars(element, {
+              '--eyc-cmd-hover-left': `${Math.min(cmdHoverTip.x, maxLeft)}px`,
+              '--eyc-cmd-hover-top': `${cmdHoverTip.y}px`,
+            })}
+          >
+            <div className="eyc-cmd-hover-sig">
+              {cmd.returnType ? <span className="eyc-cmd-hover-type">&lt;{cmd.returnType}&gt;</span> : null}
+              <span className="eyc-cmd-hover-name"> {cmd.name} </span>
+              <span>（</span>
+              <span className="eyc-cmd-hover-params">{sig}</span>
+              <span>）</span>
+              {cmd.libraryName ? <span className="eyc-cmd-hover-lib"> - {cmd.libraryName}</span> : null}
+            </div>
+            {cmd.description && <div className="eyc-cmd-hover-desc">解释：{cmd.description}</div>}
+          </div>
+        )
+      })()}
       {editorContextMenu && (
         <div
           className="eyc-editor-context-menu"
@@ -8210,6 +8695,21 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           <div className="eyc-debug-hover-name">{debugHover.variable.name}</div>
           <div className="eyc-debug-hover-type">{debugHover.variable.type}</div>
           <div className="eyc-debug-hover-value">{debugHover.variable.value || '（空）'}</div>
+        </div>
+      )}
+
+      {/* 未知标识符回车 → 插入变量提示框（照易语言） */}
+      {insertVarPrompt && (
+        <div className="eyc-insertvar-overlay" onMouseDown={() => { setInsertVarPrompt(null); focusWrapper() }}>
+          <div className="eyc-insertvar-dialog" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="eyc-insertvar-text">未知命令“{insertVarPrompt.name}”。是否将“{insertVarPrompt.name}”插入为变量？</div>
+            <div className="eyc-insertvar-btns">
+              <button type="button" autoFocus onClick={() => applyInsertVariable('local')}>局部变量</button>
+              <button type="button" onClick={() => applyInsertVariable('assembly')}>程序集变量</button>
+              <button type="button" onClick={() => applyInsertVariable('global')}>全局变量</button>
+              <button type="button" onClick={() => { setInsertVarPrompt(null); focusWrapper() }}>取消</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -257,12 +257,10 @@ export function buildBlocks(text: string, isClassModule = false, isResourceTable
 
     if (ln.type === 'localVar') {
       if (he !== 2) {
-        if (he !== 1 && he !== 11 && he !== 2) { flush() }
-        if (!tbl) {
-          newTbl('localVar', ['变量名', '类 型', '静态', '数组', '备 注'], i, 'eVariableheadcolor')
-        } else {
-          addHdr(['变量名', '类 型', '静态', '数组', '备 注'], i, 'eVariableheadcolor')
-        }
+        // 局部变量表独立成块（不再并入子程序/参数表）：折叠范围计算本就按
+        // 「下一个非 localVar 表格块」预期此结构；独立块之间由 CSS 留视觉间距
+        flush()
+        newTbl('localVar', ['变量名', '类 型', '静态', '数组', '备 注'], i, 'eVariableheadcolor')
       }
       pushRow(i, [
         { text: f[0] || '', cls: 'Variablescolor', fieldIdx: 0 },
@@ -440,9 +438,12 @@ export function buildBlocks(text: string, isClassModule = false, isResourceTable
   const processed: RenderBlock[] = []
   for (let i = 0; i < blocks.length; i++) {
     processed.push(blocks[i])
-    if (blocks[i].kind === 'table' && blocks[i].tableType === 'sub') {
+    // 空子程序补一个虚拟输入行：声明区（子程序表/局部变量表）之后既没有代码行也没有
+    // 后续声明表时插入。子程序表与局部变量表之间是声明区内部，不插（那里不能写代码）。
+    if (blocks[i].kind === 'table' && (blocks[i].tableType === 'sub' || blocks[i].tableType === 'localVar')) {
       const next = blocks[i + 1]
-      if (!next || next.kind !== 'codeline') {
+      const nextIsLocalVar = next && next.kind === 'table' && next.tableType === 'localVar'
+      if ((!next || next.kind !== 'codeline') && !nextIsLocalVar) {
         const lastRow = blocks[i].rows[blocks[i].rows.length - 1]
         const afterLine = lastRow ? lastRow.lineIndex : blocks[i].lineIndex
         processed.push({

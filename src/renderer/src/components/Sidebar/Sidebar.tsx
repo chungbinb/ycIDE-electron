@@ -1,6 +1,9 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import type { DesignControl, DesignForm, SelectionTarget, LibWindowUnit, LibUnitProperty, LibUnitEvent } from '../Editor/VisualDesigner'
+import { parseFontSpec, stringifyFontSpec, formatFontSummary, fontSpecToCss, colorrefToHex, hexToColorref, COMMON_FONT_FAMILIES, DEFAULT_FONT_NAME, DEFAULT_FONT_SIZE, type FontSpec } from '../Editor/fontSpec'
 import Icon, { resolveUnitIconName } from '../Icon/Icon'
+import ChildTabEditorDialog from '../Editor/ChildTabEditorDialog'
 import '../Icon/Icon.css'
 import './Sidebar.css'
 
@@ -122,9 +125,27 @@ interface SidebarProps {
   onLibraryHint?: (hint: { title: string; lines: string[] }) => void
   /** 项目树节点右键操作（程序集分类/程序集/类模块） */
   onProjectNodeAction?: (action: ProjectNodeAction, node: { id: string; label: string }) => void
+  /** 是否有已复制的窗口可粘贴（窗口节点右键菜单“粘贴窗口”的可用性） */
+  canPasteWindow?: boolean
 }
 
-export type ProjectNodeAction = 'newAssembly' | 'newClassModule' | 'newSub' | 'deleteModule'
+export type ProjectNodeAction = 'newAssembly' | 'newClassModule' | 'newSub' | 'deleteModule' | 'newWindow' | 'newGlobalVar' | 'newConstant' | 'newDataType' | 'newDllCmd' | 'newPtrCmd' | 'copyWindow' | 'pasteWindow' | 'deleteWindow'
+
+// 项目树各分类节点右键的「新建」菜单项（分类 id → 菜单项；动作复用插入菜单同款逻辑）
+const CATEGORY_CONTEXT_MENU_ITEMS: Record<string, Array<{ action: ProjectNodeAction; label: string }>> = {
+  _cat_windows: [{ action: 'newWindow', label: '新建窗口' }],
+  _cat_sources: [
+    { action: 'newAssembly', label: '新建程序集' },
+    { action: 'newClassModule', label: '新建类模块' },
+  ],
+  _cat_globals: [{ action: 'newGlobalVar', label: '新建全局变量' }],
+  _cat_constants: [{ action: 'newConstant', label: '新建常量' }],
+  _cat_datatypes: [{ action: 'newDataType', label: '新建自定义数据类型' }],
+  _cat_dllcmds: [
+    { action: 'newDllCmd', label: '新建DLL命令' },
+    { action: 'newPtrCmd', label: '新建指针命令' },
+  ],
+}
 
 interface LibItem {
   name: string
@@ -1297,7 +1318,7 @@ function EditableNameCell({ value, existingNames, onChange, ariaLabel = '名称'
 }
 
 /** 可编辑整数属性单元格 */
-function EditableIntCell({ value, onChange, ariaLabel = '数值' }: { value: number; onChange: (v: number) => void; ariaLabel?: string }): React.JSX.Element {
+function EditableIntCell({ value, onChange, ariaLabel = '数值', disabled = false }: { value: number; onChange: (v: number) => void; ariaLabel?: string; disabled?: boolean }): React.JSX.Element {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(String(value))
   const [liveMessage, setLiveMessage] = useState('')
@@ -1313,6 +1334,11 @@ function EditableIntCell({ value, onChange, ariaLabel = '数值' }: { value: num
     if (!isNaN(n) && n !== value) onChange(n)
     else setDraft(String(value))
   }, [draft, value, onChange])
+
+  // 禁用（如非圆角矩形时的圆角半径）：灰显只读；须置于所有 Hook 之后，避免 Hook 数量随 disabled 变化
+  if (disabled) {
+    return <span className="prop-value-text prop-value-disabled" aria-label={buildEditableAriaLabel(ariaLabel, String(value))}>{value}</span>
+  }
 
   if (editing) {
     return (
@@ -1414,43 +1440,239 @@ const COMMON_COLOR_NAMES: Record<number, string> = {
   0x808080: '灰色',
 }
 
-/** 可编辑颜色属性单元格：色块点击弹出系统颜色选择器，存储值为 COLORREF（0xBBGGRR）整数 */
+// COLORREF(0xBBGGRR) → #RRGGBB
+function colorrefToHexStr(n: number): string {
+  const c = Number.isFinite(n) ? (Math.max(0, Math.trunc(n)) & 0xffffff) : 0
+  const r = c & 0xff, g = (c >> 8) & 0xff, b = (c >> 16) & 0xff
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+}
+// #RRGGBB（可含或不含 #、大小写不限）→ COLORREF；无效返回 null
+function hexStrToColorref(text: string): number | null {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(text.trim())
+  if (!m) return null
+  const v = Number.parseInt(m[1], 16)
+  return ((v >> 16) & 0xff) | (((v >> 8) & 0xff) << 8) | ((v & 0xff) << 16)
+}
+
+/** 可编辑颜色属性单元格：色块弹系统取色器 + 可直接输入/粘贴/复制 #RRGGBB；存储 COLORREF（0xBBGGRR） */
 function EditableColorCell({ value, onChange, ariaLabel = '颜色' }: { value: number; onChange: (v: number) => void; ariaLabel?: string }): React.JSX.Element {
   const n = Number.isFinite(value) ? (Math.max(0, Math.trunc(value)) & 0xffffff) : 0
-  const r = n & 0xff
-  const g = (n >> 8) & 0xff
-  const b = (n >> 16) & 0xff
-  const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
-  const label = COMMON_COLOR_NAMES[n] || hex.toUpperCase()
+  const hex = colorrefToHexStr(n)
+  const [draft, setDraft] = useState(hex)
+  useEffect(() => { setDraft(hex) }, [hex])
+  // 颜色选择器按住滑动会连发大量 onChange；每次都触发整窗体 setTabs + 撤销栈的全量 JSON.stringify 比较，
+  // 高频（叠加窗体里的底图/图片 base64）会拖垮渲染进程直至崩溃。故节流到 ~90ms 提交一次（滑块本地即时预览），
+  // 并保证最后一个值一定被提交（尾随 flush + blur flush）。
+  const pendingRef = useRef<number | null>(null)
+  const lastTimeRef = useRef(0)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flush = (): void => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
+    if (pendingRef.current !== null) { const v = pendingRef.current; pendingRef.current = null; lastTimeRef.current = Date.now(); onChange(v) }
+  }
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
+  const throttledCommit = (cr: number): void => {
+    pendingRef.current = cr
+    if (Date.now() - lastTimeRef.current >= 90) flush()
+    else if (!timerRef.current) timerRef.current = setTimeout(flush, 90)
+  }
+  const commitHex = (): void => {
+    const cr = hexStrToColorref(draft)
+    if (cr !== null) onChange(cr)
+    else setDraft(hex)  // 无效回退
+  }
+  const swatchHex = /^#[0-9a-fA-F]{6}$/.test(draft) ? draft : hex
   return (
-    <label className="prop-color-cell">
+    <span className="prop-color-cell">
       <input
         className="prop-color-input"
         type="color"
-        aria-label={buildEditableAriaLabel(ariaLabel, label)}
-        value={hex}
-        onChange={e => {
-          const v = e.target.value
-          const rr = Number.parseInt(v.slice(1, 3), 16)
-          const gg = Number.parseInt(v.slice(3, 5), 16)
-          const bb = Number.parseInt(v.slice(5, 7), 16)
-          if (Number.isFinite(rr) && Number.isFinite(gg) && Number.isFinite(bb)) {
-            onChange(rr | (gg << 8) | (bb << 16))
-          }
-        }}
+        aria-label={buildEditableAriaLabel(ariaLabel, hex)}
+        value={swatchHex}
+        onChange={e => { setDraft(e.target.value); throttledCommit(hexStrToColorref(e.target.value) ?? n) }}
+        onBlur={flush}
       />
-      <span className="prop-color-name">{label}</span>
-    </label>
+      <input
+        className="prop-color-hex"
+        type="text"
+        aria-label={`${ariaLabel} 十六进制值，可粘贴 #RRGGBB`}
+        value={draft}
+        spellCheck={false}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commitHex}
+        onKeyDown={e => { if (e.key === 'Enter') { commitHex(); (e.target as HTMLInputElement).blur() } }}
+      />
+    </span>
+  )
+}
+
+/** 可编辑图片属性单元格（文件选择 → base64 data URL） */
+function EditableImageCell({ value, onChange, ariaLabel = '图片' }: { value: string; onChange: (v: string) => void; ariaLabel?: string }): React.JSX.Element {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const hasImage = typeof value === 'string' && value.startsWith('data:image')
+  const pickFile = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : ''
+      if (result) onChange(result)
+    }
+    reader.readAsDataURL(file)
+    // 允许再次选择同一文件
+    e.target.value = ''
+  }
+  return (
+    <div className="prop-image-cell">
+      <input
+        ref={inputRef}
+        className="prop-image-input"
+        type="file"
+        accept="image/*"
+        aria-label={buildEditableAriaLabel(ariaLabel)}
+        onChange={pickFile}
+      />
+      {hasImage && <img className="prop-image-thumb" src={value} alt="" />}
+      <button type="button" className="prop-image-btn" onClick={() => inputRef.current?.click()}>
+        {hasImage ? '更换' : '选择...'}
+      </button>
+      {hasImage && (
+        <button type="button" className="prop-image-btn prop-image-clear" onClick={() => onChange('')}>清除</button>
+      )}
+    </div>
+  )
+}
+
+/** 子夹表单元格：点「编辑…」打开子夹管理弹窗（值=换行分隔的子夹标题） */
+function EditableTabListCell({ value, onChange }: { value: string; onChange: (v: string) => void }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const titles = String(value || '').split('\n').map(t => t.trim()).filter(Boolean)
+  const summary = titles.length ? `${titles.length} 个：${titles.join('/').slice(0, 20)}` : '（无子夹）'
+  return (
+    <span className="prop-font-cell">
+      <button type="button" className="prop-font-btn" aria-label="子夹管理" onClick={() => setOpen(true)}>{summary} · 编辑…</button>
+      {open && (
+        <ChildTabEditorDialog
+          titles={String(value || '')}
+          controlName="选择夹"
+          onSave={(t) => { onChange(t); setOpen(false) }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </span>
+  )
+}
+
+/** 可编辑字体属性单元格（点击弹出可拖动的浮动字体对话框，避免被侧栏裁剪；值以 JSON 字符串存） */
+function EditableFontCell({ value, onChange, ariaLabel = '字体' }: { value: string; onChange: (v: string) => void; ariaLabel?: string }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const spec = parseFontSpec(value)
+  const cur: FontSpec = spec || { name: DEFAULT_FONT_NAME, size: DEFAULT_FONT_SIZE }
+  const update = (patch: Partial<FontSpec>): void => onChange(stringifyFontSpec({ ...cur, ...patch }))
+  // 文本颜色滑动同样会连发 → 节流提交（与 EditableColorCell 同因：高频全窗体更新+撤销栈 JSON.stringify 会崩渲染进程）。
+  const colorPendRef = useRef<number | null>(null)
+  const colorLastRef = useRef(0)
+  const colorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flushColor = (): void => {
+    if (colorTimerRef.current) { clearTimeout(colorTimerRef.current); colorTimerRef.current = null }
+    if (colorPendRef.current !== null) { const c = colorPendRef.current; colorPendRef.current = null; colorLastRef.current = Date.now(); update({ color: c }) }
+  }
+  const throttleColor = (cr: number): void => {
+    colorPendRef.current = cr
+    if (Date.now() - colorLastRef.current >= 90) flushColor()
+    else if (!colorTimerRef.current) colorTimerRef.current = setTimeout(flushColor, 90)
+  }
+  useEffect(() => () => { if (colorTimerRef.current) clearTimeout(colorTimerRef.current) }, [])
+  // 打开时居中，关闭时清位置
+  useEffect(() => {
+    if (open && pos === null) setPos({ x: Math.max(8, Math.round(window.innerWidth / 2 - 140)), y: Math.max(8, Math.round(window.innerHeight / 2 - 140)) })
+    if (!open) setPos(null)
+  }, [open, pos])
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open])
+  // 标题栏拖动
+  const startDrag = (e: React.MouseEvent): void => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const startX = e.clientX, startY = e.clientY
+    const orig = pos || { x: 0, y: 0 }
+    const onMove = (ev: MouseEvent): void => {
+      const nx = Math.min(Math.max(0, orig.x + (ev.clientX - startX)), window.innerWidth - 120)
+      const ny = Math.min(Math.max(0, orig.y + (ev.clientY - startY)), window.innerHeight - 36)
+      setPos({ x: nx, y: ny })
+    }
+    const onUp = (): void => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+  const previewStyle = fontSpecToCss(cur) as React.CSSProperties
+  return (
+    <div className="prop-font-cell">
+      <button type="button" className="prop-font-btn" aria-label={buildEditableAriaLabel(ariaLabel)} onClick={() => setOpen(true)}>
+        {formatFontSummary(spec)}
+      </button>
+      {open && pos && createPortal(
+        <div className="prop-font-dialog" role="dialog" aria-label="字体" style={{ left: `${pos.x}px`, top: `${pos.y}px` }}>
+          <div className="prop-font-dialog-title" onMouseDown={startDrag}>
+            <span>字体</span>
+            <button type="button" className="prop-font-close" aria-label="关闭" onClick={() => setOpen(false)}>✕</button>
+          </div>
+          <div className="prop-font-body">
+            <label className="prop-font-row">字体
+              <select value={cur.name} onChange={e => update({ name: e.target.value })}>
+                {(COMMON_FONT_FAMILIES.includes(cur.name) ? COMMON_FONT_FAMILIES : [cur.name, ...COMMON_FONT_FAMILIES]).map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </label>
+            <label className="prop-font-row">大小
+              <input type="number" min={1} max={200} value={cur.size} onChange={e => update({ size: Number(e.target.value) || DEFAULT_FONT_SIZE })} />
+            </label>
+            <div className="prop-font-styles">
+              <label><input type="checkbox" checked={!!cur.bold} onChange={e => update({ bold: e.target.checked })} />粗体</label>
+              <label><input type="checkbox" checked={!!cur.italic} onChange={e => update({ italic: e.target.checked })} />斜体</label>
+              <label><input type="checkbox" checked={!!cur.underline} onChange={e => update({ underline: e.target.checked })} />下划线</label>
+              <label><input type="checkbox" checked={!!cur.strikeout} onChange={e => update({ strikeout: e.target.checked })} />删除线</label>
+            </div>
+            <label className="prop-font-row">文本颜色
+              <span className="prop-font-color">
+                <input type="color" value={colorrefToHex(cur.color ?? 0)} onChange={e => throttleColor(hexToColorref(e.target.value))} onBlur={flushColor} />
+                <input
+                  className="prop-font-color-hex"
+                  type="text"
+                  spellCheck={false}
+                  aria-label="文本颜色十六进制值，可粘贴 #RRGGBB"
+                  value={cur.color !== undefined ? colorrefToHex(cur.color) : ''}
+                  placeholder="#RRGGBB"
+                  onChange={e => { const cr = hexStrToColorref(e.target.value); if (cr !== null) update({ color: cr }) }}
+                />
+                {cur.color !== undefined && <button type="button" className="prop-font-color-reset" onClick={() => update({ color: undefined })}>默认</button>}
+              </span>
+            </label>
+            <div className="prop-font-preview" style={previewStyle}>字体示例 AaBbCc 你好 123</div>
+            <div className="prop-font-actions">
+              <button type="button" className="prop-font-reset" onClick={() => { onChange(''); setOpen(false) }}>清除（用默认字体）</button>
+              <button type="button" className="prop-font-ok" onClick={() => setOpen(false)}>完成</button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
   )
 }
 
 /** 可编辑逻辑型属性单元格（下拉选择） */
-function EditableBoolCell({ value, onChange, ariaLabel = '布尔值' }: { value: boolean; onChange: (v: boolean) => void; ariaLabel?: string }): React.JSX.Element {
+function EditableBoolCell({ value, onChange, ariaLabel = '布尔值', disabled = false }: { value: boolean; onChange: (v: boolean) => void; ariaLabel?: string; disabled?: boolean }): React.JSX.Element {
   return (
     <select
       className="prop-edit-select"
       aria-label={buildEditableAriaLabel(ariaLabel)}
       value={value ? '1' : '0'}
+      disabled={disabled}
       onChange={e => onChange(e.target.value === '1')}
     >
       <option value="1">真</option>
@@ -1460,12 +1682,13 @@ function EditableBoolCell({ value, onChange, ariaLabel = '布尔值' }: { value:
 }
 
 /** 可编辑枚举/选择属性单元格（下拉框） */
-function EditablePickCell({ value, options, onChange, ariaLabel = '选项' }: { value: number; options: string[]; onChange: (v: number) => void; ariaLabel?: string }): React.JSX.Element {
+function EditablePickCell({ value, options, onChange, ariaLabel = '选项', disabled = false }: { value: number; options: string[]; onChange: (v: number) => void; ariaLabel?: string; disabled?: boolean }): React.JSX.Element {
   return (
     <select
       className="prop-edit-select"
       aria-label={buildEditableAriaLabel(ariaLabel)}
       value={value}
+      disabled={disabled}
       onChange={e => onChange(parseInt(e.target.value, 10))}
     >
       {options.map((opt, i) => (
@@ -1476,22 +1699,34 @@ function EditablePickCell({ value, options, onChange, ariaLabel = '选项' }: { 
 }
 
 /** 根据属性类型渲染对应的可编辑单元格 */
-function renderEditableCell(prop: LibUnitProperty, val: string | number | boolean, onChange: (v: string | number | boolean) => void): React.JSX.Element {
+function renderEditableCell(prop: LibUnitProperty, val: string | number | boolean, onChange: (v: string | number | boolean) => void, disabled = false): React.JSX.Element {
   // 有 pickOptions → 下拉选择
   if (prop.pickOptions.length > 0 && typeof val === 'number') {
-    return <EditablePickCell value={val} options={prop.pickOptions} ariaLabel={prop.name} onChange={v => onChange(v)} />
+    return <EditablePickCell value={val} options={prop.pickOptions} ariaLabel={prop.name} disabled={disabled} onChange={v => onChange(v)} />
   }
   // 逻辑型 → 单击切换
   if (prop.typeName === '逻辑型') {
-    return <EditableBoolCell value={!!val} ariaLabel={prop.name} onChange={v => onChange(v)} />
+    return <EditableBoolCell value={!!val} ariaLabel={prop.name} disabled={disabled} onChange={v => onChange(v)} />
   }
   // 颜色类型 → 色块 + 系统颜色选择器
   if (prop.typeName === '颜色' || prop.typeName === '颜色(透明)' || prop.typeName === '背景颜色') {
     return <EditableColorCell value={typeof val === 'number' ? val : Number(val) || 0} ariaLabel={prop.name} onChange={v => onChange(v)} />
   }
+  // 图片类型 → 文件选择器（存 base64 data URL）
+  if (prop.typeName === '图片') {
+    return <EditableImageCell value={typeof val === 'string' ? val : ''} ariaLabel={prop.name} onChange={v => onChange(v)} />
+  }
+  // 字体类型 → 自绘字体选择器（值以 JSON 字符串存）
+  if (prop.typeName === '字体') {
+    return <EditableFontCell value={typeof val === 'string' ? val : ''} ariaLabel={prop.name} onChange={v => onChange(v)} />
+  }
+  // 子夹表 → 打开子夹管理弹窗（值=换行分隔的子夹标题）
+  if (prop.typeName === '子夹表') {
+    return <EditableTabListCell value={typeof val === 'string' ? val : ''} onChange={v => onChange(v)} />
+  }
   // 整数型 / 小数型等数值类型
   if (prop.typeName === '整数型' || prop.typeName === '小数型' || prop.typeName === '选择整数' || prop.typeName === '选择特定整数') {
-    return <EditableIntCell value={typeof val === 'number' ? val : 0} ariaLabel={prop.name} onChange={v => onChange(v)} />
+    return <EditableIntCell value={typeof val === 'number' ? val : 0} ariaLabel={prop.name} disabled={disabled} onChange={v => onChange(v)} />
   }
   // 文本型及其他 → 文本输入
   return <EditableTextCell value={String(val ?? '')} ariaLabel={prop.name} onChange={v => onChange(v)} />
@@ -1581,17 +1816,39 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
               <td className="prop-value">窗口</td>
             </tr>
             {windowUnit ? (
-              windowUnit.properties.filter(p => !p.isReadOnly).map(p => {
-                const val = resolveFormPropValue(p, f)
-                return (
-                  <tr key={p.name} className="prop-row">
-                    <th className="prop-name" scope="row" title={p.description}>{p.name}</th>
-                    <td className="prop-value">
-                      {renderEditableCell(p, val, v => onPropertyChange?.('form', null, p.name, v))}
-                    </td>
-                  </tr>
-                )
-              })
+              (() => {
+                // 无边框时无标题栏 → 控制按钮及其下级（最大化/最小化按钮）全禁用；
+                // 控制按钮为假时，其下级选项禁用（照易语言，与编译器 border===0 忽略这些位一致）
+                const borderProp = windowUnit.properties.find(p => p.name === '边框')
+                const borderVal = borderProp ? Number(resolveFormPropValue(borderProp, f)) : 2
+                const borderIsNone = borderVal === 0
+                const controlBoxOn = f.properties?.['控制按钮'] !== false
+                // 外形=圆角矩形(1) 时其下级「圆角半径」可编辑；矩形/椭圆时禁用（椭圆由窗口尺寸决定曲率，无可调半径）
+                const shapeProp = windowUnit.properties.find(p => p.name === '外形')
+                const shapeVal = shapeProp ? Number(resolveFormPropValue(shapeProp, f)) : 0
+                // 有底图时其下级「底图方式」可切换，无底图时禁用
+                const hasBackImage = typeof f.properties?.['底图'] === 'string' && (f.properties['底图'] as string).startsWith('data:image')
+                return windowUnit.properties.filter(p => !p.isReadOnly).map(p => {
+                  const val = resolveFormPropValue(p, f)
+                  const isControlBox = p.name === '控制按钮'
+                  const isSubOfControlBox = p.name === '最大化按钮' || p.name === '最小化按钮'
+                  const isCornerRadius = p.name === '圆角半径'
+                  const isBgMode = p.name === '底图方式'
+                  const isSubOption = isSubOfControlBox || isCornerRadius || isBgMode
+                  const disabled = (isControlBox && borderIsNone)
+                    || (isSubOfControlBox && (borderIsNone || !controlBoxOn))
+                    || (isCornerRadius && shapeVal !== 1)
+                    || (isBgMode && !hasBackImage)
+                  return (
+                    <tr key={p.name} className="prop-row">
+                      <th className={`prop-name${isSubOption ? ' prop-name-sub' : ''}`} scope="row" title={p.description}>{p.name}</th>
+                      <td className="prop-value">
+                        {renderEditableCell(p, val, v => onPropertyChange?.('form', null, p.name, v), disabled)}
+                      </td>
+                    </tr>
+                  )
+                })
+              })()
             ) : (
               <>
                 <tr className="prop-row"><th className="prop-name" scope="row">标题</th><td className="prop-value"><EditableTextCell value={f.title} ariaLabel="标题" onChange={v => onPropertyChange?.('form', null, '标题', v)} /></td></tr>
@@ -1638,17 +1895,28 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
             <td className="prop-value">{typeName}</td>
           </tr>
           {unit ? (
-            unit.properties.filter(p => !p.isReadOnly).map(p => {
-              const val = resolveControlPropValue(p, control)
-              return (
-                <tr key={p.name} className="prop-row">
-                  <th className="prop-name" scope="row" title={p.description}>{p.name}</th>
-                  <td className="prop-value">
-                    {renderEditableCell(p, val, v => onPropertyChange?.('control', control.id, p.name, v))}
-                  </td>
-                </tr>
-              )
-            })
+            (() => {
+              // 可停留焦点为假时，其下级「停留顺序」禁用（Tab 停不到就无所谓顺序）
+              const canFocusOn = control.properties['可停留焦点'] !== false
+              // 调节器上限值/底限值：仅「自动调节器(1)」时可编辑；无调节器(0)/手动调节器(2) 均禁用
+              const spinModeProp = unit.properties.find(p => p.name === '调节器方式')
+              const spinModeVal = spinModeProp ? Number(resolveControlPropValue(spinModeProp, control)) : 0
+              return unit.properties.filter(p => !p.isReadOnly).map(p => {
+                const val = resolveControlPropValue(p, control)
+                const isTabOrder = p.name === '停留顺序'
+                const isSpinLimit = p.name === '调节器上限值' || p.name === '调节器底限值'
+                const isSubOption = isTabOrder || isSpinLimit
+                const disabled = (isTabOrder && !canFocusOn) || (isSpinLimit && spinModeVal !== 1)
+                return (
+                  <tr key={p.name} className="prop-row">
+                    <th className={`prop-name${isSubOption ? ' prop-name-sub' : ''}`} scope="row" title={p.description}>{p.name}</th>
+                    <td className="prop-value">
+                      {renderEditableCell(p, val, v => onPropertyChange?.('control', control.id, p.name, v), disabled)}
+                    </td>
+                  </tr>
+                )
+              })
+            })()
           ) : (
             <>
               <tr className="prop-row"><th className="prop-name" scope="row">标题</th><td className="prop-value"><EditableTextCell value={control.text} ariaLabel="标题" onChange={v => onPropertyChange?.('control', control.id, '标题', v)} /></td></tr>
@@ -1668,7 +1936,7 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
   )
 }
 
-function Sidebar({ width, onResize, placement = 'left', selection, activeTab, onTabChange, onSelectControl, onPropertyChange, projectTree, onOpenFile, activeFileId, projectDir, openTabs = [], onEventNavigate, onSaveProject, onCloseProject, onLibraryChange, onLibraryHint, onProjectNodeAction }: SidebarProps): React.JSX.Element {
+function Sidebar({ width, onResize, placement = 'left', selection, activeTab, onTabChange, onSelectControl, onPropertyChange, projectTree, onOpenFile, activeFileId, projectDir, openTabs = [], onEventNavigate, onSaveProject, onCloseProject, onLibraryChange, onLibraryHint, onProjectNodeAction, canPasteWindow = false }: SidebarProps): React.JSX.Element {
   const SIDEBAR_MIN_WIDTH = 150
   const SIDEBAR_MAX_WIDTH = 500
   const SIDEBAR_RESIZE_STEP = 16
@@ -1812,7 +2080,7 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
   })
   const [tabsContextMenu, setTabsContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [projectContextMenu, setProjectContextMenu] = useState<{ x: number; y: number; projectDir: string; projectName: string } | null>(null)
-  const [nodeContextMenu, setNodeContextMenu] = useState<{ x: number; y: number; nodeId: string; nodeLabel: string; kind: 'category' | 'module'; isClassModule: boolean } | null>(null)
+  const [nodeContextMenu, setNodeContextMenu] = useState<{ x: number; y: number; nodeId: string; nodeLabel: string; kind: 'category' | 'module' | 'window'; isClassModule: boolean; categoryId: string } | null>(null)
 
   const { modifiedFileKeys, aiModifiedFileKeys } = useMemo(() => {
     const keys = new Set<string>()
@@ -1960,12 +2228,13 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
     })
   }, [])
 
-  // 程序集分类/程序集/类模块节点的右键菜单
+  // 分类节点（窗口/程序集/全局变量/常量表/数据类型/DLL命令）、程序集/类模块、窗口 节点的右键菜单
   const handleNodeContextMenu = useCallback((event: React.MouseEvent<HTMLElement>, node: TreeNode) => {
     if (!onProjectNodeAction) return
-    const isSourcesCategory = node.type === 'folder' && node.id === '_cat_sources'
+    const isMenuCategory = node.type === 'folder' && node.id in CATEGORY_CONTEXT_MENU_ITEMS
     const isSourceModule = node.type === 'module' && /\.(eyc|ecc)$/i.test(node.id)
-    if (!isSourcesCategory && !isSourceModule) return
+    const isWindowNode = node.type === 'window' && /\.efw$/i.test(node.id)
+    if (!isMenuCategory && !isSourceModule && !isWindowNode) return
     event.preventDefault()
     event.stopPropagation()
     const menuWidth = 240
@@ -1975,8 +2244,9 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
       y: event.clientY,
       nodeId: node.id,
       nodeLabel: node.label,
-      kind: isSourcesCategory ? 'category' : 'module',
+      kind: isMenuCategory ? 'category' : isWindowNode ? 'window' : 'module',
       isClassModule: /\.ecc$/i.test(node.id),
+      categoryId: isMenuCategory ? node.id : '',
     })
   }, [onProjectNodeAction])
 
@@ -2236,21 +2506,47 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
         >
           {nodeContextMenu.kind === 'category' ? (
             <>
+              {(CATEGORY_CONTEXT_MENU_ITEMS[nodeContextMenu.categoryId] || []).map(item => (
+                <button
+                  key={item.action}
+                  type="button"
+                  role="menuitem"
+                  className="sidebar-tabs-context-menu-item"
+                  onClick={() => fireNodeAction(item.action)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </>
+          ) : nodeContextMenu.kind === 'window' ? (
+            <>
               <button
                 type="button"
                 role="menuitem"
                 className="sidebar-tabs-context-menu-item"
-                onClick={() => fireNodeAction('newAssembly')}
+                onClick={() => fireNodeAction('copyWindow')}
               >
-                新建程序集
+                复制窗口（{nodeContextMenu.nodeLabel}）
               </button>
               <button
                 type="button"
                 role="menuitem"
                 className="sidebar-tabs-context-menu-item"
-                onClick={() => fireNodeAction('newClassModule')}
+                disabled={!canPasteWindow}
+                title={canPasteWindow ? undefined : '先复制一个窗口后才能粘贴'}
+                onClick={() => fireNodeAction('pasteWindow')}
               >
-                新建类模块
+                粘贴窗口
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="sidebar-tabs-context-menu-item"
+                disabled={nodeContextMenu.nodeId.replace(/\.efw$/i, '') === '_启动窗口'}
+                title={nodeContextMenu.nodeId.replace(/\.efw$/i, '') === '_启动窗口' ? '启动窗口不能删除' : undefined}
+                onClick={() => fireNodeAction('deleteWindow')}
+              >
+                删除窗口（{nodeContextMenu.nodeLabel}）
               </button>
             </>
           ) : (

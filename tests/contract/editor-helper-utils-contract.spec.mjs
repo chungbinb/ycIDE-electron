@@ -95,6 +95,7 @@ test('paste utils: dll declarations paste into dll section instead of current su
   const { parseLines } = loadTsModule(blocksPath)
   const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
     './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
   })
 
   const currentText = [
@@ -131,6 +132,7 @@ test('paste utils: dll declarations without existing dll section insert before f
   const { parseLines } = loadTsModule(blocksPath)
   const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
     './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
   })
 
   const currentText = [
@@ -159,6 +161,7 @@ test('paste utils: routed declarations can skip inline insertion when only speci
   const { parseLines } = loadTsModule(blocksPath)
   const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
     './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
   })
 
   const currentText = ['.程序集 Demo', '.子程序 A, 整数型', '    返回 (0)'].join('\n')
@@ -178,10 +181,174 @@ test('paste utils: routed declarations can skip inline insertion when only speci
   assert.deepEqual(toPlain(result.routedDeclarations), [{ language: 'ell', lines: clipText.split('\n') }])
 })
 
+test('paste utils: duplicate pasted sub names get _1/_2 suffix instead of merging', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
+  })
+
+  const currentText = [
+    '.程序集 Demo',
+    '',
+    '.子程序 子程序1, , , ',
+    '    调试输出 (1)',
+    '',
+    '.子程序 子程序1_1, , , ',
+    '',
+  ].join('\n')
+
+  // 用户场景①：只复制了声明行的子程序，旧合并语义会整块剔除、粘贴毫无反应；
+  // 现在应改名插入。_1 已被占用 → 升 _2。
+  const headOnly = buildMultiLinePasteResult({
+    currentText,
+    clipText: '.子程序 子程序1, , , ',
+    cursorLine: 3,
+    sanitizePastedText: (t) => t,
+  })
+  assert.ok(headOnly)
+  assert.match(headOnly.nextText, /\.子程序 子程序1_2, , , /)
+  // 原有两个子程序原样保留
+  assert.match(headOnly.nextText, /\.子程序 子程序1, , , /)
+  assert.match(headOnly.nextText, /\.子程序 子程序1_1, , , /)
+
+  // 用户场景②：带正文的重名子程序 → 整块改名插入，正文不再并入旧子程序
+  const withBody = buildMultiLinePasteResult({
+    currentText,
+    clipText: ['.子程序 子程序1, , , ', '    调试输出 (2)'].join('\n'),
+    cursorLine: 3,
+    sanitizePastedText: (t) => t,
+  })
+  assert.ok(withBody)
+  const bodyIdx = withBody.nextText.split('\n').findIndex(l => l === '.子程序 子程序1_2, , , ')
+  assert.ok(bodyIdx >= 0)
+  assert.equal(withBody.nextText.split('\n')[bodyIdx + 1], '    调试输出 (2)')
+
+  // 不重名的子程序原名插入
+  const fresh = buildMultiLinePasteResult({
+    currentText,
+    clipText: '.子程序 新子程序, , , ',
+    cursorLine: 3,
+    sanitizePastedText: (t) => t,
+  })
+  assert.ok(fresh)
+  assert.match(fresh.nextText, /\.子程序 新子程序, , , /)
+})
+
+test('paste utils: pasted local variable lines relocate to the target sub declaration area', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
+  })
+
+  const currentText = [
+    '.程序集 Demo',
+    '',
+    '.子程序 A, , , ',
+    '.局部变量 a, 整数型',
+    '    调试输出 (1)',
+    '',
+  ].join('\n')
+
+  // 光标在子程序正文处粘贴纯局部变量 → 并入声明区（现有局部变量块末尾），不在光标处形成第二张变量表
+  const pureVars = buildMultiLinePasteResult({
+    currentText,
+    clipText: ['.局部变量 b, 整数型', '.局部变量 c, 整数型'].join('\n'),
+    cursorLine: 4,
+    sanitizePastedText: (t) => t,
+  })
+  assert.ok(pureVars)
+  const pv = pureVars.nextText.split('\n')
+  assert.equal(pv[3], '.局部变量 a, 整数型')
+  assert.equal(pv[4], '.局部变量 b, 整数型')
+  assert.equal(pv[5], '.局部变量 c, 整数型')
+  assert.equal(pv[6], '    调试输出 (1)')
+  assert.equal(pureVars.insertAt, 4)
+  assert.equal(pureVars.pastedLineCount, 2)
+
+  // 混合粘贴：局部变量归位声明区、普通代码仍在光标处内联（变量在代码上方）
+  const mixed = buildMultiLinePasteResult({
+    currentText,
+    clipText: ['.局部变量 d, 整数型', '调试输出 (2)'].join('\n'),
+    cursorLine: 4,
+    sanitizePastedText: (t) => t,
+  })
+  assert.ok(mixed)
+  const ml = mixed.nextText.split('\n')
+  assert.equal(ml[4], '.局部变量 d, 整数型')
+  // 普通代码按光标行缩进整体平移（既有行为）
+  assert.equal(ml[5], '    调试输出 (2)')
+  assert.equal(ml[6], '    调试输出 (1)')
+
+  // 片段自带子程序时，其局部变量随子程序保留、不被抽走
+  const withSub = buildMultiLinePasteResult({
+    currentText,
+    clipText: ['.子程序 B, , , ', '.局部变量 x, 整数型'].join('\n'),
+    cursorLine: 4,
+    sanitizePastedText: (t) => t,
+  })
+  assert.ok(withSub)
+  const ws = withSub.nextText.split('\n')
+  const subIdx = ws.findIndex(l => l.startsWith('.子程序 B'))
+  assert.ok(subIdx >= 0)
+  assert.equal(ws[subIdx + 1], '.局部变量 x, 整数型')
+})
+
+test('paste utils: misplaced local variable lines relocate to their sub declaration area', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { relocateMisplacedLocalVarLines } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
+  })
+
+  // 用户场景：子程序正文（空行后）出现三条局部变量 → 全部归位到声明区末尾（保持相对顺序）
+  const text = [
+    '.程序集 窗口程序集_启动窗口',
+    '',
+    '.子程序 __启动窗口_创建完毕, , , ',
+    '.局部变量 a, 整数型',
+    '    调试输出 (1)',
+    '',
+    '.局部变量 b, 整数型',
+    '.局部变量 c, 整数型',
+  ].join('\n')
+  const out = relocateMisplacedLocalVarLines(text)
+  const ol = out.split('\n')
+  assert.equal(ol[3], '.局部变量 a, 整数型')
+  assert.equal(ol[4], '.局部变量 b, 整数型')
+  assert.equal(ol[5], '.局部变量 c, 整数型')
+  assert.equal(ol[6], '    调试输出 (1)')
+
+  // 无错位 → 返回 null（不写回）
+  const clean = [
+    '.子程序 A, , , ',
+    '.局部变量 a, 整数型',
+    '    调试输出 (1)',
+  ].join('\n')
+  assert.equal(relocateMisplacedLocalVarLines(clean), null)
+
+  // 多子程序各归各：第二个子程序的错位行只进第二个的声明区
+  const multi = [
+    '.子程序 A, , , ',
+    '    调试输出 (1)',
+    '.局部变量 x, 整数型',
+    '.子程序 B, , , ',
+    '    调试输出 (2)',
+    '.局部变量 y, 整数型',
+  ].join('\n')
+  const mo = relocateMisplacedLocalVarLines(multi).split('\n')
+  assert.equal(mo[1], '.局部变量 x, 整数型')
+  assert.equal(mo[2], '    调试输出 (1)')
+  assert.equal(mo[4], '.局部变量 y, 整数型')
+  assert.equal(mo[5], '    调试输出 (2)')
+})
+
 test('paste utils: mixed paste routes declarations and keeps normal code inline', () => {
   const { parseLines } = loadTsModule(blocksPath)
   const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
     './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
   })
 
   const currentText = ['.程序集 Demo', '.子程序 A, 整数型', '    返回 (0)'].join('\n')
@@ -684,4 +851,157 @@ test('paste sanitize: nested flow in true branch remains visible text', () => {
   assert.equal(out.includes('\u200C') || out.includes('\u200D') || out.includes('\u2060'), false)
   assert.equal(out.includes('    如果 ()'), true)
   assert.equal(out.includes('否则'), true)
+})
+
+test('paste utils: selection-replace paste overwrites fully selected same-name sub (no rename)', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
+  })
+
+  const currentText = [
+    '.版本 2',
+    '.程序集 窗口程序集_启动窗口',
+    '.子程序 _按钮1_被单击, , , ',
+    '    旧代码1 ()',
+    '    旧代码2 ()',
+    '.子程序 B',
+    '    返回 (0)',
+  ].join('\n')
+  const clipText = [
+    '.子程序 _按钮1_被单击, , , ',
+    '    新代码 ()',
+  ].join('\n')
+
+  const result = buildMultiLinePasteResult({
+    currentText,
+    clipText,
+    cursorLine: 2,
+    sanitizePastedText: (t) => t,
+    replaceLineIndices: [2, 3, 4],
+  })
+
+  assert.ok(result)
+  assert.equal(result.insertAt, 2)
+  const text = result.nextText
+  assert.equal((text.match(/_按钮1_被单击/g) || []).length, 1)
+  assert.equal(text.includes('_被单击_1'), false)
+  assert.equal(text.includes('新代码'), true)
+  assert.equal(text.includes('旧代码1'), false)
+  assert.equal(text.includes('.子程序 B'), true)
+})
+
+test('paste utils: selection-replace keeps unselected tail lines inside the overwritten sub', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
+  })
+
+  const currentText = [
+    '.版本 2',
+    '.程序集 窗口程序集_启动窗口',
+    '.子程序 _按钮1_被单击, , , ',
+    '    旧代码1 ()',
+    '    旧代码2 ()',
+  ].join('\n')
+  const clipText = [
+    '.子程序 _按钮1_被单击, , , ',
+    '    新代码 ()',
+  ].join('\n')
+
+  const result = buildMultiLinePasteResult({
+    currentText,
+    clipText,
+    cursorLine: 2,
+    sanitizePastedText: (t) => t,
+    replaceLineIndices: [2, 3],
+  })
+
+  assert.ok(result)
+  const lines = result.nextText.split('\n')
+  assert.equal((result.nextText.match(/_按钮1_被单击/g) || []).length, 1)
+  const declIdx = lines.findIndex(l => l.includes('_按钮1_被单击'))
+  const newIdx = lines.findIndex(l => l.includes('新代码'))
+  const tailIdx = lines.findIndex(l => l.includes('旧代码2'))
+  assert.ok(declIdx >= 0 && newIdx > declIdx && tailIdx > newIdx)
+})
+
+test('paste utils: selection elsewhere still renames duplicated pasted sub', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
+  })
+
+  const currentText = [
+    '.版本 2',
+    '.程序集 窗口程序集_启动窗口',
+    '.子程序 _按钮1_被单击, , , ',
+    '    旧代码1 ()',
+    '.子程序 B',
+    '    返回 (0)',
+  ].join('\n')
+  const clipText = [
+    '.子程序 _按钮1_被单击, , , ',
+    '    新代码 ()',
+  ].join('\n')
+
+  const result = buildMultiLinePasteResult({
+    currentText,
+    clipText,
+    cursorLine: 5,
+    sanitizePastedText: (t) => t,
+    replaceLineIndices: [5],
+  })
+
+  assert.ok(result)
+  const text = result.nextText
+  assert.equal(text.includes('_按钮1_被单击_1'), true)
+  assert.equal(text.includes('旧代码1'), true)
+})
+
+test('paste utils: selection-replace deletes selected subs that have no counterpart in clipboard', () => {
+  const { parseLines } = loadTsModule(blocksPath)
+  const { buildMultiLinePasteResult } = loadTsModule(pasteUtilsPath, {
+    './eycBlocks': { parseLines },
+    './eycFlow': loadTsModule(flowPath),
+  })
+
+  const currentText = [
+    '.版本 2',
+    '.程序集 窗口程序集_启动窗口',
+    '.子程序 _子程序1_被单击, , , ',
+    '    旧代码1 ()',
+    '.子程序 _子程序1_被双击, , , ',
+    '    旧代码2 ()',
+    '.子程序 B',
+    '    返回 (0)',
+  ].join('\n')
+  const clipText = [
+    '.子程序 _子程序1_被单击, , , ',
+    '    新代码 ()',
+  ].join('\n')
+
+  const result = buildMultiLinePasteResult({
+    currentText,
+    clipText,
+    cursorLine: 2,
+    sanitizePastedText: (t) => t,
+    replaceLineIndices: [2, 3, 4, 5],
+  })
+
+  assert.ok(result)
+  const text = result.nextText
+  // 被单击：覆盖为剪贴板版本（唯一、不改名、新代码）
+  assert.equal((text.match(/_子程序1_被单击/g) || []).length, 1)
+  assert.equal(text.includes('新代码'), true)
+  assert.equal(text.includes('旧代码1'), false)
+  // 被双击：选中但剪贴板没有对应 → 整个删除
+  assert.equal(text.includes('_子程序1_被双击'), false)
+  assert.equal(text.includes('旧代码2'), false)
+  // 未选中的 B 不受影响
+  assert.equal(text.includes('.子程序 B'), true)
+  assert.equal(text.includes('返回 (0)'), true)
 })

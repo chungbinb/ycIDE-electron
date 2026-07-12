@@ -1,7 +1,9 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import { parseFontSpec, fontSpecToCss } from './fontSpec'
 import Icon, { resolveUnitIconName } from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './VisualDesigner.css'
+import MenuEditorDialog from './MenuEditorDialog'
 
 // ========== 类型定义 ==========
 
@@ -49,10 +51,23 @@ export interface DesignControl {
   text: string
   visible: boolean
   enabled: boolean
+  locked?: boolean      // 设计器中锁定：可选中（便于解锁）但不可拖动/缩放
   properties: Record<string, string | number | boolean>  // 支持库属性值
 }
 
 /** 窗口属性 */
+/** 窗口菜单项（菜单编辑器）：一棵树，separator=true 表示分隔条，children 表示子菜单 */
+export interface MenuItemDef {
+  name: string          // 名称（生成 _名_被选择 事件用）
+  caption: string       // 标题（显示文本；分隔条忽略）
+  shortcut?: string     // 快捷键（如 "Ctrl+S"）
+  checked?: boolean     // 选中标记
+  disabled?: boolean    // 禁止
+  visible?: boolean      // 可视（缺省 true）
+  separator?: boolean   // 分隔条
+  children?: MenuItemDef[]
+}
+
 export interface DesignForm {
   name: string
   title: string
@@ -60,6 +75,7 @@ export interface DesignForm {
   height: number
   sourceFile?: string  // 关联的 .eyc 源代码文件名
   controls: DesignControl[]
+  menu?: MenuItemDef[]  // 窗口菜单栏（顶级菜单数组）
   properties?: Record<string, string | number | boolean>  // 支持库属性值
 }
 
@@ -73,17 +89,35 @@ export type SelectionTarget =
 export type AlignAction = 'align-left' | 'align-right' | 'align-top' | 'align-bottom'
   | 'center-h' | 'center-v' | 'same-width' | 'same-height' | 'same-size' | null
 
+// 设计器标尺下方的对齐工具条按钮（原先在顶部工具栏，现独立到可视化设计器内、只在设计窗口时显示）
+const VD_ALIGN_BUTTONS: { action: Exclude<AlignAction, null>; icon: string; title: string }[] = [
+  { action: 'align-left', icon: 'align-left', title: '左对齐' },
+  { action: 'align-right', icon: 'align-right', title: '右对齐' },
+  { action: 'align-top', icon: 'align-top', title: '顶端对齐' },
+  { action: 'align-bottom', icon: 'align-bottom', title: '底端对齐' },
+  { action: 'center-h', icon: 'center-h', title: '水平居中' },
+  { action: 'center-v', icon: 'center-v', title: '垂直居中' },
+  { action: 'same-width', icon: 'same-width', title: '相同宽度' },
+  { action: 'same-height', icon: 'same-height', title: '相同高度' },
+  { action: 'same-size', icon: 'same-size', title: '相同大小' },
+]
+
 interface VisualDesignerProps {
   form: DesignForm
   onChange: (form: DesignForm) => void
   onSelectControl: (target: SelectionTarget) => void
   windowUnits?: LibWindowUnit[]
   externalSelectedId?: string
-  alignAction?: AlignAction
-  onAlignDone?: () => void
   onMultiSelectChange?: (count: number) => void
   onControlDoubleClick?: (control: DesignControl, defaultEvent: LibUnitEvent | null) => void
   onFormDoubleClick?: (form: DesignForm, defaultEvent: LibUnitEvent | null) => void
+  onUndo?: () => void  // 右键菜单「撤销」→ 外层全局撤销栈
+  onOpenWindowSource?: () => void       // 「到对应窗口程序集」→ 打开该窗体的 .eyc 代码
+  onNavigateBack?: () => void           // 「跳回先前位置」→ 导航历史回跳
+  onCanNavigateBack?: () => boolean     // 是否有可回跳的历史（渲染菜单时查询）
+  onPreviewWindow?: () => void          // 「预览」→ 编译运行该窗口(不编译源代码)
+  onMenuItemActivate?: (itemName: string) => void  // 单击设计器菜单栏的菜单项 → 生成/跳转 _名_被选择 事件
+  onMenuItemRenames?: (renames: Array<{ oldName: string; newName: string }>) => void  // 菜单项改名 → 同步源代码引用
 }
 
 // ========== 内置默认尺寸 ==========
@@ -91,6 +125,7 @@ const DEFAULT_SIZES: Record<string, [number, number]> = {
   '按钮': [75, 28], '编辑框': [120, 24], '标签': [80, 20], '图片框': [100, 80],
   '列表框': [120, 100], '组合框': [120, 24], '选择框': [80, 20], '单选框': [80, 20],
   '分组框': [160, 120], '进度条': [150, 20], '时钟': [32, 32], '图片组': [32, 32],
+  '选择夹': [220, 150], '月历': [200, 160], '滑块条': [150, 30], '画板': [200, 150],
 }
 const DEFAULT_SIZE: [number, number] = [100, 30]
 
@@ -103,6 +138,16 @@ const HANDLES: HandleDir[] = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']
 const GRID = 4
 const ALIGN_SNAP_TOLERANCE = 6
 const FORM_TITLEBAR_HEIGHT = 32
+const TOOL_TITLEBAR_HEIGHT = 22
+
+// 底图方式 → 画布背景图 CSS（图片层，网格层恒定）
+const BACK_IMAGE_MODE_CSS: Record<number, { size: string; repeat: string; position: string }> = {
+  0: { size: 'auto', repeat: 'repeat', position: '0 0' },          // 平铺
+  1: { size: 'auto', repeat: 'no-repeat', position: 'left top' },  // 居左上
+  2: { size: 'auto', repeat: 'no-repeat', position: 'center' },    // 居中
+  3: { size: 'auto', repeat: 'no-repeat', position: 'right bottom' }, // 居右下
+  4: { size: '100% 100%', repeat: 'no-repeat', position: '0 0' },  // 缩放
+}
 const FORM_MIN_WIDTH = 180
 const FORM_MIN_HEIGHT = 80
 const MIN_ZOOM = 0.25
@@ -209,10 +254,29 @@ function readColorProperty(
 function resolveFormVisualColors(form: DesignForm): FormVisualColors {
   const titleBg = readColorProperty(form.properties, ['标题栏背景色', '标题栏背景颜色', '标题栏颜色']) || '#e9edf2'
   const titleText = readColorProperty(form.properties, ['标题栏文本色', '标题栏文字颜色', '前景颜色', '前景色']) || '#111827'
-  const canvasBg = readColorProperty(form.properties, ['背景颜色', '背景色', '客户区背景色']) || '#f4f6f8'
+  // 「底色」是窗口单元属性（COLORREF），0 表示默认底色须回落，不能进 readColorProperty（0 会被当黑色）
+  const backColorRaw = form.properties?.['底色']
+  const backColor = typeof backColorRaw === 'number' && backColorRaw !== 0 ? colorFromNumber(backColorRaw) : null
+  const canvasBg = backColor || readColorProperty(form.properties, ['背景颜色', '背景色', '客户区背景色']) || '#f4f6f8'
   const border = readColorProperty(form.properties, ['边框颜色', '边框色']) || '#9ca3af'
   const grid = readColorProperty(form.properties, ['网格颜色', '网格色']) || '#c5c9d1'
   return { titleBg, titleText, canvasBg, border, grid }
+}
+
+// 边框样式（窗口「边框」属性 0~5）对应的设计器窗体外观参数
+interface FormChromeStyle {
+  hasTitlebar: boolean
+  isToolWindow: boolean
+  titlebarHeight: number
+}
+
+function resolveFormChromeStyle(form: DesignForm): { borderStyle: number } & FormChromeStyle {
+  const raw = form.properties?.['边框']
+  const borderStyle = typeof raw === 'number' && raw >= 0 && raw <= 5 ? raw : 2
+  const hasTitlebar = borderStyle !== 0
+  const isToolWindow = borderStyle === 4 || borderStyle === 5
+  const titlebarHeight = !hasTitlebar ? 0 : isToolWindow ? TOOL_TITLEBAR_HEIGHT : FORM_TITLEBAR_HEIGHT
+  return { borderStyle, hasTitlebar, isToolWindow, titlebarHeight }
 }
 
 interface ControlVisualColors {
@@ -291,18 +355,30 @@ function rectsIntersect(
 }
 
 let nextControlId = 1
+// 控件剪贴板（模块级，跨窗体/标签页保留，语义类似系统剪贴板）
+let vdControlClipboard: DesignControl[] = []
 
 // ========== 组件 ==========
 
 // 记住上次选中的 id（跨重渲染保持）
 let lastSelectedId: string = '__form__'
 
-function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], externalSelectedId, alignAction, onAlignDone, onMultiSelectChange, onControlDoubleClick, onFormDoubleClick }: VisualDesignerProps): React.JSX.Element {
+function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], externalSelectedId, onMultiSelectChange, onControlDoubleClick, onFormDoubleClick, onUndo, onOpenWindowSource, onNavigateBack, onCanNavigateBack, onPreviewWindow, onMenuItemActivate, onMenuItemRenames }: VisualDesignerProps): React.JSX.Element {
   // '__form__' 表示选中窗口自身，null 表示无选中
   const [selectedId, setSelectedId] = useState<string | null>(lastSelectedId)
   // 多选支持
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeTool, setActiveTool] = useState<string | null>(null)
+  // 右键菜单：位置(视口坐标) + 是否右键在控件上；null 表示未打开
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; onControl: boolean } | null>(null)
+  // 「位置及尺寸」子菜单是否展开
+  const [ctxSubmenuOpen, setCtxSubmenuOpen] = useState(false)
+  // 「查看数据类型定义」弹框：要展示的控件类型（支持库单元）信息；null 表示未打开
+  const [typeInfoUnit, setTypeInfoUnit] = useState<LibWindowUnit | null>(null)
+  // 「菜单编辑器」对话框是否打开
+  const [menuEditorOpen, setMenuEditorOpen] = useState(false)
+  // 设计器菜单栏：当前展开的顶级菜单下标（null 表示未展开）
+  const [menuBarOpenTop, setMenuBarOpenTop] = useState<number | null>(null)
   const [toolboxFloat, setToolboxFloat] = useState(false)
   const [toolboxDockSide, setToolboxDockSide] = useState<'left' | 'right'>('right')
   const [toolboxDockWidth, setToolboxDockWidth] = useState(160)
@@ -319,6 +395,52 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const [isSpacePressed, setIsSpacePressed] = useState(false)
   const [isPanningView, setIsPanningView] = useState(false)
   const [hoveredControlId, setHoveredControlId] = useState<string | null>(null)
+  // 选择夹当前显示页（设计器 WYSIWYG）：key=选择夹控件名，value=页索引。缺省取该选择夹「现行子夹」。
+  const [activeTabPage, setActiveTabPage] = useState<Record<string, number>>({})
+  const getActivePage = (tabName: string): number => {
+    if (tabName in activeTabPage) return activeTabPage[tabName]
+    const tab = form.controls.find(c => c.name === tabName && (c.type === '选择夹' || c.type === 'Tab'))
+    return tab ? Number(tab.properties?.['现行子夹'] ?? 0) : 0
+  }
+  // 拖动/新增回调是 [] useCallback，闭包会读到旧 activeTabPage，故镜像到 ref 供回调取新值。
+  const activeTabPageRef = useRef<Record<string, number>>(activeTabPage)
+  activeTabPageRef.current = activeTabPage
+  // 单控件几何归属计算（供 addControl/拖动共用）：中心点落入某选择夹「体区」（去顶部 22px 标签条）→ 写归属，否则清除。
+  const ownershipForRect = (ctrl: DesignControl, tabs: DesignControl[]): { owner: string; page: number } | null => {
+    if (ctrl.type === '选择夹' || ctrl.type === 'Tab') return null
+    const cx = ctrl.left + ctrl.width / 2, cy = ctrl.top + ctrl.height / 2
+    for (const t of tabs) {
+      if (t.id === ctrl.id) continue
+      if (cx >= t.left && cx <= t.left + t.width && cy >= t.top + 22 && cy <= t.top + t.height) {
+        const page = t.name in activeTabPageRef.current ? activeTabPageRef.current[t.name] : Number(t.properties?.['现行子夹'] ?? 0)
+        return { owner: t.name, page }
+      }
+    }
+    return null
+  }
+  // 拖动结束后按落点重指派归属（读 formRef 最新态），有变更才提交。
+  const reassignTabOwnership = (movedIds: string[]): void => {
+    const latest = formRef.current
+    const tabs = latest.controls.filter(c => c.type === '选择夹' || c.type === 'Tab')
+    if (tabs.length === 0) return
+    let changed = false
+    const controls = latest.controls.map(c => {
+      if (!movedIds.includes(c.id)) return c
+      const own = ownershipForRect(c, tabs)
+      const curOwner = typeof c.properties?.['所属选择夹'] === 'string' ? c.properties['所属选择夹'] as string : ''
+      const curPage = Number(c.properties?.['所属子夹'] ?? 0)
+      if (own) {
+        if (curOwner === own.owner && curPage === own.page) return c
+        changed = true
+        return { ...c, properties: { ...c.properties, '所属选择夹': own.owner, '所属子夹': own.page } }
+      }
+      if (!curOwner) return c
+      changed = true
+      const p = { ...c.properties }; delete p['所属选择夹']; delete p['所属子夹']
+      return { ...c, properties: p }
+    })
+    if (changed) onChangeRef.current({ ...latest, controls })
+  }
   const formVisualColors = resolveFormVisualColors(form)
   const designerRootRef = useRef<HTMLDivElement>(null)
   const canvasRegionRef = useRef<HTMLDivElement>(null)
@@ -359,13 +481,35 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     : null
   const visualFormWidth = Math.max(form.width, FORM_MIN_WIDTH)
   const visualFormHeight = Math.max(form.height, FORM_MIN_HEIGHT)
+  const formChrome = resolveFormChromeStyle(form)
+  const formTitlebarHeight = formChrome.titlebarHeight
+  const formControlBox = form.properties?.['控制按钮'] !== false
+  const formMinButton = form.properties?.['最小化按钮'] !== false
+  const formMaxButton = form.properties?.['最大化按钮'] !== false
+  // 外形（0 矩形 / 1 圆角矩形 / 2 椭圆形）与底图（base64 data URL）
+  const formShapeRaw = form.properties?.['外形']
+  const formShape = typeof formShapeRaw === 'number' && formShapeRaw >= 0 && formShapeRaw <= 2 ? formShapeRaw : 0
+  // 圆角半径（仅圆角矩形用），默认 20，夹取到非负
+  const formCornerRadiusRaw = form.properties?.['圆角半径']
+  const formCornerRadius = typeof formCornerRadiusRaw === 'number' && formCornerRadiusRaw >= 0 ? formCornerRadiusRaw : 20
+  const formBackImage = typeof form.properties?.['底图'] === 'string' && (form.properties['底图'] as string).startsWith('data:image')
+    ? (form.properties['底图'] as string)
+    : ''
+  // 底图方式 0平铺 / 1居左上 / 2居中 / 3居右下 / 4缩放
+  const formBackImageModeRaw = form.properties?.['底图方式']
+  const formBackImageMode = typeof formBackImageModeRaw === 'number' && formBackImageModeRaw >= 0 && formBackImageModeRaw <= 4 ? formBackImageModeRaw : 0
+  const backImageCss = BACK_IMAGE_MODE_CSS[formBackImageMode] || BACK_IMAGE_MODE_CSS[0]
+  // 图标（base64 data URL）：标题栏左上角图标
+  const formIcon = typeof form.properties?.['图标'] === 'string' && (form.properties['图标'] as string).startsWith('data:image')
+    ? (form.properties['图标'] as string)
+    : ''
   const viewStateStorageKey = useMemo(() => {
     const rawId = (form.sourceFile || form.name || 'untitled-form').trim()
     const safeId = rawId.replace(/[^\w.-]+/g, '_').toLowerCase()
     return `ycide.visual-designer.view-state.${safeId}`
   }, [form.name, form.sourceFile])
   const scaledFormWidth = visualFormWidth * zoom
-  const scaledFormHeight = (visualFormHeight + FORM_TITLEBAR_HEIGHT) * zoom
+  const scaledFormHeight = (visualFormHeight + formTitlebarHeight) * zoom
   const workspaceWidth = computeWorkspaceSpan(scaledFormWidth, viewportSize.width)
   const workspaceHeight = computeWorkspaceSpan(scaledFormHeight, viewportSize.height)
   const formOffsetLeft = (workspaceWidth - scaledFormWidth) / 2
@@ -419,15 +563,15 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const maxBottom = Math.max(...selected.map(control => control.top + control.height))
     const x1 = formOffsetLeft + minLeft * zoom - scrollPos.left
     const x2 = formOffsetLeft + maxRight * zoom - scrollPos.left
-    const y1 = formOffsetTop + (FORM_TITLEBAR_HEIGHT + minTop) * zoom - scrollPos.top
-    const y2 = formOffsetTop + (FORM_TITLEBAR_HEIGHT + maxBottom) * zoom - scrollPos.top
+    const y1 = formOffsetTop + (formTitlebarHeight + minTop) * zoom - scrollPos.top
+    const y2 = formOffsetTop + (formTitlebarHeight + maxBottom) * zoom - scrollPos.top
     return {
       x: Math.min(x1, x2),
       y: Math.min(y1, y2),
       w: Math.abs(x2 - x1),
       h: Math.abs(y2 - y1),
     }
-  }, [form.controls, formOffsetLeft, formOffsetTop, scrollPos.left, scrollPos.top, selectedControl, selectedIds, zoom])
+  }, [form.controls, formOffsetLeft, formOffsetTop, formTitlebarHeight, scrollPos.left, scrollPos.top, selectedControl, selectedIds, zoom])
 
   useEffect(() => {
     zoomRef.current = zoom
@@ -604,9 +748,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const point = getCanvasPoint(clientX, clientY)
     setMouseRulerPos({
       x: formOffsetLeft + point.x * zoom - scrollPos.left,
-      y: formOffsetTop + (FORM_TITLEBAR_HEIGHT + point.y) * zoom - scrollPos.top,
+      y: formOffsetTop + (formTitlebarHeight + point.y) * zoom - scrollPos.top,
     })
-  }, [formOffsetLeft, formOffsetTop, getCanvasPoint, scrollPos.left, scrollPos.top, zoom])
+  }, [formOffsetLeft, formOffsetTop, formTitlebarHeight, getCanvasPoint, scrollPos.left, scrollPos.top, zoom])
 
   const zoomTo = useCallback((nextZoom: number, anchorClientPoint?: { x: number; y: number }) => {
     const host = canvasAreaRef.current
@@ -622,7 +766,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const viewportY = anchorY - rect.top
 
     const oldScaledW = visualFormWidth * currentZoom
-    const oldScaledH = (visualFormHeight + FORM_TITLEBAR_HEIGHT) * currentZoom
+    const oldScaledH = (visualFormHeight + formTitlebarHeight) * currentZoom
     const oldWorkspaceW = computeWorkspaceSpan(oldScaledW, host.clientWidth)
     const oldWorkspaceH = computeWorkspaceSpan(oldScaledH, host.clientHeight)
     const oldOffsetX = (oldWorkspaceW - oldScaledW) / 2
@@ -634,7 +778,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const formY = (worldY - oldOffsetY) / currentZoom
 
     const newScaledW = visualFormWidth * targetZoom
-    const newScaledH = (visualFormHeight + FORM_TITLEBAR_HEIGHT) * targetZoom
+    const newScaledH = (visualFormHeight + formTitlebarHeight) * targetZoom
     const newWorkspaceW = computeWorkspaceSpan(newScaledW, host.clientWidth)
     const newWorkspaceH = computeWorkspaceSpan(newScaledH, host.clientHeight)
     const newOffsetX = (newWorkspaceW - newScaledW) / 2
@@ -648,7 +792,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     }
 
     setZoom(targetZoom)
-  }, [visualFormWidth, visualFormHeight])
+  }, [visualFormWidth, visualFormHeight, formTitlebarHeight])
 
   const stepZoom = useCallback((direction: 1 | -1, anchorClientPoint?: { x: number; y: number }) => {
     const currentZoom = zoomRef.current || 1
@@ -676,7 +820,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
     // 窗体居中于工作区，滚动到工作区中心即窗体居中
     const scaledW = visualFormWidth * targetZoom
-    const scaledH = (visualFormHeight + FORM_TITLEBAR_HEIGHT) * targetZoom
+    const scaledH = (visualFormHeight + formTitlebarHeight) * targetZoom
     const targetWorkspaceW = computeWorkspaceSpan(scaledW, host.clientWidth)
     const targetWorkspaceH = computeWorkspaceSpan(scaledH, host.clientHeight)
     const centerScroll = {
@@ -705,7 +849,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       hostNow.scrollTop = centerScroll.top
       setScrollPos({ left: hostNow.scrollLeft, top: hostNow.scrollTop })
     }))
-  }, [visualFormWidth, visualFormHeight, zoomTo])
+  }, [visualFormWidth, visualFormHeight, formTitlebarHeight, zoomTo])
 
   // 缩放到适应窗口：窗体完整可见、尽量铺满画布可视区域，并居中显示
   const fitZoomToViewport = useCallback(() => {
@@ -716,10 +860,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const availableHeight = Math.max(host.clientHeight - padding, 50)
     const fit = Math.min(
       availableWidth / Math.max(visualFormWidth, 1),
-      availableHeight / Math.max(visualFormHeight + FORM_TITLEBAR_HEIGHT, 1),
+      availableHeight / Math.max(visualFormHeight + formTitlebarHeight, 1),
     )
     zoomToCentered(fit)
-  }, [visualFormWidth, visualFormHeight, zoomToCentered])
+  }, [visualFormWidth, visualFormHeight, formTitlebarHeight, zoomToCentered])
 
   // 倍率预设：首项为实际最小倍率，其余固定档位（超出范围的剔除）
   const zoomPresetPercents = (() => {
@@ -861,6 +1005,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       enabled: true,
       properties: {},
     }
+    // 拖入选择夹体区 → 归属当前显示页（几何 + 当前页）
+    const tabsNow = latestForm.controls.filter(c => c.type === '选择夹' || c.type === 'Tab')
+    const own = ownershipForRect(newCtrl, tabsNow)
+    if (own) { newCtrl.properties['所属选择夹'] = own.owner; newCtrl.properties['所属子夹'] = own.page }
     pendingNewIdRef.current = id
     onChangeRef.current({ ...latestForm, controls: [...latestForm.controls, newCtrl] })
     setSelectedId(id)
@@ -881,20 +1029,168 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     setSelectedId(null)
   }, [selectedId, selectedIds])
 
+  // ===== 右键菜单动作：复制/剪切/粘贴/层级/锁定，均作用于当前选中控件 =====
+  const getSelectedControlIds = useCallback((): string[] => {
+    if (selectedIds.size > 0) return [...selectedIds]
+    if (selectedId && selectedId !== '__form__') return [selectedId]
+    return []
+  }, [selectedIds, selectedId])
+
+  const copySelected = useCallback(() => {
+    const ids = new Set(getSelectedControlIds())
+    if (ids.size === 0) return
+    vdControlClipboard = formRef.current.controls
+      .filter(c => ids.has(c.id))
+      .map(c => ({ ...c, properties: { ...c.properties } }))
+  }, [getSelectedControlIds])
+
+  const pasteControls = useCallback(() => {
+    if (vdControlClipboard.length === 0) return
+    const latestForm = formRef.current
+    const existingIds = new Set(latestForm.controls.map(c => c.id))
+    const newControls: DesignControl[] = []
+    for (const src of vdControlClipboard) {
+      let id: string
+      do { id = `ctrl_${nextControlId++}` } while (existingIds.has(id))
+      existingIds.add(id)
+      // 生成唯一名字：类型 + 最小可用序号
+      const usedNames = new Set([...latestForm.controls, ...newControls].map(c => c.name))
+      let n = 1
+      let name = `${src.type}${n}`
+      while (usedNames.has(name)) { n++; name = `${src.type}${n}` }
+      newControls.push({ ...src, id, name, left: src.left + 8, top: src.top + 8, properties: { ...src.properties } })
+    }
+    onChangeRef.current({ ...latestForm, controls: [...latestForm.controls, ...newControls] })
+    if (newControls.length > 1) {
+      setSelectedIds(new Set(newControls.map(c => c.id)))
+      setSelectedId(newControls[newControls.length - 1].id)
+    } else {
+      setSelectedIds(new Set())
+      setSelectedId(newControls[0]?.id ?? null)
+    }
+  }, [])
+
+  const cutSelected = useCallback(() => {
+    copySelected()
+    deleteSelected()
+  }, [copySelected, deleteSelected])
+
+  const bringToFront = useCallback(() => {
+    const ids = new Set(getSelectedControlIds())
+    if (ids.size === 0) return
+    const latestForm = formRef.current
+    const kept = latestForm.controls.filter(c => !ids.has(c.id))
+    const moved = latestForm.controls.filter(c => ids.has(c.id))
+    onChangeRef.current({ ...latestForm, controls: [...kept, ...moved] })
+  }, [getSelectedControlIds])
+
+  const sendToBack = useCallback(() => {
+    const ids = new Set(getSelectedControlIds())
+    if (ids.size === 0) return
+    const latestForm = formRef.current
+    const moved = latestForm.controls.filter(c => ids.has(c.id))
+    const kept = latestForm.controls.filter(c => !ids.has(c.id))
+    onChangeRef.current({ ...latestForm, controls: [...moved, ...kept] })
+  }, [getSelectedControlIds])
+
+  const setLockSelected = useCallback((locked: boolean) => {
+    const ids = new Set(getSelectedControlIds())
+    if (ids.size === 0) return
+    const latestForm = formRef.current
+    onChangeRef.current({ ...latestForm, controls: latestForm.controls.map(c => ids.has(c.id) ? { ...c, locked } : c) })
+  }, [getSelectedControlIds])
+
+  // 打开右键菜单：右键控件时若它不在多选集合内，则单选它
+  const openContextMenu = useCallback((e: React.MouseEvent, ctrl?: DesignControl) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (ctrl && !selectedIds.has(ctrl.id)) {
+      setSelectedIds(new Set())
+      setSelectedId(ctrl.id)
+    }
+    setCtxSubmenuOpen(false)
+    setContextMenu({ x: e.clientX, y: e.clientY, onControl: !!ctrl })
+  }, [selectedIds])
+
+  const runVdMenuAction = useCallback((action: string) => {
+    setContextMenu(null)
+    switch (action) {
+      case 'undo': onUndo?.(); break
+      case 'delete': deleteSelected(); break
+      case 'copy': copySelected(); break
+      case 'cut': cutSelected(); break
+      case 'paste': pasteControls(); break
+      case 'toFront': bringToFront(); break
+      case 'toBack': sendToBack(); break
+      case 'lock': setLockSelected(true); break
+      case 'unlock': setLockSelected(false); break
+      case 'openSource': onOpenWindowSource?.(); break
+      case 'navBack': onNavigateBack?.(); break
+      case 'preview': onPreviewWindow?.(); break
+      case 'menuEditor': setMenuEditorOpen(true); break
+      case 'viewType': {
+        const ctrl = formRef.current.controls.find(c => c.id === getSelectedControlIds()[0])
+        if (ctrl) {
+          const unit = windowUnits.find(u => u.name === ctrl.type)
+          setTypeInfoUnit(unit ?? { name: ctrl.type, englishName: '', description: '（未在支持库中找到该类型的定义信息）', libraryName: '', properties: [], events: [] })
+        }
+        break
+      }
+    }
+  }, [onUndo, deleteSelected, copySelected, cutSelected, pasteControls, bringToFront, sendToBack, setLockSelected, onOpenWindowSource, onNavigateBack, onPreviewWindow, getSelectedControlIds, windowUnits])
+
+  // 右键菜单：点击别处 / 按 Esc 关闭（延迟一帧再挂监听，避免开菜单那次 mousedown 立即关掉）
+  useEffect(() => {
+    if (!contextMenu) return
+    const close = (): void => setContextMenu(null)
+    const onKey = (ev: KeyboardEvent): void => { if (ev.key === 'Escape') { ev.stopPropagation(); setContextMenu(null) } }
+    const t = window.setTimeout(() => {
+      document.addEventListener('mousedown', close)
+      window.addEventListener('keydown', onKey, true)
+    }, 0)
+    return () => {
+      window.clearTimeout(t)
+      document.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [contextMenu])
+
+  // 设计器菜单栏下拉：点别处 / Esc 关闭
+  useEffect(() => {
+    if (menuBarOpenTop === null) return
+    const close = (): void => setMenuBarOpenTop(null)
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setMenuBarOpenTop(null) }
+    const t = window.setTimeout(() => {
+      document.addEventListener('mousedown', close)
+      window.addEventListener('keydown', onKey, true)
+    }, 0)
+    return () => {
+      window.clearTimeout(t)
+      document.removeEventListener('mousedown', close)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [menuBarOpenTop])
+
+  // 「查看数据类型定义」弹框：Esc 关闭
+  useEffect(() => {
+    if (!typeInfoUnit) return
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') { e.stopPropagation(); setTypeInfoUnit(null) } }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [typeInfoUnit])
+
   // 通知父组件多选数量变化
   useEffect(() => {
     onMultiSelectChange?.(selectedIds.size)
   }, [selectedIds.size, onMultiSelectChange])
 
-  // 执行对齐操作
-  useEffect(() => {
-    if (!alignAction) return
+  // 执行对齐操作（由设计器标尺下方的对齐工具条直接调用；需选中 ≥2 个控件）
+  const applyAlign = useCallback((action: AlignAction): void => {
+    if (!action) return
     // 收集所有选中的控件（多选 + 单选）
     const ids = selectedIds.size > 0 ? selectedIds : (selectedId && selectedId !== '__form__' ? new Set([selectedId]) : new Set<string>())
     const selected = form.controls.filter(c => ids.has(c.id))
-    if (selected.length < 1) { onAlignDone?.(); return }
-
-    if (selected.length < 2) { onAlignDone?.(); return }
+    if (selected.length < 2) return
 
     // 以最边缘的控件为基准
     const minLeft = Math.min(...selected.map(c => c.left))
@@ -907,7 +1203,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
     const updated = form.controls.map(c => {
       if (!ids.has(c.id)) return c
-      switch (alignAction) {
+      switch (action) {
         case 'align-left': return { ...c, left: minLeft }
         case 'align-right': return { ...c, left: maxRight - c.width }
         case 'align-top': return { ...c, top: minTop }
@@ -921,8 +1217,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       }
     })
     onChange({ ...form, controls: updated })
-    onAlignDone?.()
-  }, [alignAction])
+  }, [selectedIds, selectedId, form, onChange])
 
   // 键盘事件
   useEffect(() => {
@@ -939,6 +1234,32 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [selectedId, deleteSelected])
+
+  // 设计器编辑快捷键（Ctrl+C/X/V 复制剪切粘贴、Ctrl+T 置顶）。用「捕获阶段」抢在 App 全局
+  // 快捷键之前处理并阻断：否则 App 的 edit:paste 对 efw 会触发命令粘贴，与控件粘贴冲突。
+  // 仅在真正有可操作对象时才拦截（否则放行，交给 App/浏览器）。
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
+      const tgt = e.target
+      if (tgt instanceof HTMLElement && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.tagName === 'SELECT' || tgt.isContentEditable)) return
+      const hasSel = getSelectedControlIds().length > 0
+      let done = false
+      switch (e.key.toLowerCase()) {
+        case 'c': if (hasSel) { copySelected(); done = true } break
+        case 'x': if (hasSel) { cutSelected(); done = true } break
+        case 'v': if (vdControlClipboard.length > 0) { pasteControls(); done = true } break
+        case 't': if (hasSel) { bringToFront(); done = true } break
+        case 'u': if (onOpenWindowSource) { onOpenWindowSource(); done = true } break
+        case 'j': if (onNavigateBack && onCanNavigateBack?.()) { onNavigateBack(); done = true } break
+        case 'enter': if (onPreviewWindow) { onPreviewWindow(); done = true } break // Ctrl+Enter 预览
+        case 'e': setMenuEditorOpen(true); done = true; break // Ctrl+E 菜单编辑器
+      }
+      if (done) { e.preventDefault(); e.stopPropagation() }
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [getSelectedControlIds, copySelected, cutSelected, pasteControls, bringToFront, onOpenWindowSource, onNavigateBack, onCanNavigateBack, onPreviewWindow])
 
   // 画布鼠标按下 — 开始创建控件或选中窗口
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
@@ -1258,6 +1579,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       setSelectedId(ctrl.id)
     }
 
+    // 锁定的控件：允许选中（便于在右键菜单里解锁），但不启动拖动
+    if (ctrl.locked) return
+
     if (isInMultiSelect && selectedIds.size >= 2) {
       // 多选拖拽：记录所有选中控件的初始位置
       const origPositions = new Map<string, { left: number; top: number }>()
@@ -1320,6 +1644,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
         document.body.style.cursor = ''
+        reassignTabOwnership([...origPositions.keys()])  // 落点重指派子夹归属
       }
 
       document.body.style.cursor = 'move'
@@ -1374,6 +1699,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
         document.body.style.cursor = ''
+        reassignTabOwnership([ctrl.id])  // 落点重指派子夹归属
       }
 
       document.body.style.cursor = 'move'
@@ -1448,19 +1774,33 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const unitInfo = windowUnits.find(u => u.name === ctrl.type)
 
     switch (ctrl.type) {
-      case '按钮':
+      case '按钮': {
+        const props = ctrl.properties || {}
+        const btnStyle = Number(props['类型'] ?? 0)        // 0通常 1默认
+        const hAlign = Number(props['横向对齐方式'] ?? 1)   // 0左 1中 2右
+        const vAlign = Number(props['纵向对齐方式'] ?? 1)   // 0顶 1中 2底
+        const btnImage = typeof props['图片'] === 'string' && (props['图片'] as string).startsWith('data:image')
+          ? (props['图片'] as string)
+          : ''
+        const toFlex = (n: number): string => n === 1 ? 'center' : n === 2 ? 'flex-end' : 'flex-start'
+        // 底色（COLORREF，0=默认）
+        const btnBackRaw = props['底色']
+        const btnBackColor = typeof btnBackRaw === 'number' && btnBackRaw !== 0 ? (colorFromNumber(btnBackRaw) || controlColors.bg) : controlColors.bg
         return (
           <div
-            className="vd-preview vd-preview-button"
+            className={`vd-preview vd-preview-button${btnStyle === 1 ? ' vd-preview-button-default' : ''}`}
             ref={(element) => setCssVars(element, {
-              '--vd-preview-bg': controlColors.bg,
+              '--vd-preview-bg': btnBackColor,
               '--vd-preview-border': controlColors.border,
               '--vd-preview-text': controlColors.text,
+              '--vd-preview-justify': toFlex(hAlign),
+              '--vd-preview-align-items': toFlex(vAlign),
             })}
           >
-            {ctrl.text}
+            {btnImage ? <img className="vd-preview-button-img" src={btnImage} alt="" /> : ctrl.text}
           </div>
         )
+      }
       case '编辑框':
       case '超级编辑框': {
         const props = ctrl.properties || {}
@@ -1470,10 +1810,11 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const maskChar = String(props['密码遮盖字符'] ?? '*').charAt(0) || '*'
         const align = Number(props['对齐方式'] ?? 0)
         const borderMode = Number(props['边框'] ?? 2)
+        const spinMode = Number(props['调节器方式'] ?? 0)
         const displayText = isPassword ? maskChar.repeat((ctrl.text || '').length) : ctrl.text
         return (
           <div
-            className={`vd-preview vd-preview-input${isMultiline ? ' vd-preview-input-multiline' : ''}${borderMode === 0 ? ' vd-preview-input-borderless' : ''}${borderMode === 2 ? ' vd-preview-input-sunken' : ''}`}
+            className={`vd-preview vd-preview-input${isMultiline ? ' vd-preview-input-multiline' : ''}${borderMode === 0 ? ' vd-preview-input-borderless' : ''}${borderMode === 2 ? ' vd-preview-input-sunken' : ''}${spinMode !== 0 ? ' vd-preview-input-spin' : ''}`}
             ref={(element) => setCssVars(element, {
               '--vd-preview-bg': readColorProperty(ctrl.properties, ['背景颜色', '背景色', '背景']) || '#ffffff',
               '--vd-preview-border': controlColors.border,
@@ -1481,7 +1822,13 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               '--vd-preview-align': align === 1 ? 'center' : align === 2 ? 'right' : 'left',
             })}
           >
-            {displayText}
+            <span className="vd-preview-input-text">{displayText}</span>
+            {spinMode !== 0 && (
+              <span className="vd-preview-spin" aria-hidden="true">
+                <span className="vd-preview-spin-btn">▴</span>
+                <span className="vd-preview-spin-btn">▾</span>
+              </span>
+            )}
           </div>
         )
       }
@@ -1517,48 +1864,144 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         return (
           <div className="vd-preview vd-preview-webedit">{ctrl.text}</div>
         )
-      case '标签':
+      case '标签': {
+        const props = ctrl.properties || {}
+        const hAlign = Number(props['横向对齐方式'] ?? 0)  // 0左 1中 2右
+        const vAlign = Number(props['纵向对齐方式'] ?? 0)  // 0顶 1中 2底
+        const border = Number(props['边框'] ?? 0)          // 0无 1凹入 2凸出 3浅凹 4镜框 5单线 6渐变镜框
+        const transparent = Number(props['效果'] ?? 0) === 4
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 16777215
+        const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
+        const toFlex = (n: number): string => n === 1 ? 'center' : n === 2 ? 'flex-end' : 'flex-start'
+        const borderCls = border === 1 || border === 3 ? ' vd-preview-label-sunken'
+          : border === 2 ? ' vd-preview-label-raised'
+          : border === 4 || border === 5 || border === 6 ? ' vd-preview-label-bordered' : ''
         return (
-          <div className="vd-preview vd-preview-label">{ctrl.text}</div>
+          <div
+            className={`vd-preview vd-preview-label${borderCls}`}
+            ref={(element) => setCssVars(element, {
+              '--vd-preview-bg': transparent || bgNum === 16777215 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
+              '--vd-preview-text': colorFromNumber(textNum) || controlColors.text,
+              '--vd-preview-justify': toFlex(hAlign),
+              '--vd-preview-align-items': vAlign === 0 ? 'flex-start' : vAlign === 2 ? 'flex-end' : 'center',
+            })}
+          >{ctrl.text}</div>
         )
+      }
       case '图片框':
-      case '影像框':
+      case '影像框': {
+        const props = ctrl.properties || {}
+        const pic = typeof props['图片'] === 'string' && (props['图片'] as string).startsWith('data:image') ? (props['图片'] as string) : ''
+        const border = Number(props['边框'] ?? 0)
+        const drawMode = Number(props['显示方式'] ?? 0)  // 0居左上 1缩放 2居中
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 16777215
+        const borderCls = border === 1 || border === 3 ? ' vd-preview-label-sunken'
+          : border === 2 ? ' vd-preview-label-raised'
+          : border === 4 || border === 5 ? ' vd-preview-label-bordered' : ''
+        const fit = drawMode === 1 ? 'fill' : 'none'
+        const objPos = drawMode === 2 ? 'center' : 'left top'
         return (
-          <div className="vd-preview vd-preview-image">{ctrl.type}</div>
+          <div
+            className={`vd-preview vd-preview-image${borderCls}`}
+            // 图片框是实底控件（非透明标签）：背景色恒显示，白色即白（不当透明）。
+            ref={(element) => setCssVars(element, { '--vd-preview-bg': colorFromNumber(bgNum) || '#ffffff' })}
+          >
+            {pic
+              ? <img src={pic} alt="" style={{ width: '100%', height: '100%', objectFit: fit as React.CSSProperties['objectFit'], objectPosition: objPos }} />
+              : <span className="vd-preview-image-label">{ctrl.type}</span>}
+          </div>
         )
-      case '列表框':
+      }
+      case '画板': {
+        const props = ctrl.properties || {}
+        const border = Number(props['边框'] ?? 0)
+        const bgNum = typeof props['画板背景色'] === 'number' ? (props['画板背景色'] as number) : 16777215
+        const pic = typeof props['底图'] === 'string' && (props['底图'] as string).startsWith('data:image') ? (props['底图'] as string) : ''
+        const picMode = Number(props['底图方式'] ?? 0) // 0居左上 1平铺 2居中
+        const borderCls = border === 1 || border === 3 ? ' vd-preview-label-sunken'
+          : border === 2 ? ' vd-preview-label-raised'
+          : border === 4 || border === 5 ? ' vd-preview-label-bordered' : ''
+        return (
+          <div
+            className={`vd-preview vd-preview-drawpanel${borderCls}`}
+            // 画板是自绘画布：背景色恒显示，可选底图（平铺/居中/居左上）；设计期只画背景不画运行时绘图内容。
+            ref={(element) => setCssVars(element, {
+              '--vd-preview-bg': colorFromNumber(bgNum) || '#ffffff',
+              '--vd-preview-bgimg': pic ? `url(${pic})` : 'none',
+              '--vd-preview-bgrepeat': picMode === 1 ? 'repeat' : 'no-repeat',
+              '--vd-preview-bgpos': picMode === 2 ? 'center' : 'left top',
+            })}
+          >
+            <span className="vd-preview-drawpanel-label">{ctrl.name}</span>
+          </div>
+        )
+      }
       case '选择列表框':
       case '超级列表框':
         return (
           <div className="vd-preview vd-preview-list" />
         )
-      case '组合框':
+      case '组合框': {
+        const props = ctrl.properties || {}
+        const kind = Number(props['类型'] ?? 2)
+        const items = String(props['列表项目'] ?? '').split('\n').filter(Boolean)
+        const curSel = Number(props['现行选中项'] ?? -1)
+        const displayText = kind === 2
+          ? (curSel >= 0 && items[curSel] ? items[curSel] : (items[0] || ctrl.text))
+          : (String(props['内容'] ?? '') || ctrl.text)
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 16777215
+        const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
         return (
-          <div className="vd-preview vd-preview-combo">
-            <span className="vd-preview-combo-text">{ctrl.text}</span>
+          <div
+            className="vd-preview vd-preview-combo"
+            ref={(el) => setCssVars(el, {
+              '--vd-preview-bg': bgNum === 16777215 ? '#ffffff' : (colorFromNumber(bgNum) || '#ffffff'),
+              '--vd-preview-text': colorFromNumber(textNum) || controlColors.text,
+            })}
+          >
+            <span className="vd-preview-combo-text">{displayText}</span>
             <span className="vd-preview-combo-arrow">▾</span>
           </div>
         )
+      }
       case '选择框':
+      case '单选框': {
+        const props = ctrl.properties || {}
+        const isRadio = ctrl.type === '单选框'
+        const checked = props['选中'] === true || props['选中'] === '真'
+        const leftText = props['标题居左'] === true || props['标题居左'] === '真'
+        const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 16777215
         return (
-          <div className="vd-preview vd-preview-check-like">
-            <span className="vd-preview-checkbox" />
-            {ctrl.text}
+          <div
+            className={`vd-preview vd-preview-check-like${leftText ? ' vd-preview-check-leftcap' : ''}`}
+            ref={(element) => setCssVars(element, {
+              '--vd-preview-text': colorFromNumber(textNum) || controlColors.text,
+              '--vd-preview-bg': bgNum === 16777215 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
+            })}
+          >
+            <span className={`${isRadio ? 'vd-preview-radio' : 'vd-preview-checkbox'}${checked ? ' vd-preview-check-on' : ''}`} />
+            <span className="vd-preview-check-text">{ctrl.text}</span>
           </div>
         )
-      case '单选框':
+      }
+      case '分组框': {
+        const props = ctrl.properties || {}
+        const hAlign = Number(props['对齐方式'] ?? 0)
+        const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 16777215
         return (
-          <div className="vd-preview vd-preview-check-like">
-            <span className="vd-preview-radio" />
-            {ctrl.text}
+          <div
+            className="vd-preview vd-preview-group"
+            ref={(element) => setCssVars(element, {
+              '--vd-preview-bg': bgNum === 16777215 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
+              '--vd-preview-group-textalign': hAlign === 1 ? 'center' : hAlign === 2 ? 'right' : 'left',
+            })}
+          >
+            <span className="vd-preview-group-title" ref={(el) => { if (el) el.style.color = colorFromNumber(textNum) || '' }}>{ctrl.text}</span>
           </div>
         )
-      case '分组框':
-        return (
-          <div className="vd-preview vd-preview-group">
-            <span className="vd-preview-group-title">{ctrl.text}</span>
-          </div>
-        )
+      }
       case 'ycUI按钮': {
         const isPrimary = ctrl.properties['主色模式'] === true || ctrl.properties['主色模式'] === '真'
         const radius = typeof ctrl.properties['圆角半径'] === 'number'
@@ -1582,12 +2025,21 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           </div>
         )
       }
-      case '进度条':
+      case '进度条': {
+        const props = ctrl.properties || {}
+        const vert = Number(props['方向'] ?? 0) === 1
+        const blocks = Number(props['显示方式'] ?? 0) === 0
+        const min = Number(props['最小位置'] ?? 0), max = Number(props['最大位置'] ?? 100), pos = Number(props['位置'] ?? 0)
+        const frac = Math.max(0, Math.min(1, (pos - min) / ((max - min) || 1)))
         return (
-          <div className="vd-preview vd-preview-progress">
-            <div className="vd-preview-progress-fill" />
+          <div
+            className={`vd-preview vd-preview-progress${vert ? ' vd-preview-progress-vert' : ''}`}
+            ref={(el) => setCssVars(el, { '--vd-preview-fill': `${frac * 100}%` })}
+          >
+            <div className={`vd-preview-progress-fill${blocks ? ' vd-preview-progress-fill-blocks' : ''}`} />
           </div>
         )
+      }
       case '时钟':
       case '图片组':
         return (
@@ -1595,6 +2047,151 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             <Icon name={resolveUnitIconName(ctrl.type, unitInfo?.iconFileName, unitInfo?.libraryName)} size={12} />
           </div>
         )
+      case '外形框': {
+        const props = ctrl.properties || {}
+        const shape = Number(props['外形'] ?? 0)          // 0矩形 1正方形 2椭圆 3圆 4圆角矩形 5圆角正方形 6横线 7纵线
+        const lineStyle = Number(props['线型'] ?? 1)       // 0无 1直线 2划线 3点线 4点划线 5双点划线
+        const lineWidth = Math.max(1, Number(props['线宽'] ?? 1))
+        const lineColor = colorFromNumber(typeof props['线条颜色'] === 'number' ? (props['线条颜色'] as number) : 0) || '#000'
+        const fillColor = colorFromNumber(typeof props['填充颜色'] === 'number' ? (props['填充颜色'] as number) : 16777215) || 'transparent'
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 16777215
+        const dash = lineStyle === 2 ? '5,3' : lineStyle === 3 ? '1,3' : lineStyle === 4 ? '5,3,1,3' : lineStyle === 5 ? '5,3,1,3,1,3' : undefined
+        const stroke = lineStyle === 0 ? 'none' : lineColor
+        const w = ctrl.width, h = ctrl.height, sq = Math.min(w, h)
+        let shapeEl: React.JSX.Element
+        if (shape === 2 || shape === 3) shapeEl = <ellipse cx={(shape === 3 ? sq : w) / 2} cy={(shape === 3 ? sq : h) / 2} rx={(shape === 3 ? sq : w) / 2 - lineWidth} ry={(shape === 3 ? sq : h) / 2 - lineWidth} fill={fillColor} stroke={stroke} strokeWidth={lineWidth} strokeDasharray={dash} />
+        else if (shape === 4 || shape === 5) shapeEl = <rect x={lineWidth / 2} y={lineWidth / 2} width={(shape === 5 ? sq : w) - lineWidth} height={(shape === 5 ? sq : h) - lineWidth} rx={Math.min(w, h) / 4} fill={fillColor} stroke={stroke} strokeWidth={lineWidth} strokeDasharray={dash} />
+        else if (shape === 6) shapeEl = <line x1={0} y1={h / 2} x2={w} y2={h / 2} stroke={stroke} strokeWidth={lineWidth} strokeDasharray={dash} />
+        else if (shape === 7) shapeEl = <line x1={w / 2} y1={0} x2={w / 2} y2={h} stroke={stroke} strokeWidth={lineWidth} strokeDasharray={dash} />
+        else shapeEl = <rect x={lineWidth / 2} y={lineWidth / 2} width={(shape === 1 ? sq : w) - lineWidth} height={(shape === 1 ? sq : h) - lineWidth} fill={fillColor} stroke={stroke} strokeWidth={lineWidth} strokeDasharray={dash} />
+        return (
+          <div className="vd-preview vd-preview-shape" style={{ background: bgNum === 16777215 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent') }}>
+            <svg width="100%" height="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ display: 'block' }}>{shapeEl}</svg>
+          </div>
+        )
+      }
+      case '滑块条': {
+        const props = ctrl.properties || {}
+        const vert = Number(props['方向'] ?? 0) === 1
+        const min = Number(props['最小位置'] ?? 0), max = Number(props['最大位置'] ?? 100), pos = Number(props['位置'] ?? 0)
+        const frac = Math.max(0, Math.min(1, (pos - min) / ((max - min) || 1)))
+        const w = ctrl.width, h = ctrl.height
+        return (
+          <div className="vd-preview vd-preview-slider">
+            <svg width="100%" height="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ display: 'block' }}>
+              {vert
+                ? <>
+                  <line x1={w / 2} y1={4} x2={w / 2} y2={h - 4} stroke={controlColors.border} strokeWidth={3} strokeLinecap="round" />
+                  <rect x={w / 2 - 7} y={4 + frac * (h - 8) - 3} width={14} height={6} rx={2} fill={controlColors.text} />
+                </>
+                : <>
+                  <line x1={4} y1={h / 2} x2={w - 4} y2={h / 2} stroke={controlColors.border} strokeWidth={3} strokeLinecap="round" />
+                  <rect x={4 + frac * (w - 8) - 3} y={h / 2 - 7} width={6} height={14} rx={2} fill={controlColors.text} />
+                </>}
+            </svg>
+          </div>
+        )
+      }
+      case '横向滚动条':
+      case '纵向滚动条': {
+        const props = ctrl.properties || {}
+        const vert = ctrl.type === '纵向滚动条'
+        const min = Number(props['最小位置'] ?? 0), max = Number(props['最大位置'] ?? 100), pos = Number(props['位置'] ?? 0)
+        const page = Number(props['页改变值'] ?? 10)
+        const range = max - min
+        const thumbFrac = (range + page) > 0 ? Math.max(0.15, Math.min(1, page / (range + page))) : 1
+        const trackFrac = range > 0 ? Math.max(0, Math.min(1, (pos - min) / range)) * (1 - thumbFrac) : 0
+        return (
+          <div
+            className={`vd-preview vd-preview-scrollbar${vert ? ' vd-preview-scrollbar-vert' : ''}`}
+            ref={(el) => setCssVars(el, { '--vd-preview-thumb-size': `${thumbFrac * 100}%`, '--vd-preview-thumb-pos': `${trackFrac * 100}%` })}
+          >
+            <span className="vd-preview-scrollbar-btn">{vert ? '▲' : '◀'}</span>
+            <span className="vd-preview-scrollbar-track"><span className="vd-preview-scrollbar-thumb" /></span>
+            <span className="vd-preview-scrollbar-btn">{vert ? '▼' : '▶'}</span>
+          </div>
+        )
+      }
+      case '日期框': {
+        const props = ctrl.properties || {}
+        const kind = Number(props['附件类型'] ?? 0)
+        return (
+          <div
+            className="vd-preview vd-preview-input"
+            ref={(el) => setCssVars(el, { '--vd-preview-bg': '#ffffff', '--vd-preview-border': controlColors.border, '--vd-preview-text': controlColors.text, '--vd-preview-align': 'left' })}
+          >
+            <span className="vd-preview-input-text">{String(props['今天'] || '') || '2026/07/11'}</span>
+            {kind === 1
+              ? <span className="vd-preview-spin" aria-hidden="true"><span className="vd-preview-spin-btn">▴</span><span className="vd-preview-spin-btn">▾</span></span>
+              : <span className="vd-preview-combo-arrow">▾</span>}
+          </div>
+        )
+      }
+      case '月历': {
+        const props = ctrl.properties || {}
+        const firstDay = Number(props['开始星期首日'] ?? 0)
+        const week = ['一', '二', '三', '四', '五', '六', '日']
+        const rot = week.slice(firstDay).concat(week.slice(0, firstDay))
+        return (
+          <div className="vd-preview vd-preview-monthcal">
+            <div className="vd-preview-monthcal-title">2026 年 7 月</div>
+            <div className="vd-preview-monthcal-grid">
+              {rot.map((d) => <span key={`h${d}`} className="vd-preview-monthcal-head">{d}</span>)}
+              {Array.from({ length: 31 }, (_, i) => <span key={i} className={`vd-preview-monthcal-day${i + 1 === 11 ? ' vd-preview-monthcal-today' : ''}`}>{i + 1}</span>)}
+            </div>
+          </div>
+        )
+      }
+      case '列表框': {
+        const props = ctrl.properties || {}
+        const items = String(props['列表项目'] ?? '').split('\n').filter(Boolean)
+        const rows = items.length ? items : ['列表项目 1', '列表项目 2', '列表项目 3']
+        const curSel = Number(props['现行选中项'] ?? -1)
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 16777215
+        const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
+        return (
+          <div
+            className="vd-preview vd-preview-listbox"
+            ref={(el) => setCssVars(el, {
+              '--vd-preview-bg': bgNum === 16777215 ? '#ffffff' : (colorFromNumber(bgNum) || '#ffffff'),
+              '--vd-preview-text': colorFromNumber(textNum) || controlColors.text,
+              '--vd-preview-border': controlColors.border,
+            })}
+          >
+            {rows.slice(0, 6).map((r, i) => <span key={i} className={`vd-preview-listbox-item${i === curSel ? ' vd-preview-listbox-item-sel' : ''}`}>{r}</span>)}
+          </div>
+        )
+      }
+      case '超级链接框': {
+        const props = ctrl.properties || {}
+        const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
+        return (
+          <div className="vd-preview vd-preview-label" style={{ color: colorFromNumber(textNum) || '#0a68d8' }}>
+            <span style={{ textDecoration: 'underline', cursor: 'pointer' }}>{ctrl.text}</span>
+          </div>
+        )
+      }
+      case '选择夹': {
+        const props = ctrl.properties || {}
+        const names = String(props['子夹标题'] ?? props['列表项目'] ?? '').split('\n').map(t => t.trim()).filter(Boolean)
+        const tabs = names.length ? names : ['选项夹一', '选项夹二']
+        const active = getActivePage(ctrl.name)
+        return (
+          <div className="vd-preview vd-preview-tab">
+            <div className="vd-preview-tab-headers">
+              {tabs.map((t, i) => (
+                <span
+                  key={i}
+                  className={`vd-preview-tab-header${i === active ? ' vd-preview-tab-header-active' : ''}`}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); setActiveTabPage(prev => ({ ...prev, [ctrl.name]: i })) }}
+                >{t}</span>
+              ))}
+            </div>
+            <div className="vd-preview-tab-body" />
+          </div>
+        )
+      }
       default:
         // 通用外观：显示组件名称
         return (
@@ -1847,6 +2444,199 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     </div>
   )
 
+  // 右键菜单渲染（照易语言窗体设计器：字母助记键 + 快捷键 + 分隔线 + 子菜单 + 灰显占位项）
+  const renderContextMenu = (): React.JSX.Element | null => {
+    if (!contextMenu) return null
+    const selIds = getSelectedControlIds()
+    const hasSel = selIds.length > 0
+    const canAlign = selIds.length >= 2
+    const canPaste = vdControlClipboard.length > 0
+    const allLocked = hasSel && selIds.every(id => form.controls.find(c => c.id === id)?.locked)
+    const anyLocked = hasSel && selIds.some(id => form.controls.find(c => c.id === id)?.locked)
+    const menuW = 236, menuH = 408
+    const x = Math.max(4, Math.min(contextMenu.x, window.innerWidth - menuW - 4))
+    const y = Math.max(4, Math.min(contextMenu.y, window.innerHeight - menuH - 4))
+    const alignItems: { label: string; action: Exclude<AlignAction, null> }[] = [
+      { label: '左对齐', action: 'align-left' },
+      { label: '右对齐', action: 'align-right' },
+      { label: '顶对齐', action: 'align-top' },
+      { label: '底对齐', action: 'align-bottom' },
+      { label: '水平居中', action: 'center-h' },
+      { label: '垂直居中', action: 'center-v' },
+      { label: '相同宽度', action: 'same-width' },
+      { label: '相同高度', action: 'same-height' },
+      { label: '相同大小', action: 'same-size' },
+    ]
+    const mkItem = (accel: string, label: string, action: string | null, shortcut?: string, disabled?: boolean): React.JSX.Element => (
+      <button
+        type="button"
+        className="vd-ctx-item"
+        disabled={disabled || !action}
+        onClick={action ? () => runVdMenuAction(action) : undefined}
+      >
+        <span className="vd-ctx-accel">{accel}.</span>
+        <span className="vd-ctx-label">{label}</span>
+        {shortcut ? <span className="vd-ctx-shortcut">{shortcut}</span> : null}
+      </button>
+    )
+    return (
+      <div
+        className="vd-ctx-menu"
+        ref={(el) => setCssVars(el, { '--vd-ctx-left': `${x}px`, '--vd-ctx-top': `${y}px` })}
+        onMouseDown={(e) => e.stopPropagation()}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        {mkItem('A', '查看数据类型定义', 'viewType', undefined, !hasSel)}
+        <div className="vd-ctx-sep" />
+        {mkItem('U', '撤销', 'undo', 'Ctrl+Z')}
+        {mkItem('D', '删除', 'delete', 'Del', !hasSel)}
+        <div className="vd-ctx-sep" />
+        {mkItem('C', '复制', 'copy', 'Ctrl+C', !hasSel)}
+        {mkItem('T', '剪切', 'cut', 'Ctrl+X', !hasSel)}
+        {mkItem('P', '粘贴', 'paste', 'Ctrl+V', !canPaste)}
+        <div className="vd-ctx-sep" />
+        <div
+          className="vd-ctx-subwrap"
+          onMouseEnter={() => setCtxSubmenuOpen(true)}
+          onMouseLeave={() => setCtxSubmenuOpen(false)}
+        >
+          <button type="button" className="vd-ctx-item vd-ctx-item-sub" disabled={!canAlign}>
+            <span className="vd-ctx-accel">W.</span>
+            <span className="vd-ctx-label">位置及尺寸</span>
+            <span className="vd-ctx-arrow">▶</span>
+          </button>
+          {ctxSubmenuOpen && canAlign ? (
+            <div className="vd-ctx-submenu">
+              {alignItems.map(a => (
+                <button
+                  key={a.action}
+                  type="button"
+                  className="vd-ctx-item"
+                  onClick={() => { setContextMenu(null); applyAlign(a.action) }}
+                >
+                  <span className="vd-ctx-label">{a.label}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        {mkItem('T', '到最顶层', 'toFront', 'Ctrl+T', !hasSel)}
+        {mkItem('B', '到最底层', 'toBack', undefined, !hasSel)}
+        <div className="vd-ctx-sep" />
+        {mkItem('L', '锁定', 'lock', undefined, !hasSel || allLocked)}
+        {mkItem('K', '解除锁定', 'unlock', undefined, !anyLocked)}
+        <div className="vd-ctx-sep" />
+        {mkItem('M', '菜单编辑器', 'menuEditor', 'Ctrl+E')}
+        {mkItem('V', '预览', 'preview', 'Ctrl+Enter')}
+        {mkItem('Z', '跳回先前位置', 'navBack', 'Ctrl+J', !onCanNavigateBack?.())}
+        {mkItem('J', '到对应窗口程序集', 'openSource', 'Ctrl+U')}
+      </div>
+    )
+  }
+
+  // 「查看数据类型定义」弹框：展示该控件类型（支持库单元）的属性/事件
+  const renderTypeInfoDialog = (): React.JSX.Element | null => {
+    if (!typeInfoUnit) return null
+    const u = typeInfoUnit
+    return (
+      <div className="vd-typeinfo-overlay" onMouseDown={() => setTypeInfoUnit(null)}>
+        <div className="vd-typeinfo-dialog" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="vd-typeinfo-header">
+            <span className="vd-typeinfo-title">{u.name}{u.englishName ? `（${u.englishName}）` : ''}</span>
+            <button type="button" className="vd-typeinfo-close" onClick={() => setTypeInfoUnit(null)} aria-label="关闭">×</button>
+          </div>
+          {(u.libraryName || u.description) && (
+            <div className="vd-typeinfo-meta">
+              {u.libraryName ? <div>支持库：{u.libraryName}</div> : null}
+              {u.description ? <div className="vd-typeinfo-desc">{u.description}</div> : null}
+            </div>
+          )}
+          <div className="vd-typeinfo-body">
+            <div className="vd-typeinfo-section-title">属性（{u.properties.length}）</div>
+            {u.properties.length > 0 ? (
+              <table className="vd-typeinfo-table">
+                <thead><tr><th>名称</th><th>类型</th><th>说明</th></tr></thead>
+                <tbody>
+                  {u.properties.map(p => (
+                    <tr key={p.name}>
+                      <td>{p.name}{p.isReadOnly ? ' (只读)' : ''}</td>
+                      <td>{p.typeName}</td>
+                      <td>{p.description}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <div className="vd-typeinfo-empty">无</div>}
+            <div className="vd-typeinfo-section-title">事件（{u.events.length}）</div>
+            {u.events.length > 0 ? (
+              <table className="vd-typeinfo-table">
+                <thead><tr><th>名称</th><th>说明</th></tr></thead>
+                <tbody>
+                  {u.events.map(ev => (
+                    <tr key={ev.name}>
+                      <td>{ev.name}</td>
+                      <td>{ev.description}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <div className="vd-typeinfo-empty">无</div>}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // 设计器菜单栏：递归渲染下拉（叶子双击生成 _名_被选择 事件；有子项 CSS :hover 展开子菜单）
+  const renderMenuNodes = (nodes: MenuItemDef[]): React.JSX.Element => (
+    <div className="vd-fmenu-dropdown">
+      {nodes.filter(n => n && n.visible !== false).map((n, i) => {
+        if (n.separator) return <div key={`sep-${i}`} className="vd-fmenu-sep" />
+        const kids = Array.isArray(n.children) ? n.children.filter(Boolean) : []
+        return (
+          <div
+            key={n.name || `it-${i}`}
+            className={`vd-fmenu-item${n.disabled ? ' vd-fmenu-disabled' : ''}`}
+            onMouseDown={(e) => { e.stopPropagation(); if (kids.length === 0 && n.name) { setMenuBarOpenTop(null); onMenuItemActivate?.(n.name) } }}
+          >
+            <span className="vd-fmenu-caption">{n.checked ? '✓ ' : ''}{n.caption || '(未命名)'}</span>
+            {n.shortcut ? <span className="vd-fmenu-shortcut">{n.shortcut}</span> : null}
+            {kids.length > 0 ? <span className="vd-fmenu-arrow">▶</span> : null}
+            {kids.length > 0 ? renderMenuNodes(kids) : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+
+  const renderFormMenuBar = (): React.JSX.Element | null => {
+    const tops = Array.isArray(form.menu) ? form.menu.filter(n => n && n.visible !== false) : []
+    if (tops.length === 0) return null
+    return (
+      <div className="vd-fmenu-bar" onMouseDown={(e) => e.stopPropagation()}>
+        {tops.map((top, i) => {
+          const kids = Array.isArray(top.children) ? top.children.filter(Boolean) : []
+          return (
+            <div
+              key={top.name || `top-${i}`}
+              className={`vd-fmenu-top${menuBarOpenTop === i ? ' vd-fmenu-top-open' : ''}${top.disabled ? ' vd-fmenu-disabled' : ''}`}
+              onMouseDown={(e) => {
+                e.stopPropagation()
+                // 有子菜单：单击展开/收起下拉；无子菜单（顶级命令项）：单击直接生成/跳转事件
+                if (kids.length > 0) setMenuBarOpenTop(prev => (prev === i ? null : i))
+                else if (top.name) { setMenuBarOpenTop(null); onMenuItemActivate?.(top.name) }
+              }}
+              onMouseEnter={() => { if (menuBarOpenTop !== null) setMenuBarOpenTop(i) }}
+            >
+              <span className="vd-fmenu-topcap">{top.caption || '(未命名)'}</span>
+              {menuBarOpenTop === i && kids.length > 0 ? renderMenuNodes(kids) : null}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
   return (
     <div className="vd" ref={designerRootRef}>
       {/* 画布区域 */}
@@ -1912,6 +2702,23 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           ))}
         </div>
 
+        {/* 对齐工具条：独立于顶部工具栏，只在可视化设计器内、标尺下方显示；选中 ≥2 个控件时可用 */}
+        <div className="vd-align-bar" role="toolbar" aria-label="对齐">
+          {VD_ALIGN_BUTTONS.map(b => (
+            <button
+              key={b.action}
+              type="button"
+              className="vd-align-btn"
+              title={b.title}
+              aria-label={b.title}
+              disabled={selectedIds.size < 2}
+              onClick={() => applyAlign(b.action)}
+            >
+              <Icon name={b.icon} size={16} />
+            </button>
+          ))}
+        </div>
+
         <div
           className={`vd-canvas-scroll ${isSpacePressed ? 'vd-canvas-scroll-pan-ready' : ''} ${isPanningView ? 'vd-canvas-scroll-pan-active' : ''}`}
           ref={canvasAreaRef}
@@ -1931,7 +2738,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           ref={(element) => setCssVars(element, {
             '--vd-zoom': `${zoom}`,
             '--vd-shell-width': `${visualFormWidth * zoom}px`,
-            '--vd-shell-height': `${(visualFormHeight + FORM_TITLEBAR_HEIGHT) * zoom}px`,
+            '--vd-shell-height': `${(visualFormHeight + formTitlebarHeight) * zoom}px`,
             '--vd-shell-left': `${formOffsetLeft}px`,
             '--vd-shell-top': `${formOffsetTop}px`,
           })}
@@ -1939,36 +2746,56 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
         {/* 窗口外壳 */}
         <div
-          className={`vd-form-wrapper ${selectedId === '__form__' ? 'vd-form-wrapper-selected' : ''}`}
+          className={`vd-form-wrapper vd-form-border-${formChrome.borderStyle} vd-form-shape-${formShape} ${selectedId === '__form__' ? 'vd-form-wrapper-selected' : ''}`}
           ref={(element) => setCssVars(element, {
             '--vd-form-title-bg': formVisualColors.titleBg,
             '--vd-form-title-text': formVisualColors.titleText,
             '--vd-form-canvas-bg': formVisualColors.canvasBg,
             '--vd-form-border': formVisualColors.border,
             '--vd-form-grid': formVisualColors.grid,
+            '--vd-form-corner-radius': `${formCornerRadius}px`,
           })}
         >
-          <div className="vd-form-titlebar" onMouseDown={handleFormTitleClick} onDoubleClick={handleFormDblClick}>
-            <span className="vd-form-titlebar-icon"><Icon name="windows-form" size={14} /></span>
-            <span className="vd-form-titlebar-text">{form.title || form.name}</span>
-            <span className="vd-form-titlebar-btns">
-              <span className="vd-form-btn">─</span>
-              <span className="vd-form-btn">🗖️</span>
-              <span className="vd-form-btn vd-form-btn-close">✕</span>
-            </span>
-          </div>
+          {/* 窗口本体（标题栏+客户区）：外形裁剪作用于此层，让调整句柄留在外部不被裁掉 */}
+          <div className={`vd-form-body vd-form-shape-${formShape}`}>
+          {formChrome.hasTitlebar && (
+            <div className={`vd-form-titlebar${formChrome.isToolWindow ? ' vd-form-titlebar-tool' : ''}`} onMouseDown={handleFormTitleClick} onDoubleClick={handleFormDblClick}>
+              {!formChrome.isToolWindow && <span className="vd-form-titlebar-icon">{formIcon ? <img className="vd-form-titlebar-icon-img" src={formIcon} alt="" /> : <Icon name="windows-form" size={14} />}</span>}
+              <span className="vd-form-titlebar-text">{form.title || form.name}</span>
+              {formControlBox && (
+                <span className="vd-form-titlebar-btns">
+                  {/* 工具窗标题栏只有关闭钮；最小化/最大化都关时按钮组不显示，只关一个则灰显（Win32 行为） */}
+                  {!formChrome.isToolWindow && (formMinButton || formMaxButton) && (
+                    <>
+                      <span className={`vd-form-btn${formMinButton ? '' : ' vd-form-btn-off'}`}>─</span>
+                      <span className={`vd-form-btn${formMaxButton ? '' : ' vd-form-btn-off'}`}>🗖️</span>
+                    </>
+                  )}
+                  <span className="vd-form-btn vd-form-btn-close">✕</span>
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* 菜单栏（有菜单时显示，双击菜单项生成事件） */}
+          {renderFormMenuBar()}
 
           {/* 窗口客户区 */}
           <div
-            className={`vd-form-canvas ${activeTool ? 'vd-crosshair' : ''} ${selectedId === '__form__' ? 'vd-form-selected' : ''}`}
+            className={`vd-form-canvas ${activeTool ? 'vd-crosshair' : ''} ${selectedId === '__form__' ? 'vd-form-selected' : ''}${formBackImage ? ' vd-form-canvas-bgimage' : ''}`}
             ref={(element) => {
               canvasRef.current = element
               setCssVars(element, {
                 '--vd-form-width': `${visualFormWidth}px`,
                 '--vd-form-height': `${visualFormHeight}px`,
+                '--vd-form-bg-image': formBackImage ? `url("${formBackImage}")` : 'none',
+                '--vd-form-bg-size': backImageCss.size,
+                '--vd-form-bg-repeat': backImageCss.repeat,
+                '--vd-form-bg-position': backImageCss.position,
               })
             }}
             onMouseDown={handleCanvasMouseDown}
+            onContextMenu={(e) => openContextMenu(e)}
             onMouseMove={(e) => updateMouseRulerPos(e.clientX, e.clientY)}
             onMouseLeave={() => setMouseRulerPos(null)}
             onDoubleClick={handleFormDblClick}
@@ -2026,28 +2853,41 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               </div>
             )}
             {form.controls.map(ctrl => {
+              // 属于某选择夹某页的子控件：仅当该页为当前显示页才渲染（否则视为在别页，隐藏且不可选/拖）。
+              const tabOwner = typeof ctrl.properties?.['所属选择夹'] === 'string' ? ctrl.properties['所属选择夹'] as string : ''
+              if (tabOwner && Number(ctrl.properties?.['所属子夹'] ?? 0) !== getActivePage(tabOwner)) return null
               const isSelected = ctrl.id === selectedId
               const isMultiSelected = selectedIds.has(ctrl.id)
               const isHovered = hoveredControlId === ctrl.id && !isSelected && !isMultiSelected
               return (
                 <div
                   key={ctrl.id}
-                  className={`vd-control ${isSelected ? 'vd-control-selected' : ''} ${isMultiSelected ? 'vd-control-multi-selected' : ''} ${isHovered ? 'vd-control-hovered' : ''}`}
-                  ref={(element) => setCssVars(element, {
-                    '--vd-control-left': `${ctrl.left}px`,
-                    '--vd-control-top': `${ctrl.top}px`,
-                    '--vd-control-width': `${ctrl.width}px`,
-                    '--vd-control-height': `${ctrl.height}px`,
-                  })}
+                  className={`vd-control ${isSelected ? 'vd-control-selected' : ''} ${isMultiSelected ? 'vd-control-multi-selected' : ''} ${isHovered ? 'vd-control-hovered' : ''} ${ctrl.locked ? 'vd-control-locked' : ''}`}
+                  ref={(element) => {
+                    const fontCss = fontSpecToCss(parseFontSpec(ctrl.properties?.['字体']))
+                    setCssVars(element, {
+                      '--vd-control-left': `${ctrl.left}px`,
+                      '--vd-control-top': `${ctrl.top}px`,
+                      '--vd-control-width': `${ctrl.width}px`,
+                      '--vd-control-height': `${ctrl.height}px`,
+                      '--vd-control-font-family': fontCss.fontFamily || 'inherit',
+                      '--vd-control-font-size': fontCss.fontSize || '12px',
+                      '--vd-control-font-weight': fontCss.fontWeight || 'normal',
+                      '--vd-control-font-style': fontCss.fontStyle || 'normal',
+                      '--vd-control-font-deco': fontCss.textDecoration || 'none',
+                      '--vd-control-color': fontCss.color || 'inherit',
+                    })
+                  }}
                   onMouseEnter={() => setHoveredControlId(ctrl.id)}
                   onMouseLeave={() => setHoveredControlId(prev => prev === ctrl.id ? null : prev)}
                   onMouseDown={(e) => handleControlMouseDown(e, ctrl)}
                   onDoubleClick={(e) => handleControlDblClick(e, ctrl)}
+                  onContextMenu={(e) => openContextMenu(e, ctrl)}
                 >
                   {renderControlPreview(ctrl)}
 
-                  {/* 选中句柄 */}
-                  {(isSelected || isMultiSelected) && HANDLES.map(h => (
+                  {/* 选中句柄（锁定控件不显示，禁止缩放） */}
+                  {(isSelected || isMultiSelected) && !ctrl.locked && HANDLES.map(h => (
                     <div
                       key={h}
                       className={`vd-handle vd-handle-${h}`}
@@ -2058,6 +2898,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               )
             })}
           </div>
+          </div>{/* vd-form-body 结束 */}
 
           {/* 窗口选中时显示调整大小句柄 */}
           {selectedId === '__form__' && (
@@ -2126,6 +2967,26 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
       {/* 工具箱：固定模式在右侧渲染，浮动模式悬浮在整个设计器上方 */}
       {renderToolbox()}
+
+      {/* 右键菜单 */}
+      {renderContextMenu()}
+
+      {/* 「查看数据类型定义」弹框 */}
+      {renderTypeInfoDialog()}
+
+      {/* 「菜单编辑器」对话框 */}
+      {menuEditorOpen && (
+        <MenuEditorDialog
+          menu={form.menu}
+          formName={form.title || form.name}
+          onClose={() => setMenuEditorOpen(false)}
+          onSave={(menu, renames) => {
+            onChange({ ...form, menu })
+            if (renames.length) onMenuItemRenames?.(renames)
+            setMenuEditorOpen(false)
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -1,5 +1,6 @@
 import './ThemeManager.css'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import ThrottledColorInput from './ThrottledColorInput'
 import type {
   ThemeDefinition,
   ThemeImportConflictDecision,
@@ -8,9 +9,13 @@ import type {
 import {
   DEFAULT_FLOW_LINE_MODE_CONFIG,
   THEME_TOKEN_GROUPS,
+  THEME_GRADIENT_TYPE_OPTIONS,
+  DEFAULT_THEME_GROUP_GRADIENT,
   type FlowLineMode,
   type FlowLineModeConfig,
   type FlowLineMultiConfig,
+  type ThemeGradientsConfig,
+  type ThemeGradientType,
   type ThemeTokenGroupId,
 } from '../../../../shared/theme-tokens'
 
@@ -34,6 +39,8 @@ interface ThemeManagerProps {
   onSelectTheme: (themeId: string) => Promise<void> | void
   onApplyTheme: (themeId: string) => Promise<void> | void
   onTokenChange?: (tokenKey: string, value: string) => void
+  gradients?: ThemeGradientsConfig
+  onGradientChange?: (groupId: ThemeTokenGroupId, patch: { enabled?: boolean; type?: ThemeGradientType; secondColor?: { tokenKey: string; value: string } }) => void
   onFlowLineModeChange?: (mode: FlowLineMode) => void
   onFlowLineMainColorChange?: (value: string) => void
   onFlowLineDepthStepChange?: (key: keyof FlowLineMultiConfig, value: number) => void
@@ -89,6 +96,8 @@ function ThemeManager({
   onSelectTheme,
   onApplyTheme,
   onTokenChange,
+  gradients = {},
+  onGradientChange,
   onFlowLineModeChange,
   onFlowLineMainColorChange,
   onFlowLineDepthStepChange,
@@ -749,6 +758,33 @@ function ThemeManager({
                 <section key={group.id} className="theme-manager-group">
                   <header className="theme-manager-group-header">
                     <h3 className="theme-manager-group-title">{group.label}</h3>
+                    {group.id !== 'flow-line' && (() => {
+                      const g = gradients[group.id] || DEFAULT_THEME_GROUP_GRADIENT
+                      return (
+                        <span className="theme-manager-gradient-controls">
+                          <label className="theme-manager-checkbox theme-manager-gradient-toggle">
+                            <input
+                              type="checkbox"
+                              checked={g.enabled}
+                              onChange={(event) => onGradientChange?.(group.id, { enabled: event.target.checked })}
+                            />
+                            渐变
+                          </label>
+                          {g.enabled && (
+                            <select
+                              className="theme-manager-gradient-type"
+                              value={g.type}
+                              aria-label={`${group.label}-渐变类型`}
+                              onChange={(event) => onGradientChange?.(group.id, { type: event.target.value as ThemeGradientType })}
+                            >
+                              {THEME_GRADIENT_TYPE_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                              ))}
+                            </select>
+                          )}
+                        </span>
+                      )
+                    })()}
                     <button type="button" className="theme-manager-btn" onClick={() => onResetGroup?.(group.id)}>重置本组</button>
                   </header>
                   {group.id === 'flow-line' && (
@@ -771,7 +807,7 @@ function ThemeManager({
                       </div>
                       <div className="theme-manager-flow-row">
                         <span>主色</span>
-                        <input type="color" value={activeFlowLineMainColor} title="流程线主色" aria-label="流程线主色" onChange={(event) => onFlowLineMainColorChange?.(event.target.value)} />
+                        <ThrottledColorInput value={activeFlowLineMainColor} title="流程线主色" aria-label="流程线主色" onChange={(v) => onFlowLineMainColorChange?.(v)} />
                         <span>色相步进</span>
                         <input type="number" value={flowLineConfig.multi.depthHueStep} title="流程线色相步进" aria-label="流程线色相步进" onChange={(event) => onFlowLineDepthStepChange?.('depthHueStep', Number(event.target.value))} disabled={flowLineConfig.mode !== 'multi'} />
                         <span>饱和度步进</span>
@@ -800,11 +836,19 @@ function ThemeManager({
                         >
                           <span className="theme-manager-token-label">{item.label}</span>
                           <ThemePreviewChip color={tokenValues[item.tokenKey] || '#000000'} />
-                          <input
-                            type="color"
+                          {(gradients[group.id] || DEFAULT_THEME_GROUP_GRADIENT).enabled && (
+                            <ThrottledColorInput
+                              className="theme-manager-gradient-second"
+                              value={(gradients[group.id]?.secondColors || {})[item.tokenKey] || tokenValues[item.tokenKey] || '#000000'}
+                              title="渐变第二色"
+                              aria-label={`${group.label}-${item.label}-渐变第二色`}
+                              onChange={(v) => onGradientChange?.(group.id, { secondColor: { tokenKey: item.tokenKey, value: v } })}
+                            />
+                          )}
+                          <ThrottledColorInput
                             value={tokenValues[item.tokenKey] || '#000000'}
                             aria-label={`${group.label}-${item.label}`}
-                            onChange={(event) => onTokenChange?.(item.tokenKey, event.target.value)}
+                            onChange={(v) => onTokenChange?.(item.tokenKey, v)}
                             disabled={group.id === 'base' && TOOLBAR_ICON_TOKEN_KEYS.has(item.tokenKey) && preserveToolbarIconOriginalColors}
                           />
                           <button

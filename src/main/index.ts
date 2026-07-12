@@ -499,15 +499,57 @@ function saveThemeDefinition(themeId: ThemeId, theme: ThemeDefinition): void {
 
 function createBuiltinThemeDefinition(themeId: ThemeId): ThemeDefinition {
   const darkDefaults = createDefaultThemeTokenPayload().tokenValues
+  // 令牌组之外的界面级变量（菜单/面板/弹窗/按钮/强调色等）：主题只给令牌组会导致
+  // 切主题时这些键残留上一主题的值（或落 CSS 缺省），内置基准必须给全。
+  const darkUiExtras: Record<string, string> = {
+    '--bg-hover': '#2a2d2e',
+    '--bg-active': '#37373d',
+    '--bg-selection': '#264f78',
+    '--bg-input': '#3c3c3c',
+    '--border-color': '#3c3c3c',
+    '--border-focus': '#007fd4',
+    '--text-disabled': '#5a5a5a',
+    '--text-accent': '#4fc1ff',
+    '--text-link': '#3794ff',
+    '--accent': '#0078d4',
+    '--accent-hover': '#1a8dea',
+    '--accent-active': '#005a9e',
+    '--error': '#f44747',
+    '--warning': '#cca700',
+    '--success': '#89d185',
+    '--info': '#75beff',
+    '--statusbar-item-hover': 'rgba(255, 255, 255, 0.12)',
+    '--panel-bg': '#252526',
+    '--dialog-bg': '#252526',
+    '--dialog-border': '#454545',
+    '--dialog-shadow': 'rgba(0, 0, 0, 0.5)',
+    '--menu-shadow': 'rgba(0, 0, 0, 0.4)',
+    '--danger': '#e81123',
+    '--menu-text-on-accent': 'rgba(255, 255, 255, 0.8)',
+    '--activity-icon-filter': 'brightness(0) invert(1)',
+    '--button-secondary-bg': '#3c3c3c',
+    '--button-secondary-border': '#555555',
+    '--button-secondary-hover': '#4c4c4c',
+  }
   if (themeId === BUILTIN_DARK_THEME_ID) {
     return {
       name: BUILTIN_DARK_THEME_ID,
-      colors: { ...darkDefaults },
+      colors: { ...darkDefaults, ...darkUiExtras },
     }
   }
 
   const lightDefaults: Record<string, string> = {
     ...darkDefaults,
+    // 浅色语法配色（VSCode Light 系）：深色默认的米黄函数/浅灰运算符在白底不可读
+    '--syntax-keyword': '#0000ff',
+    '--syntax-string': '#a31515',
+    '--syntax-number': '#098658',
+    '--syntax-comment': '#008000',
+    '--syntax-function': '#795e26',
+    '--syntax-type': '#267f99',
+    '--syntax-variable': '#001080',
+    '--syntax-operator': '#383838',
+    '--table-cell-text': '#1f2328',
     '--bg-primary': '#f5f5f5',
     '--bg-secondary': '#ffffff',
     '--bg-tertiary': '#f7f7f9',
@@ -1743,11 +1785,17 @@ app.whenReady().then(() => {
       } catch { /* ignore */ }
     }
 
-    // 5. 更新磁盘上所有 .eyc 文件的内容引用（跳过已在编辑器中打开的）
+    // 5. 更新磁盘上所有 .eyc 文件的内容引用（跳过已在编辑器中打开的）。
+    // 命名约定：**程序集名**用剥前导下划线的核心名（_启动窗口 → 窗口程序集_启动窗口，
+    // 前导下划线兼作分隔符）；**窗口事件名**用原始名（_启动窗口 的事件是「__启动窗口_创建完毕」，
+    // 双下划线合法）；跨窗口成员引用（旧名.）用原始名。与渲染层 applyWindowRenameToContent 一致。
     const eycFiles = readdirSync(projectDir).filter(f => f.toLowerCase().endsWith('.eyc'))
+    const oldCore = oldName.replace(/^_+/, '')
+    const newCore = newName.replace(/^_+/, '')
     const escapedOldName = oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const escapedOldCore = oldCore.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const ownAssemblyLineRe = new RegExp(
-      '^(\\s*\\.程序集\\s+)(窗口程序集_' + escapedOldName + '|' + escapedOldName + ')(?=\\s|,|$)',
+      '^(\\s*\\.程序集\\s+)(窗口程序集_' + escapedOldCore + '|' + escapedOldName + ')(?=\\s|,|$)',
       'm'
     )
     for (const fileName of eycFiles) {
@@ -1755,13 +1803,13 @@ app.whenReady().then(() => {
       if (openSet.has(filePath)) continue
       let content = readFileSync(filePath, 'utf-8')
       const isOwnRenamedSource = filePath.toLowerCase() === newEyc.toLowerCase()
-      if (!content.includes(oldName) && !isOwnRenamedSource) continue
-      // 更新程序集名：窗口程序集_旧名 → 窗口程序集_新名
-      content = content.split('窗口程序集_' + oldName).join('窗口程序集_' + newName)
+      if (!content.includes(oldName) && !content.includes(oldCore) && !isOwnRenamedSource) continue
+      // 更新程序集名：窗口程序集_旧核心名 → 窗口程序集_新核心名
+      content = content.split('窗口程序集_' + oldCore).join('窗口程序集_' + newCore)
       if (isOwnRenamedSource) {
-        content = content.replace(ownAssemblyLineRe, '$1窗口程序集_' + newName)
+        content = content.replace(ownAssemblyLineRe, '$1窗口程序集_' + newCore)
       }
-      // 更新事件引用：_旧名_ → _新名_
+      // 更新事件引用：_原始旧名_ → _原始新名_
       content = content.split('_' + oldName + '_').join('_' + newName + '_')
       // 更新跨窗口引用：旧名. → 新名.  (如 窗口1.按钮1.禁止)
       content = content.split(oldName + '.').join(newName + '.')
@@ -2916,14 +2964,14 @@ app.whenReady().then(() => {
     return compileViaWorker({ projectDir, debug: true, arch, mode: 'compile' }, editorFilesObj)
   })
 
-  ipcMain.handle('compiler:run', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string, debugOptions?: { breakpoints?: Record<string, number[]> }) => {
+  ipcMain.handle('compiler:run', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string, debugOptions?: { breakpoints?: Record<string, number[]>; previewWindow?: string }) => {
     if (shouldRunAsAndroid(projectDir)) {
       const settings = readIDESettings()
       const editorFiles = editorFilesObj ? new Map(Object.entries(editorFilesObj)) : undefined
       return buildAndRunAndroidProject(projectDir, settings, editorFiles)
     }
     // 编译在工作线程完成（不卡界面）；运行 exe 仍在主进程（本就用子进程，不阻塞，且涉及调试交互）。
-    const result = await compileViaWorker({ projectDir, debug: true, arch, mode: 'run', breakpoints: debugOptions?.breakpoints || {} }, editorFilesObj)
+    const result = await compileViaWorker({ projectDir, debug: true, arch, mode: 'run', breakpoints: debugOptions?.breakpoints || {}, previewWindow: debugOptions?.previewWindow }, editorFilesObj)
     if (result.success && result.outputFile) {
       runExecutable(result.outputFile)
     }

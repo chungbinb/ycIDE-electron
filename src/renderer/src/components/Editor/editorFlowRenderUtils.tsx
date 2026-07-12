@@ -141,6 +141,9 @@ export function renderFlowSegsLine(params: RenderFlowSegsParams): { node: ReactN
 
           const hasInnerStartBelow = seg?.type === 'branch' && slots.slice(d + 1).some(next => next?.type === 'start')
           const hasOuterBranchAbove = seg?.type === 'start' && slots.slice(0, d).some(prev => prev?.type === 'branch')
+          // 分支的内容行是同一行右侧紧邻的内层结构（如 否则体首行就是嵌套如果）：
+          // 分支横线与右箭头需延伸过本格右缘，箭头尖对齐内层结构的外侧竖线，不在中间留缺口。
+          const arrowIntoInner = seg?.type === 'branch' && slots[d + 1]?.type === 'start'
           const hasStartSameDepth = segsAtDepth.some(item => item.type === 'start')
           const normalEndArrow = !!(seg?.type === 'end' && !seg?.hasNextFlow && !hasStartSameDepth)
           const arrowOnlyEndArrow = !!seg?.endArrowOnly
@@ -151,7 +154,7 @@ export function renderFlowSegsLine(params: RenderFlowSegsParams): { node: ReactN
           return (
           <span
             key={d}
-            className={`eyc-flow-seg ${seg ? `eyc-flow-${seg.type}` : ''} ${seg?.isLoop ? 'eyc-flow-loop' : ''}${seg?.suppressOuter ? ' eyc-flow-no-outer' : ''}${seg?.hasPrevFlowEnd ? ' eyc-flow-has-prev-end' : ''}${seg?.hasOuterLink ? ' eyc-flow-has-outer-link' : ''}${seg?.hasInnerLink ? ' eyc-flow-has-inner-link' : ''}${seg?.hasInnerVertFromAbove ? ' eyc-flow-inner-from-above' : ''}${hasInnerStartBelow ? ' eyc-flow-stagger-upper' : ''}${hasOuterBranchAbove ? ' eyc-flow-stagger-lower' : ''}`}
+            className={`eyc-flow-seg ${seg ? `eyc-flow-${seg.type}` : ''} ${seg?.isLoop ? 'eyc-flow-loop' : ''}${seg?.suppressOuter ? ' eyc-flow-no-outer' : ''}${seg?.hasPrevFlowEnd ? ' eyc-flow-has-prev-end' : ''}${seg?.hasOuterLink ? ' eyc-flow-has-outer-link' : ''}${seg?.hasInnerLink ? ' eyc-flow-has-inner-link' : ''}${seg?.hasInnerVertFromAbove ? ' eyc-flow-inner-from-above' : ''}${hasInnerStartBelow ? ' eyc-flow-stagger-upper' : ''}${hasOuterBranchAbove ? ' eyc-flow-stagger-lower' : ''}${arrowIntoInner ? ' eyc-flow-arrow-into-inner' : ''}`}
             ref={(element) => {
               if (!seg) return
               applyFlowColors(element, seg, resolveColors)
