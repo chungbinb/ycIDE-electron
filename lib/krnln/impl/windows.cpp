@@ -1577,6 +1577,15 @@ extern "C" double krnln_GetTimePart(double date) {
 // ==== 控件成员运行时（ycIDE 声明式控件成员协议后端）====
 // 编译器只传 HWND（名字→HWND 解析留在生成的 main.cpp，属项目专属逻辑）；本处只依赖 HWND，与项目解耦。
 // window-units.json 的属性 access.get/set 模板调用这些函数；第三方支持库照此在自己的 impl 里实现同名/自定义 helper。
+// 选区/长度类属性的编辑目标：编辑框=自身；组合框=其子 Edit（不可编辑下拉式无子 Edit → NULL，属性无效，与易语言一致）
+static HWND krnln_edit_target(HWND h) {
+  if (!h) return NULL;
+  wchar_t c[24] = L""; GetClassNameW(h, c, 24);
+  if (_wcsicmp(c, L"EDIT") == 0) return h;
+  if (_wcsicmp(c, L"COMBOBOX") == 0) return FindWindowExW(h, NULL, L"Edit", NULL);
+  return NULL;
+}
+
 extern "C" long long krnln_ctrl_get_number(HWND h, const wchar_t* prop) {
   if (!h || !prop) return 0;
   wchar_t cls[32] = L""; GetClassNameW(h, cls, 32);
@@ -1589,6 +1598,17 @@ extern "C" long long krnln_ctrl_get_number(HWND h, const wchar_t* prop) {
     if (_wcsicmp(prop, L"顶边") == 0) return p.y;
     if (_wcsicmp(prop, L"宽度") == 0) return r.right - r.left;
     return r.bottom - r.top;
+  }
+  // 编辑框/组合框编辑部分：选区（0 基）与长度限制（易语言约定 0=不受限制；Win32 未限制时返回巨值，映射回 0）
+  if (_wcsicmp(prop, L"起始选择位置") == 0 || _wcsicmp(prop, L"被选择字符数") == 0 || _wcsicmp(prop, L"最大允许长度") == 0 || _wcsicmp(prop, L"最大文本长度") == 0) {
+    HWND ed = krnln_edit_target(h);
+    if (!ed) return 0;
+    if (_wcsicmp(prop, L"最大允许长度") == 0 || _wcsicmp(prop, L"最大文本长度") == 0) {
+      long long lim = (long long)SendMessageW(ed, EM_GETLIMITTEXT, 0, 0);
+      return lim >= 0x7FFFFFFE ? 0 : lim;
+    }
+    DWORD s = 0, e = 0; SendMessageW(ed, EM_GETSEL, (WPARAM)&s, (LPARAM)&e);
+    return _wcsicmp(prop, L"起始选择位置") == 0 ? (long long)s : (long long)(e - s);
   }
   if (_wcsicmp(cls, L"BUTTON") == 0) {
     if (_wcsicmp(prop, L"选中") == 0) return SendMessageW(h, BM_GETCHECK, 0, 0) == BST_CHECKED ? 1 : 0;
@@ -1621,6 +1641,11 @@ extern "C" long long krnln_ctrl_get_number(HWND h, const wchar_t* prop) {
     if (_wcsicmp(prop, L"最大位置") == 0) return (long long)si.nMax;
     return 0;
   }
+  if (_wcsicmp(cls, L"SysMonthCal32") == 0) {
+    if (_wcsicmp(prop, L"滚动月数") == 0) return (long long)SendMessageW(h, MCM_GETMONTHDELTA, 0, 0);
+    if (_wcsicmp(prop, L"最多选择天数") == 0) return (long long)SendMessageW(h, MCM_GETMAXSELCOUNT, 0, 0);
+    return 0;
+  }
   return 0;
 }
 
@@ -1637,6 +1662,19 @@ extern "C" void krnln_ctrl_set_number(HWND h, const wchar_t* prop, long long val
     if (_wcsicmp(prop, L"左边") == 0) x = v; else if (_wcsicmp(prop, L"顶边") == 0) y = v; else if (_wcsicmp(prop, L"宽度") == 0) w = v; else ht = v;
     SetWindowPos(h, NULL, x, y, w, ht, SWP_NOZORDER | SWP_NOACTIVATE);
     return;
+  }
+  // 编辑框/组合框编辑部分：选区（易语言承 VB6 语义：置起始位置=定位光标收拢选区、-1=移到尾部；置字符数以当前起点展开、-1=全选）
+  if (_wcsicmp(prop, L"起始选择位置") == 0 || _wcsicmp(prop, L"被选择字符数") == 0 || _wcsicmp(prop, L"最大允许长度") == 0 || _wcsicmp(prop, L"最大文本长度") == 0) {
+    HWND ed = krnln_edit_target(h);
+    if (!ed) return;
+    if (_wcsicmp(prop, L"最大允许长度") == 0 || _wcsicmp(prop, L"最大文本长度") == 0) { SendMessageW(ed, EM_LIMITTEXT, (WPARAM)(v > 0 ? v : 0), 0); return; }
+    if (_wcsicmp(prop, L"起始选择位置") == 0) {
+      int pos = (v == -1) ? GetWindowTextLengthW(ed) : (v > 0 ? v : 0);
+      SendMessageW(ed, EM_SETSEL, (WPARAM)pos, (LPARAM)pos); return;
+    }
+    if (v == -1) { SendMessageW(ed, EM_SETSEL, 0, (LPARAM)-1); return; }
+    DWORD s = 0, e = 0; SendMessageW(ed, EM_GETSEL, (WPARAM)&s, (LPARAM)&e);
+    SendMessageW(ed, EM_SETSEL, (WPARAM)s, (LPARAM)(s + (DWORD)(v > 0 ? v : 0))); return;
   }
   if (_wcsicmp(cls, L"BUTTON") == 0) {
     if (_wcsicmp(prop, L"选中") == 0) { SendMessageW(h, BM_SETCHECK, (WPARAM)(v ? BST_CHECKED : BST_UNCHECKED), 0); return; }
@@ -1667,6 +1705,35 @@ extern "C" void krnln_ctrl_set_number(HWND h, const wchar_t* prop, long long val
     if (_wcsicmp(prop, L"最小位置") == 0 || _wcsicmp(prop, L"最大位置") == 0) { si.fMask = SIF_RANGE; GetScrollInfo(h, SB_CTL, &si); if (_wcsicmp(prop, L"最小位置") == 0) si.nMin = v; else si.nMax = v; SetScrollInfo(h, SB_CTL, &si, TRUE); return; }
     return;
   }
+  if (_wcsicmp(cls, L"SysMonthCal32") == 0) {
+    if (_wcsicmp(prop, L"滚动月数") == 0) { SendMessageW(h, MCM_SETMONTHDELTA, (WPARAM)v, 0); return; }
+    if (_wcsicmp(prop, L"最多选择天数") == 0) { SendMessageW(h, MCM_SETMAXSELCOUNT, (WPARAM)(v > 0 ? v : 1), 0); return; }
+    return;
+  }
+}
+
+// 「被选择文本」：读=当前选区文本的 owned 拷贝；写=EM_REPLACESEL 替换当前选区（易语言语义）。组合框经子 Edit。
+extern "C" wchar_t* krnln_ctrl_get_seltext(HWND h) {
+  HWND ed = krnln_edit_target(h);
+  DWORD s = 0, e = 0;
+  int len = ed ? GetWindowTextLengthW(ed) : 0;
+  if (ed) SendMessageW(ed, EM_GETSEL, (WPARAM)&s, (LPARAM)&e);
+  if (!ed || e <= s || len <= 0) { wchar_t* z = (wchar_t*)malloc(sizeof(wchar_t)); if (z) z[0] = 0; return z; }
+  wchar_t* buf = (wchar_t*)malloc((size_t)(len + 1) * sizeof(wchar_t));
+  if (!buf) return nullptr;
+  int got = GetWindowTextW(ed, buf, len + 1);
+  if (got < 0) got = 0;
+  if ((int)e > got) e = (DWORD)got;
+  if ((int)s > got) s = (DWORD)got;
+  int n = e > s ? (int)(e - s) : 0;
+  if (n > 0) memmove(buf, buf + s, (size_t)n * sizeof(wchar_t));
+  buf[n] = L'\0';
+  return buf;
+}
+extern "C" void krnln_ctrl_set_seltext(HWND h, const wchar_t* t) {
+  HWND ed = krnln_edit_target(h);
+  if (!ed) return;
+  SendMessageW(ed, EM_REPLACESEL, TRUE, (LPARAM)(t ? t : L""));
 }
 
 extern "C" void krnln_ctrl_set_text(HWND h, const wchar_t* text) {

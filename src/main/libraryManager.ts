@@ -198,11 +198,11 @@ const CORE_LIBRARY_GUID = 'D09F2340818511D396F6AE4C17150413'
 const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
   'impl/linux.cpp': '088edd74d09dac6c9e70da4feed932e3e0d4aceba36b6aab5d9fb152077aef34',
   'impl/macos.mm': '798149470018bf45a3e996d82db1db41f473f6a6aca2fd3badf7b8ad1538b4ac',
-  'impl/windows.cpp': 'cbfd7c0250ba69140c46e45e8f756f4b3fa3cd14e0f89d6476fcfbea443673b2',
+  'impl/windows.cpp': '3970143cc79fa5368bf0aa5218b9320833673bd953c4bf080fed6039e0d0cd20',
   'krnln.commands.ycmd.json': '839e75869b95f651eeec794e711e313fa39a424ff0542b6d8d3cec89b94c45cd',
   'krnln.constants.json': '02e83c81be209c290b335be9daec43df9fa23f5035e204b19280232b7fc894c3',
   'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
-  'window-units.json': '3c835d4a7cb5864c4aed9d13a3056d01d3888cc2582d9028259f42ff4e5868d4',
+  'window-units.json': '6bcf73f23fa06c593583688d7f31085dec9d24445273d13c6dbb56e882bbbd46',
 }
 
 const DEFAULT_PROTOCOL_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [

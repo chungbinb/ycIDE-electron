@@ -60,6 +60,7 @@ describe('控件成员声明式派发', () => {
       '进度条1.最小位置 ＝ 0',
       '进度条1.最大位置 ＝ 1000',
       '进度条1.位置 ＝ 进度条1.位置 ＋ 1',
+      '进度条1.位置 ＝ 进度条1.位置 ＋ 到数值 (“3”)',  // 回归：属性读 ＋ 尾随函数调用（parseCommandCall 吞并形态，不得误报「方法不支持」）
       '编辑框1.内容 ＝ “你好”',
       't ＝ 编辑框1.内容',
       '',
@@ -177,4 +178,109 @@ describe('控件成员声明式派发', () => {
     expect(gen).toContain('yc_ctrl_get_date(')         // 日期读
     rmSync(dir, { recursive: true, force: true })
   }, 120000)
+
+  it.skipIf(!zigAvailable)('现行子夹/时钟周期/编辑框选区/画板状态/窗口标题 声明式读写并可编译', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ycide-gapfix2-'))
+    writeFileSync(join(dir, 'p.epp'), [
+      '# YiCode Project File', 'Version=1', 'ProjectName=剩余属性验证',
+      'OutputType=WindowsApp', 'Platform=windows', '',
+      'File=EFW|_启动窗口.efw|1', 'File=EYC|_启动窗口.eyc|0', '',
+    ].join('\n'), 'utf-8')
+    writeFileSync(join(dir, '_启动窗口.efw'), JSON.stringify({
+      name: '_启动窗口', title: '窗口', width: 500, height: 400, sourceFile: '_启动窗口.eyc',
+      controls: [
+        { id: 'c1', type: '选择夹', name: '选择夹1', left: 10, top: 10, width: 220, height: 150, text: '', visible: true, enabled: true, properties: { '子夹标题': '甲夹\n乙夹' } },
+        { id: 'c2', type: '时钟', name: '时钟1', left: 10, top: 170, width: 32, height: 32, text: '', visible: true, enabled: true, properties: { '时钟周期': 0 } },
+        { id: 'c3', type: '编辑框', name: '编辑框1', left: 10, top: 210, width: 200, height: 24, text: 'hello', visible: true, enabled: true, properties: {} },
+        { id: 'c4', type: '组合框', name: '组合框1', left: 10, top: 240, width: 150, height: 120, text: '', visible: true, enabled: true, properties: {} },
+        { id: 'c5', type: '月历', name: '月历1', left: 240, top: 10, width: 220, height: 160, text: '', visible: true, enabled: true, properties: {} },
+        { id: 'c6', type: '画板', name: '画板1', left: 240, top: 180, width: 200, height: 150, text: '', visible: true, enabled: true, properties: {} },
+      ],
+    }), 'utf-8')
+    writeFileSync(join(dir, '_启动窗口.eyc'), [
+      '.版本 2', '.程序集 窗口程序集_启动窗口', '',
+      '.子程序 __启动窗口_创建完毕',
+      '.局部变量 n, 整数型', '.局部变量 t, 文本型',
+      '选择夹1.现行子夹 ＝ 1',
+      'n ＝ 选择夹1.现行子夹',
+      '时钟1.时钟周期 ＝ 500',
+      'n ＝ 时钟1.时钟周期',
+      '编辑框1.起始选择位置 ＝ 1',
+      '编辑框1.被选择字符数 ＝ 2',
+      't ＝ 编辑框1.被选择文本',
+      '编辑框1.被选择文本 ＝ “替换”',
+      '编辑框1.最大允许长度 ＝ 100',
+      '组合框1.最大文本长度 ＝ 50',
+      '月历1.滚动月数 ＝ 3',
+      '画板1.画笔粗细 ＝ 5',
+      'n ＝ 画板1.画笔粗细',
+      '_启动窗口.标题 ＝ “新标题”',
+      '',
+      '.子程序 _时钟1_周期事件',
+      '时钟1.时钟周期 ＝ 0',
+      '',
+    ].join('\n'), 'utf-8')
+
+    const before = messages.length
+    const result = await compileProject({ projectDir: dir, mode: 'run' })
+    const errors = messages.slice(before).filter(m => m.type === 'error').map(m => m.text).join('\n')
+    expect(result.success, `编译失败：\n${errors}`).toBe(true)
+
+    const gen = readFileSync(join(dir, 'temp', '_启动窗口.cpp'), 'utf-8')
+    expect(gen).toContain('yc_tab_set_cur(')            // 现行子夹写（自带 yc_tab_sync）
+    expect(gen).toContain('yc_tab_get_cur(')            // 现行子夹读
+    expect(gen).toContain('yc_timer_set_period(')       // 时钟周期写
+    expect(gen).toContain('yc_timer_get_period(')       // 时钟周期读
+    expect(gen).toContain('L"起始选择位置"')             // 编辑框选区
+    expect(gen).toContain('yc_ctrl_get_seltext(')       // 被选择文本读
+    expect(gen).toContain('krnln_ctrl_set_seltext(')    // 被选择文本写（替换选中）
+    expect(gen).toContain('yc_dp_set_prop(')            // 画板状态写
+    expect(gen).toContain('yc_dp_get_prop(')            // 画板状态读
+    expect(gen).toContain('yc_get_control_handle_by_name(L"_启动窗口")')  // 窗口标题经窗体名解析
+
+    const mainCpp = readFileSync(join(dir, 'temp', 'main.cpp'), 'utf-8')
+    expect(mainCpp).toContain('case WM_TIMER')          // 周期事件派发
+    expect(mainCpp).toContain('_时钟1_周期事件();')      // 定时器 id → 用户处理子程序
+    expect(mainCpp).toContain('return g_hMainWnd;')     // 窗体名 → 主窗句柄
+    rmSync(dir, { recursive: true, force: true })
+  }, 120000)
+
+  it.skipIf(!zigAvailable)('未绑定的控件属性/方法在转译期给出带行号的中文错误(不再是 undeclared identifier)', async () => {
+    const mkProj = (eycLines: string[]) => {
+      const dir = mkdtempSync(join(tmpdir(), 'ycide-gaperr-'))
+      writeFileSync(join(dir, 'p.epp'), [
+        '# YiCode Project File', 'Version=1', 'ProjectName=err',
+        'OutputType=WindowsApp', 'Platform=windows', '',
+        'File=EFW|_启动窗口.efw|1', 'File=EYC|_启动窗口.eyc|0', '',
+      ].join('\n'), 'utf-8')
+      writeFileSync(join(dir, '_启动窗口.efw'), JSON.stringify({
+        name: '_启动窗口', title: '窗口', width: 400, height: 300, sourceFile: '_启动窗口.eyc',
+        controls: [
+          { id: 'c1', type: '标签', name: '标签1', left: 10, top: 10, width: 80, height: 24, text: '', visible: true, enabled: true, properties: {} },
+          { id: 'c2', type: '编辑框', name: '编辑框1', left: 10, top: 40, width: 120, height: 24, text: '', visible: true, enabled: true, properties: {} },
+        ],
+      }), 'utf-8')
+      writeFileSync(join(dir, '_启动窗口.eyc'), ['.版本 2', '.程序集 窗口程序集_启动窗口', '', '.子程序 __启动窗口_创建完毕', ...eycLines, ''].join('\n'), 'utf-8')
+      return dir
+    }
+
+    // 属性写：标签.边框 无 set 绑定（设计期样式）
+    const dir1 = mkProj(['标签1.边框 ＝ 1'])
+    let before = messages.length
+    const r1 = await compileProject({ projectDir: dir1, mode: 'run' })
+    expect(r1.success).toBe(false)
+    const err1 = messages.slice(before).filter(m => m.type === 'error').map(m => m.text).join('\n')
+    expect(err1).toContain('暂不支持在代码中赋值')
+    expect(err1).toContain('_启动窗口.eyc:')   // 带 文件:行号 定位
+    rmSync(dir1, { recursive: true, force: true })
+
+    // 方法调用：编辑框.加入文本 无绑定（补全侧有、编译侧无的已知缺口）
+    const dir2 = mkProj(['编辑框1.加入文本 (“x”)'])
+    before = messages.length
+    const r2 = await compileProject({ projectDir: dir2, mode: 'run' })
+    expect(r2.success).toBe(false)
+    const err2 = messages.slice(before).filter(m => m.type === 'error').map(m => m.text).join('\n')
+    expect(err2).toContain('暂不支持在代码中调用')
+    rmSync(dir2, { recursive: true, force: true })
+  }, 180000)
 })

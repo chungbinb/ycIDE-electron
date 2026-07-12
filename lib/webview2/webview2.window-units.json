@@ -2,6 +2,9 @@
   "version": "1.0",
   "description": "WebView2 浏览器支持库窗口组件定义。",
   "author": "ycIDE",
+  "controlMemberBindings": [
+    {"unit": "浏览框", "unitEnglishName": "WebView", "member": "地址", "memberEnglishName": "url", "get": "yc_ctrl_get_text({h})", "set": "krnln_ctrl_set_text({h}, {vtext})"}
+  ],
   "windowUnits": [
     {
       "name": "浏览框",

@@ -372,7 +372,7 @@ interface TranspileCacheFile {
   entries: Record<string, TranspileCacheEntry>
 }
 
-const TRANSPILE_CACHE_VERSION = 22
+const TRANSPILE_CACHE_VERSION = 23
 
 interface BuildArtifactCacheFile {
   version: number
@@ -3456,17 +3456,21 @@ function replaceLogicalOperatorAliases(expr: string): string {
 // 控件属性【读取】：`控件名.属性` → 声明式 get 模板（按控件类型键控派发）。
 // 触发条件：①ctrlName 确在 currentProjectControls（是控件，非自定义类型变量）；②该控件类型在协议里为此属性声明了 get 绑定。
 // 否则原样保留。方法调用（成员名后接 '(' 或全角 '（'）用负向前瞻排除（方法本就无 get 绑定，双重保险）。
-function replaceControlPropertyReads(expr: string): string {
+function replaceControlPropertyReads(expr: string, variableTypeResolver?: (name: string) => string | undefined): string {
+  if (currentProjectControls.size === 0) return expr
   const bindings = loadCompileProtocols().controlMembers
-  if (bindings.length === 0 || currentProjectControls.size === 0) return expr
   return expr.replace(
     /([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)\.([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)(?!\s*[(（])(?![一-龥A-Za-z0-9_])/g,
     (whole, ctrlName: string, member: string) => {
       const type = resolveProjectControlType(ctrlName)
       if (!type) return whole
+      // 同名变量遮蔽控件名（如自定义类型变量恰与控件同名）→ 按变量成员处理，原样保留
+      if (variableTypeResolver?.(ctrlName)) return whole
       const getTpl = resolveControlMemberTemplate(bindings, type, member, 'get')
-      if (!getTpl) return whole
-      return applyMemberTemplate(getTpl, `yc_get_control_handle_by_name(L"${escapeCString(ctrlName)}")`, '')
+      // 确属控件而属性无 get 绑定 → 友好报错并中止（原样保留会变成难懂的 undeclared identifier）；
+      // 行号前缀由 transpileEycContent 主循环的 catch 统一补上。
+      if (!getTpl) throw new Error(`${type}“${ctrlName}”的属性“${member}”暂不支持在代码中读取`)
+      return applyMemberTemplate(getTpl, `yc_get_control_handle_by_name(L"${escapeCString(ctrlName)}")`, '', [], `L"${escapeCString(ctrlName)}"`)
     },
   )
 }
@@ -3548,6 +3552,7 @@ function isTextExpression(expr: string): boolean {
     || /^yc_ctrl_get_text\(/.test(trimmed)
     || /^yc_ctrl_get_tag\(/.test(trimmed)
     || /^yc_ctrl_get_date\(/.test(trimmed)
+    || /^yc_ctrl_get_seltext\(/.test(trimmed)
     || /^yc_text_concat\(/.test(trimmed)
     || /^yc_utf8_to_wide\(/.test(trimmed)
     || /^\(\[\&\]\(\)\s*->\s*wchar_t\*/.test(trimmed)
@@ -3844,6 +3849,22 @@ function translateExpressionToC(
       if (declMethod) return declMethod
       const llCall = translateListLikeMethodCall(call, methodTx)
       if (llCall) return llCall
+      // `控件.方法(…)` 未命中任何绑定（表达式上下文）→ 友好报错；行号前缀由主循环 catch 统一补上。
+      // 仅对带括号的真调用报错——无括号的 `控件.属性`（parseCommandCall 会把裸点名当零参调用）放行给下方属性读取替换器；
+      // 且方法段必须是纯标识符——`控件.属性 ＋ 函数(x)` 会被 parseCommandCall 整段吞进 call.name，不得误报。
+      if (/[(（]/.test(trimmed)) {
+        const dotAt = call.name.lastIndexOf('.')
+        if (dotAt > 0) {
+          const objName = call.name.slice(0, dotAt)
+          const method = call.name.slice(dotAt + 1)
+          const objType = /^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(objName) && /^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(method)
+            ? resolveProjectControlType(objName)
+            : ''
+          if (objType && !variableTypeResolver?.(objName)) {
+            throw new Error(`${objType}“${objName}”的方法“${method}”暂不支持在代码中调用`)
+          }
+        }
+      }
 
       const resolved = commandMap.get(call.name)
       if (resolved) {
@@ -3874,7 +3895,7 @@ function translateExpressionToC(
   let translated = replaceConstantRefs(convertFullWidthOps(trimmed))
   translated = replaceBooleanLiterals(translated)
   translated = replaceLogicalOperatorAliases(translated)
-  translated = replaceControlPropertyReads(translated)
+  translated = replaceControlPropertyReads(translated, variableTypeResolver)
 
   // 逻辑运算（且/或 已转 &&/||）优先级最低，必须先于比较运算切分
   const logical = findTopLevelLogical(translated)
@@ -4988,7 +5009,15 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'extern int yc_dp_getpicheight(const wchar_t* n, const std::vector<unsigned char>& img);\n'
   result += 'extern void yc_dp_copy(const wchar_t* n);\n'
   result += 'extern YC_BIN yc_dp_getpic(const wchar_t* n, int ow, int oh);\n'
-  result += 'extern int yc_dp_unitcnv(const wchar_t* n, int v, int type);\n\n'
+  result += 'extern int yc_dp_unitcnv(const wchar_t* n, int v, int type);\n'
+  result += 'extern int yc_dp_get_prop(const wchar_t* n, int prop);\n'
+  result += 'extern void yc_dp_set_prop(const wchar_t* n, int prop, int v);\n'
+  // 时钟周期运行时读写（时钟无 HWND，按名查生成的定时器表）
+  result += 'extern int yc_timer_get_period(const wchar_t* n);\n'
+  result += 'extern void yc_timer_set_period(const wchar_t* n, int v);\n'
+  // 编辑框/组合框「被选择文本」（库返 owned wchar_t*，main.cpp 包 YC_TEXT）
+  result += 'extern YC_TEXT yc_ctrl_get_seltext(HWND h);\n'
+  result += 'extern "C" void krnln_ctrl_set_seltext(HWND h, const wchar_t* t);\n\n'
   result += 'static wchar_t* yc_wcsdup_text(const wchar_t* s);\n'
   result += 'static wchar_t* yc_empty_text(void);\n'
   result += 'static YC_TEXT yc_utf8_to_wide(const char* s);\n'
@@ -5919,6 +5948,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   }
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    try {
     const rawLine = lines[lineIndex]
     pendingBreakpointLine = inSub && breakpointLines.has(lineIndex + 1) ? (lineIndex + 1) : null
     // 剥离流程标记零宽字符（\u200C/\u200D/\u2060/\u200B）与行尾单引号注释
@@ -6229,9 +6259,14 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         const propSetTpl = (propMatch && propCtrlType)
           ? resolveControlMemberTemplate(loadCompileProtocols().controlMembers, propCtrlType, propMatch[2], 'set')
           : null
+        // 确属控件（且名字未被同名变量遮蔽）而属性无 set 绑定 → 友好报错并中止，
+        // 不再把 `控件.属性` 原样发成 C++ 左值（那会变成难懂的 undeclared identifier）。
+        if (propMatch && propCtrlType && !propSetTpl && !resolveVisibleVarType(propMatch[1])) {
+          throwSourceError(lineIndex + 1, `${propCtrlType}“${propMatch[1]}”的属性“${propMatch[2]}”暂不支持在代码中赋值`)
+        }
         const propSetIsText = !!propSetTpl && propSetTpl.includes('{vtext}')
         const emitPropSet = (valueExpr: string) =>
-          emitSubLine(applyMemberTemplate(propSetTpl!, `yc_get_control_handle_by_name(L"${escapeCString(propMatch![1])}")`, valueExpr) + ';')
+          emitSubLine(applyMemberTemplate(propSetTpl!, `yc_get_control_handle_by_name(L"${escapeCString(propMatch![1])}")`, valueExpr, [], `L"${escapeCString(propMatch![1])}"`) + ';')
 
         const rhsCall = parseCommandCall(rightRaw)
         const rhsResolved = rhsCall ? commandMap.get(rhsCall.name) : undefined
@@ -6327,12 +6362,31 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         if (llCall) {
           emitSubLine(`${llCall};`)
         } else if (call && call.name) {
+          // `控件.方法(…)` 未命中任何绑定 → 友好报错（原样发出去必是 undeclared identifier）。
+          // 对象/方法段须均为纯标识符（防 parseCommandCall 吞并运算表达式后误报，与表达式路同款守卫）。
+          const dotAt = call.name.lastIndexOf('.')
+          if (dotAt > 0) {
+            const objName = call.name.slice(0, dotAt)
+            const method = call.name.slice(dotAt + 1)
+            const objType = /^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(objName) && /^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(method)
+              ? resolveProjectControlType(objName)
+              : ''
+            if (objType && !resolveVisibleVarType(objName)) {
+              throwSourceError(lineIndex + 1, `${objType}“${objName}”的方法“${method}”暂不支持在代码中调用`)
+            }
+          }
           const cArgs = call.args.map(a => formatArgForC(a, commandMap, directCallables)).join(', ')
           emitSubLine(`${call.name}(${cArgs});`)
         } else {
           emitSubLine(`/* ${line} */`)
         }
       }
+    }
+    } catch (e) {
+      // 深层转译错误统一补「文件名:行号:」前缀（throwSourceError 已带前缀的原样重抛）
+      const msg = e instanceof Error ? e.message : String(e)
+      if (msg.startsWith(`${fileName}:`)) throw e
+      throwSourceError(lineIndex + 1, msg)
     }
   }
 
@@ -6656,6 +6710,8 @@ function generateMainC(
 
     mainCode += 'HWND yc_get_control_handle_by_name(const wchar_t* ctrlName) {\n'
     mainCode += '    if (!ctrlName || !g_hMainWnd) return NULL;\n'
+    // 窗体名解析到主窗句柄——`窗口名.标题/宽度/可视` 等经通用控件属性绑定直接作用于窗口本身
+    mainCode += `    if (lstrcmpW(ctrlName, L"${escapeCString(winInfo.formName)}") == 0) return g_hMainWnd;\n`
     for (const ctrl of winInfo.controls) {
       mainCode += `    if (lstrcmpW(ctrlName, L"${escapeCString(ctrl.name)}") == 0) return GetDlgItem(g_hMainWnd, IDC_${ctrl.name.toUpperCase()});\n`
     }
@@ -6677,7 +6733,9 @@ function generateMainC(
     mainCode += 'extern "C" wchar_t* krnln_ctrl_get_tag(HWND h);\n'
     mainCode += 'extern "C" wchar_t* krnln_ctrl_get_date(HWND h, const wchar_t* prop);\n'
     mainCode += 'YC_TEXT yc_ctrl_get_tag(HWND h) { wchar_t* p = krnln_ctrl_get_tag(h); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n'
-    mainCode += 'YC_TEXT yc_ctrl_get_date(HWND h, const wchar_t* prop) { wchar_t* p = krnln_ctrl_get_date(h, prop); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n\n'
+    mainCode += 'YC_TEXT yc_ctrl_get_date(HWND h, const wchar_t* prop) { wchar_t* p = krnln_ctrl_get_date(h, prop); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n'
+    mainCode += 'extern "C" wchar_t* krnln_ctrl_get_seltext(HWND h);\n'
+    mainCode += 'YC_TEXT yc_ctrl_get_seltext(HWND h) { wchar_t* p = krnln_ctrl_get_seltext(h); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n\n'
 
     mainCode += 'int yc_text_compare(const wchar_t* left, const wchar_t* right) {\n'
     mainCode += '    const wchar_t* lhs = left ? left : L"";\n'
@@ -6710,13 +6768,26 @@ function generateMainC(
 
     // 控件成员访问按控件类型键控派发：转译前从项目所有窗口(.efw)灌一次「控件名→类型」表。
     // 只有确属控件的 `名.成员` 才走声明式读写，避免与自定义类型成员撞名。
+    // 窗体名也注册为「窗口」类型——`窗口名.标题/宽度/可视` 等经通用绑定生效（启动窗口经名字解析到 g_hMainWnd；
+    // 非启动窗口暂解析不到句柄，运行时为无害空操作，与声明式化前的行为一致）。
     currentProjectControls = new Map<string, string>()
     for (const f of project.files) {
       if (f.type !== 'EFW' && !f.fileName.toLowerCase().endsWith('.efw')) continue
       const efwEditorContent = editorFiles?.get(f.fileName)
-      const ctrls: Array<{ name?: unknown; type?: unknown }> = efwEditorContent
-        ? (() => { try { const d = JSON.parse(efwEditorContent); return Array.isArray(d.controls) ? d.controls : [] } catch { return [] } })()
-        : parseWindowFile(join(project.projectDir, f.fileName)).controls
+      let formName = ''
+      let ctrls: Array<{ name?: unknown; type?: unknown }> = []
+      if (efwEditorContent) {
+        try {
+          const d = JSON.parse(efwEditorContent)
+          ctrls = Array.isArray(d.controls) ? d.controls : []
+          formName = typeof d.name === 'string' ? d.name : ''
+        } catch { /* ignore */ }
+      } else {
+        const parsed = parseWindowFile(join(project.projectDir, f.fileName))
+        ctrls = parsed.controls
+        formName = parsed.formName || ''
+      }
+      if (formName) currentProjectControls.set(formName, '窗口')
       for (const c of ctrls) {
         const nm = typeof c?.name === 'string' ? c.name : ''
         const ty = typeof c?.type === 'string' ? c.type : ''
@@ -6968,6 +7039,19 @@ function generateMainC(
     mainCode += 'int yc_tab_get_cur(const wchar_t* n){ HWND h=yc_get_control_handle_by_name(n); return h?(int)SendMessageW(h,TCM_GETCURSEL,0,0):-1; }\n'
     mainCode += 'int yc_tab_set_cur(const wchar_t* n, int idx){ HWND h=yc_get_control_handle_by_name(n); if(!h) return 0; SendMessageW(h,TCM_SETCURSEL,(WPARAM)idx,0); yc_tab_sync(GetDlgCtrlID(h)); return 1; }\n\n'
 
+    // 时钟「时钟周期」运行时读写：时钟无 HWND，靠生成的 名→定时器id 表；周期存表内（可变），
+    // 置周期 = KillTimer + (周期>0 时) SetTimer；0=不产生时钟事件（易语言语义）。表始终生成（空占位）保证跨编译单元可链接。
+    {
+      const timerCtrls = winInfo.controls.filter(c => c.type === '时钟' || c.type === 'Timer')
+      mainCode += 'struct YcTimerEntry { const wchar_t* name; int id; int period; };\n'
+      const timerEntries = timerCtrls.map(c =>
+        `{ L"${escapeCString(c.name)}", IDC_${c.name.toUpperCase()}, ${readIntProp(c.extraProps?.['时钟周期'], 0)} }`)
+      mainCode += `static YcTimerEntry g_ycTimers[] = { ${timerEntries.length ? timerEntries.join(', ') : '{ NULL, 0, 0 }'} };\n`
+      mainCode += 'static YcTimerEntry* yc_timer_find(const wchar_t* n){ if(!n) return NULL; for(size_t i=0;i<sizeof(g_ycTimers)/sizeof(g_ycTimers[0]);i++){ if(g_ycTimers[i].name && lstrcmpW(g_ycTimers[i].name, n)==0) return &g_ycTimers[i]; } return NULL; }\n'
+      mainCode += 'int yc_timer_get_period(const wchar_t* n){ YcTimerEntry* e=yc_timer_find(n); return e?e->period:0; }\n'
+      mainCode += 'void yc_timer_set_period(const wchar_t* n, int v){ YcTimerEntry* e=yc_timer_find(n); if(!e||!g_hMainWnd) return; if(v<0) v=0; e->period=v; KillTimer(g_hMainWnd, (UINT_PTR)e->id); if(v>0) SetTimer(g_hMainWnd, (UINT_PTR)e->id, (UINT)v, NULL); }\n\n'
+    }
+
     // ===== 画板（DrawPanel）运行时：首个自注册控件窗口类 YCDRAWPANEL + 离屏 backbuffer + GDI 状态机 + 绘画事件 =====
     // 状态/助手/proc 始终生成（同超级链接框/选择夹策略，保证跨编译单元的画板方法调用可链接）。
     const drawPanelCtrls = winInfo.controls.filter(c => c.type === '画板' || c.type === 'DrawPanel')
@@ -7035,6 +7119,10 @@ int yc_dp_getpicheight(const wchar_t* n, const std::vector<unsigned char>& img){
 void yc_dp_copy(const wchar_t* n){ (void)n; /* v1 未实现：跨画板复制需以画板对象作参数，待后续 */ }
 std::vector<unsigned char> yc_dp_getpic(const wchar_t* n, int ow, int oh){ (void)ow; (void)oh; std::vector<unsigned char> out; HWND _h=yc_get_control_handle_by_name(n); std::map<HWND,YcDrawPanelState>::iterator _it=g_ycDrawPanels.find(_h); if(_it==g_ycDrawPanels.end()||!_it->second.memBmp) return out; YcDrawPanelState& st=_it->second; Gdiplus::Bitmap* bmp=Gdiplus::Bitmap::FromHBITMAP(st.memBmp,NULL); if(!bmp) return out; IStream* ps=NULL; if(CreateStreamOnHGlobal(NULL,TRUE,&ps)==S_OK&&ps){ CLSID pngClsid={0x557cf406,0x1a04,0x11d3,{0x9a,0x73,0x00,0x00,0xf8,0x1e,0xf3,0x2e}}; if(bmp->Save(ps,&pngClsid,NULL)==Gdiplus::Ok){ HGLOBAL hg=NULL; GetHGlobalFromStream(ps,&hg); if(hg){ SIZE_T sz=GlobalSize(hg); void* pd=GlobalLock(hg); if(pd&&sz>0){ out.assign((unsigned char*)pd,(unsigned char*)pd+sz); GlobalUnlock(hg); } } } ps->Release(); } delete bmp; return out; }
 int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) return yc_dp_u2px(st,v,1); if(type==2) return yc_dp_u2px(st,v,0); if(type==3) return yc_dp_px2u(st,v,1); if(type==4) return yc_dp_px2u(st,v,0); return v; }
+/* 画板 GDI 状态属性运行时读写：state 存原始枚举值、笔刷每次绘图现建，故直接改字段即对下一次绘图生效。
+   prop id 与 window-units.json 画板 access 绑定一致：0画笔类型 1画笔粗细 2画出方式 3刷子类型 4绘画单位 5自动重画 6画笔颜色 7刷子颜色 8画板背景色 9文本颜色 10文本背景颜色 */
+int yc_dp_get_prop(const wchar_t* n, int prop){ YC_DP_R(n,0); switch(prop){ case 0:return st.penStyle; case 1:return st.penWidth; case 2:return st.rop2; case 3:return st.brushStyle; case 4:return st.unit; case 5:return st.autoRedraw; case 6:return (int)st.penColor; case 7:return (int)st.brushColor; case 8:return (int)st.backColor; case 9:return (int)st.textColor; case 10:return (int)st.textBkColor; } return 0; }
+void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop){ case 0:st.penStyle=v;break; case 1:st.penWidth=v;break; case 2:st.rop2=v;break; case 3:st.brushStyle=v;break; case 4:st.unit=v;break; case 5:st.autoRedraw=v?1:0;break; case 6:st.penColor=(COLORREF)v;break; case 7:st.brushColor=(COLORREF)v;break; case 8:st.backColor=(COLORREF)v;break; case 9:st.textColor=(COLORREF)v;break; case 10:st.textBkColor=(COLORREF)v;break; } if(prop==5||prop==8) InvalidateRect(_h,NULL,FALSE); }
 `
 
     // 创建控件函数
@@ -7338,6 +7426,8 @@ int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) 
       for (const ev of events) {
         // 画板「绘画」事件不走 WM_COMMAND/NOTIFY/SCROLL 通道，由 YcDrawPanelProc 的 WM_PAINT 带 4 个 int 参直接派发。
         if ((ctrl.type === '画板' || ctrl.type === 'DrawPanel') && ev.name === '绘画') continue
+        // 时钟「周期事件」不走 WM_COMMAND/NOTIFY/SCROLL 通道，由主窗 WM_TIMER 按定时器 id 直接派发。
+        if ((ctrl.type === '时钟' || ctrl.type === 'Timer') && ev.name === '周期事件') continue
         const handlerName = `_${ctrl.name.replace(/^_+/, '')}_${ev.name}`
         const proto = resolveEventByProtocol(
           protocolBindings,
@@ -7440,6 +7530,15 @@ int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) 
       mainCode += `WEAK_FUNC void ${b.handlerName}(void) { }\n`
     }
 
+    // 时钟「周期事件」处理函数（WM_TIMER 派发；weak 空实现保证无用户处理时可链接）
+    const timerEventCtrls = winInfo.controls.filter(c => c.type === '时钟' || c.type === 'Timer')
+    for (const ctrl of timerEventCtrls) {
+      const handlerName = `_${ctrl.name.replace(/^_+/, '')}_周期事件`
+      if (declaredHandlers.has(handlerName)) continue
+      declaredHandlers.add(handlerName)
+      mainCode += `WEAK_FUNC void ${handlerName}(void) { }\n`
+    }
+
     mainCode += `WEAK_FUNC void ${windowEventPrefix}_创建完毕(void) { }\n`
     mainCode += `WEAK_FUNC void ${windowEventPrefix}_按下某键(int 键代码, int 功能键状态) { }\n`
     mainCode += `WEAK_FUNC void ${windowEventPrefix}_某键被放开(int 键代码, int 功能键状态) { }\n`
@@ -7515,6 +7614,16 @@ int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) 
     if (hasWindowMenu) mainCode += '        CreateMenus(hWnd);\n'
     mainCode += `        ${windowEventPrefix}_创建完毕();\n`
     mainCode += '        break;\n'
+    // 时钟「周期事件」派发：定时器 id = 控件 IDC 宏值（SetTimer 创建期/yc_timer_set_period 均用它）
+    if (timerEventCtrls.length > 0) {
+      mainCode += '    case WM_TIMER:\n'
+      mainCode += '        switch ((int)wParam) {\n'
+      for (const ctrl of timerEventCtrls) {
+        mainCode += `        case IDC_${ctrl.name.toUpperCase()}: _${ctrl.name.replace(/^_+/, '')}_周期事件(); return 0;\n`
+      }
+      mainCode += '        }\n'
+      mainCode += '        break;\n'
+    }
     mainCode += '    case WM_COMMAND: {\n'
     mainCode += '        int wmId = LOWORD(wParam);\n'
     mainCode += '        int wmEvent = HIWORD(wParam);\n'
