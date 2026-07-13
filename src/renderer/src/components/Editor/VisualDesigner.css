@@ -1188,46 +1188,47 @@
 }
 
 .vd-preview-progress {
-  background: var(--bg-hover);
-  border: 1px solid var(--button-secondary-border);
+  /* Win32 固定观感：不随 IDE 主题（深色主题下 --bg-hover 会把槽画成近黑） */
+  background: #e6e6e6;
+  border: 1px solid #bcbcbc;
 }
 
 .vd-preview-progress-fill {
   width: var(--vd-preview-fill, 40%);
   height: 100%;
-  background: linear-gradient(180deg, var(--success) 0%, color-mix(in srgb, var(--success) 85%, var(--bg-primary)) 100%);
+  background: linear-gradient(180deg, #2fd352 0%, #06b025 100%);
 }
 .vd-preview-progress-vert { display: flex; align-items: flex-end; }
 .vd-preview-progress-vert .vd-preview-progress-fill { width: 100%; height: var(--vd-preview-fill, 40%); }
-.vd-preview-progress-fill-blocks { background: repeating-linear-gradient(90deg, var(--success) 0, var(--success) 8px, transparent 8px, transparent 10px); }
-.vd-preview-progress-vert .vd-preview-progress-fill-blocks { background: repeating-linear-gradient(0deg, var(--success) 0, var(--success) 8px, transparent 8px, transparent 10px); }
+.vd-preview-progress-fill-blocks { background: repeating-linear-gradient(90deg, #06b025 0, #06b025 8px, transparent 8px, transparent 10px); }
+.vd-preview-progress-vert .vd-preview-progress-fill-blocks { background: repeating-linear-gradient(0deg, #06b025 0, #06b025 8px, transparent 8px, transparent 10px); }
 /* 滑块条 */
 .vd-preview-slider { background: transparent; }
 /* 滚动条 */
-.vd-preview-scrollbar { display: flex; align-items: stretch; background: var(--bg-hover); overflow: hidden; font-size: 8px; }
+.vd-preview-scrollbar { display: flex; align-items: stretch; background: #f0f0f0; overflow: hidden; font-size: 8px; }
 .vd-preview-scrollbar-vert { flex-direction: column; }
-.vd-preview-scrollbar-btn { display: flex; align-items: center; justify-content: center; color: var(--text-secondary); background: var(--button-secondary-bg, var(--bg-hover)); flex-shrink: 0; min-width: 12px; min-height: 12px; }
+.vd-preview-scrollbar-btn { display: flex; align-items: center; justify-content: center; color: #505050; background: #f0f0f0; flex-shrink: 0; min-width: 12px; min-height: 12px; }
 .vd-preview-scrollbar-track { position: relative; flex: 1; overflow: hidden; }
-.vd-preview-scrollbar-thumb { position: absolute; background: var(--button-secondary-border); border-radius: 2px; }
+.vd-preview-scrollbar-thumb { position: absolute; background: #cdcdcd; border-radius: 2px; }
 .vd-preview-scrollbar:not(.vd-preview-scrollbar-vert) .vd-preview-scrollbar-thumb { top: 1px; bottom: 1px; left: var(--vd-preview-thumb-pos, 0); width: var(--vd-preview-thumb-size, 30%); }
 .vd-preview-scrollbar-vert .vd-preview-scrollbar-thumb { left: 1px; right: 1px; top: var(--vd-preview-thumb-pos, 0); height: var(--vd-preview-thumb-size, 30%); }
 /* 月历 */
-.vd-preview-monthcal { display: flex; flex-direction: column; background: #fff; color: #000; border: 1px solid var(--button-secondary-border); overflow: hidden; font-size: 9px; }
+.vd-preview-monthcal { display: flex; flex-direction: column; background: #fff; color: #000; border: 1px solid #bcbcbc; overflow: hidden; font-size: 9px; }
 .vd-preview-monthcal-title { text-align: center; background: #2a6099; color: #fff; padding: 1px 0; font-size: 9px; }
 .vd-preview-monthcal-grid { display: grid; grid-template-columns: repeat(7, 1fr); flex: 1; }
 .vd-preview-monthcal-head { text-align: center; color: #888; font-size: 8px; }
 .vd-preview-monthcal-day { text-align: center; font-size: 8px; }
 .vd-preview-monthcal-today { outline: 1px solid #c00; border-radius: 50%; }
 /* 列表框 */
-.vd-preview-listbox { display: flex; flex-direction: column; background: var(--vd-preview-bg, #fff); color: var(--vd-preview-text, #000); border: 1px solid var(--vd-preview-border, var(--button-secondary-border)); overflow: hidden; }
+.vd-preview-listbox { display: flex; flex-direction: column; background: var(--vd-preview-bg, #fff); color: var(--vd-preview-text, #000); border: 1px solid var(--vd-preview-border, #828790); overflow: hidden; }
 .vd-preview-listbox-item { padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; line-height: 1.4; }
 .vd-preview-listbox-item-sel { background: #2a6099; color: #fff; }
 /* 选择夹 */
 .vd-preview-tab { display: flex; flex-direction: column; }
 .vd-preview-tab-headers { display: flex; gap: 1px; }
-.vd-preview-tab-header { padding: 1px 8px; font-size: 11px; background: var(--bg-hover); border: 1px solid var(--button-secondary-border); border-bottom: none; border-radius: 3px 3px 0 0; }
-.vd-preview-tab-header-active { background: var(--bg-primary); font-weight: 600; }
-.vd-preview-tab-body { flex: 1; border: 1px solid var(--button-secondary-border); }
+.vd-preview-tab-header { padding: 1px 8px; font-size: 11px; color: #000; background: #f0f0f0; border: 1px solid #bcbcbc; border-bottom: none; border-radius: 3px 3px 0 0; }
+.vd-preview-tab-header-active { background: #fdfdfd; font-weight: 600; }
+.vd-preview-tab-body { flex: 1; border: 1px solid #bcbcbc; }
 
 .vd-preview-compact {
   background: var(--bg-input);
