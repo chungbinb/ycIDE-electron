@@ -6663,7 +6663,9 @@ function generateMainC(
     mainCode += `static int g_nWidth = ${winInfo.width};\n`
     mainCode += `static int g_nHeight = ${winInfo.height};\n`
     mainCode += 'static HINSTANCE g_hInstance;\n'
-    mainCode += 'static HWND g_hMainWnd = NULL;\n\n'
+    mainCode += 'static HWND g_hMainWnd = NULL;\n'
+    // 窗体背景刷全局化：类注册与 WM_PRINTCLIENT（主题化公共控件向父窗要背景）共用
+    mainCode += 'static HBRUSH g_hFormBgBrush = NULL;\n\n'
 
     // 底图（背景图片）/ 图标 / 按钮图片：把选中的图片文件字节内嵌为数组，运行时经 GDI+ 从内存流解码
     const backImageBytes = winInfo.backImage ? decodeImageDataUrl(winInfo.backImage) : null
@@ -7836,34 +7838,42 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       mainCode += '        break;\n'
       mainCode += '    }\n'
     }
+    // 底图绘制块（要求作用域内已有 HDC hdc）——WM_PAINT 与 WM_PRINTCLIENT 共用
+    let backImageDrawBlock = ''
+    if (backImageBytes) {
+      backImageDrawBlock += '        if (g_backImage) {\n'
+      backImageDrawBlock += '            RECT crc; GetClientRect(hWnd, &crc);\n'
+      backImageDrawBlock += '            int cw = (int)(crc.right - crc.left), ch = (int)(crc.bottom - crc.top);\n'
+      backImageDrawBlock += '            Gdiplus::Graphics graphics(hdc);\n'
+      const biMode = winInfo.backImageMode
+      if (biMode === 4) {
+        backImageDrawBlock += '            graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);\n'
+        backImageDrawBlock += '            graphics.DrawImage(g_backImage, 0, 0, cw, ch);\n'
+      } else if (biMode === 0) {
+        backImageDrawBlock += '            Gdiplus::TextureBrush texBrush(g_backImage);\n'
+        backImageDrawBlock += '            graphics.FillRectangle(&texBrush, 0, 0, cw, ch);\n'
+      } else {
+        backImageDrawBlock += '            int iw = (int)g_backImage->GetWidth(), ih = (int)g_backImage->GetHeight();\n'
+        if (biMode === 1) backImageDrawBlock += '            int ix = 0, iy = 0;\n'
+        else if (biMode === 2) backImageDrawBlock += '            int ix = (cw - iw) / 2, iy = (ch - ih) / 2;\n'
+        else backImageDrawBlock += '            int ix = cw - iw, iy = ch - ih;\n'
+        backImageDrawBlock += '            graphics.DrawImage(g_backImage, ix, iy, iw, ih);\n'
+      }
+      backImageDrawBlock += '        }\n'
+    }
+    // 主题化公共控件（滑块条等）经 DrawThemeParentBackground 向父窗要背景——DefWindowProc 不处理
+    // WM_PRINTCLIENT，缺此处理则主题引擎的内存位图保持全黑（滑块条黑底）。填窗体背景刷，有底图连底图一起画。
+    mainCode += '    case WM_PRINTCLIENT: {\n'
+    mainCode += '        HDC hdc = (HDC)wParam;\n'
+    mainCode += '        RECT prc; GetClientRect(hWnd, &prc);\n'
+    mainCode += '        FillRect(hdc, &prc, g_hFormBgBrush ? g_hFormBgBrush : GetSysColorBrush(COLOR_BTNFACE));\n'
+    mainCode += backImageDrawBlock
+    mainCode += '        return 0;\n'
+    mainCode += '    }\n'
     mainCode += '    case WM_PAINT: {\n'
     mainCode += '        PAINTSTRUCT ps;\n'
     mainCode += '        HDC hdc = BeginPaint(hWnd, &ps);\n'
-    if (backImageBytes) {
-      // 底图：按「底图方式」绘制（透明区域由类背景刷透出）
-      mainCode += '        if (g_backImage) {\n'
-      mainCode += '            RECT crc; GetClientRect(hWnd, &crc);\n'
-      mainCode += '            int cw = (int)(crc.right - crc.left), ch = (int)(crc.bottom - crc.top);\n'
-      mainCode += '            Gdiplus::Graphics graphics(hdc);\n'
-      const mode = winInfo.backImageMode
-      if (mode === 4) {
-        // 缩放：拉伸铺满
-        mainCode += '            graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);\n'
-        mainCode += '            graphics.DrawImage(g_backImage, 0, 0, cw, ch);\n'
-      } else if (mode === 0) {
-        // 平铺：纹理刷铺满
-        mainCode += '            Gdiplus::TextureBrush texBrush(g_backImage);\n'
-        mainCode += '            graphics.FillRectangle(&texBrush, 0, 0, cw, ch);\n'
-      } else {
-        // 居左上(1)/居中(2)/居右下(3)：原尺寸定位
-        mainCode += '            int iw = (int)g_backImage->GetWidth(), ih = (int)g_backImage->GetHeight();\n'
-        if (mode === 1) mainCode += '            int ix = 0, iy = 0;\n'
-        else if (mode === 2) mainCode += '            int ix = (cw - iw) / 2, iy = (ch - ih) / 2;\n'
-        else mainCode += '            int ix = cw - iw, iy = ch - ih;\n'
-        mainCode += '            graphics.DrawImage(g_backImage, ix, iy, iw, ih);\n'
-      }
-      mainCode += '        }\n'
-    }
+    mainCode += backImageDrawBlock
     mainCode += '        EndPaint(hWnd, &ps);\n'
     mainCode += '        break;\n'
     mainCode += '    }\n'
@@ -8024,8 +8034,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       : '    wcex.hIcon = LoadIcon(NULL, IDI_APPLICATION);\n'
     mainCode += `    wcex.hCursor = LoadCursor(NULL, ${mapMousePointerCursor(winInfo.mousePointer)});\n`
     mainCode += winInfo.backColor !== 0
-      ? `    wcex.hbrBackground = CreateSolidBrush((COLORREF)${winInfo.backColor >>> 0});\n`
-      : '    wcex.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);\n'
+      ? `    g_hFormBgBrush = CreateSolidBrush((COLORREF)${winInfo.backColor >>> 0});\n    wcex.hbrBackground = g_hFormBgBrush;\n`
+      : '    g_hFormBgBrush = GetSysColorBrush(COLOR_BTNFACE);\n    wcex.hbrBackground = g_hFormBgBrush;\n'
     mainCode += '    wcex.lpszMenuName = NULL;\n'
     mainCode += '    wcex.lpszClassName = g_szClassName;\n'
     mainCode += iconImageBytes
