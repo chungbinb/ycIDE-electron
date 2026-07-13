@@ -12,9 +12,16 @@ import { eycToInternalFormat, eycToYiFormat, sanitizePastedTextForCurrent, extra
 import { parseLines } from './eycBlocks'
 import { buildMultiLinePasteResult } from './editorPasteUtils'
 import { buildMonacoThemeTokens } from './monacoThemeTokens'
+import { parseFontSpec, stringifyFontSpec } from './fontSpec'
 import Icon from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './Editor.css'
+
+// 同时具备「字体」与独立「文本颜色」属性的控件类型：这两处文本色需双向同步（见 updateFormProperty）。
+// 与 lib/krnln/window-units.json 中「字体+文本颜色」并存的 10 个单元一致；控件 type 存中文名（.efw/addControl 均用中文），故只列中文。
+const FONT_TEXTCOLOR_SYNC_TYPES = new Set([
+  '标签', '编辑框', '选择框', '单选框', '列表框', '组合框', '分组框', '画板', '月历', '超级链接框',
+])
 
 /** 注册 eyc 语言到 Monaco Editor */
 function registerEycLanguage(monaco: Monaco): void {
@@ -1174,6 +1181,29 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             }
             if (boolDef) {
               return { ...c, [boolDef.field]: boolDef.invert ? !value : value }
+            }
+            // 「字体」内的文本颜色 ↔ 独立「文本颜色」属性双向同步（二者代表同一文本色；运行时多数控件用独立
+            // 「文本颜色」上色而字体对话框只显示 font.color——不同步则所见≠所得）。仅同时具备两者的控件类型生效。
+            if (FONT_TEXTCOLOR_SYNC_TYPES.has(c.type) && (propName === '字体' || propName === '文本颜色')) {
+              const next = { ...c.properties, [propName]: value }
+              if (propName === '字体') {
+                const newFont = parseFontSpec(typeof value === 'string' ? value : '')
+                // 清除整个字体（值为空/不可解析）不改文本颜色（清字体≠清颜色，避免抹掉用户独立设的文本色）。
+                if (newFont) {
+                  // 仅当 font.color 相对旧值真的变了才镜像（改字族/字号/粗体不应重置文本颜色）。
+                  const oldFc = parseFontSpec(typeof c.properties['字体'] === 'string' ? (c.properties['字体'] as string) : '')?.color
+                  if (newFont.color !== oldFc) next['文本颜色'] = typeof newFont.color === 'number' ? newFont.color : 0  // undefined=默认→0(黑)
+                }
+              } else {
+                // 独立文本颜色变了 → 写回已有字体的 font.color（0=默认→undefined，非 0=显式色）。
+                // 无字体的控件不凭空建字体（避免把系统默认字体锁成宋体9改变外观）——此时独立文本颜色即权威，codegen 也读它。
+                const curFont = parseFontSpec(typeof c.properties['字体'] === 'string' ? (c.properties['字体'] as string) : '')
+                if (curFont) {
+                  const tc = Number(value)
+                  next['字体'] = stringifyFontSpec({ ...curFont, color: tc === 0 ? undefined : tc })
+                }
+              }
+              return { ...c, properties: next }
             }
             return { ...c, properties: { ...c.properties, [propName]: value } }
           })
