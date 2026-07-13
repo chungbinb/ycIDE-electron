@@ -1928,7 +1928,8 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
                 const isBgMode = p.name === '底图方式'
                 const isGradBgSub = p.name === '渐变背景颜色1' || p.name === '渐变背景颜色2' || p.name === '渐变背景颜色3'
                 const isGradBorderSub = p.name === '渐变边框宽度' || p.name === '渐变边框颜色1' || p.name === '渐变边框颜色2' || p.name === '渐变边框颜色3'
-                const isSubOption = isTabOrder || isSpinLimit || isBgMode || p.name === '渐变背景方式' || isGradBgSub || isGradBorderSub
+                // 渐变背景方式 是下面三个渐变背景颜色的父项，与 底图/边框 同级不缩进（只缩进其子颜色项）
+                const isSubOption = isTabOrder || isSpinLimit || isBgMode || isGradBgSub || isGradBorderSub
                 const disabled = (isTabOrder && !canFocusOn) || (isSpinLimit && spinModeVal !== 1)
                   || (isBgMode && !hasCtrlBackImage)
                   || (isGradBgSub && gradBgMode === 0)     // 渐变背景方式=通常(0) → 三颜色无效
