@@ -1036,12 +1036,12 @@
         {
           "name": "背景颜色",
           "englishName": "BackColor",
-          "description": "标签背景颜色；效果为透明时不起作用。",
+          "description": "标签背景颜色；效果为透明时不起作用；0 表示默认（融入窗口底色）。",
           "type": 0,
           "typeName": "颜色",
           "isReadOnly": false,
           "pickOptions": [],
-          "defaultValue": 16777215
+          "defaultValue": 0
         },
         {
           "name": "底图",
@@ -1584,12 +1584,12 @@
         {
           "name": "背景颜色",
           "englishName": "BackColor",
-          "description": "选择框背景颜色。",
+          "description": "选择框背景颜色；0 表示默认（融入窗口底色）。",
           "type": 0,
           "typeName": "颜色",
           "isReadOnly": false,
           "pickOptions": [],
-          "defaultValue": 16777215
+          "defaultValue": 0
         },
         {
           "name": "字体",
@@ -1745,12 +1745,12 @@
         {
           "name": "背景颜色",
           "englishName": "BackColor",
-          "description": "单选框背景颜色。",
+          "description": "单选框背景颜色；0 表示默认（融入窗口底色）。",
           "type": 0,
           "typeName": "颜色",
           "isReadOnly": false,
           "pickOptions": [],
-          "defaultValue": 16777215
+          "defaultValue": 0
         },
         {
           "name": "字体",
@@ -2646,12 +2646,12 @@
         {
           "name": "背景颜色",
           "englishName": "BackColor",
-          "description": "分组框背景颜色。",
+          "description": "分组框背景颜色；0 表示默认（融入窗口底色）。",
           "type": 0,
           "typeName": "颜色",
           "isReadOnly": false,
           "pickOptions": [],
-          "defaultValue": 16777215
+          "defaultValue": 0
         },
         {
           "name": "字体",

@@ -245,6 +245,35 @@ describe('控件成员声明式派发', () => {
     rmSync(dir, { recursive: true, force: true })
   }, 120000)
 
+  it.skipIf(!zigAvailable)('标签/选择框显式白色背景进运行时颜色表(白=白)，未设背景不进表(默认融入)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ycide-whitebg-'))
+    writeFileSync(join(dir, 'p.epp'), [
+      '# YiCode Project File', 'Version=1', 'ProjectName=白底验证',
+      'OutputType=WindowsApp', 'Platform=windows', '',
+      'File=EFW|_启动窗口.efw|1', 'File=EYC|_启动窗口.eyc|0', '',
+    ].join('\n'), 'utf-8')
+    writeFileSync(join(dir, '_启动窗口.efw'), JSON.stringify({
+      name: '_启动窗口', title: '窗口', width: 400, height: 300, sourceFile: '_启动窗口.eyc',
+      controls: [
+        { id: 'c1', type: '标签', name: '白标', left: 10, top: 10, width: 80, height: 24, text: '白', visible: true, enabled: true, properties: { '背景颜色': 16777215 } },
+        { id: 'c2', type: '标签', name: '素标', left: 10, top: 40, width: 80, height: 24, text: '素', visible: true, enabled: true, properties: {} },
+        { id: 'c3', type: '选择框', name: '白选', left: 10, top: 70, width: 80, height: 24, text: '选', visible: true, enabled: true, properties: { '背景颜色': 16777215 } },
+      ],
+    }), 'utf-8')
+    writeFileSync(join(dir, '_启动窗口.eyc'), ['.版本 2', '.程序集 窗口程序集_启动窗口', '', '.子程序 __启动窗口_创建完毕', ''].join('\n'), 'utf-8')
+
+    const before = messages.length
+    const result = await compileProject({ projectDir: dir, mode: 'run' })
+    const errors = messages.slice(before).filter(m => m.type === 'error').map(m => m.text).join('\n')
+    expect(result.success, `编译失败：\n${errors}`).toBe(true)
+
+    const mainCpp = readFileSync(join(dir, 'temp', 'main.cpp'), 'utf-8')
+    expect(mainCpp).toContain('{ IDC_白标, (COLORREF)0, (COLORREF)16777215, NULL, 0 }')  // 显式白 → 进表画白
+    expect(mainCpp).not.toContain('IDC_素标, (COLORREF)')                                  // 未设 → 不进表(融入窗口)
+    expect(mainCpp).toContain('{ IDC_白选, (COLORREF)0, (COLORREF)16777215, NULL, 0 }')  // 选择框同款
+    rmSync(dir, { recursive: true, force: true })
+  }, 120000)
+
   it.skipIf(!zigAvailable)('未绑定的控件属性/方法在转译期给出带行号的中文错误(不再是 undeclared identifier)', async () => {
     const mkProj = (eycLines: string[]) => {
       const dir = mkdtempSync(join(tmpdir(), 'ycide-gaperr-'))
