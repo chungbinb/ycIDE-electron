@@ -6672,8 +6672,8 @@ function generateMainC(
     const iconImageBytes = winInfo.iconImage ? decodeImageDataUrl(winInfo.iconImage) : null
     // 按索引与 winInfo.controls 对齐（controls 已按停留顺序排序，两处循环同序）
     const controlImageBytes: Array<Buffer | null> = winInfo.controls.map(c => {
-      // 图片框/按钮用「图片」，画板用「底图」
-      const img = (c.type === '画板' || c.type === 'DrawPanel') ? c.extraProps?.['底图'] : c.extraProps?.['图片']
+      // 图片框/按钮用「图片」，画板/标签用「底图」
+      const img = (c.type === '画板' || c.type === 'DrawPanel' || c.type === '标签' || c.type === 'Label') ? c.extraProps?.['底图'] : c.extraProps?.['图片']
       return (typeof img === 'string' && img.startsWith('data:image')) ? decodeImageDataUrl(img) : null
     })
     const hasAnyControlImage = controlImageBytes.some(Boolean)
@@ -6842,12 +6842,15 @@ function generateMainC(
           if (editCodegenInfo.needsInputFilter) anyEditNeedsInputFilter = true
         } else if (ctrl.type === '标签' || ctrl.type === 'Label') {
           const lc = buildStdLabelCodegen(ctrl.extraProps)
-          if (lc.colorEntry || lc.transparent) {
+          // 有底图的标签：文字必须以透明背景模式画在图上（transparent 路径 = SetBkMode(TRANSPARENT)+NULL_BRUSH，
+          // 擦除由 YcLblBgProc 子类的 WM_ERASEBKGND 负责画图），否则文字自带底色矩形会在图上打洞。
+          const lblHasBgImg = !!controlImageBytes[winInfo.controls.indexOf(ctrl)]
+          if (lc.colorEntry || lc.transparent || lblHasBgImg) {
             editColorEntries.push({
               idMacro: `IDC_${ctrl.name.toUpperCase()}`,
               textColor: lc.colorEntry?.textColor ?? 0,
               backColor: lc.colorEntry?.backColor ?? 0xffffff,
-              transparent: lc.transparent ? 1 : 0,
+              transparent: (lc.transparent || lblHasBgImg) ? 1 : 0,
             })
           }
         } else if (ctrl.type === '选择框' || ctrl.type === 'CheckBox' || ctrl.type === '单选框' || ctrl.type === 'RadioBox') {
@@ -6951,6 +6954,54 @@ function generateMainC(
         mainCode += `    { ${e.idMacro}, ${e.shape}, ${e.effect}, ${e.lineStyle}, ${e.lineWidth}, (COLORREF)${e.lineColor >>> 0}, (COLORREF)${e.fillColor >>> 0}, (COLORREF)${e.backColor >>> 0} },\n`
       }
       mainCode += '};\n\n'
+    }
+
+    // 标签「底图」运行时：g_ycLblBgs 表（内嵌图字节，懒解码为 GDI+ Image）+ YcLblBgProc 子类。
+    // WM_ERASEBKGND：先填窗体背景刷（图有透明区/未铺满时透出窗体），再按「底图方式」(0居左上/1平铺/2居中)
+    // 画图并返回 1；标签文字由 STATIC 自身 WM_PAINT 以透明背景模式（颜色表 transparent 路径）叠加。
+    const labelBgEntries: Array<{ idMacro: string; imgIdx: number; mode: number }> = []
+    {
+      let lblCtrlIdx = 0
+      for (const ctrl of winInfo.controls) {
+        const idx = lblCtrlIdx++
+        if (!(ctrl.type === '标签' || ctrl.type === 'Label')) continue
+        if (!controlImageBytes[idx]) continue
+        labelBgEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, imgIdx: idx, mode: readIntProp(ctrl.extraProps?.['底图方式'], 0) })
+      }
+    }
+    if (labelBgEntries.length > 0) {
+      mainCode += '/* 标签底图表（懒解码 GDI+ Image）与子类过程 */\n'
+      mainCode += 'typedef struct { int id; int mode; const unsigned char* data; unsigned int size; Gdiplus::Image* img; } YcLblBgEntry;\n'
+      mainCode += 'static YcLblBgEntry g_ycLblBgs[] = {\n'
+      for (const e of labelBgEntries) {
+        mainCode += `    { ${e.idMacro}, ${e.mode}, g_ctrlImg_${e.imgIdx}, g_ctrlImgSize_${e.imgIdx}, NULL },\n`
+      }
+      mainCode += '};\n'
+      mainCode += 'static LRESULT CALLBACK YcLblBgProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR ref) {\n'
+      mainCode += '    if (m == WM_ERASEBKGND) {\n'
+      mainCode += '        YcLblBgEntry* e = (YcLblBgEntry*)ref;\n'
+      mainCode += '        HDC hdc = (HDC)w; RECT rc; GetClientRect(h, &rc);\n'
+      mainCode += '        FillRect(hdc, &rc, g_hFormBgBrush ? g_hFormBgBrush : GetSysColorBrush(COLOR_BTNFACE));\n'
+      mainCode += '        if (!e->img && e->data && e->size > 0) {\n'
+      mainCode += '            HGLOBAL hm = GlobalAlloc(GMEM_MOVEABLE, e->size);\n'
+      mainCode += '            if (hm) { void* pm = GlobalLock(hm); if (pm) { memcpy(pm, e->data, e->size); GlobalUnlock(hm); }\n'
+      mainCode += '                IStream* ps = NULL;\n'
+      mainCode += '                if (CreateStreamOnHGlobal(hm, TRUE, &ps) == S_OK && ps) { e->img = Gdiplus::Image::FromStream(ps, FALSE); if (e->img && e->img->GetLastStatus() != Gdiplus::Ok) { delete e->img; e->img = NULL; } ps->Release(); }\n'
+      mainCode += '                else { GlobalFree(hm); }\n'
+      mainCode += '            }\n'
+      mainCode += '        }\n'
+      mainCode += '        if (e->img) {\n'
+      mainCode += '            Gdiplus::Graphics g(hdc); int cw = rc.right - rc.left, ch = rc.bottom - rc.top;\n'
+      mainCode += '            int iw = (int)e->img->GetWidth(), ih = (int)e->img->GetHeight();\n'
+      mainCode += '            if (e->mode == 1) { Gdiplus::TextureBrush tb(e->img); g.FillRectangle(&tb, 0, 0, cw, ch); }\n'
+      mainCode += '            else if (e->mode == 2) { g.DrawImage(e->img, (cw - iw) / 2, (ch - ih) / 2, iw, ih); }\n'
+      mainCode += '            else { g.DrawImage(e->img, 0, 0, iw, ih); }\n'
+      mainCode += '        }\n'
+      mainCode += '        return 1;\n'
+      mainCode += '    }\n'
+      mainCode += '    if (m == WM_NCDESTROY) RemoveWindowSubclass(h, YcLblBgProc, 1);\n'
+      mainCode += '    return DefSubclassProc(h, m, w, l);\n'
+      mainCode += '}\n\n'
     }
 
     // 超级链接框表：SysLink 控件，点击(NM_CLICK)或调用「跳转」方法时按类型 ShellExecute 打开邮件/网址。
@@ -7143,6 +7194,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     let ctrlId = 1001
     for (const ctrl of winInfo.controls) {
       const ctrlIndex = ctrlId - 1001  // 与 controlImageBytes 同序对齐（loop 顶 ctrlId 尚未自增）
+      const lblBgEntryIdx = labelBgEntries.findIndex(e => e.imgIdx === ctrlIndex)
       const unitInfo = allUnits.find(u => u.name === ctrl.type || u.englishName === ctrl.type)
       const libraryFileName = unitInfo ? (libNameToFileName.get(normalizeKey(unitInfo.libraryName)) || '') : ''
       const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
@@ -7254,6 +7306,10 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       mainCode += `        ${style},\n`
       mainCode += `        ${ctrl.x}, ${ctrl.y}, ${ctrl.width}, ${ctrl.height},\n`
       mainCode += `        hWndParent, (HMENU)${ctrlId++}, g_hInstance, NULL);\n`
+      // 标签底图：创建后即挂 YcLblBgProc 子类（WM_ERASEBKGND 画底图），ref 传表项指针
+      if (lblBgEntryIdx >= 0) {
+        mainCode += `    SetWindowSubclass(hCtrl, YcLblBgProc, 1, (DWORD_PTR)&g_ycLblBgs[${lblBgEntryIdx}]);\n`
+      }
       // 字体：控件设了「字体」则 CreateFontW 专用字体，否则用默认 GUI 字体（所有控件通用）
       // 画板不走 WM_SETFONT（自绘用 st.hFont，在下方画板分支里创建），跳过通用字体块。
       const ctrlFont = parseControlFont(ctrl.extraProps?.['字体'])

@@ -1877,6 +1877,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const vAlign = Number(props['纵向对齐方式'] ?? 0)  // 0顶 1中 2底
         const border = Number(props['边框'] ?? 0)          // 0无 1凹入 2凸出 3浅凹 4镜框 5单线 6渐变镜框
         const transparent = Number(props['效果'] ?? 0) === 4
+        // 底图（data URL）+ 底图方式（0居左上/1平铺/2居中）——与运行时 YcLblBgProc 绘制一致
+        const lblBgImg = typeof props['底图'] === 'string' && (props['底图'] as string).startsWith('data:image') ? (props['底图'] as string) : ''
+        const lblBgMode = Number(props['底图方式'] ?? 0)
         // 背景颜色 -1=默认（融入窗口，与运行时不进颜色表一致；0 是纯黑的合法 COLORREF 不能当哨兵）；显式白/黑=真白/真黑。透明只由「效果=透明」驱动
         const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : -1
         const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
@@ -1887,6 +1890,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         return (
           <div
             className={`vd-preview vd-preview-label${borderCls}`}
+            style={lblBgImg ? {
+              backgroundImage: `url("${lblBgImg}")`,
+              backgroundRepeat: lblBgMode === 1 ? 'repeat' : 'no-repeat',
+              backgroundPosition: lblBgMode === 2 ? 'center' : '0 0',
+              backgroundSize: 'auto',
+            } : undefined}
             ref={(element) => setCssVars(element, {
               '--vd-preview-bg': transparent || bgNum < 0 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
               '--vd-preview-text': colorFromNumber(textNum) || controlColors.text,
