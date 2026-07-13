@@ -1454,12 +1454,16 @@ function hexStrToColorref(text: string): number | null {
   return ((v >> 16) & 0xff) | (((v >> 8) & 0xff) << 8) | ((v & 0xff) << 16)
 }
 
-/** 可编辑颜色属性单元格：色块弹系统取色器 + 可直接输入/粘贴/复制 #RRGGBB；存储 COLORREF（0xBBGGRR） */
-function EditableColorCell({ value, onChange, ariaLabel = '颜色' }: { value: number; onChange: (v: number) => void; ariaLabel?: string }): React.JSX.Element {
-  const n = Number.isFinite(value) ? (Math.max(0, Math.trunc(value)) & 0xffffff) : 0
+/** 可编辑颜色属性单元格：色块弹系统取色器 + 可直接输入/粘贴/复制 #RRGGBB；存储 COLORREF（0xBBGGRR）。
+ * 负值（-1）为「默认」哨兵（融入型控件背景颜色的未设置态；0 是纯黑的合法 COLORREF 不能当哨兵）——
+ * 显示为「默认」，输入「默认」或清空后回车可复位到该属性声明的默认值。 */
+function EditableColorCell({ value, onChange, ariaLabel = '颜色', resetValue }: { value: number; onChange: (v: number) => void; ariaLabel?: string; resetValue?: number }): React.JSX.Element {
+  const isDefault = !Number.isFinite(value) || value < 0
+  const n = isDefault ? 0xffffff : (Math.trunc(value) & 0xffffff)
   const hex = colorrefToHexStr(n)
-  const [draft, setDraft] = useState(hex)
-  useEffect(() => { setDraft(hex) }, [hex])
+  const display = isDefault ? '默认' : hex
+  const [draft, setDraft] = useState(display)
+  useEffect(() => { setDraft(display) }, [display])
   // 颜色选择器按住滑动会连发大量 onChange；每次都触发整窗体 setTabs + 撤销栈的全量 JSON.stringify 比较，
   // 高频（叠加窗体里的底图/图片 base64）会拖垮渲染进程直至崩溃。故节流到 ~90ms 提交一次（滑块本地即时预览），
   // 并保证最后一个值一定被提交（尾随 flush + blur flush）。
@@ -1477,9 +1481,15 @@ function EditableColorCell({ value, onChange, ariaLabel = '颜色' }: { value: n
     else if (!timerRef.current) timerRef.current = setTimeout(flush, 90)
   }
   const commitHex = (): void => {
-    const cr = hexStrToColorref(draft)
+    const trimmed = draft.trim()
+    if (trimmed === '' || trimmed === '默认') {
+      onChange(typeof resetValue === 'number' ? resetValue : -1)
+      setDraft(display)
+      return
+    }
+    const cr = hexStrToColorref(trimmed)
     if (cr !== null) onChange(cr)
-    else setDraft(hex)  // 无效回退
+    else setDraft(display)  // 无效回退
   }
   const swatchHex = /^#[0-9a-fA-F]{6}$/.test(draft) ? draft : hex
   return (
@@ -1710,7 +1720,7 @@ function renderEditableCell(prop: LibUnitProperty, val: string | number | boolea
   }
   // 颜色类型 → 色块 + 系统颜色选择器
   if (prop.typeName === '颜色' || prop.typeName === '颜色(透明)' || prop.typeName === '背景颜色') {
-    return <EditableColorCell value={typeof val === 'number' ? val : Number(val) || 0} ariaLabel={prop.name} onChange={v => onChange(v)} />
+    return <EditableColorCell value={typeof val === 'number' ? val : Number(val) || 0} ariaLabel={prop.name} resetValue={typeof prop.defaultValue === 'number' ? prop.defaultValue : undefined} onChange={v => onChange(v)} />
   }
   // 图片类型 → 文件选择器（存 base64 data URL）
   if (prop.typeName === '图片') {

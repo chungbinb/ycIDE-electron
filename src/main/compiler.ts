@@ -1880,7 +1880,7 @@ function buildStdLabelCodegen(extraProps: Record<string, unknown>): {
   const border = readIntProp(extraProps['边框'], 0)          // 0无 1凹入 2凸出 3浅凹 4镜框 5单线 6渐变镜框
   const effect = readIntProp(extraProps['效果'], 0)          // 0通常 1凹入 2凸出 3阴影 4透明
   const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], 0)  // 0=默认（不进颜色表，融入窗口）；显式白=真白
+  const backColor = readIntProp(extraProps['背景颜色'], -1)  // -1=默认（不进颜色表，融入窗口）；0 是纯黑合法色，显式白/黑=真白/真黑
   const autoWrap = readBoolProp(extraProps['是否自动折行'], false)
   const parts = ['WS_CHILD', 'SS_NOTIFY']
   // 横向对齐：居中/右总是折行；左对齐时按「是否自动折行」选 SS_LEFT(折行)/SS_LEFTNOWORDWRAP(不折行)
@@ -1895,7 +1895,7 @@ function buildStdLabelCodegen(extraProps: Record<string, unknown>): {
   return {
     style: parts.join(' | '),
     exStyle,
-    colorEntry: (textColor !== 0 || backColor !== 0) ? { textColor, backColor: backColor === 0 ? 0xffffff : backColor } : null,
+    colorEntry: (textColor !== 0 || backColor >= 0) ? { textColor, backColor: backColor >= 0 ? backColor : 0xffffff } : null,
     transparent: effect === 4,
   }
 }
@@ -1913,7 +1913,7 @@ function buildStdCheckableCodegen(extraProps: Record<string, unknown>, isRadio: 
   const leftText = readBoolProp(extraProps['标题居左'], false)
   const checked = readBoolProp(extraProps['选中'], false)
   const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], 0)  // 0=默认（不进颜色表，融入窗口）；显式白=真白
+  const backColor = readIntProp(extraProps['背景颜色'], -1)  // -1=默认（不进颜色表，融入窗口）；0 是纯黑合法色，显式白/黑=真白/真黑
   const parts = ['WS_CHILD', 'WS_TABSTOP', isRadio ? 'BS_AUTORADIOBUTTON' : 'BS_AUTOCHECKBOX']
   if (pushLike) parts.push('BS_PUSHLIKE')
   if (flat) parts.push('BS_FLAT')
@@ -1923,7 +1923,7 @@ function buildStdCheckableCodegen(extraProps: Record<string, unknown>, isRadio: 
   return {
     style: parts.join(' | '),
     checked,
-    colorEntry: (textColor !== 0 || backColor !== 0) ? { textColor, backColor: backColor === 0 ? 0xffffff : backColor } : null,
+    colorEntry: (textColor !== 0 || backColor >= 0) ? { textColor, backColor: backColor >= 0 ? backColor : 0xffffff } : null,
   }
 }
 
@@ -1933,12 +1933,12 @@ function buildStdGroupBoxCodegen(extraProps: Record<string, unknown>): {
 } {
   const hAlign = readIntProp(extraProps['对齐方式'], 0)  // 0左 1中 2右
   const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], 0)  // 0=默认（不进颜色表，融入窗口）；显式白=真白
+  const backColor = readIntProp(extraProps['背景颜色'], -1)  // -1=默认（不进颜色表，融入窗口）；0 是纯黑合法色，显式白/黑=真白/真黑
   const parts = ['WS_CHILD', 'BS_GROUPBOX']
   parts.push(hAlign === 1 ? 'BS_CENTER' : hAlign === 2 ? 'BS_RIGHT' : 'BS_LEFT')
   return {
     style: parts.join(' | '),
-    colorEntry: (textColor !== 0 || backColor !== 0) ? { textColor, backColor: backColor === 0 ? 0xffffff : backColor } : null,
+    colorEntry: (textColor !== 0 || backColor >= 0) ? { textColor, backColor: backColor >= 0 ? backColor : 0xffffff } : null,
   }
 }
 

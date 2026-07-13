@@ -1877,8 +1877,8 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const vAlign = Number(props['纵向对齐方式'] ?? 0)  // 0顶 1中 2底
         const border = Number(props['边框'] ?? 0)          // 0无 1凹入 2凸出 3浅凹 4镜框 5单线 6渐变镜框
         const transparent = Number(props['效果'] ?? 0) === 4
-        // 背景颜色 0=默认（融入窗口，与运行时 STATIC 不进颜色表一致）；显式白=真白。透明只由「效果=透明」驱动
-        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 0
+        // 背景颜色 -1=默认（融入窗口，与运行时不进颜色表一致；0 是纯黑的合法 COLORREF 不能当哨兵）；显式白/黑=真白/真黑。透明只由「效果=透明」驱动
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : -1
         const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
         const toFlex = (n: number): string => n === 1 ? 'center' : n === 2 ? 'flex-end' : 'flex-start'
         const borderCls = border === 1 || border === 3 ? ' vd-preview-label-sunken'
@@ -1888,7 +1888,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           <div
             className={`vd-preview vd-preview-label${borderCls}`}
             ref={(element) => setCssVars(element, {
-              '--vd-preview-bg': transparent || bgNum === 0 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
+              '--vd-preview-bg': transparent || bgNum < 0 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
               '--vd-preview-text': colorFromNumber(textNum) || controlColors.text,
               '--vd-preview-justify': toFlex(hAlign),
               '--vd-preview-align-items': vAlign === 0 ? 'flex-start' : vAlign === 2 ? 'flex-end' : 'center',
@@ -1979,13 +1979,13 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const checked = props['选中'] === true || props['选中'] === '真'
         const leftText = props['标题居左'] === true || props['标题居左'] === '真'
         const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
-        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 0
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : -1
         return (
           <div
             className={`vd-preview vd-preview-check-like${leftText ? ' vd-preview-check-leftcap' : ''}`}
             ref={(element) => setCssVars(element, {
               '--vd-preview-text': colorFromNumber(textNum) || controlColors.text,
-              '--vd-preview-bg': bgNum === 0 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
+              '--vd-preview-bg': bgNum < 0 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
             })}
           >
             <span className={`${isRadio ? 'vd-preview-radio' : 'vd-preview-checkbox'}${checked ? ' vd-preview-check-on' : ''}`} />
@@ -1997,12 +1997,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const props = ctrl.properties || {}
         const hAlign = Number(props['对齐方式'] ?? 0)
         const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
-        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 0
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : -1
         return (
           <div
             className="vd-preview vd-preview-group"
             ref={(element) => setCssVars(element, {
-              '--vd-preview-bg': bgNum === 0 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
+              '--vd-preview-bg': bgNum < 0 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
               '--vd-preview-group-textalign': hAlign === 1 ? 'center' : hAlign === 2 ? 'right' : 'left',
             })}
           >

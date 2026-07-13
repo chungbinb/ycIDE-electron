@@ -258,6 +258,7 @@ describe('控件成员声明式派发', () => {
         { id: 'c1', type: '标签', name: '白标', left: 10, top: 10, width: 80, height: 24, text: '白', visible: true, enabled: true, properties: { '背景颜色': 16777215 } },
         { id: 'c2', type: '标签', name: '素标', left: 10, top: 40, width: 80, height: 24, text: '素', visible: true, enabled: true, properties: {} },
         { id: 'c3', type: '选择框', name: '白选', left: 10, top: 70, width: 80, height: 24, text: '选', visible: true, enabled: true, properties: { '背景颜色': 16777215 } },
+        { id: 'c4', type: '标签', name: '黑标', left: 10, top: 100, width: 80, height: 24, text: '黑', visible: true, enabled: true, properties: { '背景颜色': 0 } },
       ],
     }), 'utf-8')
     writeFileSync(join(dir, '_启动窗口.eyc'), ['.版本 2', '.程序集 窗口程序集_启动窗口', '', '.子程序 __启动窗口_创建完毕', ''].join('\n'), 'utf-8')
@@ -271,6 +272,7 @@ describe('控件成员声明式派发', () => {
     expect(mainCpp).toContain('{ IDC_白标, (COLORREF)0, (COLORREF)16777215, NULL, 0 }')  // 显式白 → 进表画白
     expect(mainCpp).not.toContain('IDC_素标, (COLORREF)')                                  // 未设 → 不进表(融入窗口)
     expect(mainCpp).toContain('{ IDC_白选, (COLORREF)0, (COLORREF)16777215, NULL, 0 }')  // 选择框同款
+    expect(mainCpp).toContain('{ IDC_黑标, (COLORREF)0, (COLORREF)0, NULL, 0 }')          // 显式纯黑(0)进表画黑(默认哨兵是 -1 不是 0)
     rmSync(dir, { recursive: true, force: true })
   }, 120000)
 
