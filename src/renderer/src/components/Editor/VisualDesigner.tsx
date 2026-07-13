@@ -139,6 +139,9 @@ const GRID = 4
 const ALIGN_SNAP_TOLERANCE = 6
 const FORM_TITLEBAR_HEIGHT = 32
 const TOOL_TITLEBAR_HEIGHT = 22
+// 设计器菜单栏条（.vd-fmenu-bar，border-box 含底边框）高度——有菜单时位于标题栏与客户区之间；
+// 客户区坐标↔工作区/标尺坐标的换算必须把它与标题栏高度一并计入，否则纵向标尺高亮/游标上移一条菜单栏
+const FORM_MENUBAR_HEIGHT = 22
 
 // 底图方式 → 画布背景图 CSS（图片层，网格层恒定）
 const BACK_IMAGE_MODE_CSS: Record<number, { size: string; repeat: string; position: string }> = {
@@ -483,6 +486,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const visualFormHeight = Math.max(form.height, FORM_MIN_HEIGHT)
   const formChrome = resolveFormChromeStyle(form)
   const formTitlebarHeight = formChrome.titlebarHeight
+  // 窗口铬高度 = 标题栏 + 菜单栏（有可见顶级菜单时 renderFormMenuBar 渲染 22px 条）——几何换算统一用它，
+  // 判定条件须与 renderFormMenuBar 的过滤一致（menu 数组存在且至少一个 visible !== false 的顶级项）
+  const formMenuBarHeight = Array.isArray(form.menu) && form.menu.some(n => n && n.visible !== false) ? FORM_MENUBAR_HEIGHT : 0
+  const formChromeHeight = formTitlebarHeight + formMenuBarHeight
   const formControlBox = form.properties?.['控制按钮'] !== false
   const formMinButton = form.properties?.['最小化按钮'] !== false
   const formMaxButton = form.properties?.['最大化按钮'] !== false
@@ -509,7 +516,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     return `ycide.visual-designer.view-state.${safeId}`
   }, [form.name, form.sourceFile])
   const scaledFormWidth = visualFormWidth * zoom
-  const scaledFormHeight = (visualFormHeight + formTitlebarHeight) * zoom
+  const scaledFormHeight = (visualFormHeight + formChromeHeight) * zoom
   const workspaceWidth = computeWorkspaceSpan(scaledFormWidth, viewportSize.width)
   const workspaceHeight = computeWorkspaceSpan(scaledFormHeight, viewportSize.height)
   const formOffsetLeft = (workspaceWidth - scaledFormWidth) / 2
@@ -563,15 +570,15 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const maxBottom = Math.max(...selected.map(control => control.top + control.height))
     const x1 = formOffsetLeft + minLeft * zoom - scrollPos.left
     const x2 = formOffsetLeft + maxRight * zoom - scrollPos.left
-    const y1 = formOffsetTop + (formTitlebarHeight + minTop) * zoom - scrollPos.top
-    const y2 = formOffsetTop + (formTitlebarHeight + maxBottom) * zoom - scrollPos.top
+    const y1 = formOffsetTop + (formChromeHeight + minTop) * zoom - scrollPos.top
+    const y2 = formOffsetTop + (formChromeHeight + maxBottom) * zoom - scrollPos.top
     return {
       x: Math.min(x1, x2),
       y: Math.min(y1, y2),
       w: Math.abs(x2 - x1),
       h: Math.abs(y2 - y1),
     }
-  }, [form.controls, formOffsetLeft, formOffsetTop, formTitlebarHeight, scrollPos.left, scrollPos.top, selectedControl, selectedIds, zoom])
+  }, [form.controls, formOffsetLeft, formOffsetTop, formChromeHeight, scrollPos.left, scrollPos.top, selectedControl, selectedIds, zoom])
 
   useEffect(() => {
     zoomRef.current = zoom
@@ -748,9 +755,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const point = getCanvasPoint(clientX, clientY)
     setMouseRulerPos({
       x: formOffsetLeft + point.x * zoom - scrollPos.left,
-      y: formOffsetTop + (formTitlebarHeight + point.y) * zoom - scrollPos.top,
+      y: formOffsetTop + (formChromeHeight + point.y) * zoom - scrollPos.top,
     })
-  }, [formOffsetLeft, formOffsetTop, formTitlebarHeight, getCanvasPoint, scrollPos.left, scrollPos.top, zoom])
+  }, [formOffsetLeft, formOffsetTop, formChromeHeight, getCanvasPoint, scrollPos.left, scrollPos.top, zoom])
 
   const zoomTo = useCallback((nextZoom: number, anchorClientPoint?: { x: number; y: number }) => {
     const host = canvasAreaRef.current
@@ -766,7 +773,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const viewportY = anchorY - rect.top
 
     const oldScaledW = visualFormWidth * currentZoom
-    const oldScaledH = (visualFormHeight + formTitlebarHeight) * currentZoom
+    const oldScaledH = (visualFormHeight + formChromeHeight) * currentZoom
     const oldWorkspaceW = computeWorkspaceSpan(oldScaledW, host.clientWidth)
     const oldWorkspaceH = computeWorkspaceSpan(oldScaledH, host.clientHeight)
     const oldOffsetX = (oldWorkspaceW - oldScaledW) / 2
@@ -778,7 +785,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const formY = (worldY - oldOffsetY) / currentZoom
 
     const newScaledW = visualFormWidth * targetZoom
-    const newScaledH = (visualFormHeight + formTitlebarHeight) * targetZoom
+    const newScaledH = (visualFormHeight + formChromeHeight) * targetZoom
     const newWorkspaceW = computeWorkspaceSpan(newScaledW, host.clientWidth)
     const newWorkspaceH = computeWorkspaceSpan(newScaledH, host.clientHeight)
     const newOffsetX = (newWorkspaceW - newScaledW) / 2
@@ -792,7 +799,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     }
 
     setZoom(targetZoom)
-  }, [visualFormWidth, visualFormHeight, formTitlebarHeight])
+  }, [visualFormWidth, visualFormHeight, formChromeHeight])
 
   const stepZoom = useCallback((direction: 1 | -1, anchorClientPoint?: { x: number; y: number }) => {
     const currentZoom = zoomRef.current || 1
@@ -820,7 +827,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
     // 窗体居中于工作区，滚动到工作区中心即窗体居中
     const scaledW = visualFormWidth * targetZoom
-    const scaledH = (visualFormHeight + formTitlebarHeight) * targetZoom
+    const scaledH = (visualFormHeight + formChromeHeight) * targetZoom
     const targetWorkspaceW = computeWorkspaceSpan(scaledW, host.clientWidth)
     const targetWorkspaceH = computeWorkspaceSpan(scaledH, host.clientHeight)
     const centerScroll = {
@@ -849,7 +856,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       hostNow.scrollTop = centerScroll.top
       setScrollPos({ left: hostNow.scrollLeft, top: hostNow.scrollTop })
     }))
-  }, [visualFormWidth, visualFormHeight, formTitlebarHeight, zoomTo])
+  }, [visualFormWidth, visualFormHeight, formChromeHeight, zoomTo])
 
   // 缩放到适应窗口：窗体完整可见、尽量铺满画布可视区域，并居中显示
   const fitZoomToViewport = useCallback(() => {
@@ -860,10 +867,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const availableHeight = Math.max(host.clientHeight - padding, 50)
     const fit = Math.min(
       availableWidth / Math.max(visualFormWidth, 1),
-      availableHeight / Math.max(visualFormHeight + formTitlebarHeight, 1),
+      availableHeight / Math.max(visualFormHeight + formChromeHeight, 1),
     )
     zoomToCentered(fit)
-  }, [visualFormWidth, visualFormHeight, formTitlebarHeight, zoomToCentered])
+  }, [visualFormWidth, visualFormHeight, formChromeHeight, zoomToCentered])
 
   // 倍率预设：首项为实际最小倍率，其余固定档位（超出范围的剔除）
   const zoomPresetPercents = (() => {
@@ -2738,7 +2745,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           ref={(element) => setCssVars(element, {
             '--vd-zoom': `${zoom}`,
             '--vd-shell-width': `${visualFormWidth * zoom}px`,
-            '--vd-shell-height': `${(visualFormHeight + formTitlebarHeight) * zoom}px`,
+            '--vd-shell-height': `${(visualFormHeight + formChromeHeight) * zoom}px`,
             '--vd-shell-left': `${formOffsetLeft}px`,
             '--vd-shell-top': `${formOffsetTop}px`,
           })}
