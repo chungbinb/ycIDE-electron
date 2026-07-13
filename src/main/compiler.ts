@@ -6888,13 +6888,15 @@ function generateMainC(
       mainCode += '    return DefSubclassProc(hWnd, message, wParam, lParam);\n'
       mainCode += '}\n\n'
     }
-    if (editColorEntries.length > 0) {
+    {
+      // 颜色表始终生成（空占位 id=0 永不匹配）：WM_CTLCOLOR* case 恒存在，未配色控件的兜底路径对所有项目一致
       mainCode += '/* 编辑框自定义颜色表 */\n'
       mainCode += 'typedef struct { int id; COLORREF textColor; COLORREF backColor; HBRUSH brush; int transparent; } YcEditColorEntry;\n'
       mainCode += 'static YcEditColorEntry g_ycEditColors[] = {\n'
       for (const entry of editColorEntries) {
         mainCode += `    { ${entry.idMacro}, (COLORREF)${entry.textColor}, (COLORREF)${entry.backColor}, NULL, ${entry.transparent} },\n`
       }
+      if (editColorEntries.length === 0) mainCode += '    { 0, (COLORREF)0, (COLORREF)0, NULL, 0 },\n'
       mainCode += '};\n\n'
     }
 
@@ -7724,7 +7726,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '        }\n'
     mainCode += '        break;\n'
     mainCode += '    }\n'
-    if (editColorEntries.length > 0) {
+    {
+      const formBackRefExpr = winInfo.backColor !== 0 ? `(COLORREF)${winInfo.backColor >>> 0}` : 'GetSysColor(COLOR_BTNFACE)'
       mainCode += '    case WM_CTLCOLOREDIT:\n'
       mainCode += '    case WM_CTLCOLORLISTBOX:\n'
       mainCode += '    case WM_CTLCOLORSTATIC: {\n'
@@ -7739,7 +7742,18 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       mainCode += '            if (!g_ycEditColors[ci].brush) g_ycEditColors[ci].brush = CreateSolidBrush(g_ycEditColors[ci].backColor);\n'
       mainCode += '            return (LRESULT)g_ycEditColors[ci].brush;\n'
       mainCode += '        }\n'
-      mainCode += '        break;\n'
+      // 查表不中：**绝不能 break**——switch 之后是 return 0，NULL 背景刷会让主题化滑块条等
+      // 公共控件的双缓冲位图保持全黑（用户实测黑底根因）。STATIC 通道且非 EDIT 类（滑块条/标签/
+      // 选择框/单选框/分组框）→ 返回窗体背景刷（融入窗体底色，易语言行为）；只读编辑框虽走
+      // STATIC 通道但按类名识别为 EDIT → 与 EDIT/LISTBOX 通道一起显式 DefWindowProc（系统默认观感）。
+      mainCode += '        if (message == WM_CTLCOLORSTATIC) {\n'
+      mainCode += '            wchar_t ccCls[16] = L""; GetClassNameW((HWND)lParam, ccCls, 16);\n'
+      mainCode += '            if (_wcsicmp(ccCls, L"EDIT") != 0) {\n'
+      mainCode += `            SetBkColor((HDC)wParam, ${formBackRefExpr});\n`
+      mainCode += '                return (LRESULT)(g_hFormBgBrush ? g_hFormBgBrush : GetSysColorBrush(COLOR_BTNFACE));\n'
+      mainCode += '            }\n'
+      mainCode += '        }\n'
+      mainCode += '        return DefWindowProcW(hWnd, message, wParam, lParam);\n'
       mainCode += '    }\n'
     }
     if (buttonDrawEntries.length > 0 || shapeBoxEntries.length > 0 || chkListIds.length > 0) {
