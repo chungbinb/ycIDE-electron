@@ -29,7 +29,9 @@ function writeProject(dir: string, eycBody: string[]): void {
 }
 
 describe('Unicode 标识符 + 未定义标识符友好报错', () => {
-  it('未定义标识符（韩文 중국어의）→ 友好中文报错，非 C++ undeclared identifier', async () => {
+  // 友好报错在转译期抛，但 compileProject 会先校验 Zig 工具链——无 zig 时拿到的是「找不到 Zig 编译器」
+  // 而非转译期错误，故与其它真编译用例一样 zig-gate（CI 无 zig 跳过；本机有 zig 验证）。
+  it.skipIf(!zigAvailable)('未定义标识符（韩文 중국어의）→ 友好中文报错，非 C++ undeclared identifier', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ycide-uid-neg-')); tmpDirs.push(dir)
     writeProject(dir, ['.局部变量 a, 文本型', 'a ＝ 중국어의', '标签1.标题 ＝ a'])
     const before = messages.length
