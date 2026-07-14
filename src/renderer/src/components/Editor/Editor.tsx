@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo, useImperativeHandle, forwardRef, Component, type ErrorInfo, type ReactNode } from 'react'
 import './monaco-setup' // 必须在 @monaco-editor/react 首次 init 前：用本地 monaco 替代 CDN（离线可用）
 import MonacoEditor, { OnMount, OnChange, type Monaco } from '@monaco-editor/react'
-import type { editor } from 'monaco-editor'
+import type { editor, languages } from 'monaco-editor'
 import EycTableEditor, { type EycTableEditorHandle, type FileProblem } from './EycTableEditor'
 import { useEditorDiagnosticsProblems } from './editorDiagnostics'
 import type { EditorDiagnosticsProblem } from './editorDiagnosticsShared'
@@ -10,11 +10,19 @@ import { buildCompletionCatalog } from './editorCompletionCatalogUtils'
 import VisualDesigner, { type DesignForm, type DesignControl, type SelectionTarget, type LibWindowUnit, type LibUnitEvent } from './VisualDesigner'
 import { eycToInternalFormat, eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
 import { parseLines } from './eycBlocks'
+import { parseColorLiteralToColorref } from '../../../../shared/colorNames'
 import { buildMultiLinePasteResult } from './editorPasteUtils'
 import { buildMonacoThemeTokens } from './monacoThemeTokens'
+import { parseFontSpec, stringifyFontSpec } from './fontSpec'
 import Icon from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './Editor.css'
+
+// 同时具备「字体」与独立「文本颜色」属性的控件类型：这两处文本色需双向同步（见 updateFormProperty）。
+// 与 lib/krnln/window-units.json 中「字体+文本颜色」并存的 10 个单元一致；控件 type 存中文名（.efw/addControl 均用中文），故只列中文。
+const FONT_TEXTCOLOR_SYNC_TYPES = new Set([
+  '标签', '编辑框', '选择框', '单选框', '列表框', '组合框', '分组框', '画板', '月历', '超级链接框',
+])
 
 /** 注册 eyc 语言到 Monaco Editor */
 function registerEycLanguage(monaco: Monaco): void {
@@ -72,6 +80,9 @@ function registerEycLanguage(monaco: Monaco): void {
     // 逻辑常量
     constants: ['真', '假', '空'],
 
+    // 名色（#红色 等）——颜色字面量高亮用
+    colorNames: ['黑色', '白色', '红色', '绿色', '蓝色', '黄色', '青色', '紫红色', '灰色'],
+
     // 运算符
     operators: ['＝', '≠', '＞', '＜', '≥', '≤', '＋', '－', '×', '÷', '且', '或', '非'],
 
@@ -81,7 +92,7 @@ function registerEycLanguage(monaco: Monaco): void {
     tokenizer: {
       root: [
         // 以 . 开头的声明关键字
-        [/\.([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*)/, {
+        [/\.([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]*)/, {
           cases: {
             '$1@declarations': 'keyword.declaration',
             '@default': 'keyword.declaration',
@@ -100,12 +111,19 @@ function registerEycLanguage(monaco: Monaco): void {
         [/\uff08/, 'delimiter.parenthesis'],
         [/\uff09/, 'delimiter.parenthesis'],
 
+        // 颜色字面量：#hex(3/6/8 位) / #名色 / rgb()rgba() → constant.color（配 DocumentColorProvider 出色块）
+        [/#[0-9a-fA-F]{8}(?![0-9a-fA-F])/, 'constant.color'],
+        [/#[0-9a-fA-F]{6}(?![0-9a-fA-F])/, 'constant.color'],
+        [/#[0-9a-fA-F]{3}(?![0-9a-fA-F])/, 'constant.color'],
+        [/#([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)/, { cases: { '$1@colorNames': 'constant.color', '@default': 'constant' } }],
+        [/[rR][gG][bB][aA]?(?=\s*[（(])/, 'constant.color'],
+
         // 数字
         [/\d+\.\d*/, 'number.float'],
         [/\d+/, 'number'],
 
         // 标识符匹配
-        [/[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*/, {
+        [/[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]*/, {
           cases: {
             '@keywords': 'keyword',
             '@typeKeywords': 'type',
@@ -153,6 +171,42 @@ function registerEycLanguage(monaco: Monaco): void {
     indentationRules: {
       increaseIndentPattern: /^\s*\.(子程序|如果|否则|判断开始|判断|计次循环首|循环判断首|变量循环首)/,
       decreaseIndentPattern: /^\s*\.(如果结束|如果真结束|否则|判断结束|计次循环尾|循环判断尾|变量循环尾)/,
+    },
+  })
+
+  // 颜色字面量色块：Monaco 原生可编辑色块 + 真实颜色（#hex / #名色 / rgb()rgba()）。
+  // 字符串内的颜色由 Monarch 的 string 规则先吃掉、这里正则也不会误命中（跳过引号内）。
+  monaco.languages.registerColorProvider('eyc', {
+    provideDocumentColors(model: editor.ITextModel) {
+      const out: { range: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number }; color: { red: number; green: number; blue: number; alpha: number } }[] = []
+      const re = /#(?:[0-9a-fA-F]{8}(?![0-9a-fA-F])|[0-9a-fA-F]{6}(?![0-9a-fA-F])|[0-9a-fA-F]{3}(?![0-9a-fA-F])|[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)|[rR][gG][bB][aA]?\s*[（(]\s*\d+\s*[,，]\s*\d+\s*[,，]\s*\d+/g
+      for (let ln = 1; ln <= model.getLineCount(); ln++) {
+        const text = model.getLineContent(ln)
+        re.lastIndex = 0
+        let m: RegExpExecArray | null
+        while ((m = re.exec(text)) !== null) {
+          const tok = m[0]
+          let cref: number | null = null
+          if (tok[0] === '#') {
+            cref = parseColorLiteralToColorref(tok)
+          } else {
+            const am = tok.match(/(\d+)\s*[,，]\s*(\d+)\s*[,，]\s*(\d+)/)
+            if (am) cref = Math.min(255, +am[1]) | (Math.min(255, +am[2]) << 8) | (Math.min(255, +am[3]) << 16)
+          }
+          if (cref === null) continue
+          const r = cref & 0xff, g = (cref >> 8) & 0xff, b = (cref >> 16) & 0xff
+          out.push({
+            range: { startLineNumber: ln, startColumn: m.index + 1, endLineNumber: ln, endColumn: m.index + 1 + tok.length },
+            color: { red: r / 255, green: g / 255, blue: b / 255, alpha: 1 },
+          })
+        }
+      }
+      return out
+    },
+    provideColorPresentations(_model: editor.ITextModel, colorInfo: languages.IColorInformation) {
+      const c = colorInfo.color
+      const hex = `#${[c.red, c.green, c.blue].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join('')}`
+      return [{ label: hex }]
     },
   })
 
@@ -980,7 +1034,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     if (!content.includes(oldName)) return content
     const escaped = oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const regex = new RegExp(
-      '(?<=[^\\u4e00-\\u9fa5A-Za-z0-9_.]|^)' + escaped + '(?=[^\\u4e00-\\u9fa5A-Za-z0-9_.]|$)',
+      '(?<=[^\\u4e00-\\u9fa5\\u3400-\\u4dbf\\uac00-\\ud7a3\\u3040-\\u30ffA-Za-z0-9_.]|^)' + escaped + '(?=[^\\u4e00-\\u9fa5\\u3400-\\u4dbf\\uac00-\\ud7a3\\u3040-\\u30ffA-Za-z0-9_.]|$)',
       'g'
     )
     return content.replace(regex, newName)
@@ -1174,6 +1228,29 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             }
             if (boolDef) {
               return { ...c, [boolDef.field]: boolDef.invert ? !value : value }
+            }
+            // 「字体」内的文本颜色 ↔ 独立「文本颜色」属性双向同步（二者代表同一文本色；运行时多数控件用独立
+            // 「文本颜色」上色而字体对话框只显示 font.color——不同步则所见≠所得）。仅同时具备两者的控件类型生效。
+            if (FONT_TEXTCOLOR_SYNC_TYPES.has(c.type) && (propName === '字体' || propName === '文本颜色')) {
+              const next = { ...c.properties, [propName]: value }
+              if (propName === '字体') {
+                const newFont = parseFontSpec(typeof value === 'string' ? value : '')
+                // 清除整个字体（值为空/不可解析）不改文本颜色（清字体≠清颜色，避免抹掉用户独立设的文本色）。
+                if (newFont) {
+                  // 仅当 font.color 相对旧值真的变了才镜像（改字族/字号/粗体不应重置文本颜色）。
+                  const oldFc = parseFontSpec(typeof c.properties['字体'] === 'string' ? (c.properties['字体'] as string) : '')?.color
+                  if (newFont.color !== oldFc) next['文本颜色'] = typeof newFont.color === 'number' ? newFont.color : 0  // undefined=默认→0(黑)
+                }
+              } else {
+                // 独立文本颜色变了 → 写回已有字体的 font.color（0=默认→undefined，非 0=显式色）。
+                // 无字体的控件不凭空建字体（避免把系统默认字体锁成宋体9改变外观）——此时独立文本颜色即权威，codegen 也读它。
+                const curFont = parseFontSpec(typeof c.properties['字体'] === 'string' ? (c.properties['字体'] as string) : '')
+                if (curFont) {
+                  const tc = Number(value)
+                  next['字体'] = stringifyFontSpec({ ...curFont, color: tc === 0 ? undefined : tc })
+                }
+              }
+              return { ...c, properties: next }
             }
             return { ...c, properties: { ...c.properties, [propName]: value } }
           })

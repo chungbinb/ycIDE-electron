@@ -9,6 +9,7 @@ import type { LibraryCommand as LibCommand, LibraryConstant as LibConstant, Libr
 import { generateDebugRuntimeCode } from './debug-runtime'
 import { createCommandResolvers } from './compilerCommandResolvers'
 import { ycmdCommandIdToNativeSymbol } from './ycmd-registry'
+import { parseColorLiteralToColorref } from '../shared/colorNames'
 
 // 编译消息类型
 export interface CompileMessage {
@@ -372,7 +373,7 @@ interface TranspileCacheFile {
   entries: Record<string, TranspileCacheEntry>
 }
 
-const TRANSPILE_CACHE_VERSION = 22
+const TRANSPILE_CACHE_VERSION = 25
 
 interface BuildArtifactCacheFile {
   version: number
@@ -1557,7 +1558,7 @@ function translateControlMethodCall(call: { name: string; args: string[] }, tx: 
   if (dot <= 0) return null
   const objName = call.name.slice(0, dot)
   const method = call.name.slice(dot + 1)
-  if (!/^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(objName)) return null
+  if (!/^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(objName)) return null
   const type = resolveProjectControlType(objName)
   if (!type) return null
   const tpl = resolveControlMethod(loadCompileProtocols().controlMethods, type, method)
@@ -1880,7 +1881,7 @@ function buildStdLabelCodegen(extraProps: Record<string, unknown>): {
   const border = readIntProp(extraProps['边框'], 0)          // 0无 1凹入 2凸出 3浅凹 4镜框 5单线 6渐变镜框
   const effect = readIntProp(extraProps['效果'], 0)          // 0通常 1凹入 2凸出 3阴影 4透明
   const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], 0xffffff)
+  const backColor = readIntProp(extraProps['背景颜色'], -1)  // -1=默认（不进颜色表，融入窗口）；0 是纯黑合法色，显式白/黑=真白/真黑
   const autoWrap = readBoolProp(extraProps['是否自动折行'], false)
   const parts = ['WS_CHILD', 'SS_NOTIFY']
   // 横向对齐：居中/右总是折行；左对齐时按「是否自动折行」选 SS_LEFT(折行)/SS_LEFTNOWORDWRAP(不折行)
@@ -1895,7 +1896,7 @@ function buildStdLabelCodegen(extraProps: Record<string, unknown>): {
   return {
     style: parts.join(' | '),
     exStyle,
-    colorEntry: (textColor !== 0 || backColor !== 0xffffff) ? { textColor, backColor } : null,
+    colorEntry: (textColor !== 0 || backColor >= 0) ? { textColor, backColor: backColor >= 0 ? backColor : 0xffffff } : null,
     transparent: effect === 4,
   }
 }
@@ -1913,7 +1914,7 @@ function buildStdCheckableCodegen(extraProps: Record<string, unknown>, isRadio: 
   const leftText = readBoolProp(extraProps['标题居左'], false)
   const checked = readBoolProp(extraProps['选中'], false)
   const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], 0xffffff)
+  const backColor = readIntProp(extraProps['背景颜色'], -1)  // -1=默认（不进颜色表，融入窗口）；0 是纯黑合法色，显式白/黑=真白/真黑
   const parts = ['WS_CHILD', 'WS_TABSTOP', isRadio ? 'BS_AUTORADIOBUTTON' : 'BS_AUTOCHECKBOX']
   if (pushLike) parts.push('BS_PUSHLIKE')
   if (flat) parts.push('BS_FLAT')
@@ -1923,7 +1924,7 @@ function buildStdCheckableCodegen(extraProps: Record<string, unknown>, isRadio: 
   return {
     style: parts.join(' | '),
     checked,
-    colorEntry: (textColor !== 0 || backColor !== 0xffffff) ? { textColor, backColor } : null,
+    colorEntry: (textColor !== 0 || backColor >= 0) ? { textColor, backColor: backColor >= 0 ? backColor : 0xffffff } : null,
   }
 }
 
@@ -1933,12 +1934,12 @@ function buildStdGroupBoxCodegen(extraProps: Record<string, unknown>): {
 } {
   const hAlign = readIntProp(extraProps['对齐方式'], 0)  // 0左 1中 2右
   const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], 0xffffff)
+  const backColor = readIntProp(extraProps['背景颜色'], -1)  // -1=默认（不进颜色表，融入窗口）；0 是纯黑合法色，显式白/黑=真白/真黑
   const parts = ['WS_CHILD', 'BS_GROUPBOX']
   parts.push(hAlign === 1 ? 'BS_CENTER' : hAlign === 2 ? 'BS_RIGHT' : 'BS_LEFT')
   return {
     style: parts.join(' | '),
-    colorEntry: (textColor !== 0 || backColor !== 0xffffff) ? { textColor, backColor } : null,
+    colorEntry: (textColor !== 0 || backColor >= 0) ? { textColor, backColor: backColor >= 0 ? backColor : 0xffffff } : null,
   }
 }
 
@@ -2427,7 +2428,7 @@ function collectUsedLibraryFileNames(project: ProjectInfo, editorFiles?: Map<str
       }
 
       // 赋值右值中的命令调用：例如 test = 取本机名()
-      const assignMatch = line.match(/^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*\s*[＝=]\s*(.+)$/)
+      const assignMatch = line.match(/^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*\s*[＝=]\s*(.+)$/)
       if (assignMatch) {
         const rhsCall = parseCommandCall(assignMatch[1].trim())
         if (rhsCall?.name) {
@@ -2439,7 +2440,7 @@ function collectUsedLibraryFileNames(project: ProjectInfo, editorFiles?: Map<str
       // 嵌套在实参中的命令调用：例如 a ＝ 外部命令(指针到长整数(地址), 0)
       // 顶层命令名识别不到这类调用，会漏标支持库导致链接缺符号
       const codeLine = stripTrailingEycComment(line)
-      const nestedCallRe = /([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)\s*[（(]/g
+      const nestedCallRe = /([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)\s*[（(]/g
       let nestedMatch: RegExpExecArray | null
       while ((nestedMatch = nestedCallRe.exec(codeLine)) !== null) {
         const nestedResolved = commandMap.get(nestedMatch[1])
@@ -2539,7 +2540,7 @@ function collectGenericFallbackLibraryFileNames(project: ProjectInfo, editorFile
         continue
       }
 
-      const assignMatch = line.match(/^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*\s*[＝=]\s*(.+)$/)
+      const assignMatch = line.match(/^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*\s*[＝=]\s*(.+)$/)
       if (assignMatch) {
         markIfGenericFallback(parseCommandCall(assignMatch[1].trim()))
       }
@@ -2592,7 +2593,7 @@ function collectCommandSourceLocationsByLibrary(project: ProjectInfo, editorFile
       const line = lines[i].replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
       if (!line || line.startsWith("'")) continue
 
-      const assignMatch = line.match(/^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*\s*[＝=]\s*(.+)$/)
+      const assignMatch = line.match(/^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*\s*[＝=]\s*(.+)$/)
       if (assignMatch) {
         markCall(f.fileName, lineNo, parseCommandCall(assignMatch[1].trim()))
       }
@@ -3166,7 +3167,7 @@ function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Ma
         continue
       }
 
-      const assignMatch = line.match(/^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*\s*[＝=]\s*(.+)$/)
+      const assignMatch = line.match(/^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*\s*[＝=]\s*(.+)$/)
       if (assignMatch) {
         validateOne(f.fileName, lineNo, parseCommandCall(assignMatch[1].trim()))
       }
@@ -3200,7 +3201,47 @@ function convertFullWidthOps(expr: string): string {
 }
 
 function replaceConstantRefs(expr: string): string {
-  return expr.replace(/#([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)/g, '$1')
+  return expr.replace(/#([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*)/g, '$1')
+}
+
+// \u5168\u4f53\u5df2\u77e5\u5e38\u91cf\u540d\uff08\u5e93\u5e38\u91cf + \u9879\u76ee\u5e38\u91cf\uff0c\u5747\u5265\u53bb\u524d\u5bfc #\uff09\u3002\u540d\u8272\u8f6c\u6362\u547d\u4e2d\u540c\u540d\u5e38\u91cf\u65f6\u8ba9\u5e38\u91cf\u4f18\u5148\uff0c
+// \u907f\u514d\u906e\u853d\u7528\u6237/\u5e93\u5e38\u91cf\u3002\u8f6c\u8bd1\u5f00\u59cb\u524d\u4e0e currentProjectControls \u540c\u5904\u704c\u4e00\u6b21\u3002
+let currentKnownConstantNames = new Set<string>()
+
+// \u989c\u8272\u5b57\u9762\u91cf\u9884\u5904\u7406\uff1a\u628a #RRGGBB / #RGB / #RRGGBBAA(\u4e22 alpha) / #\u540d\u8272 \u5c31\u5730\u66ff\u6362\u4e3a\u5341\u8fdb\u5236 COLORREF\u3002
+// \u5fc5\u987b\u5728 replaceConstantRefs \u4e4b\u524d\u8dd1\u2014\u2014\u5426\u5219 #ffffff \u88ab\u5265\u6210\u672a\u5b9a\u4e49\u6807\u8bc6\u7b26\u3001#00ff00 \u6b8b\u7559\u88f8 # \u6210\u975e\u6cd5 C++\u3002
+// \u5b57\u7b26\u4e32\u5b57\u9762\u91cf\u5185\u4e0d\u6539\u5199\uff1b\u547d\u4e2d\u5df2\u77e5\u5e38\u91cf\u540d\u7684 token \u539f\u6837\u4fdd\u7559\u4ea4\u7ed9\u5e38\u91cf\u5904\u7406\u3002\u8f93\u51fa\u5341\u8fdb\u5236\uff08\u6570\u5b57\u5feb\u8def\u53ea\u8ba4 /^-?\d+$/\uff09\u3002
+function applyColorLiterals(expr: string): string {
+  if (expr.indexOf('#') < 0) return expr
+  const COLOR_TOKEN = /^#([0-9a-fA-F]{8}(?![0-9a-fA-F])|[0-9a-fA-F]{6}(?![0-9a-fA-F])|[0-9a-fA-F]{3}(?![0-9a-fA-F])|[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]*)/
+  let out = ''
+  let inStr = false
+  let strClose = ''
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]
+    if (inStr) {
+      out += ch
+      if (ch === strClose) inStr = false
+      continue
+    }
+    if (ch === '"') { inStr = true; strClose = '"'; out += ch; continue }
+    if (ch === '\u201c') { inStr = true; strClose = '\u201d'; out += ch; continue }
+    if (ch === '#') {
+      const m = COLOR_TOKEN.exec(expr.slice(i))
+      if (m && !currentKnownConstantNames.has(m[1])) {
+        const cr = parseColorLiteralToColorref(m[0])
+        if (cr !== null) {
+          out += String(cr >>> 0)
+          i += m[0].length - 1
+          continue
+        }
+      }
+      out += ch
+      continue
+    }
+    out += ch
+  }
+  return out
 }
 
 // ===== \u6570\u7ec4\u53d8\u91cf\u652f\u6301 =====
@@ -3309,10 +3350,10 @@ function rewriteArrayIndexOnce(
     }
     if (ch === '"') { inQuote = true; quoteClose = '"'; continue }
     if (ch === '\u201c') { inQuote = true; quoteClose = '\u201d'; continue }
-    if (!/[\u4e00-\u9fa5A-Za-z_]/.test(ch)) continue
+    if (!/[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_]/.test(ch)) continue
 
     let j = i
-    while (j < expr.length && /[\u4e00-\u9fa5A-Za-z0-9_]/.test(expr[j])) j++
+    while (j < expr.length && /[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]/.test(expr[j])) j++
     const name = expr.slice(i, j)
     const info = currentTranspileArrayVars.get(name)
     let k = j
@@ -3402,7 +3443,7 @@ function buildArrayLiteralExpr(
 
 /** 解析下标赋值语句左值：`名称 [e1] [e2]… ＝ 右值`；非该形态返回 null（是否数组由调用方查表判定） */
 function parseIndexedAssignTarget(line: string): { name: string; indexExprs: string[]; rhs: string } | null {
-  const head = line.match(/^\s*([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)\s*(?=\[)/)
+  const head = line.match(/^\s*([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)\s*(?=\[)/)
   if (!head) return null
   const name = head[1]
   let cursor = head[0].length
@@ -3441,14 +3482,14 @@ function rewriteArrayIndexRefs(
 
 function replaceBooleanLiterals(expr: string): string {
   return expr
-    .replace(/(^|[^\u4e00-\u9fa5A-Za-z0-9_])真(?=$|[^\u4e00-\u9fa5A-Za-z0-9_])/g, '$11')
-    .replace(/(^|[^\u4e00-\u9fa5A-Za-z0-9_])假(?=$|[^\u4e00-\u9fa5A-Za-z0-9_])/g, '$10')
+    .replace(/(^|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])真(?=$|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])/g, '$11')
+    .replace(/(^|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])假(?=$|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])/g, '$10')
 }
 
 function replaceLogicalOperatorAliases(expr: string): string {
   return expr
-    .replace(/(^|[^\u4e00-\u9fa5A-Za-z0-9_])且(?=$|[^\u4e00-\u9fa5A-Za-z0-9_])/g, '$1&&')
-    .replace(/(^|[^\u4e00-\u9fa5A-Za-z0-9_])或(?=$|[^\u4e00-\u9fa5A-Za-z0-9_])/g, '$1||')
+    .replace(/(^|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])且(?=$|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])/g, '$1&&')
+    .replace(/(^|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])或(?=$|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])/g, '$1||')
     .replace(/\bAnd\b/gi, '&&')
     .replace(/\bOr\b/gi, '||')
 }
@@ -3456,17 +3497,21 @@ function replaceLogicalOperatorAliases(expr: string): string {
 // 控件属性【读取】：`控件名.属性` → 声明式 get 模板（按控件类型键控派发）。
 // 触发条件：①ctrlName 确在 currentProjectControls（是控件，非自定义类型变量）；②该控件类型在协议里为此属性声明了 get 绑定。
 // 否则原样保留。方法调用（成员名后接 '(' 或全角 '（'）用负向前瞻排除（方法本就无 get 绑定，双重保险）。
-function replaceControlPropertyReads(expr: string): string {
+function replaceControlPropertyReads(expr: string, variableTypeResolver?: (name: string) => string | undefined): string {
+  if (currentProjectControls.size === 0) return expr
   const bindings = loadCompileProtocols().controlMembers
-  if (bindings.length === 0 || currentProjectControls.size === 0) return expr
   return expr.replace(
-    /([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)\.([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)(?!\s*[(（])(?![一-龥A-Za-z0-9_])/g,
+    /([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)\.([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)(?!\s*[(（])(?![一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])/g,
     (whole, ctrlName: string, member: string) => {
       const type = resolveProjectControlType(ctrlName)
       if (!type) return whole
+      // 同名变量遮蔽控件名（如自定义类型变量恰与控件同名）→ 按变量成员处理，原样保留
+      if (variableTypeResolver?.(ctrlName)) return whole
       const getTpl = resolveControlMemberTemplate(bindings, type, member, 'get')
-      if (!getTpl) return whole
-      return applyMemberTemplate(getTpl, `yc_get_control_handle_by_name(L"${escapeCString(ctrlName)}")`, '')
+      // 确属控件而属性无 get 绑定 → 友好报错并中止（原样保留会变成难懂的 undeclared identifier）；
+      // 行号前缀由 transpileEycContent 主循环的 catch 统一补上。
+      if (!getTpl) throw new Error(`${type}“${ctrlName}”的属性“${member}”暂不支持在代码中读取`)
+      return applyMemberTemplate(getTpl, `yc_get_control_handle_by_name(L"${escapeCString(ctrlName)}")`, '', [], `L"${escapeCString(ctrlName)}"`)
     },
   )
 }
@@ -3493,7 +3538,7 @@ function translateListLikeMethodCall(
   const objName = call.name.slice(0, dot)
   const method = call.name.slice(dot + 1)
   if (!LISTLIKE_METHOD_NAMES.has(method)) return null
-  if (!/^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(objName)) return null
+  if (!/^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(objName)) return null
   const args = call.args || []
   const nm = `L"${escapeCString(objName)}"`
   const A = (i: number): string => tx(args[i] ?? '0')
@@ -3548,6 +3593,7 @@ function isTextExpression(expr: string): boolean {
     || /^yc_ctrl_get_text\(/.test(trimmed)
     || /^yc_ctrl_get_tag\(/.test(trimmed)
     || /^yc_ctrl_get_date\(/.test(trimmed)
+    || /^yc_ctrl_get_seltext\(/.test(trimmed)
     || /^yc_text_concat\(/.test(trimmed)
     || /^yc_utf8_to_wide\(/.test(trimmed)
     || /^\(\[\&\]\(\)\s*->\s*wchar_t\*/.test(trimmed)
@@ -3574,7 +3620,7 @@ function getExprSimpleIdentifierType(expr: string, variableTypeResolver?: Variab
   if (!variableTypeResolver) return ''
   const trimmed = (expr || '').trim()
   if (!trimmed) return ''
-  const identMatch = trimmed.match(/^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*$/)
+  const identMatch = trimmed.match(/^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*$/)
   if (!identMatch) return ''
   const baseName = trimmed.split('.')[0] || ''
   return (variableTypeResolver(baseName) || '').trim()
@@ -3790,6 +3836,10 @@ function translateExpressionToC(
     return `L"${content}"`
   }
 
+  // 颜色字面量（#hex / #名色）→ 十进制 COLORREF，须在 replaceConstantRefs 之前；
+  // 整体是单个颜色时下面数字快路接住，复合表达式里的颜色 token 也已就地换成整数。
+  trimmed = applyColorLiterals(trimmed)
+
   if (trimmed === '真') return '1'
   if (trimmed === '假') return '0'
   if (/^-?\d+$/.test(trimmed)) {
@@ -3810,6 +3860,20 @@ function translateExpressionToC(
     }
   }
   if (/^-?\d+\.\d+$/.test(trimmed)) return trimmed
+
+  // rgb()/rgba() 颜色构造 → COLORREF 整数。放在 commandMap 守卫之外（不依赖库），rgba 丢弃 alpha
+  // （GDI 文本颜色无 alpha）。参数递归转译，支持变量/表达式；RGB 宏由用户 cpp 前导的 <windows.h> 提供。
+  if (/^rgba?\s*[（(]/i.test(trimmed)) {
+    const colorCall = parseCommandCall(trimmed)
+    const colorBuiltin = colorCall && colorCall.name ? normalizeBuiltinCallName(colorCall.name) : ''
+    if (colorCall && (colorBuiltin === 'rgb' || colorBuiltin === 'rgba')) {
+      const txArg = (e: string): string => translateExpressionToC(e, commandMap, directCallables, variableTypeResolver)
+      const rr = txArg(colorCall.args?.[0] || '0')
+      const gg = txArg(colorCall.args?.[1] || '0')
+      const bb = txArg(colorCall.args?.[2] || '0')
+      return `RGB(${rr}, ${gg}, ${bb})`
+    }
+  }
 
   if (commandMap) {
     const call = parseCommandCall(trimmed)
@@ -3844,6 +3908,22 @@ function translateExpressionToC(
       if (declMethod) return declMethod
       const llCall = translateListLikeMethodCall(call, methodTx)
       if (llCall) return llCall
+      // `控件.方法(…)` 未命中任何绑定（表达式上下文）→ 友好报错；行号前缀由主循环 catch 统一补上。
+      // 仅对带括号的真调用报错——无括号的 `控件.属性`（parseCommandCall 会把裸点名当零参调用）放行给下方属性读取替换器；
+      // 且方法段必须是纯标识符——`控件.属性 ＋ 函数(x)` 会被 parseCommandCall 整段吞进 call.name，不得误报。
+      if (/[(（]/.test(trimmed)) {
+        const dotAt = call.name.lastIndexOf('.')
+        if (dotAt > 0) {
+          const objName = call.name.slice(0, dotAt)
+          const method = call.name.slice(dotAt + 1)
+          const objType = /^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(objName) && /^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(method)
+            ? resolveProjectControlType(objName)
+            : ''
+          if (objType && !variableTypeResolver?.(objName)) {
+            throw new Error(`${objType}“${objName}”的方法“${method}”暂不支持在代码中调用`)
+          }
+        }
+      }
 
       const resolved = commandMap.get(call.name)
       if (resolved) {
@@ -3874,7 +3954,7 @@ function translateExpressionToC(
   let translated = replaceConstantRefs(convertFullWidthOps(trimmed))
   translated = replaceBooleanLiterals(translated)
   translated = replaceLogicalOperatorAliases(translated)
-  translated = replaceControlPropertyReads(translated)
+  translated = replaceControlPropertyReads(translated, variableTypeResolver)
 
   // 逻辑运算（且/或 已转 &&/||）优先级最低，必须先于比较运算切分
   const logical = findTopLevelLogical(translated)
@@ -3946,6 +4026,24 @@ function translateExpressionToC(
       return `(yc_value_to_big(${left}) ${multiplicative.operator} yc_value_to_big(${right}))`
     }
     return `(${left} ${multiplicative.operator} ${right})`
+  }
+
+  // 未定义标识符友好报错：走到这里还是个裸标识符 → 前面所有转换（命令/控件属性/常量/运算符/字面量）
+  // 都没认领它。仅在有变量解析器（真实转译上下文）时校验，排除已知变量/数组/命令/子程序/常量/控件/
+  // 保留字后仍不认识 → 报中文错（由转译主循环 try/catch 补「文件名:行号:」前缀），替代难懂的 C++
+  // undeclared identifier。非中英文（韩/日等）标识符经上方标识符正则放宽后同样能被识别与校验。
+  if (
+    variableTypeResolver
+    && /^[\p{L}_][\p{L}0-9_]*$/u.test(translated)
+    && translated !== '真' && translated !== '假' && translated !== '空'
+    && !variableTypeResolver(translated)
+    && !currentTranspileArrayVars.has(translated)
+    && !commandMap?.has(translated)
+    && !directCallables?.has(translated)
+    && !currentKnownConstantNames.has(translated)
+    && !currentProjectControls.has(translated)
+  ) {
+    throw new Error(`未定义的变量或标识符“${translated}”（若这是一段文本，请用引号括起来，例如 "${translated}"）`)
   }
 
   return translated
@@ -4922,6 +5020,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'extern "C" void yc_invoke_support_cmd(const char* libName, int cmdIndex, YC_MDATA_INF* pRetData, int argCount, YC_MDATA_INF* pArgs);\n'
   result += 'extern HWND yc_get_control_handle_by_name(const wchar_t* ctrlName);\n'
   result += 'extern YC_TEXT yc_ctrl_get_text(HWND h);\n'
+  result += 'extern void yc_ctrl_set_text_color(HWND h, COLORREF c);\n'
   result += 'extern YC_TEXT yc_ctrl_get_tag(HWND h);\n'
   result += 'extern YC_TEXT yc_ctrl_get_date(HWND h, const wchar_t* prop);\n'
   result += 'extern "C" void krnln_ctrl_set_tag(HWND h, const wchar_t* t);\n'
@@ -4988,7 +5087,15 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'extern int yc_dp_getpicheight(const wchar_t* n, const std::vector<unsigned char>& img);\n'
   result += 'extern void yc_dp_copy(const wchar_t* n);\n'
   result += 'extern YC_BIN yc_dp_getpic(const wchar_t* n, int ow, int oh);\n'
-  result += 'extern int yc_dp_unitcnv(const wchar_t* n, int v, int type);\n\n'
+  result += 'extern int yc_dp_unitcnv(const wchar_t* n, int v, int type);\n'
+  result += 'extern int yc_dp_get_prop(const wchar_t* n, int prop);\n'
+  result += 'extern void yc_dp_set_prop(const wchar_t* n, int prop, int v);\n'
+  // 时钟周期运行时读写（时钟无 HWND，按名查生成的定时器表）
+  result += 'extern int yc_timer_get_period(const wchar_t* n);\n'
+  result += 'extern void yc_timer_set_period(const wchar_t* n, int v);\n'
+  // 编辑框/组合框「被选择文本」（库返 owned wchar_t*，main.cpp 包 YC_TEXT）
+  result += 'extern YC_TEXT yc_ctrl_get_seltext(HWND h);\n'
+  result += 'extern "C" void krnln_ctrl_set_seltext(HWND h, const wchar_t* t);\n\n'
   result += 'static wchar_t* yc_wcsdup_text(const wchar_t* s);\n'
   result += 'static wchar_t* yc_empty_text(void);\n'
   result += 'static YC_TEXT yc_utf8_to_wide(const char* s);\n'
@@ -5718,7 +5825,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   }
 
   if (projectResources.length > 0) {
-    const validIdentifier = /^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*$/
+    const validIdentifier = /^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]*$/
     result += '/* Project resource reference macros (#name -> YC_BIN) */\n'
     for (const r of projectResources) {
       const resourceName = (r.name || '').trim()
@@ -5919,6 +6026,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   }
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    try {
     const rawLine = lines[lineIndex]
     pendingBreakpointLine = inSub && breakpointLines.has(lineIndex + 1) ? (lineIndex + 1) : null
     // 剥离流程标记零宽字符（\u200C/\u200D/\u2060/\u200B）与行尾单引号注释
@@ -6205,7 +6313,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       }
 
       // 数组变量整体赋值字面量：数组 ＝ { 1, 2, 3 }（元素存储形态按数组声明的元素类型定）
-      const aryLitAssign = line.match(/^([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)\s*[＝=]\s*([{｛][\s\S]*)$/)
+      const aryLitAssign = line.match(/^([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)\s*[＝=]\s*([{｛][\s\S]*)$/)
       if (aryLitAssign && currentTranspileArrayVars.has(aryLitAssign[1])) {
         const info = currentTranspileArrayVars.get(aryLitAssign[1])!
         const lit = matchArrayLiteral(aryLitAssign[2])
@@ -6217,21 +6325,26 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       }
 
       // 赋值表达式：支持全角/半角等号
-      const assignMatch = line.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)\s*[＝=]\s*(.+)$/)
+      const assignMatch = line.match(/^([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*)\s*[＝=]\s*(.+)$/)
       if (assignMatch) {
         const left = assignMatch[1]
         const rightRaw = assignMatch[2].trim()
 
-        const propMatch = left.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*)\.([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*)$/)
+        const propMatch = left.match(/^([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]*)\.([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]*)$/)
         // 控件属性做左值：按控件类型解析协议里声明的 set 模板（进度条.位置、编辑框.内容 等），读写机制来自 window-units.json 而非硬编码。
         // 模板占位 {h}=控件句柄、{v}=原始值、{vtext}=文本化值。
         const propCtrlType = propMatch ? resolveProjectControlType(propMatch[1]) : ''
         const propSetTpl = (propMatch && propCtrlType)
           ? resolveControlMemberTemplate(loadCompileProtocols().controlMembers, propCtrlType, propMatch[2], 'set')
           : null
+        // 确属控件（且名字未被同名变量遮蔽）而属性无 set 绑定 → 友好报错并中止，
+        // 不再把 `控件.属性` 原样发成 C++ 左值（那会变成难懂的 undeclared identifier）。
+        if (propMatch && propCtrlType && !propSetTpl && !resolveVisibleVarType(propMatch[1])) {
+          throwSourceError(lineIndex + 1, `${propCtrlType}“${propMatch[1]}”的属性“${propMatch[2]}”暂不支持在代码中赋值`)
+        }
         const propSetIsText = !!propSetTpl && propSetTpl.includes('{vtext}')
         const emitPropSet = (valueExpr: string) =>
-          emitSubLine(applyMemberTemplate(propSetTpl!, `yc_get_control_handle_by_name(L"${escapeCString(propMatch![1])}")`, valueExpr) + ';')
+          emitSubLine(applyMemberTemplate(propSetTpl!, `yc_get_control_handle_by_name(L"${escapeCString(propMatch![1])}")`, valueExpr, [], `L"${escapeCString(propMatch![1])}"`) + ';')
 
         const rhsCall = parseCommandCall(rightRaw)
         const rhsResolved = rhsCall ? commandMap.get(rhsCall.name) : undefined
@@ -6264,7 +6377,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         }
 
         const leftSimpleVarType = (() => {
-          if (!/^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*$/.test(left)) return ''
+          if (!/^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]*$/.test(left)) return ''
           for (let i = visibleDebugVars.length - 1; i >= 0; i--) {
             if (visibleDebugVars[i].name === left) return (visibleDebugVars[i].type || '').trim()
           }
@@ -6327,12 +6440,31 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         if (llCall) {
           emitSubLine(`${llCall};`)
         } else if (call && call.name) {
+          // `控件.方法(…)` 未命中任何绑定 → 友好报错（原样发出去必是 undeclared identifier）。
+          // 对象/方法段须均为纯标识符（防 parseCommandCall 吞并运算表达式后误报，与表达式路同款守卫）。
+          const dotAt = call.name.lastIndexOf('.')
+          if (dotAt > 0) {
+            const objName = call.name.slice(0, dotAt)
+            const method = call.name.slice(dotAt + 1)
+            const objType = /^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(objName) && /^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(method)
+              ? resolveProjectControlType(objName)
+              : ''
+            if (objType && !resolveVisibleVarType(objName)) {
+              throwSourceError(lineIndex + 1, `${objType}“${objName}”的方法“${method}”暂不支持在代码中调用`)
+            }
+          }
           const cArgs = call.args.map(a => formatArgForC(a, commandMap, directCallables)).join(', ')
           emitSubLine(`${call.name}(${cArgs});`)
         } else {
           emitSubLine(`/* ${line} */`)
         }
       }
+    }
+    } catch (e) {
+      // 深层转译错误统一补「文件名:行号:」前缀（throwSourceError 已带前缀的原样重抛）
+      const msg = e instanceof Error ? e.message : String(e)
+      if (msg.startsWith(`${fileName}:`)) throw e
+      throwSourceError(lineIndex + 1, msg)
     }
   }
 
@@ -6609,15 +6741,17 @@ function generateMainC(
     mainCode += `static int g_nWidth = ${winInfo.width};\n`
     mainCode += `static int g_nHeight = ${winInfo.height};\n`
     mainCode += 'static HINSTANCE g_hInstance;\n'
-    mainCode += 'static HWND g_hMainWnd = NULL;\n\n'
+    mainCode += 'static HWND g_hMainWnd = NULL;\n'
+    // 窗体背景刷全局化：类注册与 WM_PRINTCLIENT（主题化公共控件向父窗要背景）共用
+    mainCode += 'static HBRUSH g_hFormBgBrush = NULL;\n\n'
 
     // 底图（背景图片）/ 图标 / 按钮图片：把选中的图片文件字节内嵌为数组，运行时经 GDI+ 从内存流解码
     const backImageBytes = winInfo.backImage ? decodeImageDataUrl(winInfo.backImage) : null
     const iconImageBytes = winInfo.iconImage ? decodeImageDataUrl(winInfo.iconImage) : null
     // 按索引与 winInfo.controls 对齐（controls 已按停留顺序排序，两处循环同序）
     const controlImageBytes: Array<Buffer | null> = winInfo.controls.map(c => {
-      // 图片框/按钮用「图片」，画板用「底图」
-      const img = (c.type === '画板' || c.type === 'DrawPanel') ? c.extraProps?.['底图'] : c.extraProps?.['图片']
+      // 图片框/按钮用「图片」，画板/标签用「底图」
+      const img = (c.type === '画板' || c.type === 'DrawPanel' || c.type === '标签' || c.type === 'Label') ? c.extraProps?.['底图'] : c.extraProps?.['图片']
       return (typeof img === 'string' && img.startsWith('data:image')) ? decodeImageDataUrl(img) : null
     })
     const hasAnyControlImage = controlImageBytes.some(Boolean)
@@ -6656,6 +6790,8 @@ function generateMainC(
 
     mainCode += 'HWND yc_get_control_handle_by_name(const wchar_t* ctrlName) {\n'
     mainCode += '    if (!ctrlName || !g_hMainWnd) return NULL;\n'
+    // 窗体名解析到主窗句柄——`窗口名.标题/宽度/可视` 等经通用控件属性绑定直接作用于窗口本身
+    mainCode += `    if (lstrcmpW(ctrlName, L"${escapeCString(winInfo.formName)}") == 0) return g_hMainWnd;\n`
     for (const ctrl of winInfo.controls) {
       mainCode += `    if (lstrcmpW(ctrlName, L"${escapeCString(ctrl.name)}") == 0) return GetDlgItem(g_hMainWnd, IDC_${ctrl.name.toUpperCase()});\n`
     }
@@ -6677,7 +6813,9 @@ function generateMainC(
     mainCode += 'extern "C" wchar_t* krnln_ctrl_get_tag(HWND h);\n'
     mainCode += 'extern "C" wchar_t* krnln_ctrl_get_date(HWND h, const wchar_t* prop);\n'
     mainCode += 'YC_TEXT yc_ctrl_get_tag(HWND h) { wchar_t* p = krnln_ctrl_get_tag(h); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n'
-    mainCode += 'YC_TEXT yc_ctrl_get_date(HWND h, const wchar_t* prop) { wchar_t* p = krnln_ctrl_get_date(h, prop); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n\n'
+    mainCode += 'YC_TEXT yc_ctrl_get_date(HWND h, const wchar_t* prop) { wchar_t* p = krnln_ctrl_get_date(h, prop); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n'
+    mainCode += 'extern "C" wchar_t* krnln_ctrl_get_seltext(HWND h);\n'
+    mainCode += 'YC_TEXT yc_ctrl_get_seltext(HWND h) { wchar_t* p = krnln_ctrl_get_seltext(h); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n\n'
 
     mainCode += 'int yc_text_compare(const wchar_t* left, const wchar_t* right) {\n'
     mainCode += '    const wchar_t* lhs = left ? left : L"";\n'
@@ -6710,13 +6848,30 @@ function generateMainC(
 
     // 控件成员访问按控件类型键控派发：转译前从项目所有窗口(.efw)灌一次「控件名→类型」表。
     // 只有确属控件的 `名.成员` 才走声明式读写，避免与自定义类型成员撞名。
+    // 窗体名也注册为「窗口」类型——`窗口名.标题/宽度/可视` 等经通用绑定生效（启动窗口经名字解析到 g_hMainWnd；
+    // 非启动窗口暂解析不到句柄，运行时为无害空操作，与声明式化前的行为一致）。
     currentProjectControls = new Map<string, string>()
+    // 已知常量名（供颜色名色转换防遮蔽）：库常量 + 项目常量，剥去前导 #。
+    currentKnownConstantNames = new Set<string>()
+    for (const c of libraryConstants) currentKnownConstantNames.add((c.name || '').replace(/^#/, ''))
+    for (const c of projectConstants) currentKnownConstantNames.add((c.name || '').replace(/^#/, ''))
     for (const f of project.files) {
       if (f.type !== 'EFW' && !f.fileName.toLowerCase().endsWith('.efw')) continue
       const efwEditorContent = editorFiles?.get(f.fileName)
-      const ctrls: Array<{ name?: unknown; type?: unknown }> = efwEditorContent
-        ? (() => { try { const d = JSON.parse(efwEditorContent); return Array.isArray(d.controls) ? d.controls : [] } catch { return [] } })()
-        : parseWindowFile(join(project.projectDir, f.fileName)).controls
+      let formName = ''
+      let ctrls: Array<{ name?: unknown; type?: unknown }> = []
+      if (efwEditorContent) {
+        try {
+          const d = JSON.parse(efwEditorContent)
+          ctrls = Array.isArray(d.controls) ? d.controls : []
+          formName = typeof d.name === 'string' ? d.name : ''
+        } catch { /* ignore */ }
+      } else {
+        const parsed = parseWindowFile(join(project.projectDir, f.fileName))
+        ctrls = parsed.controls
+        formName = parsed.formName || ''
+      }
+      if (formName) currentProjectControls.set(formName, '窗口')
       for (const c of ctrls) {
         const nm = typeof c?.name === 'string' ? c.name : ''
         const ty = typeof c?.type === 'string' ? c.type : ''
@@ -6769,12 +6924,16 @@ function generateMainC(
           if (editCodegenInfo.needsInputFilter) anyEditNeedsInputFilter = true
         } else if (ctrl.type === '标签' || ctrl.type === 'Label') {
           const lc = buildStdLabelCodegen(ctrl.extraProps)
-          if (lc.colorEntry || lc.transparent) {
+          // 有底图/渐变背景的标签：文字必须以透明背景模式画在图/渐变上（transparent 路径 = SetBkMode(TRANSPARENT)+NULL_BRUSH，
+          // 擦除由 YcLblBgProc 子类的 WM_ERASEBKGND 负责画图/渐变），否则文字自带底色矩形会在其上打洞。
+          const lblHasBgImg = !!controlImageBytes[winInfo.controls.indexOf(ctrl)]
+          const lblHasGrad = readIntProp(ctrl.extraProps?.['渐变背景方式'], 0) !== 0
+          if (lc.colorEntry || lc.transparent || lblHasBgImg || lblHasGrad) {
             editColorEntries.push({
               idMacro: `IDC_${ctrl.name.toUpperCase()}`,
               textColor: lc.colorEntry?.textColor ?? 0,
               backColor: lc.colorEntry?.backColor ?? 0xffffff,
-              transparent: lc.transparent ? 1 : 0,
+              transparent: (lc.transparent || lblHasBgImg || lblHasGrad) ? 1 : 0,
             })
           }
         } else if (ctrl.type === '选择框' || ctrl.type === 'CheckBox' || ctrl.type === '单选框' || ctrl.type === 'RadioBox') {
@@ -6815,15 +6974,31 @@ function generateMainC(
       mainCode += '    return DefSubclassProc(hWnd, message, wParam, lParam);\n'
       mainCode += '}\n\n'
     }
-    if (editColorEntries.length > 0) {
+    {
+      // 颜色表始终生成（空占位 id=0 永不匹配）：WM_CTLCOLOR* case 恒存在，未配色控件的兜底路径对所有项目一致
       mainCode += '/* 编辑框自定义颜色表 */\n'
       mainCode += 'typedef struct { int id; COLORREF textColor; COLORREF backColor; HBRUSH brush; int transparent; } YcEditColorEntry;\n'
       mainCode += 'static YcEditColorEntry g_ycEditColors[] = {\n'
       for (const entry of editColorEntries) {
         mainCode += `    { ${entry.idMacro}, (COLORREF)${entry.textColor}, (COLORREF)${entry.backColor}, NULL, ${entry.transparent} },\n`
       }
+      if (editColorEntries.length === 0) mainCode += '    { 0, (COLORREF)0, (COLORREF)0, NULL, 0 },\n'
       mainCode += '};\n\n'
     }
+
+    // 运行时「文本颜色」覆盖表 + setter（代码里 `控件.文本颜色 ＝ 颜色`）。文本颜色与生成的
+    // WM_CTLCOLOR* + g_ycEditColors 深度纠缠，故 helper 与覆盖表放生成代码（krnln 库不动）。
+    // 月历经类名派发到 MCM_SETCOLOR（用户 cpp 无 commctrl.h，须在此 main.cpp 内处理）；
+    // 其余共用 WM_CTLCOLOR 的控件写覆盖表并重绘；超级链接框(SysLink)存值但视觉无效（无消息可改链接文字色）。
+    mainCode += '/* 运行时文本颜色覆盖 */\n'
+    mainCode += 'static std::map<HWND,COLORREF> g_ycTextColorOverride;\n'
+    mainCode += 'void yc_ctrl_set_text_color(HWND h, COLORREF c){\n'
+    mainCode += '    if(!h) return;\n'
+    mainCode += '    wchar_t tcCls[32]=L""; GetClassNameW(h,tcCls,32);\n'
+    mainCode += '    if(_wcsicmp(tcCls,L"SysMonthCal32")==0){ SendMessageW(h,MCM_SETCOLOR,MCSC_TEXT,(LPARAM)c); return; }\n'
+    mainCode += '    g_ycTextColorOverride[h]=c;\n'
+    mainCode += '    InvalidateRect(h,NULL,TRUE);\n'
+    mainCode += '}\n\n'
 
     // 自绘按钮表：按钮设了底色或文本色则 BS_OWNERDRAW，WM_DRAWITEM 按 ID 查表自绘。
     // hasCustomColor 决定是否自绘；textColor<0 表示用默认按钮文本色。
@@ -6876,6 +7051,91 @@ function generateMainC(
         mainCode += `    { ${e.idMacro}, ${e.shape}, ${e.effect}, ${e.lineStyle}, ${e.lineWidth}, (COLORREF)${e.lineColor >>> 0}, (COLORREF)${e.fillColor >>> 0}, (COLORREF)${e.backColor >>> 0} },\n`
       }
       mainCode += '};\n\n'
+    }
+
+    // 标签「底图/渐变背景」运行时：g_ycLblBgs 表（内嵌图字节懒解码为 GDI+ Image；渐变方式+3 色）+ YcLblBgProc 子类。
+    // WM_ERASEBKGND：先填窗体背景刷（图有透明区/未铺满时透出窗体），再按「底图方式」(0居左上/1平铺/2居中/3缩放)
+    // 画图；无底图时按「渐变背景方式」(0无/1上下/2左右/3-4-7-8 对角/5-6 反向) 用 3 色线性渐变填充；返回 1。
+    // 底图优先于渐变（易语言「未设定底图时的渐变背景」语义）。标签文字由 STATIC 自身 WM_PAINT 以透明背景模式叠加。
+    const labelBgEntries: Array<{ idMacro: string; imgIdx: number; hasImg: boolean; mode: number; gradMode: number; g1: number; g2: number; g3: number }> = []
+    {
+      let lblCtrlIdx = 0
+      for (const ctrl of winInfo.controls) {
+        const idx = lblCtrlIdx++
+        if (!(ctrl.type === '标签' || ctrl.type === 'Label')) continue
+        const hasImg = !!controlImageBytes[idx]
+        const gradMode = readIntProp(ctrl.extraProps?.['渐变背景方式'], 0)
+        if (!hasImg && gradMode === 0) continue  // 无底图无渐变 → 不挂子类
+        labelBgEntries.push({
+          idMacro: `IDC_${ctrl.name.toUpperCase()}`, imgIdx: idx, hasImg,
+          mode: readIntProp(ctrl.extraProps?.['底图方式'], 0),
+          gradMode,
+          g1: readIntProp(ctrl.extraProps?.['渐变背景颜色1'], 0),
+          g2: readIntProp(ctrl.extraProps?.['渐变背景颜色2'], 0),
+          g3: readIntProp(ctrl.extraProps?.['渐变背景颜色3'], 0),
+        })
+      }
+    }
+    if (labelBgEntries.length > 0) {
+      mainCode += '/* 标签底图/渐变背景表（懒解码 GDI+ Image）与子类过程 */\n'
+      mainCode += 'typedef struct { int id; int mode; const unsigned char* data; unsigned int size; Gdiplus::Image* img; int gradMode; COLORREF g1; COLORREF g2; COLORREF g3; } YcLblBgEntry;\n'
+      mainCode += 'static YcLblBgEntry g_ycLblBgs[] = {\n'
+      for (const e of labelBgEntries) {
+        const dataRef = e.hasImg ? `g_ctrlImg_${e.imgIdx}, g_ctrlImgSize_${e.imgIdx}` : 'NULL, 0'
+        mainCode += `    { ${e.idMacro}, ${e.mode}, ${dataRef}, NULL, ${e.gradMode}, (COLORREF)${e.g1}, (COLORREF)${e.g2}, (COLORREF)${e.g3} },\n`
+      }
+      mainCode += '};\n'
+      mainCode += 'static LRESULT CALLBACK YcLblBgProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR ref) {\n'
+      mainCode += '    if (m == WM_ERASEBKGND) {\n'
+      mainCode += '        YcLblBgEntry* e = (YcLblBgEntry*)ref;\n'
+      mainCode += '        HDC hdc = (HDC)w; RECT rc; GetClientRect(h, &rc);\n'
+      mainCode += '        FillRect(hdc, &rc, g_hFormBgBrush ? g_hFormBgBrush : GetSysColorBrush(COLOR_BTNFACE));\n'
+      mainCode += '        if (!e->img && e->data && e->size > 0) {\n'
+      mainCode += '            HGLOBAL hm = GlobalAlloc(GMEM_MOVEABLE, e->size);\n'
+      mainCode += '            if (hm) { void* pm = GlobalLock(hm); if (pm) { memcpy(pm, e->data, e->size); GlobalUnlock(hm); }\n'
+      mainCode += '                IStream* ps = NULL;\n'
+      mainCode += '                if (CreateStreamOnHGlobal(hm, TRUE, &ps) == S_OK && ps) { e->img = Gdiplus::Image::FromStream(ps, FALSE); if (e->img && e->img->GetLastStatus() != Gdiplus::Ok) { delete e->img; e->img = NULL; } ps->Release(); }\n'
+      mainCode += '                else { GlobalFree(hm); }\n'
+      mainCode += '            }\n'
+      mainCode += '        }\n'
+      mainCode += '        if (e->img) {\n'
+      mainCode += '            Gdiplus::Graphics g(hdc); int cw = rc.right - rc.left, ch = rc.bottom - rc.top;\n'
+      mainCode += '            int iw = (int)e->img->GetWidth(), ih = (int)e->img->GetHeight();\n'
+      mainCode += '            if (e->mode == 1) { Gdiplus::TextureBrush tb(e->img); g.FillRectangle(&tb, 0, 0, cw, ch); }\n'
+      mainCode += '            else if (e->mode == 2) { g.DrawImage(e->img, (cw - iw) / 2, (ch - ih) / 2, iw, ih); }\n'
+      mainCode += '            else if (e->mode == 3) { g.DrawImage(e->img, 0, 0, cw, ch); }\n'
+      mainCode += '            else { g.DrawImage(e->img, 0, 0, iw, ih); }\n'
+      mainCode += '        }\n'
+      mainCode += '        else if (e->gradMode != 0) {\n'
+      mainCode += '            int cw = rc.right - rc.left, ch = rc.bottom - rc.top;\n'
+      mainCode += '            if (cw > 0 && ch > 0) {\n'
+      mainCode += '                Gdiplus::Graphics g(hdc);\n'
+      mainCode += '                Gdiplus::PointF p0(0.0f, 0.0f), p1(0.0f, (Gdiplus::REAL)ch);\n'
+      mainCode += '                switch (e->gradMode) {\n'
+      mainCode += '                    case 1: p0=Gdiplus::PointF(0,0); p1=Gdiplus::PointF(0,(Gdiplus::REAL)ch); break;\n'                       // 从上到下
+      mainCode += '                    case 2: p0=Gdiplus::PointF(0,0); p1=Gdiplus::PointF((Gdiplus::REAL)cw,0); break;\n'                       // 从左到右
+      mainCode += '                    case 3: p0=Gdiplus::PointF(0,0); p1=Gdiplus::PointF((Gdiplus::REAL)cw,(Gdiplus::REAL)ch); break;\n'       // 从左上到右下
+      mainCode += '                    case 4: p0=Gdiplus::PointF((Gdiplus::REAL)cw,0); p1=Gdiplus::PointF(0,(Gdiplus::REAL)ch); break;\n'       // 从右上到左下
+      mainCode += '                    case 5: p0=Gdiplus::PointF(0,(Gdiplus::REAL)ch); p1=Gdiplus::PointF(0,0); break;\n'                       // 从下到上
+      mainCode += '                    case 6: p0=Gdiplus::PointF((Gdiplus::REAL)cw,0); p1=Gdiplus::PointF(0,0); break;\n'                       // 从右到左
+      mainCode += '                    case 7: p0=Gdiplus::PointF((Gdiplus::REAL)cw,(Gdiplus::REAL)ch); p1=Gdiplus::PointF(0,0); break;\n'       // 从右下到左上
+      mainCode += '                    case 8: p0=Gdiplus::PointF(0,(Gdiplus::REAL)ch); p1=Gdiplus::PointF((Gdiplus::REAL)cw,0); break;\n'       // 从左下到右上
+      mainCode += '                }\n'
+      mainCode += '                Gdiplus::Color c1(255, GetRValue(e->g1), GetGValue(e->g1), GetBValue(e->g1));\n'
+      mainCode += '                Gdiplus::Color c2(255, GetRValue(e->g2), GetGValue(e->g2), GetBValue(e->g2));\n'
+      mainCode += '                Gdiplus::Color c3(255, GetRValue(e->g3), GetGValue(e->g3), GetBValue(e->g3));\n'
+      mainCode += '                Gdiplus::LinearGradientBrush lgb(p0, p1, c1, c3);\n'
+      mainCode += '                Gdiplus::Color cols[3] = { c1, c2, c3 };\n'
+      mainCode += '                Gdiplus::REAL poss[3] = { 0.0f, 0.5f, 1.0f };\n'
+      mainCode += '                lgb.SetInterpolationColors(cols, poss, 3);\n'
+      mainCode += '                g.FillRectangle(&lgb, 0, 0, cw, ch);\n'
+      mainCode += '            }\n'
+      mainCode += '        }\n'
+      mainCode += '        return 1;\n'
+      mainCode += '    }\n'
+      mainCode += '    if (m == WM_NCDESTROY) RemoveWindowSubclass(h, YcLblBgProc, 1);\n'
+      mainCode += '    return DefSubclassProc(h, m, w, l);\n'
+      mainCode += '}\n\n'
     }
 
     // 超级链接框表：SysLink 控件，点击(NM_CLICK)或调用「跳转」方法时按类型 ShellExecute 打开邮件/网址。
@@ -6968,6 +7228,19 @@ function generateMainC(
     mainCode += 'int yc_tab_get_cur(const wchar_t* n){ HWND h=yc_get_control_handle_by_name(n); return h?(int)SendMessageW(h,TCM_GETCURSEL,0,0):-1; }\n'
     mainCode += 'int yc_tab_set_cur(const wchar_t* n, int idx){ HWND h=yc_get_control_handle_by_name(n); if(!h) return 0; SendMessageW(h,TCM_SETCURSEL,(WPARAM)idx,0); yc_tab_sync(GetDlgCtrlID(h)); return 1; }\n\n'
 
+    // 时钟「时钟周期」运行时读写：时钟无 HWND，靠生成的 名→定时器id 表；周期存表内（可变），
+    // 置周期 = KillTimer + (周期>0 时) SetTimer；0=不产生时钟事件（易语言语义）。表始终生成（空占位）保证跨编译单元可链接。
+    {
+      const timerCtrls = winInfo.controls.filter(c => c.type === '时钟' || c.type === 'Timer')
+      mainCode += 'struct YcTimerEntry { const wchar_t* name; int id; int period; };\n'
+      const timerEntries = timerCtrls.map(c =>
+        `{ L"${escapeCString(c.name)}", IDC_${c.name.toUpperCase()}, ${readIntProp(c.extraProps?.['时钟周期'], 0)} }`)
+      mainCode += `static YcTimerEntry g_ycTimers[] = { ${timerEntries.length ? timerEntries.join(', ') : '{ NULL, 0, 0 }'} };\n`
+      mainCode += 'static YcTimerEntry* yc_timer_find(const wchar_t* n){ if(!n) return NULL; for(size_t i=0;i<sizeof(g_ycTimers)/sizeof(g_ycTimers[0]);i++){ if(g_ycTimers[i].name && lstrcmpW(g_ycTimers[i].name, n)==0) return &g_ycTimers[i]; } return NULL; }\n'
+      mainCode += 'int yc_timer_get_period(const wchar_t* n){ YcTimerEntry* e=yc_timer_find(n); return e?e->period:0; }\n'
+      mainCode += 'void yc_timer_set_period(const wchar_t* n, int v){ YcTimerEntry* e=yc_timer_find(n); if(!e||!g_hMainWnd) return; if(v<0) v=0; e->period=v; KillTimer(g_hMainWnd, (UINT_PTR)e->id); if(v>0) SetTimer(g_hMainWnd, (UINT_PTR)e->id, (UINT)v, NULL); }\n\n'
+    }
+
     // ===== 画板（DrawPanel）运行时：首个自注册控件窗口类 YCDRAWPANEL + 离屏 backbuffer + GDI 状态机 + 绘画事件 =====
     // 状态/助手/proc 始终生成（同超级链接框/选择夹策略，保证跨编译单元的画板方法调用可链接）。
     const drawPanelCtrls = winInfo.controls.filter(c => c.type === '画板' || c.type === 'DrawPanel')
@@ -6979,7 +7252,7 @@ function generateMainC(
     mainCode += 'struct YcDrawPanelState { HDC memDC; HBITMAP memBmp; HBITMAP oldBmp; int cw; int ch; int penStyle; int penWidth; COLORREF penColor; int rop2; int brushStyle; COLORREF brushColor; COLORREF textColor; COLORREF textBkColor; HFONT hFont; int writeX; int writeY; int unit; int autoRedraw; COLORREF backColor; Gdiplus::Image* bgImage; int bgMode; void (*paintHandler)(int,int,int,int); };\n'
     mainCode += 'static std::map<HWND, YcDrawPanelState> g_ycDrawPanels;\n'
     // 用 背景色 + 底图 填满整块 backbuffer（清除/非自动重画每次重绘前调用）
-    mainCode += 'static void yc_dp_fill_back(YcDrawPanelState& st){ if(!st.memDC) return; RECT rc={0,0,st.cw,st.ch}; HBRUSH hb=CreateSolidBrush(st.backColor); FillRect(st.memDC,&rc,hb); DeleteObject(hb); if(st.bgImage){ Gdiplus::Graphics g(st.memDC); int iw=(int)st.bgImage->GetWidth(), ih=(int)st.bgImage->GetHeight(); if(iw>0&&ih>0){ if(st.bgMode==1){ for(int y=0;y<st.ch;y+=ih) for(int x=0;x<st.cw;x+=iw) g.DrawImage(st.bgImage,x,y,iw,ih); } else if(st.bgMode==2){ g.DrawImage(st.bgImage,(st.cw-iw)/2,(st.ch-ih)/2,iw,ih); } else { g.DrawImage(st.bgImage,0,0,iw,ih); } } } }\n'
+    mainCode += 'static void yc_dp_fill_back(YcDrawPanelState& st){ if(!st.memDC) return; RECT rc={0,0,st.cw,st.ch}; HBRUSH hb=CreateSolidBrush(st.backColor); FillRect(st.memDC,&rc,hb); DeleteObject(hb); if(st.bgImage){ Gdiplus::Graphics g(st.memDC); int iw=(int)st.bgImage->GetWidth(), ih=(int)st.bgImage->GetHeight(); if(iw>0&&ih>0){ if(st.bgMode==1){ for(int y=0;y<st.ch;y+=ih) for(int x=0;x<st.cw;x+=iw) g.DrawImage(st.bgImage,x,y,iw,ih); } else if(st.bgMode==2){ g.DrawImage(st.bgImage,(st.cw-iw)/2,(st.ch-ih)/2,iw,ih); } else if(st.bgMode==3){ g.DrawImage(st.bgImage,0,0,st.cw,st.ch); } else { g.DrawImage(st.bgImage,0,0,iw,ih); } } } }\n'
     // 按客户区尺寸建 backbuffer
     mainCode += 'static void yc_dp_make_buffer(HWND h, YcDrawPanelState& st){ RECT rc; GetClientRect(h,&rc); st.cw=rc.right-rc.left; st.ch=rc.bottom-rc.top; if(st.cw<1)st.cw=1; if(st.ch<1)st.ch=1; HDC hdc=GetDC(h); st.memDC=CreateCompatibleDC(hdc); st.memBmp=CreateCompatibleBitmap(hdc,st.cw,st.ch); st.oldBmp=(HBITMAP)SelectObject(st.memDC,st.memBmp); ReleaseDC(h,hdc); yc_dp_fill_back(st); }\n'
     // 画板窗口过程：backbuffer 生命周期 + WM_PAINT（自动重画=真直接贴图；=假先清背景+产生绘画事件再贴图）
@@ -7035,6 +7308,10 @@ int yc_dp_getpicheight(const wchar_t* n, const std::vector<unsigned char>& img){
 void yc_dp_copy(const wchar_t* n){ (void)n; /* v1 未实现：跨画板复制需以画板对象作参数，待后续 */ }
 std::vector<unsigned char> yc_dp_getpic(const wchar_t* n, int ow, int oh){ (void)ow; (void)oh; std::vector<unsigned char> out; HWND _h=yc_get_control_handle_by_name(n); std::map<HWND,YcDrawPanelState>::iterator _it=g_ycDrawPanels.find(_h); if(_it==g_ycDrawPanels.end()||!_it->second.memBmp) return out; YcDrawPanelState& st=_it->second; Gdiplus::Bitmap* bmp=Gdiplus::Bitmap::FromHBITMAP(st.memBmp,NULL); if(!bmp) return out; IStream* ps=NULL; if(CreateStreamOnHGlobal(NULL,TRUE,&ps)==S_OK&&ps){ CLSID pngClsid={0x557cf406,0x1a04,0x11d3,{0x9a,0x73,0x00,0x00,0xf8,0x1e,0xf3,0x2e}}; if(bmp->Save(ps,&pngClsid,NULL)==Gdiplus::Ok){ HGLOBAL hg=NULL; GetHGlobalFromStream(ps,&hg); if(hg){ SIZE_T sz=GlobalSize(hg); void* pd=GlobalLock(hg); if(pd&&sz>0){ out.assign((unsigned char*)pd,(unsigned char*)pd+sz); GlobalUnlock(hg); } } } ps->Release(); } delete bmp; return out; }
 int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) return yc_dp_u2px(st,v,1); if(type==2) return yc_dp_u2px(st,v,0); if(type==3) return yc_dp_px2u(st,v,1); if(type==4) return yc_dp_px2u(st,v,0); return v; }
+/* 画板 GDI 状态属性运行时读写：state 存原始枚举值、笔刷每次绘图现建，故直接改字段即对下一次绘图生效。
+   prop id 与 window-units.json 画板 access 绑定一致：0画笔类型 1画笔粗细 2画出方式 3刷子类型 4绘画单位 5自动重画 6画笔颜色 7刷子颜色 8画板背景色 9文本颜色 10文本背景颜色 */
+int yc_dp_get_prop(const wchar_t* n, int prop){ YC_DP_R(n,0); switch(prop){ case 0:return st.penStyle; case 1:return st.penWidth; case 2:return st.rop2; case 3:return st.brushStyle; case 4:return st.unit; case 5:return st.autoRedraw; case 6:return (int)st.penColor; case 7:return (int)st.brushColor; case 8:return (int)st.backColor; case 9:return (int)st.textColor; case 10:return (int)st.textBkColor; } return 0; }
+void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop){ case 0:st.penStyle=v;break; case 1:st.penWidth=v;break; case 2:st.rop2=v;break; case 3:st.brushStyle=v;break; case 4:st.unit=v;break; case 5:st.autoRedraw=v?1:0;break; case 6:st.penColor=(COLORREF)v;break; case 7:st.brushColor=(COLORREF)v;break; case 8:st.backColor=(COLORREF)v;break; case 9:st.textColor=(COLORREF)v;break; case 10:st.textBkColor=(COLORREF)v;break; } if(prop==5||prop==8) InvalidateRect(_h,NULL,FALSE); }
 `
 
     // 创建控件函数
@@ -7051,6 +7328,7 @@ int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) 
     let ctrlId = 1001
     for (const ctrl of winInfo.controls) {
       const ctrlIndex = ctrlId - 1001  // 与 controlImageBytes 同序对齐（loop 顶 ctrlId 尚未自增）
+      const lblBgEntryIdx = labelBgEntries.findIndex(e => e.imgIdx === ctrlIndex)
       const unitInfo = allUnits.find(u => u.name === ctrl.type || u.englishName === ctrl.type)
       const libraryFileName = unitInfo ? (libNameToFileName.get(normalizeKey(unitInfo.libraryName)) || '') : ''
       const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
@@ -7162,6 +7440,10 @@ int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) 
       mainCode += `        ${style},\n`
       mainCode += `        ${ctrl.x}, ${ctrl.y}, ${ctrl.width}, ${ctrl.height},\n`
       mainCode += `        hWndParent, (HMENU)${ctrlId++}, g_hInstance, NULL);\n`
+      // 标签底图：创建后即挂 YcLblBgProc 子类（WM_ERASEBKGND 画底图），ref 传表项指针
+      if (lblBgEntryIdx >= 0) {
+        mainCode += `    SetWindowSubclass(hCtrl, YcLblBgProc, 1, (DWORD_PTR)&g_ycLblBgs[${lblBgEntryIdx}]);\n`
+      }
       // 字体：控件设了「字体」则 CreateFontW 专用字体，否则用默认 GUI 字体（所有控件通用）
       // 画板不走 WM_SETFONT（自绘用 st.hFont，在下方画板分支里创建），跳过通用字体块。
       const ctrlFont = parseControlFont(ctrl.extraProps?.['字体'])
@@ -7338,6 +7620,8 @@ int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) 
       for (const ev of events) {
         // 画板「绘画」事件不走 WM_COMMAND/NOTIFY/SCROLL 通道，由 YcDrawPanelProc 的 WM_PAINT 带 4 个 int 参直接派发。
         if ((ctrl.type === '画板' || ctrl.type === 'DrawPanel') && ev.name === '绘画') continue
+        // 时钟「周期事件」不走 WM_COMMAND/NOTIFY/SCROLL 通道，由主窗 WM_TIMER 按定时器 id 直接派发。
+        if ((ctrl.type === '时钟' || ctrl.type === 'Timer') && ev.name === '周期事件') continue
         const handlerName = `_${ctrl.name.replace(/^_+/, '')}_${ev.name}`
         const proto = resolveEventByProtocol(
           protocolBindings,
@@ -7440,6 +7724,15 @@ int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) 
       mainCode += `WEAK_FUNC void ${b.handlerName}(void) { }\n`
     }
 
+    // 时钟「周期事件」处理函数（WM_TIMER 派发；weak 空实现保证无用户处理时可链接）
+    const timerEventCtrls = winInfo.controls.filter(c => c.type === '时钟' || c.type === 'Timer')
+    for (const ctrl of timerEventCtrls) {
+      const handlerName = `_${ctrl.name.replace(/^_+/, '')}_周期事件`
+      if (declaredHandlers.has(handlerName)) continue
+      declaredHandlers.add(handlerName)
+      mainCode += `WEAK_FUNC void ${handlerName}(void) { }\n`
+    }
+
     mainCode += `WEAK_FUNC void ${windowEventPrefix}_创建完毕(void) { }\n`
     mainCode += `WEAK_FUNC void ${windowEventPrefix}_按下某键(int 键代码, int 功能键状态) { }\n`
     mainCode += `WEAK_FUNC void ${windowEventPrefix}_某键被放开(int 键代码, int 功能键状态) { }\n`
@@ -7515,6 +7808,16 @@ int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) 
     if (hasWindowMenu) mainCode += '        CreateMenus(hWnd);\n'
     mainCode += `        ${windowEventPrefix}_创建完毕();\n`
     mainCode += '        break;\n'
+    // 时钟「周期事件」派发：定时器 id = 控件 IDC 宏值（SetTimer 创建期/yc_timer_set_period 均用它）
+    if (timerEventCtrls.length > 0) {
+      mainCode += '    case WM_TIMER:\n'
+      mainCode += '        switch ((int)wParam) {\n'
+      for (const ctrl of timerEventCtrls) {
+        mainCode += `        case IDC_${ctrl.name.toUpperCase()}: _${ctrl.name.replace(/^_+/, '')}_周期事件(); return 0;\n`
+      }
+      mainCode += '        }\n'
+      mainCode += '        break;\n'
+    }
     mainCode += '    case WM_COMMAND: {\n'
     mainCode += '        int wmId = LOWORD(wParam);\n'
     mainCode += '        int wmEvent = HIWORD(wParam);\n'
@@ -7613,22 +7916,48 @@ int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) 
     mainCode += '        }\n'
     mainCode += '        break;\n'
     mainCode += '    }\n'
-    if (editColorEntries.length > 0) {
+    {
+      const formBackRefExpr = winInfo.backColor !== 0 ? `(COLORREF)${winInfo.backColor >>> 0}` : 'GetSysColor(COLOR_BTNFACE)'
       mainCode += '    case WM_CTLCOLOREDIT:\n'
       mainCode += '    case WM_CTLCOLORLISTBOX:\n'
       mainCode += '    case WM_CTLCOLORSTATIC: {\n'
       mainCode += '        int colorCtrlId = GetDlgCtrlID((HWND)lParam);\n'
       mainCode += '        HWND hColorParent = GetParent((HWND)lParam);\n'
       mainCode += '        int colorParentId = hColorParent ? GetDlgCtrlID(hColorParent) : 0;\n'
+      mainCode += '        std::map<HWND,COLORREF>::iterator _ovIt = g_ycTextColorOverride.find((HWND)lParam);\n'
+      mainCode += '        bool _hasOv = (_ovIt != g_ycTextColorOverride.end());\n'
       mainCode += '        for (size_t ci = 0; ci < sizeof(g_ycEditColors) / sizeof(g_ycEditColors[0]); ci++) {\n'
       mainCode += '            if (g_ycEditColors[ci].id != colorCtrlId && g_ycEditColors[ci].id != colorParentId) continue;\n'
-      mainCode += '            SetTextColor((HDC)wParam, g_ycEditColors[ci].textColor);\n'
+      mainCode += '            SetTextColor((HDC)wParam, _hasOv ? _ovIt->second : g_ycEditColors[ci].textColor);\n'
       mainCode += '            if (g_ycEditColors[ci].transparent) { SetBkMode((HDC)wParam, TRANSPARENT); return (LRESULT)GetStockObject(NULL_BRUSH); }\n'
       mainCode += '            SetBkColor((HDC)wParam, g_ycEditColors[ci].backColor);\n'
       mainCode += '            if (!g_ycEditColors[ci].brush) g_ycEditColors[ci].brush = CreateSolidBrush(g_ycEditColors[ci].backColor);\n'
       mainCode += '            return (LRESULT)g_ycEditColors[ci].brush;\n'
       mainCode += '        }\n'
-      mainCode += '        break;\n'
+      // 运行时覆盖但无设计期条目：也必须返回真实刷子（绝不落 return 0，否则同下方黑底陷阱）。
+      // STATIC 非 EDIT（标签/选择框/单选框/分组框）→ 融入窗体底色；EDIT/LISTBOX/只读编辑框 → 系统默认底。
+      mainCode += '        if (_hasOv) {\n'
+      mainCode += '            SetTextColor((HDC)wParam, _ovIt->second);\n'
+      mainCode += '            wchar_t ovCls[16] = L""; GetClassNameW((HWND)lParam, ovCls, 16);\n'
+      mainCode += '            if (message == WM_CTLCOLORSTATIC && _wcsicmp(ovCls, L"EDIT") != 0) {\n'
+      mainCode += `                SetBkColor((HDC)wParam, ${formBackRefExpr});\n`
+      mainCode += '                return (LRESULT)(g_hFormBgBrush ? g_hFormBgBrush : GetSysColorBrush(COLOR_BTNFACE));\n'
+      mainCode += '            }\n'
+      mainCode += '            SetBkColor((HDC)wParam, GetSysColor(COLOR_WINDOW));\n'
+      mainCode += '            return (LRESULT)GetSysColorBrush(COLOR_WINDOW);\n'
+      mainCode += '        }\n'
+      // 查表不中：**绝不能 break**——switch 之后是 return 0，NULL 背景刷会让主题化滑块条等
+      // 公共控件的双缓冲位图保持全黑（用户实测黑底根因）。STATIC 通道且非 EDIT 类（滑块条/标签/
+      // 选择框/单选框/分组框）→ 返回窗体背景刷（融入窗体底色，易语言行为）；只读编辑框虽走
+      // STATIC 通道但按类名识别为 EDIT → 与 EDIT/LISTBOX 通道一起显式 DefWindowProc（系统默认观感）。
+      mainCode += '        if (message == WM_CTLCOLORSTATIC) {\n'
+      mainCode += '            wchar_t ccCls[16] = L""; GetClassNameW((HWND)lParam, ccCls, 16);\n'
+      mainCode += '            if (_wcsicmp(ccCls, L"EDIT") != 0) {\n'
+      mainCode += `            SetBkColor((HDC)wParam, ${formBackRefExpr});\n`
+      mainCode += '                return (LRESULT)(g_hFormBgBrush ? g_hFormBgBrush : GetSysColorBrush(COLOR_BTNFACE));\n'
+      mainCode += '            }\n'
+      mainCode += '        }\n'
+      mainCode += '        return DefWindowProcW(hWnd, message, wParam, lParam);\n'
       mainCode += '    }\n'
     }
     if (buttonDrawEntries.length > 0 || shapeBoxEntries.length > 0 || chkListIds.length > 0) {
@@ -7727,34 +8056,42 @@ int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) 
       mainCode += '        break;\n'
       mainCode += '    }\n'
     }
+    // 底图绘制块（要求作用域内已有 HDC hdc）——WM_PAINT 与 WM_PRINTCLIENT 共用
+    let backImageDrawBlock = ''
+    if (backImageBytes) {
+      backImageDrawBlock += '        if (g_backImage) {\n'
+      backImageDrawBlock += '            RECT crc; GetClientRect(hWnd, &crc);\n'
+      backImageDrawBlock += '            int cw = (int)(crc.right - crc.left), ch = (int)(crc.bottom - crc.top);\n'
+      backImageDrawBlock += '            Gdiplus::Graphics graphics(hdc);\n'
+      const biMode = winInfo.backImageMode
+      if (biMode === 4) {
+        backImageDrawBlock += '            graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);\n'
+        backImageDrawBlock += '            graphics.DrawImage(g_backImage, 0, 0, cw, ch);\n'
+      } else if (biMode === 0) {
+        backImageDrawBlock += '            Gdiplus::TextureBrush texBrush(g_backImage);\n'
+        backImageDrawBlock += '            graphics.FillRectangle(&texBrush, 0, 0, cw, ch);\n'
+      } else {
+        backImageDrawBlock += '            int iw = (int)g_backImage->GetWidth(), ih = (int)g_backImage->GetHeight();\n'
+        if (biMode === 1) backImageDrawBlock += '            int ix = 0, iy = 0;\n'
+        else if (biMode === 2) backImageDrawBlock += '            int ix = (cw - iw) / 2, iy = (ch - ih) / 2;\n'
+        else backImageDrawBlock += '            int ix = cw - iw, iy = ch - ih;\n'
+        backImageDrawBlock += '            graphics.DrawImage(g_backImage, ix, iy, iw, ih);\n'
+      }
+      backImageDrawBlock += '        }\n'
+    }
+    // 主题化公共控件（滑块条等）经 DrawThemeParentBackground 向父窗要背景——DefWindowProc 不处理
+    // WM_PRINTCLIENT，缺此处理则主题引擎的内存位图保持全黑（滑块条黑底）。填窗体背景刷，有底图连底图一起画。
+    mainCode += '    case WM_PRINTCLIENT: {\n'
+    mainCode += '        HDC hdc = (HDC)wParam;\n'
+    mainCode += '        RECT prc; GetClientRect(hWnd, &prc);\n'
+    mainCode += '        FillRect(hdc, &prc, g_hFormBgBrush ? g_hFormBgBrush : GetSysColorBrush(COLOR_BTNFACE));\n'
+    mainCode += backImageDrawBlock
+    mainCode += '        return 0;\n'
+    mainCode += '    }\n'
     mainCode += '    case WM_PAINT: {\n'
     mainCode += '        PAINTSTRUCT ps;\n'
     mainCode += '        HDC hdc = BeginPaint(hWnd, &ps);\n'
-    if (backImageBytes) {
-      // 底图：按「底图方式」绘制（透明区域由类背景刷透出）
-      mainCode += '        if (g_backImage) {\n'
-      mainCode += '            RECT crc; GetClientRect(hWnd, &crc);\n'
-      mainCode += '            int cw = (int)(crc.right - crc.left), ch = (int)(crc.bottom - crc.top);\n'
-      mainCode += '            Gdiplus::Graphics graphics(hdc);\n'
-      const mode = winInfo.backImageMode
-      if (mode === 4) {
-        // 缩放：拉伸铺满
-        mainCode += '            graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);\n'
-        mainCode += '            graphics.DrawImage(g_backImage, 0, 0, cw, ch);\n'
-      } else if (mode === 0) {
-        // 平铺：纹理刷铺满
-        mainCode += '            Gdiplus::TextureBrush texBrush(g_backImage);\n'
-        mainCode += '            graphics.FillRectangle(&texBrush, 0, 0, cw, ch);\n'
-      } else {
-        // 居左上(1)/居中(2)/居右下(3)：原尺寸定位
-        mainCode += '            int iw = (int)g_backImage->GetWidth(), ih = (int)g_backImage->GetHeight();\n'
-        if (mode === 1) mainCode += '            int ix = 0, iy = 0;\n'
-        else if (mode === 2) mainCode += '            int ix = (cw - iw) / 2, iy = (ch - ih) / 2;\n'
-        else mainCode += '            int ix = cw - iw, iy = ch - ih;\n'
-        mainCode += '            graphics.DrawImage(g_backImage, ix, iy, iw, ih);\n'
-      }
-      mainCode += '        }\n'
-    }
+    mainCode += backImageDrawBlock
     mainCode += '        EndPaint(hWnd, &ps);\n'
     mainCode += '        break;\n'
     mainCode += '    }\n'
@@ -7915,8 +8252,8 @@ int yc_dp_unitcnv(const wchar_t* n, int v, int type){ YC_DP_R(n,v); if(type==1) 
       : '    wcex.hIcon = LoadIcon(NULL, IDI_APPLICATION);\n'
     mainCode += `    wcex.hCursor = LoadCursor(NULL, ${mapMousePointerCursor(winInfo.mousePointer)});\n`
     mainCode += winInfo.backColor !== 0
-      ? `    wcex.hbrBackground = CreateSolidBrush((COLORREF)${winInfo.backColor >>> 0});\n`
-      : '    wcex.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);\n'
+      ? `    g_hFormBgBrush = CreateSolidBrush((COLORREF)${winInfo.backColor >>> 0});\n    wcex.hbrBackground = g_hFormBgBrush;\n`
+      : '    g_hFormBgBrush = GetSysColorBrush(COLOR_BTNFACE);\n    wcex.hbrBackground = g_hFormBgBrush;\n'
     mainCode += '    wcex.lpszMenuName = NULL;\n'
     mainCode += '    wcex.lpszClassName = g_szClassName;\n'
     mainCode += iconImageBytes

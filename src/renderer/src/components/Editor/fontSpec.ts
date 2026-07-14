@@ -11,19 +11,9 @@ export interface FontSpec {
   color?: number        // 文本颜色 COLORREF(0xBBGGRR)；undefined = 默认文本色
 }
 
-// COLORREF(0xBBGGRR) ↔ CSS/hex
-export function colorrefToHex(c: number): string {
-  const n = (c >>> 0) & 0xffffff
-  const r = n & 0xff, g = (n >> 8) & 0xff, b = (n >> 16) & 0xff
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`
-}
-export function hexToColorref(hex: string): number {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
-  if (!m) return 0
-  const v = Number.parseInt(m[1], 16)
-  const r = (v >> 16) & 0xff, g = (v >> 8) & 0xff, b = v & 0xff
-  return r | (g << 8) | (b << 16)
-}
+// COLORREF(0xBBGGRR) ↔ CSS/hex —— 单一真源在 src/shared/colorNames，这里 re-export 供既有导入者复用。
+export { colorrefToHex, hexToColorref } from '../../../../shared/colorNames'
+import { colorrefToHex } from '../../../../shared/colorNames'
 
 export const DEFAULT_FONT_NAME = '宋体'
 export const DEFAULT_FONT_SIZE = 9

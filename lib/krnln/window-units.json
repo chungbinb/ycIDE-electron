@@ -322,7 +322,39 @@
     {"unit": "月历", "member": "最小日期", "memberEnglishName": "MinDate", "get": "yc_ctrl_get_date({h}, L\"最小日期\")", "set": "krnln_ctrl_set_date({h}, L\"最小日期\", {vtext})"},
     {"unit": "月历", "member": "最大日期", "memberEnglishName": "MaxDate", "get": "yc_ctrl_get_date({h}, L\"最大日期\")", "set": "krnln_ctrl_set_date({h}, L\"最大日期\", {vtext})"},
     {"unit": "月历", "member": "首选择日", "memberEnglishName": "SelStart", "get": "yc_ctrl_get_date({h}, L\"首选择日\")", "set": "krnln_ctrl_set_date({h}, L\"首选择日\", {vtext})"},
-    {"unit": "月历", "member": "尾选择日", "memberEnglishName": "SelEnd", "get": "yc_ctrl_get_date({h}, L\"尾选择日\")", "set": "krnln_ctrl_set_date({h}, L\"尾选择日\", {vtext})"}
+    {"unit": "月历", "member": "尾选择日", "memberEnglishName": "SelEnd", "get": "yc_ctrl_get_date({h}, L\"尾选择日\")", "set": "krnln_ctrl_set_date({h}, L\"尾选择日\", {vtext})"},
+    {"unit": "编辑框", "member": "起始选择位置", "memberEnglishName": "SelStart", "get": "krnln_ctrl_get_number({h}, L\"起始选择位置\")", "set": "krnln_ctrl_set_number({h}, L\"起始选择位置\", (long long)({v}))"},
+    {"unit": "编辑框", "member": "被选择字符数", "memberEnglishName": "SelLength", "get": "krnln_ctrl_get_number({h}, L\"被选择字符数\")", "set": "krnln_ctrl_set_number({h}, L\"被选择字符数\", (long long)({v}))"},
+    {"unit": "编辑框", "member": "最大允许长度", "memberEnglishName": "MaxAllowLength", "get": "krnln_ctrl_get_number({h}, L\"最大允许长度\")", "set": "krnln_ctrl_set_number({h}, L\"最大允许长度\", (long long)({v}))"},
+    {"unit": "编辑框", "member": "被选择文本", "memberEnglishName": "SelText", "get": "yc_ctrl_get_seltext({h})", "set": "krnln_ctrl_set_seltext({h}, {vtext})"},
+    {"unit": "组合框", "member": "起始选择位置", "memberEnglishName": "SelStart", "get": "krnln_ctrl_get_number({h}, L\"起始选择位置\")", "set": "krnln_ctrl_set_number({h}, L\"起始选择位置\", (long long)({v}))"},
+    {"unit": "组合框", "member": "被选择字符数", "memberEnglishName": "SelLength", "get": "krnln_ctrl_get_number({h}, L\"被选择字符数\")", "set": "krnln_ctrl_set_number({h}, L\"被选择字符数\", (long long)({v}))"},
+    {"unit": "组合框", "member": "最大文本长度", "memberEnglishName": "TextLimit", "get": "krnln_ctrl_get_number({h}, L\"最大文本长度\")", "set": "krnln_ctrl_set_number({h}, L\"最大文本长度\", (long long)({v}))"},
+    {"unit": "组合框", "member": "被选择文本", "memberEnglishName": "SelText", "get": "yc_ctrl_get_seltext({h})", "set": "krnln_ctrl_set_seltext({h}, {vtext})"},
+    {"unit": "选择夹", "member": "现行子夹", "memberEnglishName": "CurTab", "get": "yc_tab_get_cur({n})", "set": "yc_tab_set_cur({n}, (int)({v}))"},
+    {"unit": "时钟", "member": "时钟周期", "memberEnglishName": "elapse", "get": "yc_timer_get_period({n})", "set": "yc_timer_set_period({n}, (int)({v}))"},
+    {"unit": "月历", "member": "滚动月数", "memberEnglishName": "ScrollRate", "get": "krnln_ctrl_get_number({h}, L\"滚动月数\")", "set": "krnln_ctrl_set_number({h}, L\"滚动月数\", (long long)({v}))"},
+    {"unit": "月历", "member": "最多选择天数", "memberEnglishName": "MaxSelCount", "get": "krnln_ctrl_get_number({h}, L\"最多选择天数\")", "set": "krnln_ctrl_set_number({h}, L\"最多选择天数\", (long long)({v}))"},
+    {"unit": "画板", "member": "画笔类型", "memberEnglishName": "PenStyle", "get": "yc_dp_get_prop({n}, 0)", "set": "yc_dp_set_prop({n}, 0, (int)({v}))"},
+    {"unit": "画板", "member": "画笔粗细", "memberEnglishName": "PenWidth", "get": "yc_dp_get_prop({n}, 1)", "set": "yc_dp_set_prop({n}, 1, (int)({v}))"},
+    {"unit": "画板", "member": "画出方式", "memberEnglishName": "DrawMode", "get": "yc_dp_get_prop({n}, 2)", "set": "yc_dp_set_prop({n}, 2, (int)({v}))"},
+    {"unit": "画板", "member": "刷子类型", "memberEnglishName": "BrushStyle", "get": "yc_dp_get_prop({n}, 3)", "set": "yc_dp_set_prop({n}, 3, (int)({v}))"},
+    {"unit": "画板", "member": "绘画单位", "memberEnglishName": "DrawUnit", "get": "yc_dp_get_prop({n}, 4)", "set": "yc_dp_set_prop({n}, 4, (int)({v}))"},
+    {"unit": "画板", "member": "自动重画", "memberEnglishName": "AutoRedraw", "get": "yc_dp_get_prop({n}, 5)", "set": "yc_dp_set_prop({n}, 5, (int)({v}))"},
+    {"unit": "画板", "member": "画笔颜色", "memberEnglishName": "PenColor", "get": "yc_dp_get_prop({n}, 6)", "set": "yc_dp_set_prop({n}, 6, (int)({v}))"},
+    {"unit": "画板", "member": "刷子颜色", "memberEnglishName": "BrushColor", "get": "yc_dp_get_prop({n}, 7)", "set": "yc_dp_set_prop({n}, 7, (int)({v}))"},
+    {"unit": "画板", "member": "画板背景色", "memberEnglishName": "BackColor", "get": "yc_dp_get_prop({n}, 8)", "set": "yc_dp_set_prop({n}, 8, (int)({v}))"},
+    {"unit": "画板", "member": "文本颜色", "memberEnglishName": "TextColor", "get": "yc_dp_get_prop({n}, 9)", "set": "yc_dp_set_prop({n}, 9, (int)({v}))"},
+    {"unit": "画板", "member": "文本背景颜色", "memberEnglishName": "TextBkColor", "get": "yc_dp_get_prop({n}, 10)", "set": "yc_dp_set_prop({n}, 10, (int)({v}))"},
+    {"unit": "标签", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "编辑框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "选择框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "单选框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "列表框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "组合框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "分组框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "月历", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "超级链接框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"}
   ],
   "windowUnits": [
     {
@@ -1013,12 +1045,12 @@
         {
           "name": "背景颜色",
           "englishName": "BackColor",
-          "description": "标签背景颜色；效果为透明时不起作用。",
+          "description": "标签背景颜色；效果为透明时不起作用；未设置颜色（默认）时融入窗口底色。",
           "type": 0,
           "typeName": "颜色",
           "isReadOnly": false,
           "pickOptions": [],
-          "defaultValue": 16777215
+          "defaultValue": -1
         },
         {
           "name": "底图",
@@ -1040,7 +1072,8 @@
           "pickOptions": [
             "图片居左上",
             "图片平铺",
-            "图片居中"
+            "图片居中",
+            "图片缩放"
           ],
           "defaultValue": 0
         },
@@ -1561,12 +1594,12 @@
         {
           "name": "背景颜色",
           "englishName": "BackColor",
-          "description": "选择框背景颜色。",
+          "description": "选择框背景颜色；未设置颜色（默认）时融入窗口底色。",
           "type": 0,
           "typeName": "颜色",
           "isReadOnly": false,
           "pickOptions": [],
-          "defaultValue": 16777215
+          "defaultValue": -1
         },
         {
           "name": "字体",
@@ -1722,12 +1755,12 @@
         {
           "name": "背景颜色",
           "englishName": "BackColor",
-          "description": "单选框背景颜色。",
+          "description": "单选框背景颜色；未设置颜色（默认）时融入窗口底色。",
           "type": 0,
           "typeName": "颜色",
           "isReadOnly": false,
           "pickOptions": [],
-          "defaultValue": 16777215
+          "defaultValue": -1
         },
         {
           "name": "字体",
@@ -2623,12 +2656,12 @@
         {
           "name": "背景颜色",
           "englishName": "BackColor",
-          "description": "分组框背景颜色。",
+          "description": "分组框背景颜色；未设置颜色（默认）时融入窗口底色。",
           "type": 0,
           "typeName": "颜色",
           "isReadOnly": false,
           "pickOptions": [],
-          "defaultValue": 16777215
+          "defaultValue": -1
         },
         {
           "name": "字体",
@@ -2995,7 +3028,8 @@
           "pickOptions": [
             "图片居左上",
             "图片平铺",
-            "图片居中"
+            "图片居中",
+            "图片缩放"
           ],
           "defaultValue": 0
         },
@@ -3867,7 +3901,13 @@
           "defaultValue": 0
         }
       ],
-      "events": [],
+      "events": [
+    {
+     "name": "周期事件",
+     "description": "时钟周期到达时触发；「时钟周期」为 0 时不触发。",
+     "args": []
+    }
+   ],
       "icon": "icon/BlueIcons/Timer_16x.png"
     },
     {

@@ -380,6 +380,16 @@
   cursor: pointer;
 }
 
+/* 子属性父项未启用时（如渐变背景方式=通常、边框≠渐变镜框）灰显只读 */
+.prop-color-cell-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.prop-color-cell-disabled .prop-color-input,
+.prop-color-cell-disabled .prop-color-hex {
+  cursor: not-allowed;
+}
+
 .prop-color-input {
   width: 28px;
   height: 16px;

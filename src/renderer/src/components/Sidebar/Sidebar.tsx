@@ -1265,7 +1265,7 @@ function EditableNameCell({ value, existingNames, onChange, ariaLabel = '名称'
   const validate = useCallback((name: string): string => {
     if (!name.trim()) return '名称不能为空'
     if (/^[0-9]/.test(name)) return '名称不能以数字开头'
-    if (/^[^\u4e00-\u9fa5a-zA-Z_]/.test(name)) return '名称不能以特殊符号开头'
+    if (/^[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffa-zA-Z_]/.test(name)) return '名称不能以特殊符号开头'
     if (name !== value && existingNames.includes(name)) return '名称已存在'
     return ''
   }, [value, existingNames])
@@ -1454,12 +1454,16 @@ function hexStrToColorref(text: string): number | null {
   return ((v >> 16) & 0xff) | (((v >> 8) & 0xff) << 8) | ((v & 0xff) << 16)
 }
 
-/** 可编辑颜色属性单元格：色块弹系统取色器 + 可直接输入/粘贴/复制 #RRGGBB；存储 COLORREF（0xBBGGRR） */
-function EditableColorCell({ value, onChange, ariaLabel = '颜色' }: { value: number; onChange: (v: number) => void; ariaLabel?: string }): React.JSX.Element {
-  const n = Number.isFinite(value) ? (Math.max(0, Math.trunc(value)) & 0xffffff) : 0
+/** 可编辑颜色属性单元格：色块弹系统取色器 + 可直接输入/粘贴/复制 #RRGGBB；存储 COLORREF（0xBBGGRR）。
+ * 负值（-1）为「默认」哨兵（融入型控件背景颜色的未设置态；0 是纯黑的合法 COLORREF 不能当哨兵）——
+ * 显示为「默认」，输入「默认」或清空后回车可复位到该属性声明的默认值。 */
+function EditableColorCell({ value, onChange, ariaLabel = '颜色', resetValue, disabled = false }: { value: number; onChange: (v: number) => void; ariaLabel?: string; resetValue?: number; disabled?: boolean }): React.JSX.Element {
+  const isDefault = !Number.isFinite(value) || value < 0
+  const n = isDefault ? 0xffffff : (Math.trunc(value) & 0xffffff)
   const hex = colorrefToHexStr(n)
-  const [draft, setDraft] = useState(hex)
-  useEffect(() => { setDraft(hex) }, [hex])
+  const display = isDefault ? '默认' : hex
+  const [draft, setDraft] = useState(display)
+  useEffect(() => { setDraft(display) }, [display])
   // 颜色选择器按住滑动会连发大量 onChange；每次都触发整窗体 setTabs + 撤销栈的全量 JSON.stringify 比较，
   // 高频（叠加窗体里的底图/图片 base64）会拖垮渲染进程直至崩溃。故节流到 ~90ms 提交一次（滑块本地即时预览），
   // 并保证最后一个值一定被提交（尾随 flush + blur flush）。
@@ -1477,18 +1481,25 @@ function EditableColorCell({ value, onChange, ariaLabel = '颜色' }: { value: n
     else if (!timerRef.current) timerRef.current = setTimeout(flush, 90)
   }
   const commitHex = (): void => {
-    const cr = hexStrToColorref(draft)
+    const trimmed = draft.trim()
+    if (trimmed === '' || trimmed === '默认') {
+      onChange(typeof resetValue === 'number' ? resetValue : -1)
+      setDraft(display)
+      return
+    }
+    const cr = hexStrToColorref(trimmed)
     if (cr !== null) onChange(cr)
-    else setDraft(hex)  // 无效回退
+    else setDraft(display)  // 无效回退
   }
   const swatchHex = /^#[0-9a-fA-F]{6}$/.test(draft) ? draft : hex
   return (
-    <span className="prop-color-cell">
+    <span className={`prop-color-cell${disabled ? ' prop-color-cell-disabled' : ''}`}>
       <input
         className="prop-color-input"
         type="color"
         aria-label={buildEditableAriaLabel(ariaLabel, hex)}
         value={swatchHex}
+        disabled={disabled}
         onChange={e => { setDraft(e.target.value); throttledCommit(hexStrToColorref(e.target.value) ?? n) }}
         onBlur={flush}
       />
@@ -1498,6 +1509,7 @@ function EditableColorCell({ value, onChange, ariaLabel = '颜色' }: { value: n
         aria-label={`${ariaLabel} 十六进制值，可粘贴 #RRGGBB`}
         value={draft}
         spellCheck={false}
+        disabled={disabled}
         onChange={e => setDraft(e.target.value)}
         onBlur={commitHex}
         onKeyDown={e => { if (e.key === 'Enter') { commitHex(); (e.target as HTMLInputElement).blur() } }}
@@ -1710,7 +1722,7 @@ function renderEditableCell(prop: LibUnitProperty, val: string | number | boolea
   }
   // 颜色类型 → 色块 + 系统颜色选择器
   if (prop.typeName === '颜色' || prop.typeName === '颜色(透明)' || prop.typeName === '背景颜色') {
-    return <EditableColorCell value={typeof val === 'number' ? val : Number(val) || 0} ariaLabel={prop.name} onChange={v => onChange(v)} />
+    return <EditableColorCell value={typeof val === 'number' ? val : Number(val) || 0} ariaLabel={prop.name} disabled={disabled} resetValue={typeof prop.defaultValue === 'number' ? prop.defaultValue : undefined} onChange={v => onChange(v)} />
   }
   // 图片类型 → 文件选择器（存 base64 data URL）
   if (prop.typeName === '图片') {
@@ -1901,12 +1913,27 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
               // 调节器上限值/底限值：仅「自动调节器(1)」时可编辑；无调节器(0)/手动调节器(2) 均禁用
               const spinModeProp = unit.properties.find(p => p.name === '调节器方式')
               const spinModeVal = spinModeProp ? Number(resolveControlPropValue(spinModeProp, control)) : 0
+              // 有底图/渐变背景/渐变边框时其下级子属性缩进显示（照易语言 UW_HAS_INDENT）；无对应父项时相应子项禁用。
+              const resolveByName = (name: string): number => {
+                const pr = unit.properties.find(x => x.name === name)
+                return pr ? Number(resolveControlPropValue(pr, control)) : 0
+              }
+              const hasCtrlBackImage = typeof control.properties?.['底图'] === 'string' && (control.properties['底图'] as string).startsWith('data:image')
+              const gradBgMode = resolveByName('渐变背景方式')
+              const gradBorderOn = resolveByName('边框') === 6  // 6=渐变镜框
               return unit.properties.filter(p => !p.isReadOnly).map(p => {
                 const val = resolveControlPropValue(p, control)
                 const isTabOrder = p.name === '停留顺序'
                 const isSpinLimit = p.name === '调节器上限值' || p.name === '调节器底限值'
-                const isSubOption = isTabOrder || isSpinLimit
+                const isBgMode = p.name === '底图方式'
+                const isGradBgSub = p.name === '渐变背景颜色1' || p.name === '渐变背景颜色2' || p.name === '渐变背景颜色3'
+                const isGradBorderSub = p.name === '渐变边框宽度' || p.name === '渐变边框颜色1' || p.name === '渐变边框颜色2' || p.name === '渐变边框颜色3'
+                // 渐变背景方式 是下面三个渐变背景颜色的父项，与 底图/边框 同级不缩进（只缩进其子颜色项）
+                const isSubOption = isTabOrder || isSpinLimit || isBgMode || isGradBgSub || isGradBorderSub
                 const disabled = (isTabOrder && !canFocusOn) || (isSpinLimit && spinModeVal !== 1)
+                  || (isBgMode && !hasCtrlBackImage)
+                  || (isGradBgSub && gradBgMode === 0)     // 渐变背景方式=通常(0) → 三颜色无效
+                  || (isGradBorderSub && !gradBorderOn)    // 边框≠渐变镜框 → 渐变边框子项无效
                 return (
                   <tr key={p.name} className="prop-row">
                     <th className={`prop-name${isSubOption ? ' prop-name-sub' : ''}`} scope="row" title={p.description}>{p.name}</th>

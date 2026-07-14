@@ -81,6 +81,7 @@ export function buildMonacoThemeTokens(mode: MonacoThemeMode, themeTokenValues: 
       { token: 'type', foreground: normalizeHex(type) },
       { token: 'predefined', foreground: normalizeHex(predefined) },
       { token: 'constant', foreground: normalizeHex(constant), fontStyle: 'bold' },
+      { token: 'constant.color', foreground: normalizeHex(constant), fontStyle: 'bold' },
       { token: 'identifier', foreground: normalizeHex(identifier) },
       { token: 'operator', foreground: normalizeHex(operator) },
       { token: 'delimiter.parenthesis', foreground: normalizeHex(delimiter) },

@@ -139,6 +139,9 @@ const GRID = 4
 const ALIGN_SNAP_TOLERANCE = 6
 const FORM_TITLEBAR_HEIGHT = 32
 const TOOL_TITLEBAR_HEIGHT = 22
+// 设计器菜单栏条（.vd-fmenu-bar，border-box 含底边框）高度——有菜单时位于标题栏与客户区之间；
+// 客户区坐标↔工作区/标尺坐标的换算必须把它与标题栏高度一并计入，否则纵向标尺高亮/游标上移一条菜单栏
+const FORM_MENUBAR_HEIGHT = 22
 
 // 底图方式 → 画布背景图 CSS（图片层，网格层恒定）
 const BACK_IMAGE_MODE_CSS: Record<number, { size: string; repeat: string; position: string }> = {
@@ -483,6 +486,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const visualFormHeight = Math.max(form.height, FORM_MIN_HEIGHT)
   const formChrome = resolveFormChromeStyle(form)
   const formTitlebarHeight = formChrome.titlebarHeight
+  // 窗口铬高度 = 标题栏 + 菜单栏（有可见顶级菜单时 renderFormMenuBar 渲染 22px 条）——几何换算统一用它，
+  // 判定条件须与 renderFormMenuBar 的过滤一致（menu 数组存在且至少一个 visible !== false 的顶级项）
+  const formMenuBarHeight = Array.isArray(form.menu) && form.menu.some(n => n && n.visible !== false) ? FORM_MENUBAR_HEIGHT : 0
+  const formChromeHeight = formTitlebarHeight + formMenuBarHeight
   const formControlBox = form.properties?.['控制按钮'] !== false
   const formMinButton = form.properties?.['最小化按钮'] !== false
   const formMaxButton = form.properties?.['最大化按钮'] !== false
@@ -509,7 +516,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     return `ycide.visual-designer.view-state.${safeId}`
   }, [form.name, form.sourceFile])
   const scaledFormWidth = visualFormWidth * zoom
-  const scaledFormHeight = (visualFormHeight + formTitlebarHeight) * zoom
+  const scaledFormHeight = (visualFormHeight + formChromeHeight) * zoom
   const workspaceWidth = computeWorkspaceSpan(scaledFormWidth, viewportSize.width)
   const workspaceHeight = computeWorkspaceSpan(scaledFormHeight, viewportSize.height)
   const formOffsetLeft = (workspaceWidth - scaledFormWidth) / 2
@@ -563,15 +570,15 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const maxBottom = Math.max(...selected.map(control => control.top + control.height))
     const x1 = formOffsetLeft + minLeft * zoom - scrollPos.left
     const x2 = formOffsetLeft + maxRight * zoom - scrollPos.left
-    const y1 = formOffsetTop + (formTitlebarHeight + minTop) * zoom - scrollPos.top
-    const y2 = formOffsetTop + (formTitlebarHeight + maxBottom) * zoom - scrollPos.top
+    const y1 = formOffsetTop + (formChromeHeight + minTop) * zoom - scrollPos.top
+    const y2 = formOffsetTop + (formChromeHeight + maxBottom) * zoom - scrollPos.top
     return {
       x: Math.min(x1, x2),
       y: Math.min(y1, y2),
       w: Math.abs(x2 - x1),
       h: Math.abs(y2 - y1),
     }
-  }, [form.controls, formOffsetLeft, formOffsetTop, formTitlebarHeight, scrollPos.left, scrollPos.top, selectedControl, selectedIds, zoom])
+  }, [form.controls, formOffsetLeft, formOffsetTop, formChromeHeight, scrollPos.left, scrollPos.top, selectedControl, selectedIds, zoom])
 
   useEffect(() => {
     zoomRef.current = zoom
@@ -748,9 +755,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const point = getCanvasPoint(clientX, clientY)
     setMouseRulerPos({
       x: formOffsetLeft + point.x * zoom - scrollPos.left,
-      y: formOffsetTop + (formTitlebarHeight + point.y) * zoom - scrollPos.top,
+      y: formOffsetTop + (formChromeHeight + point.y) * zoom - scrollPos.top,
     })
-  }, [formOffsetLeft, formOffsetTop, formTitlebarHeight, getCanvasPoint, scrollPos.left, scrollPos.top, zoom])
+  }, [formOffsetLeft, formOffsetTop, formChromeHeight, getCanvasPoint, scrollPos.left, scrollPos.top, zoom])
 
   const zoomTo = useCallback((nextZoom: number, anchorClientPoint?: { x: number; y: number }) => {
     const host = canvasAreaRef.current
@@ -766,7 +773,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const viewportY = anchorY - rect.top
 
     const oldScaledW = visualFormWidth * currentZoom
-    const oldScaledH = (visualFormHeight + formTitlebarHeight) * currentZoom
+    const oldScaledH = (visualFormHeight + formChromeHeight) * currentZoom
     const oldWorkspaceW = computeWorkspaceSpan(oldScaledW, host.clientWidth)
     const oldWorkspaceH = computeWorkspaceSpan(oldScaledH, host.clientHeight)
     const oldOffsetX = (oldWorkspaceW - oldScaledW) / 2
@@ -778,7 +785,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const formY = (worldY - oldOffsetY) / currentZoom
 
     const newScaledW = visualFormWidth * targetZoom
-    const newScaledH = (visualFormHeight + formTitlebarHeight) * targetZoom
+    const newScaledH = (visualFormHeight + formChromeHeight) * targetZoom
     const newWorkspaceW = computeWorkspaceSpan(newScaledW, host.clientWidth)
     const newWorkspaceH = computeWorkspaceSpan(newScaledH, host.clientHeight)
     const newOffsetX = (newWorkspaceW - newScaledW) / 2
@@ -792,7 +799,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     }
 
     setZoom(targetZoom)
-  }, [visualFormWidth, visualFormHeight, formTitlebarHeight])
+  }, [visualFormWidth, visualFormHeight, formChromeHeight])
 
   const stepZoom = useCallback((direction: 1 | -1, anchorClientPoint?: { x: number; y: number }) => {
     const currentZoom = zoomRef.current || 1
@@ -820,7 +827,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
     // 窗体居中于工作区，滚动到工作区中心即窗体居中
     const scaledW = visualFormWidth * targetZoom
-    const scaledH = (visualFormHeight + formTitlebarHeight) * targetZoom
+    const scaledH = (visualFormHeight + formChromeHeight) * targetZoom
     const targetWorkspaceW = computeWorkspaceSpan(scaledW, host.clientWidth)
     const targetWorkspaceH = computeWorkspaceSpan(scaledH, host.clientHeight)
     const centerScroll = {
@@ -849,7 +856,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       hostNow.scrollTop = centerScroll.top
       setScrollPos({ left: hostNow.scrollLeft, top: hostNow.scrollTop })
     }))
-  }, [visualFormWidth, visualFormHeight, formTitlebarHeight, zoomTo])
+  }, [visualFormWidth, visualFormHeight, formChromeHeight, zoomTo])
 
   // 缩放到适应窗口：窗体完整可见、尽量铺满画布可视区域，并居中显示
   const fitZoomToViewport = useCallback(() => {
@@ -860,10 +867,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const availableHeight = Math.max(host.clientHeight - padding, 50)
     const fit = Math.min(
       availableWidth / Math.max(visualFormWidth, 1),
-      availableHeight / Math.max(visualFormHeight + formTitlebarHeight, 1),
+      availableHeight / Math.max(visualFormHeight + formChromeHeight, 1),
     )
     zoomToCentered(fit)
-  }, [visualFormWidth, visualFormHeight, formTitlebarHeight, zoomToCentered])
+  }, [visualFormWidth, visualFormHeight, formChromeHeight, zoomToCentered])
 
   // 倍率预设：首项为实际最小倍率，其余固定档位（超出范围的剔除）
   const zoomPresetPercents = (() => {
@@ -1870,7 +1877,19 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const vAlign = Number(props['纵向对齐方式'] ?? 0)  // 0顶 1中 2底
         const border = Number(props['边框'] ?? 0)          // 0无 1凹入 2凸出 3浅凹 4镜框 5单线 6渐变镜框
         const transparent = Number(props['效果'] ?? 0) === 4
-        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 16777215
+        // 底图（data URL）+ 底图方式（0居左上/1平铺/2居中/3缩放）——与运行时 YcLblBgProc 绘制一致
+        const lblBgImg = typeof props['底图'] === 'string' && (props['底图'] as string).startsWith('data:image') ? (props['底图'] as string) : ''
+        const lblBgMode = Number(props['底图方式'] ?? 0)
+        // 渐变背景（未设底图时生效，与运行时 LinearGradientBrush 3 色一致）：方式 0无/1上下/2左右/3-4-7-8对角/5-6反向
+        const lblGradMode = Number(props['渐变背景方式'] ?? 0)
+        const gradDir = (m: number): string => m === 1 ? 'to bottom' : m === 2 ? 'to right' : m === 3 ? 'to bottom right'
+          : m === 4 ? 'to bottom left' : m === 5 ? 'to top' : m === 6 ? 'to left' : m === 7 ? 'to top left' : 'to top right'
+        const gc = (v: unknown): string => colorFromNumber(typeof v === 'number' ? v : 0) || 'rgb(0,0,0)'
+        const lblGradCss = (!lblBgImg && lblGradMode !== 0)
+          ? `linear-gradient(${gradDir(lblGradMode)}, ${gc(props['渐变背景颜色1'])}, ${gc(props['渐变背景颜色2'])}, ${gc(props['渐变背景颜色3'])})`
+          : ''
+        // 背景颜色 -1=默认（融入窗口，与运行时不进颜色表一致；0 是纯黑的合法 COLORREF 不能当哨兵）；显式白/黑=真白/真黑。透明只由「效果=透明」驱动
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : -1
         const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
         const toFlex = (n: number): string => n === 1 ? 'center' : n === 2 ? 'flex-end' : 'flex-start'
         const borderCls = border === 1 || border === 3 ? ' vd-preview-label-sunken'
@@ -1879,8 +1898,14 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         return (
           <div
             className={`vd-preview vd-preview-label${borderCls}`}
+            style={lblBgImg ? {
+              backgroundImage: `url("${lblBgImg}")`,
+              backgroundRepeat: lblBgMode === 1 ? 'repeat' : 'no-repeat',
+              backgroundPosition: lblBgMode === 2 ? 'center' : '0 0',
+              backgroundSize: lblBgMode === 3 ? '100% 100%' : 'auto',
+            } : lblGradCss ? { backgroundImage: lblGradCss } : undefined}
             ref={(element) => setCssVars(element, {
-              '--vd-preview-bg': transparent || bgNum === 16777215 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
+              '--vd-preview-bg': transparent || bgNum < 0 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
               '--vd-preview-text': colorFromNumber(textNum) || controlColors.text,
               '--vd-preview-justify': toFlex(hAlign),
               '--vd-preview-align-items': vAlign === 0 ? 'flex-start' : vAlign === 2 ? 'flex-end' : 'center',
@@ -1917,19 +1942,20 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const border = Number(props['边框'] ?? 0)
         const bgNum = typeof props['画板背景色'] === 'number' ? (props['画板背景色'] as number) : 16777215
         const pic = typeof props['底图'] === 'string' && (props['底图'] as string).startsWith('data:image') ? (props['底图'] as string) : ''
-        const picMode = Number(props['底图方式'] ?? 0) // 0居左上 1平铺 2居中
+        const picMode = Number(props['底图方式'] ?? 0) // 0居左上 1平铺 2居中 3缩放
         const borderCls = border === 1 || border === 3 ? ' vd-preview-label-sunken'
           : border === 2 ? ' vd-preview-label-raised'
           : border === 4 || border === 5 ? ' vd-preview-label-bordered' : ''
         return (
           <div
             className={`vd-preview vd-preview-drawpanel${borderCls}`}
-            // 画板是自绘画布：背景色恒显示，可选底图（平铺/居中/居左上）；设计期只画背景不画运行时绘图内容。
+            // 画板是自绘画布：背景色恒显示，可选底图（平铺/居中/居左上/缩放）；设计期只画背景不画运行时绘图内容。
             ref={(element) => setCssVars(element, {
               '--vd-preview-bg': colorFromNumber(bgNum) || '#ffffff',
               '--vd-preview-bgimg': pic ? `url(${pic})` : 'none',
               '--vd-preview-bgrepeat': picMode === 1 ? 'repeat' : 'no-repeat',
               '--vd-preview-bgpos': picMode === 2 ? 'center' : 'left top',
+              '--vd-preview-bgsize': picMode === 3 ? '100% 100%' : 'auto',
             })}
           >
             <span className="vd-preview-drawpanel-label">{ctrl.name}</span>
@@ -1971,13 +1997,13 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const checked = props['选中'] === true || props['选中'] === '真'
         const leftText = props['标题居左'] === true || props['标题居左'] === '真'
         const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
-        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 16777215
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : -1
         return (
           <div
             className={`vd-preview vd-preview-check-like${leftText ? ' vd-preview-check-leftcap' : ''}`}
             ref={(element) => setCssVars(element, {
               '--vd-preview-text': colorFromNumber(textNum) || controlColors.text,
-              '--vd-preview-bg': bgNum === 16777215 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
+              '--vd-preview-bg': bgNum < 0 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
             })}
           >
             <span className={`${isRadio ? 'vd-preview-radio' : 'vd-preview-checkbox'}${checked ? ' vd-preview-check-on' : ''}`} />
@@ -1989,12 +2015,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const props = ctrl.properties || {}
         const hAlign = Number(props['对齐方式'] ?? 0)
         const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
-        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 16777215
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : -1
         return (
           <div
             className="vd-preview vd-preview-group"
             ref={(element) => setCssVars(element, {
-              '--vd-preview-bg': bgNum === 16777215 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
+              '--vd-preview-bg': bgNum < 0 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
               '--vd-preview-group-textalign': hAlign === 1 ? 'center' : hAlign === 2 ? 'right' : 'left',
             })}
           >
@@ -2065,7 +2091,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         else if (shape === 7) shapeEl = <line x1={w / 2} y1={0} x2={w / 2} y2={h} stroke={stroke} strokeWidth={lineWidth} strokeDasharray={dash} />
         else shapeEl = <rect x={lineWidth / 2} y={lineWidth / 2} width={(shape === 1 ? sq : w) - lineWidth} height={(shape === 1 ? sq : h) - lineWidth} fill={fillColor} stroke={stroke} strokeWidth={lineWidth} strokeDasharray={dash} />
         return (
-          <div className="vd-preview vd-preview-shape" style={{ background: bgNum === 16777215 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent') }}>
+          <div className="vd-preview vd-preview-shape" style={{ background: colorFromNumber(bgNum) || '#ffffff' }}>
             <svg width="100%" height="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ display: 'block' }}>{shapeEl}</svg>
           </div>
         )
@@ -2738,7 +2764,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           ref={(element) => setCssVars(element, {
             '--vd-zoom': `${zoom}`,
             '--vd-shell-width': `${visualFormWidth * zoom}px`,
-            '--vd-shell-height': `${(visualFormHeight + formTitlebarHeight) * zoom}px`,
+            '--vd-shell-height': `${(visualFormHeight + formChromeHeight) * zoom}px`,
             '--vd-shell-left': `${formOffsetLeft}px`,
             '--vd-shell-top': `${formOffsetTop}px`,
           })}
