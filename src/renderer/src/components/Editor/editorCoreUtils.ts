@@ -170,6 +170,41 @@ export const CONTROL_TYPE_METHODS: Record<string, Array<{ name: string; returnTy
   ],
 }
 
+// 控件方法命令详情（结构与 OutputPanel.CommandDetail 一致，供点击提示面板用）。
+export interface ControlMethodDetail {
+  name: string
+  englishName: string
+  description: string
+  returnType: string
+  category: string
+  libraryName: string
+  params: Array<{ name: string; type: string; description: string; optional: boolean; repeatable?: boolean; isVariable: boolean; isArray: boolean }>
+}
+
+// 控件方法（编辑框.加入文本 等）在库命令目录里没有——其签名真源就是上面的 CONTROL_TYPE_METHODS。
+// 点击提示时按方法名跨控件类型查一份构造详情，否则会落到"未在已加载的支持库中找到此命令"（空参数）。
+export function resolveControlMethodDetail(methodName: string): ControlMethodDetail | null {
+  if (!methodName) return null
+  for (const [ctrlType, methods] of Object.entries(CONTROL_TYPE_METHODS)) {
+    const m = methods.find(x => x.name === methodName)
+    if (m) {
+      return {
+        name: m.name,
+        englishName: '',
+        description: m.description,
+        returnType: m.returnType,
+        category: '控件方法',
+        libraryName: `系统核心支持库->${ctrlType}`,
+        params: m.params.map(p => ({
+          name: p.name, type: p.type, description: p.description || '',
+          optional: !!p.optional, repeatable: p.repeatable, isVariable: !!p.isVariable, isArray: !!p.isArray,
+        })),
+      }
+    }
+  }
+  return null
+}
+
 const NUMERIC_TYPE_COMMON_NOTE = '字节型、短整数型、整数型、长整数型、小数型、双精度小数型统称为数值型，彼此可转换；编程时需注意溢出与精度丢失（例如 257 转字节型后为 1）。'
 
 export const BUILTIN_TYPE_ITEMS: Array<{ name: string; englishName: string; description: string }> = [

@@ -1,6 +1,6 @@
 {
   "name": "ycide",
-  "version": "0.0.5-beta.6",
+  "version": "0.0.5-beta.7",
   "description": "ycIDE - 易语言集成开发环境 (HTML版)",
   "license": "MIT",
   "author": "chungbinb",
@@ -51,17 +51,24 @@
   "build": {
     "appId": "com.ycide.app",
     "productName": "ycIDE",
+    "npmRebuild": false,
     "directories": {
       "output": "dist"
     },
     "files": [
       "out/**/*",
       "resources/**/*",
-      "!out/**/*.map"
+      "!out/**/*.map",
+      "node_modules/node-pty/**/*",
+      "!node_modules/node-pty/**/*.pdb",
+      "!node_modules/node-pty/**/*.test.js",
+      "!node_modules/node-pty/{src,deps,scripts,build}/**",
+      "!node_modules/node-pty/prebuilds/{darwin-arm64,darwin-x64}/**"
     ],
     "asarUnpack": [
       "out/main/compile-worker.js",
-      "out/main/chunks/**"
+      "out/main/chunks/**",
+      "node_modules/node-pty/**"
     ],
     "extraFiles": [
       {
@@ -123,8 +130,12 @@
     "zustand": "^5.0.14"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
     "adm-zip": "^0.5.17",
     "diff": "^9.0.0",
-    "iconv-lite": "^0.7.2"
+    "iconv-lite": "^0.7.2",
+    "node-pty": "^1.1.0"
   }
 }

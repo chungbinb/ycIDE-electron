@@ -373,7 +373,7 @@ interface TranspileCacheFile {
   entries: Record<string, TranspileCacheEntry>
 }
 
-const TRANSPILE_CACHE_VERSION = 25
+const TRANSPILE_CACHE_VERSION = 26
 
 interface BuildArtifactCacheFile {
   version: number
@@ -1881,7 +1881,7 @@ function buildStdLabelCodegen(extraProps: Record<string, unknown>): {
   const border = readIntProp(extraProps['边框'], 0)          // 0无 1凹入 2凸出 3浅凹 4镜框 5单线 6渐变镜框
   const effect = readIntProp(extraProps['效果'], 0)          // 0通常 1凹入 2凸出 3阴影 4透明
   const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], -1)  // -1=默认（不进颜色表，融入窗口）；0 是纯黑合法色，显式白/黑=真白/真黑
+  const backColor = readIntProp(extraProps['背景颜色'], 16777215)  // 默认白色（进颜色表填白，创建即白底不再融入窗口）；-1 兼容旧工程=融入窗口；0=纯黑；显式白/黑=真白/真黑
   const autoWrap = readBoolProp(extraProps['是否自动折行'], false)
   const parts = ['WS_CHILD', 'SS_NOTIFY']
   // 横向对齐：居中/右总是折行；左对齐时按「是否自动折行」选 SS_LEFT(折行)/SS_LEFTNOWORDWRAP(不折行)
@@ -1914,7 +1914,7 @@ function buildStdCheckableCodegen(extraProps: Record<string, unknown>, isRadio: 
   const leftText = readBoolProp(extraProps['标题居左'], false)
   const checked = readBoolProp(extraProps['选中'], false)
   const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], -1)  // -1=默认（不进颜色表，融入窗口）；0 是纯黑合法色，显式白/黑=真白/真黑
+  const backColor = readIntProp(extraProps['背景颜色'], 16777215)  // 默认白色（进颜色表填白，创建即白底不再融入窗口）；-1 兼容旧工程=融入窗口；0=纯黑；显式白/黑=真白/真黑
   const parts = ['WS_CHILD', 'WS_TABSTOP', isRadio ? 'BS_AUTORADIOBUTTON' : 'BS_AUTOCHECKBOX']
   if (pushLike) parts.push('BS_PUSHLIKE')
   if (flat) parts.push('BS_FLAT')
@@ -1934,7 +1934,7 @@ function buildStdGroupBoxCodegen(extraProps: Record<string, unknown>): {
 } {
   const hAlign = readIntProp(extraProps['对齐方式'], 0)  // 0左 1中 2右
   const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], -1)  // -1=默认（不进颜色表，融入窗口）；0 是纯黑合法色，显式白/黑=真白/真黑
+  const backColor = readIntProp(extraProps['背景颜色'], 16777215)  // 默认白色（进颜色表填白，创建即白底不再融入窗口）；-1 兼容旧工程=融入窗口；0=纯黑；显式白/黑=真白/真黑
   const parts = ['WS_CHILD', 'BS_GROUPBOX']
   parts.push(hAlign === 1 ? 'BS_CENTER' : hAlign === 2 ? 'BS_RIGHT' : 'BS_LEFT')
   return {
@@ -1943,8 +1943,9 @@ function buildStdGroupBoxCodegen(extraProps: Record<string, unknown>): {
   }
 }
 
-// 标准 STATIC·图片框：边框走 exStyle，背景色经 WM_CTLCOLORSTATIC；有图片则 SS_BITMAP + 创建后 STM_SETIMAGE，
-// 显示方式=居中→SS_CENTERIMAGE。缩放/播放动画/数据源/数据列暂声明占位。
+// 标准 STATIC·图片框：边框走 exStyle，背景色经 WM_CTLCOLORSTATIC；有图片则 SS_BITMAP + SS_REALSIZECONTROL
+// + 创建后 STM_SETIMAGE。显示方式=居中→SS_CENTERIMAGE；=缩放→STM_SETIMAGE 前把位图拉伸到控件客户区（见图片赋值处）。
+// SS_REALSIZECONTROL 关键：不加则 SS_BITMAP 会把控件放大到图片原始尺寸（运行后图片框异常变大），加了才保持设计尺寸。
 function buildStdPicBoxCodegen(extraProps: Record<string, unknown>, hasImage: boolean): {
   style: string; exStyle: string; colorEntry: { textColor: number; backColor: number } | null
 } {
@@ -1952,8 +1953,8 @@ function buildStdPicBoxCodegen(extraProps: Record<string, unknown>, hasImage: bo
   const drawMode = readIntProp(extraProps['显示方式'], 0) // 0居左上 1缩放 2居中
   const backColor = readIntProp(extraProps['背景颜色'], 0xffffff)
   const parts = ['WS_CHILD', 'SS_NOTIFY']
-  if (hasImage) parts.push('SS_BITMAP')
-  if (drawMode === 2) parts.push('SS_CENTERIMAGE')  // 图片居中
+  if (hasImage) parts.push('SS_BITMAP', 'SS_REALSIZECONTROL')  // REALSIZECONTROL：控件不随位图自动放大，恒守设计尺寸
+  if (drawMode === 2) parts.push('SS_CENTERIMAGE')  // 图片居中（真实尺寸居中，裁剪）
   const exStyle = border === 1 ? 'WS_EX_CLIENTEDGE'
     : border === 2 ? 'WS_EX_WINDOWEDGE'
     : border === 3 ? 'WS_EX_STATICEDGE'
@@ -2487,6 +2488,13 @@ function collectUsedLibraryFileNames(project: ProjectInfo, editorFiles?: Map<str
       const libFile = libNameToFileName.get(normalizeKey(unit.libraryName))
       if (libFile) used.add(libFile)
     }
+  }
+
+  // 3) 窗口程序无条件依赖核心库 krnln 运行时：生成的 main.cpp 总会发窗口运行时封装
+  //    （yc_ctrl_get_text→krnln_ctrl_*、yc_ll_get_text→krnln_ll_* 等），故即使空窗口
+  //    （无控件、无命令）也必须链接 krnln，否则链接期缺 krnln_* 符号。
+  if (project.outputType === 'WindowsApp') {
+    used.add('krnln')
   }
 
   return used
@@ -5095,7 +5103,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'extern void yc_timer_set_period(const wchar_t* n, int v);\n'
   // 编辑框/组合框「被选择文本」（库返 owned wchar_t*，main.cpp 包 YC_TEXT）
   result += 'extern YC_TEXT yc_ctrl_get_seltext(HWND h);\n'
-  result += 'extern "C" void krnln_ctrl_set_seltext(HWND h, const wchar_t* t);\n\n'
+  result += 'extern "C" void krnln_ctrl_set_seltext(HWND h, const wchar_t* t);\n'
+  result += 'extern "C" void krnln_ctrl_append_text(HWND h, const wchar_t* t);\n\n'  // 编辑框「加入文本」
   result += 'static wchar_t* yc_wcsdup_text(const wchar_t* s);\n'
   result += 'static wchar_t* yc_empty_text(void);\n'
   result += 'static YC_TEXT yc_utf8_to_wide(const char* s);\n'
@@ -7496,6 +7505,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       } else if (picBoxCodegen) {
         // 标准 STATIC·图片框（忽略 WM_APP+1）：图片经 GDI+ 解码为 HBITMAP 后 STM_SETIMAGE
         if (picBoxImageBytes) {
+          const picDrawMode = readIntProp(ctrl.extraProps['显示方式'], 0)  // 0居左上 1缩放 2居中
           mainCode += '    {\n'
           mainCode += `      HGLOBAL hPicMem = GlobalAlloc(GMEM_MOVEABLE, g_ctrlImgSize_${ctrlIndex});\n`
           mainCode += '      if (hPicMem) {\n'
@@ -7507,7 +7517,20 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
           mainCode += '          if (pPicBmp) {\n'
           mainCode += '            if (pPicBmp->GetLastStatus() == Gdiplus::Ok) {\n'
           mainCode += '              HBITMAP hPicBitmap = NULL;\n'
-          mainCode += '              pPicBmp->GetHBITMAP(Gdiplus::Color(255, 255, 255), &hPicBitmap);\n'
+          if (picDrawMode === 1) {
+            // 缩放：位图拉伸到控件客户区，配合 SS_REALSIZECONTROL 铺满且保持控件尺寸（此前无实现，图片按原尺寸撑大控件）
+            mainCode += '              RECT _rcPic; GetClientRect(hCtrl, &_rcPic);\n'
+            mainCode += '              int _pcw = _rcPic.right - _rcPic.left, _pch = _rcPic.bottom - _rcPic.top;\n'
+            mainCode += '              if (_pcw < 1) _pcw = 1;\n'
+            mainCode += '              if (_pch < 1) _pch = 1;\n'
+            mainCode += '              Gdiplus::Bitmap _scaledPic(_pcw, _pch, PixelFormat32bppARGB);\n'
+            mainCode += '              Gdiplus::Graphics _gPic(&_scaledPic);\n'
+            mainCode += '              _gPic.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);\n'
+            mainCode += '              _gPic.DrawImage(pPicBmp, 0, 0, _pcw, _pch);\n'
+            mainCode += '              _scaledPic.GetHBITMAP(Gdiplus::Color(255, 255, 255), &hPicBitmap);\n'
+          } else {
+            mainCode += '              pPicBmp->GetHBITMAP(Gdiplus::Color(255, 255, 255), &hPicBitmap);\n'
+          }
           mainCode += '              if (hPicBitmap) SendMessageW(hCtrl, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)hPicBitmap);\n'
           mainCode += '            }\n'
           mainCode += '            delete pPicBmp;\n'
