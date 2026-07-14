@@ -26,7 +26,7 @@ export function resolveCompletionWordContext(value: string, cursorPos: number): 
   isMemberAccess: boolean
 } {
   let wordStart = cursorPos
-  while (wordStart > 0 && /[\u4e00-\u9fa5A-Za-z0-9_]/.test(value[wordStart - 1])) wordStart--
+  while (wordStart > 0 && /[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]/.test(value[wordStart - 1])) wordStart--
   const word = value.slice(wordStart, cursorPos)
   const hashMode = wordStart > 0 && value[wordStart - 1] === '#'
   const isMemberAccess = wordStart > 0 && MEMBER_DELIMITERS.has(value[wordStart - 1])

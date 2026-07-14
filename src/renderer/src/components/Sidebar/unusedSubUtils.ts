@@ -13,7 +13,7 @@
 // - 子程序在自身代码里递归调用自己也算"已使用"。
 
 const SUB_DECL_RE = /^\s*\.子程序\s+([^,\s]+)/
-const IDENT_TOKEN_RE = /[0-9A-Za-z_一-龥]+/g
+const IDENT_TOKEN_RE = /[0-9A-Za-z_一-龥㐀-䶿가-힣぀-ヿ]+/g
 
 export function computeUnusedSubNames(sourceContents: Iterable<string>): Set<string> {
   const declared = new Set<string>()

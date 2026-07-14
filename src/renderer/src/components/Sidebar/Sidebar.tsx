@@ -1265,7 +1265,7 @@ function EditableNameCell({ value, existingNames, onChange, ariaLabel = '名称'
   const validate = useCallback((name: string): string => {
     if (!name.trim()) return '名称不能为空'
     if (/^[0-9]/.test(name)) return '名称不能以数字开头'
-    if (/^[^\u4e00-\u9fa5a-zA-Z_]/.test(name)) return '名称不能以特殊符号开头'
+    if (/^[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffa-zA-Z_]/.test(name)) return '名称不能以特殊符号开头'
     if (name !== value && existingNames.includes(name)) return '名称已存在'
     return ''
   }, [value, existingNames])

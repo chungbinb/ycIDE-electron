@@ -202,7 +202,7 @@ const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
   'krnln.commands.ycmd.json': '839e75869b95f651eeec794e711e313fa39a424ff0542b6d8d3cec89b94c45cd',
   'krnln.constants.json': '02e83c81be209c290b335be9daec43df9fa23f5035e204b19280232b7fc894c3',
   'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
-  'window-units.json': '253871b9408b5aa73a336b6bf9e063af8b288ebb0d41c1ea359a861e390e5abe',
+  'window-units.json': 'fd0d660f916bc0f5faf5c8c3f64d1f54a0a28f33d537fd16d859a7466ffc16d1',
 }
 
 const DEFAULT_PROTOCOL_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [

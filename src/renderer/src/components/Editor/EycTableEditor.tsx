@@ -31,6 +31,8 @@ import { resolveFlowLineColors } from './flowLineTheme'
 import { useCodeLineEditor, type CodeLineNavigationAction, type EmptyCodeLineDeleteAction, type ParenScopedKeyAction } from './useCodeLineEditor'
 import {
   balanceArgParens,
+  insertCallArgAfter,
+  removeCallArgs,
   isArgParensBalanced,
   isQuotedTextLiteral,
   parseAssignmentDetail,
@@ -421,6 +423,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   // 粘贴入口经 ref 取最新选区（覆盖粘贴语义），避免把选区塞进各粘贴回调的依赖
   const selectedLinesRef = useRef(selectedLines)
   useEffect(() => { selectedLinesRef.current = selectedLines }, [selectedLines])
+  // ===== 展开参数行多选状态（Ctrl/Shift 点选 → Delete 删除，与行选择互斥）=====
+  const [selectedParamRows, setSelectedParamRows] = useState<{ lineIndex: number; argIdxs: Set<number> } | null>(null)
+  const paramSelAnchorRef = useRef<number | null>(null)  // 上次点选的 argIdx，供 Shift 连选
+  // 展开参数行「按住左键拖动跨行多选」：mousedown 记锚点，mousemove 过阈值转拖选、按 argIdx 连选
+  const paramDragRef = useRef<{ lineIndex: number; anchorArg: number; startX: number; startY: number; active: boolean } | null>(null)
+  const suppressParamClickRef = useRef(false)  // 拖选刚结束时吞掉随后的 click，避免误进入编辑
 
   // 悬停命令说明窗（照易语言）：鼠标停在命令名上稍候弹出签名+解释的浮动提示
   const [cmdHoverTip, setCmdHoverTip] = useState<{ cmd: CompletionItem; x: number; y: number } | null>(null)
@@ -450,10 +458,28 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       cmdHoverTimerRef.current = null
       const cmd = resolveHoverCommand(spanText, isMember)
       if (!cmd) return
+      // 延时到点时目标 span 可能已被重渲染/卸载（乐观编辑把代码行换成输入框、滚动虚拟化等）：
+      // 此时 getBoundingClientRect() 全为 0，会把提示弹到 IDE 左上角(0,0)。脱离 DOM 或零尺寸则不弹。
+      if (!target.isConnected) return
       const rect = target.getBoundingClientRect()
+      if (rect.width === 0 && rect.height === 0) return
       setCmdHoverTip({ cmd, x: rect.left, y: rect.bottom + 4 })
     }, 420)
   }, [resolveHoverCommand])
+  // 命令悬停提示是纯信息弹窗：任何点击/按键/滚动都关掉它。仅靠 span 的 onMouseLeave 不够——
+  // 点击触发乐观编辑会把 span 换成输入框、mouseLeave 不触发，弹窗会卡住不消失。
+  useEffect(() => {
+    if (!cmdHoverTip) return
+    const dismiss = (): void => clearCmdHoverTip()
+    window.addEventListener('mousedown', dismiss, true)
+    window.addEventListener('keydown', dismiss, true)
+    window.addEventListener('wheel', dismiss, { passive: true, capture: true })
+    return () => {
+      window.removeEventListener('mousedown', dismiss, true)
+      window.removeEventListener('keydown', dismiss, true)
+      window.removeEventListener('wheel', dismiss, true)
+    }
+  }, [cmdHoverTip, clearCmdHoverTip])
   const [editorContextMenu, setEditorContextMenu] = useState<{ x: number; y: number; lineIndex: number | null } | null>(null)
   const [contextMenuCanPaste, setContextMenuCanPaste] = useState(false)
   const dragAnchor = useRef<number | null>(null)  // 拖选起点行号
@@ -1288,6 +1314,26 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   // mousemove 和 mouseup 全局监听
   useEffect(() => {
     const onMove = (e: MouseEvent): void => {
+      // 展开参数行拖选：优先处理（param mousedown 已 stopPropagation，故行拖选相关 ref 未激活）
+      if (paramDragRef.current) {
+        const pd = paramDragRef.current
+        const dx = e.clientX - pd.startX, dy = e.clientY - pd.startY
+        if (!pd.active && dx * dx + dy * dy <= 25) return  // 未过阈值：仍可能是普通点击，先不动
+        pd.active = true
+        if (editCellRef.current) { setEditCell(null); setAcVisible(false) }
+        let curArg = pd.anchorArg
+        const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+        const rowEl = el?.closest?.('.eyc-param-expand-row[data-param-arg]') as HTMLElement | null
+        if (rowEl && Number(rowEl.dataset.paramLine) === pd.lineIndex) curArg = Number(rowEl.dataset.paramArg)
+        const lo = Math.min(pd.anchorArg, curArg), hi = Math.max(pd.anchorArg, curArg)
+        const set = new Set<number>()
+        for (let k = lo; k <= hi; k++) set.add(k)
+        setSelectedLines(prev => (prev.size ? new Set<number>() : prev))
+        setSelectedParamRows({ lineIndex: pd.lineIndex, argIdxs: set })
+        paramSelAnchorRef.current = pd.anchorArg
+        focusWrapper()  // 焦点移回 wrapper，Delete/Backspace 才能删选中的参数
+        return
+      }
       if (!isDragging.current && pendingInputDragRef.current) {
         const p = pendingInputDragRef.current
         if (!p.allowRowDrag) return
@@ -1360,6 +1406,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
     }
     const onUp = (e: MouseEvent): void => {
+      if (paramDragRef.current) {
+        const wasActive = paramDragRef.current.active
+        paramDragRef.current = null
+        // 真拖动过：吞掉随后的 click，别进入编辑（跨行拖动时 click 落在共同祖先、可能不在参数行上，
+        // 故也靠下一次 mousedown 顶部清零兜底）
+        if (wasActive) suppressParamClickRef.current = true
+        return
+      }
       if (lineTextSelectDragRef.current) {
         // 拖动期间已进入编辑态并实时更新选择，此处做最终更新并吞掉随后的 click
         updateLineTextSelect(lineTextSelectDragRef.current.anchorX, e.clientX)
@@ -2072,7 +2126,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const leadingAfter = after.match(/^\s*/) ? (after.match(/^\s*/)?.[0] || '') : ''
     const afterNext = after.slice(leadingAfter.length, leadingAfter.length + 1)
     const hasCallAlready = afterNext === '(' || afterNext === '（'
-    const canInsertCall = !hasCallAlready && !/^[\u4e00-\u9fa5A-Za-z0-9_.]$/.test(afterNext)
+    const canInsertCall = !hasCallAlready && !/^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]$/.test(afterNext)
 
     let callSuffix = ''
     let caretExtra = 0
@@ -2187,7 +2241,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   /** 编辑 判断开始 行时输入值以"判断"别名显示，写回源码前还原真实关键字 */
   const restoreJudgeStartAlias = useCallback((val: string): string => {
     if (!shouldAliasJudgeStartInTableMode || wasFlowKwRef.current !== '判断开始') return val
-    return val.replace(/^(\s*\.?)判断(?![一-龥A-Za-z0-9_])/, '$1判断开始')
+    return val.replace(/^(\s*\.?)判断(?![一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])/, '$1判断开始')
   }, [shouldAliasJudgeStartInTableMode])
 
   const normalizeFlowCommandName = useCallback((raw: string): string => {
@@ -2244,7 +2298,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     // 赋值表达式：identifier = expr → 格式化运算符
-    const assignM = trimmed.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)\s*(?:=(?!=)|＝)/)
+    const assignM = trimmed.match(/^([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*)\s*(?:=(?!=)|＝)/)
     if (assignM && isKnownAssignmentTarget(assignM[1], userVarNamesRef.current)) {
       const indentLen = val.length - trimmed.length
       return [val.slice(0, indentLen) + formatOps(trimmed)]
@@ -2278,7 +2332,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const resolved = resolveCmdToken(rawCmdToken)
     const cmdName = resolved.normalizedToken
     const lookupCmdName = resolved.lookupName
-    if (!/^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*$/.test(cmdName)) return [val]
+    if (!/^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*$/.test(cmdName)) return [val]
 
     if (options?.preferJudgeBranch && cmdName === '判断') {
       const parenRange = getOuterParenRange(trimmed)
@@ -2329,7 +2383,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     // 普通命令：仅对“裸命令名”自动补括号
-    const m = trimmed.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)\s*$/)
+    const m = trimmed.match(/^([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*)\s*$/)
     if (!m) return [val]
 
     // 流程关键字（非自动展开起始命令）不做普通命令式补括号，
@@ -3389,7 +3443,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const codeRenderMetaCacheRef = useRef(new Map<number, {
     signature: string
     codeLineRaw: string
-    spans: Array<{ text: string; cls: string }>
+    spans: Array<{ text: string; cls: string; swatch?: string }>
     lineCmd: CompletionItem | null
     assignDetail: ReturnType<typeof parseAssignmentDetail>
     hasExpandableDetail: boolean
@@ -4470,8 +4524,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       let baseIndent = flowIndentRef.current
       const trimmedCmd = effectiveVal.trim()
       const cmdCheckName = normalizeFlowCommandName(trimmedCmd)
-      const isBareCmd = /^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*\s*$/.test(trimmedCmd)
-      const isParenCmd = /^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*\s*[\(（].*[\)）]\s*$/.test(trimmedCmd)
+      const isBareCmd = /^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*\s*$/.test(trimmedCmd)
+      const isParenCmd = /^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*\s*[\(（].*[\)）]\s*$/.test(trimmedCmd)
       if ((isBareCmd || isParenCmd) && trimmedCmd && FLOW_AUTO_COMPLETE[cmdCheckName] && baseIndent.length >= 4 && !editingExistingJudgeCase) {
         baseIndent = baseIndent.slice(0, baseIndent.length - 4)
       }
@@ -4735,7 +4789,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           }
           // 在作用域内的代码行中替换变量名（不替换声明行和注释行）
           const nameRegex = new RegExp(
-            '(?<=[^\\u4e00-\\u9fa5A-Za-z0-9_.]|^)' + oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=[^\\u4e00-\\u9fa5A-Za-z0-9_.]|$)',
+            '(?<=[^\\u4e00-\\u9fa5\\u3400-\\u4dbf\\uac00-\\ud7a3\\u3040-\\u30ffA-Za-z0-9_.]|^)' + oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=[^\\u4e00-\\u9fa5\\u3400-\\u4dbf\\uac00-\\ud7a3\\u3040-\\u30ffA-Za-z0-9_.]|$)',
             'g'
           )
           for (let i = scopeStart; i < scopeEnd; i++) {
@@ -5551,7 +5605,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
     } else {
       let enterIndent = flowIndentRef.current
-      const isBareEnterCmd = /^[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*\s*$/.test(editVal.trim())
+      const isBareEnterCmd = /^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*\s*$/.test(editVal.trim())
       if (isBareEnterCmd && enterIndent.length >= 4) {
         enterIndent = enterIndent.slice(0, enterIndent.length - 4)
       }
@@ -5830,7 +5884,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       // 已知命令/变量/流程关键字/保留字不弹；正常回车流程继续执行，弹窗叠加其上。
       if (editCell.paramIdx === undefined) {
         const bareName = editVal.trim()
-        if (/^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(bareName)
+        if (/^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(bareName)
           && !validCommandNames.has(bareName)
           && !allKnownVarNames.has(bareName)
           && !reservedNameSet.has(bareName)) {
@@ -7047,7 +7101,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const findCommandCallWithParams = useCallback((expr: string): { cmd: CompletionItem; args: string[] } | null => {
     const normalized = (expr || '').trim()
     if (!normalized) return null
-    const head = /^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.。．]*)\s*[(（]/.exec(normalized)
+    const head = /^([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.。．]*)\s*[(（]/.exec(normalized)
     if (!head) return null
     const cmdName = (head[1] || '').trim()
     if (!cmdName) return null
@@ -7354,6 +7408,65 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }, 24)
   }, [liveUpdate])
 
+  /**
+   * 展开参数行「新增当前层级参数行」（照易语言：可重复参数上回车/顶层逗号追加下一个值行）。
+   * 先把当前值配平/格式化写回本槽（argIdx），再在其后插入一个空参数槽，焦点移入新行。
+   * 逐值一行从根本上避免了「多值挤进单槽 → replaceCallArg 反复写回 → 尾部残留级联重复」。
+   */
+  const appendRepeatParamRow = useCallback((lineIndex: number, argIdx: number, currentVal: string) => {
+    const ls = prevRef.current.split('\n')
+    const codeLine = ls[lineIndex]
+    if (codeLine === undefined) return
+    const formatted = formatParamOperators(balanceArgParens(currentVal))
+    const written = replaceCallArg(codeLine, argIdx, formatted)
+    const inserted = insertCallArgAfter(written, argIdx, '')
+    if (inserted === codeLine) return  // 无括号等异常：不动
+    // 旧参数行输入框在重渲染中卸载会触发 onBlur→commit（会 setEditCell(null) 关掉编辑、
+    // 令随后聚焦新行落空）。压制这一过渡期的 blur 提交。
+    suppressBlurCommitUntilRef.current = Date.now() + 250
+    if (liveUpdateTimerRef.current != null) { window.clearTimeout(liveUpdateTimerRef.current); liveUpdateTimerRef.current = null }
+    pendingLiveUpdateValRef.current = null
+    pushUndo(prevRef.current)
+    ls[lineIndex] = inserted
+    applyTextChange(ls.join('\n'))
+    setAcVisible(false)
+    setEditCell({ lineIndex, cellIndex: -2, fieldIdx: -1, sliceField: false, paramIdx: argIdx + 1 })
+    setEditVal('')
+    focusParamInputAt()
+  }, [applyTextChange, pushUndo, formatParamOperators, focusParamInputAt])
+
+  /**
+   * 展开参数行「回车前进到下一参数行」：先把当前值配平/格式化写回本槽，再把编辑焦点移到
+   * 下一参数行（照易语言逐格向下填，连续回车即可逐个填完所有参数）。
+   * 值未变化时不压栈、不改文本，避免连续回车把撤销栈刷爆。
+   */
+  const advanceParamEdit = useCallback((lineIndex: number, argIdx: number, currentVal: string, nextArgIdx: number) => {
+    const ls = prevRef.current.split('\n')
+    const codeLine = ls[lineIndex]
+    if (codeLine === undefined) return
+    // 旧参数输入框在重渲染中卸载会触发 onBlur→commit（关掉编辑态、令新行聚焦落空），压制这一过渡期的 blur 提交。
+    suppressBlurCommitUntilRef.current = Date.now() + 250
+    if (liveUpdateTimerRef.current != null) { window.clearTimeout(liveUpdateTimerRef.current); liveUpdateTimerRef.current = null }
+    pendingLiveUpdateValRef.current = null
+    // 仅当用户改动了本槽值才写回：连续回车穿行不应重格式化/挪动未触碰的实参（否则空格被吞、直引号被规整成弯引号）。
+    let nextLine = codeLine
+    const origArg = parseCallArgs(codeLine)[argIdx] ?? ''
+    if (currentVal !== origArg) {
+      const written = replaceCallArg(codeLine, argIdx, formatParamOperators(balanceArgParens(currentVal)))
+      if (written !== codeLine) {
+        pushUndo(prevRef.current)
+        ls[lineIndex] = written
+        nextLine = written
+        applyTextChange(ls.join('\n'))
+      }
+    }
+    const nextArgs = parseCallArgs(nextLine)
+    setAcVisible(false)
+    setEditCell({ lineIndex, cellIndex: -2, fieldIdx: -1, sliceField: false, paramIdx: nextArgIdx })
+    setEditVal(nextArgs[nextArgIdx] !== undefined ? nextArgs[nextArgIdx] : '')
+    focusParamInputAt()
+  }, [applyTextChange, pushUndo, formatParamOperators, focusParamInputAt])
+
   useEffect(() => {
     return () => {
       if (liveUpdateTimerRef.current != null) {
@@ -7363,6 +7476,36 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       pendingLiveUpdateValRef.current = null
     }
   }, [])
+
+  // 展开参数行多选与行选择互斥：一旦选了整行，清掉参数行选区
+  useEffect(() => { if (selectedLines.size > 0 && selectedParamRows) setSelectedParamRows(null) }, [selectedLines, selectedParamRows])
+
+  // 展开参数行多选删除：有参数行选区且焦点不在输入框时，Delete/Backspace 删除选中实参，Esc 清空选区
+  useEffect(() => {
+    if (!selectedParamRows || selectedParamRows.argIdxs.size === 0) return
+    const handler = (e: KeyboardEvent) => {
+      const active = document.activeElement
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return
+      if (e.key === 'Escape') { setSelectedParamRows(null); paramSelAnchorRef.current = null; return }
+      if (e.key !== 'Delete' && e.key !== 'Backspace' && e.key !== ' ') return
+      e.preventDefault()
+      const { lineIndex, argIdxs } = selectedParamRows
+      const ls = prevRef.current.split('\n')
+      const codeLine = ls[lineIndex]
+      if (codeLine !== undefined) {
+        const newLine = removeCallArgs(codeLine, [...argIdxs])
+        if (newLine !== codeLine) {
+          pushUndo(prevRef.current)
+          ls[lineIndex] = newLine
+          applyTextChange(ls.join('\n'))
+        }
+      }
+      setSelectedParamRows(null)
+      paramSelAnchorRef.current = null
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [selectedParamRows, applyTextChange, pushUndo])
 
   /** 渲染某行的流程线段 */
   const renderFlowSegs = (lineIndex: number, isExpanded?: boolean): { node: React.ReactNode; skipTreeLines: number } => {
@@ -7919,7 +8062,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                         // ===== 括号保护：命令调用行的右括号之后不允许输入内容 =====
                         if (isPlainInsertion) {
                           const trimmedOld = old.trimEnd()
-                          const isPureCommandCall = /^\s*\.?[一-龥A-Za-z_][一-龥A-Za-z0-9_.。．]*\s*[(（][\s\S]*[)）]$/.test(trimmedOld)
+                          const isPureCommandCall = /^\s*\.?[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_.。．]*\s*[(（][\s\S]*[)）]$/.test(trimmedOld)
                           if (isPureCommandCall && insertAt >= trimmedOld.length) {
                             e.target.value = old
                             const pos = Math.min(insertAt, old.length)
@@ -8042,14 +8185,19 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           }
                           // 表达式/流程条件里引用的干净标识符，非命令/子程序/变量/保留字 → 未定义变量，红标（与问题面板诊断一致）。
                           const isUndefinedVarRef = s.cls === '' && hasCommandCatalog
-                            && /^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(s.text)
+                            && /^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(s.text)
                             && !validCommandNames.has(s.text) && !allKnownVarNames.has(s.text) && !reservedNameSet.has(s.text)
                           // 已知变量的引用上变量色、数字字面量上数字色（主题「变量/数字」token 生效）
                           const refCls = s.cls === '' && allKnownVarNames.has(s.text) ? 'Variablescolor'
                             : s.cls === '' && /^[0-9０-９]+(?:[.．][0-9０-９]+)?$/.test(s.text.trim()) && s.text.trim() !== '' ? 'eyc-numcolor'
                             : s.cls
                           const className = `${refCls}${(isLineSyntaxInvalid || isUndefinedVarRef) ? ' eyc-cmd-invalid' : ''}`
-                          return <span key={si} className={className}>{renderDebugAwareSpan(displayText, className, `code-${blk.lineIndex}-${si}`)}</span>
+                          return (
+                            <span key={si} className={className}>
+                              {s.swatch ? <span className="eyc-color-swatch" style={{ backgroundColor: s.swatch }} aria-hidden="true" /> : null}
+                              {renderDebugAwareSpan(displayText, className, `code-${blk.lineIndex}-${si}`)}
+                            </span>
+                          )
                         })}
                       </>
                     )
@@ -8060,6 +8208,20 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               {/* 展开的参数详情（赋值行优先走“被赋值的变量/用作赋予的值”结构） */}
               {lineCmd && !assignDetail && isExpanded && (() => {
                 const argVals = parseCallArgs(blk.codeLine || '')
+                // 展开参数行：非重复参数每定义一行；末尾「可重复」参数按实际实参逐个成行（至少一行），
+                // 每行绑定一个实参下标(argIdx)——照易语言「逐值一行」，回车/逗号在此层级追加下一行。
+                const cmdParams = lineCmd.params
+                const lastDefIdx = cmdParams.length - 1
+                const tailRepeatable = lastDefIdx >= 0 && !!cmdParams[lastDefIdx].repeatable
+                const paramRows: Array<{ p: (typeof cmdParams)[number]; argIdx: number; defIdx: number; repeatable: boolean }> = []
+                for (let di = 0; di < cmdParams.length; di++) {
+                  if (di === lastDefIdx && tailRepeatable) {
+                    const count = Math.max(argVals.length - di, 1)  // 至少渲染一行（空实参）
+                    for (let k = 0; k < count; k++) paramRows.push({ p: cmdParams[di], argIdx: di + k, defIdx: di, repeatable: true })
+                  } else {
+                    paramRows.push({ p: cmdParams[di], argIdx: di, defIdx: di, repeatable: false })
+                  }
+                }
                 // 计算代码行前导空格数，用于参数面板缩进
                 const codeLine = (blk.codeLine || '').replace(FLOW_AUTO_TAG, '')
                 const leadingSpaces = codeLine.length - codeLine.replace(/^ +/, '').length
@@ -8089,34 +8251,82 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                         })
                       }}
                     >
-                      {lineCmd.params.map((p, pi) => {
-                        const isEditingParam = editCell && editCell.lineIndex === blk.lineIndex && editCell.paramIdx === pi && !editCell.exprPath
-                        const isEditingNestedOfParam = !!(editCell && editCell.lineIndex === blk.lineIndex && editCell.paramIdx === pi && editCell.exprPath)
-                        const argVal = argVals[pi] !== undefined ? argVals[pi] : ''
+                      {paramRows.map((row) => {
+                        const p = row.p
+                        const ai = row.argIdx
+                        const isEditingParam = editCell && editCell.lineIndex === blk.lineIndex && editCell.paramIdx === ai && !editCell.exprPath
+                        const isEditingNestedOfParam = !!(editCell && editCell.lineIndex === blk.lineIndex && editCell.paramIdx === ai && editCell.exprPath)
+                        const argVal = argVals[ai] !== undefined ? argVals[ai] : ''
                         const nestedItems = buildExprExpandItems(argVal)
-                        const exprKey = `${blk.lineIndex}:${pi}`
+                        const exprKey = `${blk.lineIndex}:${ai}`
                         const isExprExpanded = nestedItems.length > 0 && (expandedParamExprKeys.has(exprKey) || isEditingNestedOfParam)
                         // 焦点在该参数行（或子树已展开/正在编辑子树）时显示 +/- 折叠按钮，由用户手动展开收缩
                         const showExprFold = nestedItems.length > 0 && (isEditingParam || isExprExpanded)
                         const startParamEdit = (e: React.MouseEvent) => {
                           e.stopPropagation()
-                          // 点击参数行时提示该参数的信息
+                          // 点击参数行时提示该参数的信息（可重复参数各行同属一个参数定义，用 defIdx 定位提示）
                           const rawCode = (blk.codeLine || '').replace(FLOW_AUTO_TAG, '')
                           const cmdName = findFirstCommandName(rawCode)
                           if (cmdName) {
                             const ownerAssembly = findOwnerAssemblyName(blk.lineIndex)
                             const hintName = userSubNamesRef.current.has(cmdName) ? `__SUB__:${cmdName}:${ownerAssembly}` : cmdName
-                            onCommandClick?.(hintName, pi)
+                            onCommandClick?.(hintName, row.defIdx)
                           }
                           const valEl = (e.currentTarget as HTMLElement).querySelector<HTMLElement>('.eyc-param-expand-val')
                           const valueLeft = valEl?.getBoundingClientRect().left
-                          setEditCell({ lineIndex: blk.lineIndex, cellIndex: -2, fieldIdx: -1, sliceField: false, paramIdx: pi })
-                          setEditVal(argVals[pi] !== undefined ? argVals[pi] : '')
+                          setEditCell({ lineIndex: blk.lineIndex, cellIndex: -2, fieldIdx: -1, sliceField: false, paramIdx: ai })
+                          setEditVal(argVals[ai] !== undefined ? argVals[ai] : '')
                           focusParamInputAt(e.clientX, valueLeft)
                         }
+                        const isParamRowSelected = !!selectedParamRows && selectedParamRows.lineIndex === blk.lineIndex && selectedParamRows.argIdxs.has(ai)
+                        // Ctrl/Cmd+点=切换选中；Shift+点=从锚点连选；普通点=进入编辑（并清参数行选区）
+                        const onParamRowClick = (e: React.MouseEvent) => {
+                          if (suppressParamClickRef.current) { suppressParamClickRef.current = false; return }
+                          if (e.ctrlKey || e.metaKey) {
+                            e.stopPropagation()
+                            setEditCell(null)
+                            setSelectedLines(prev => (prev.size === 0 ? prev : new Set()))
+                            setSelectedParamRows(prev => {
+                              const base = prev && prev.lineIndex === blk.lineIndex ? new Set(prev.argIdxs) : new Set<number>()
+                              if (base.has(ai)) base.delete(ai); else base.add(ai)
+                              return base.size ? { lineIndex: blk.lineIndex, argIdxs: base } : null
+                            })
+                            paramSelAnchorRef.current = ai
+                            return
+                          }
+                          if (e.shiftKey && paramSelAnchorRef.current != null) {
+                            e.stopPropagation()
+                            setEditCell(null)
+                            setSelectedLines(prev => (prev.size === 0 ? prev : new Set()))
+                            const lo = Math.min(paramSelAnchorRef.current, ai), hi = Math.max(paramSelAnchorRef.current, ai)
+                            const set = new Set<number>()
+                            for (let k = lo; k <= hi; k++) set.add(k)
+                            setSelectedParamRows({ lineIndex: blk.lineIndex, argIdxs: set })
+                            return
+                          }
+                          setSelectedParamRows(null)
+                          setSelectedLines(prev => (prev.size === 0 ? prev : new Set()))
+                          paramSelAnchorRef.current = ai
+                          startParamEdit(e)
+                        }
                         return (
-                          <Fragment key={pi}>
-                            <div className={`eyc-param-expand-row${isEditingParam ? '' : ' eyc-param-expand-row-clickable'}${isExprExpanded ? ' eyc-param-expand-row-parent' : ''}`} onClick={isEditingParam ? undefined : startParamEdit}>
+                          <Fragment key={ai}>
+                            <div
+                              className={`eyc-param-expand-row${isEditingParam ? ' eyc-param-expand-row-editing' : ' eyc-param-expand-row-clickable'}${isExprExpanded ? ' eyc-param-expand-row-parent' : ''}${isParamRowSelected ? ' eyc-param-expand-row-selected' : ''}`}
+                              data-param-line={blk.lineIndex}
+                              data-param-arg={ai}
+                              onMouseDown={(e) => {
+                                suppressParamClickRef.current = false  // 清掉上一次拖选可能残留的吞点击标记
+                                if (e.ctrlKey || e.metaKey || e.shiftKey) { e.stopPropagation(); e.preventDefault(); return }
+                                if (isEditingParam || e.button !== 0) return
+                                // 普通左键：阻止冒泡到行 mousedown（否则起整行拖选/乐观进代码行编辑），记录拖选锚点。
+                                // stopPropagation 跳过了行 mousedown 的提交、preventDefault 又压掉失焦提交，故此处显式提交活跃编辑。
+                                e.stopPropagation(); e.preventDefault()
+                                if (editCellRef.current) commitRef.current()
+                                paramDragRef.current = { lineIndex: blk.lineIndex, anchorArg: ai, startX: e.clientX, startY: e.clientY, active: false }
+                              }}
+                              onClick={isEditingParam ? undefined : onParamRowClick}
+                            >
                               {showExprFold && (
                                 <span
                                   className="eyc-gutter-fold eyc-param-expr-fold"
@@ -8151,8 +8361,27 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                     onKeyDown={e => {
                                       if (handleParamInputCtrlKey(e)) return
                                       if (applyCompletionPopupKey(e.key)) { e.preventDefault(); return }
-                                      if (e.key === 'Enter') { e.preventDefault(); commit() }
-                                      else if (e.key === 'Escape') setEditCell(null)
+                                      // 顶层逗号（不在嵌套括号内）= 「新增当前层级参数行」意图，杜绝多值挤进单槽的级联重复
+                                      const caret = e.currentTarget.selectionStart ?? editVal.length
+                                      const isTopLevelComma = (e.key === ',' || e.key === '，') && isArgParensBalanced(editVal.slice(0, caret))
+                                      // 可重复参数：顶层逗号（值非空）→ 追加下一个值行（照易语言逐值一行）
+                                      if (row.repeatable && editVal.trim() !== '' && isTopLevelComma) {
+                                        e.preventDefault(); appendRepeatParamRow(blk.lineIndex, ai, editVal); return
+                                      }
+                                      // 其余情形顶层逗号一律吞掉：单个参数槽不容纳多值
+                                      if (isTopLevelComma) { e.preventDefault(); return }
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault()
+                                        // 连续回车：本行不是最后一个参数行 → 提交本行并前进到下一参数行继续编辑
+                                        const curPos = paramRows.findIndex(r => r.argIdx === ai)
+                                        const nextRow = curPos >= 0 ? paramRows[curPos + 1] : undefined
+                                        if (nextRow) { advanceParamEdit(blk.lineIndex, ai, editVal, nextRow.argIdx); return }
+                                        // 最后一行：可重复参数（值非空）→ 追加下一个值行；否则提交收尾
+                                        if (row.repeatable && editVal.trim() !== '') { appendRepeatParamRow(blk.lineIndex, ai, editVal); return }
+                                        commit()
+                                        return
+                                      }
+                                      if (e.key === 'Escape') setEditCell(null)
                                     }}
                                     spellCheck={false}
                                   />
@@ -8161,7 +8390,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                 <span className={`eyc-param-expand-val${isQuotedTextLiteral(argVal) ? ' eTxtcolor' : ''}`}>{argVal || '\u00A0'}</span>
                               )}
                             </div>
-                            {isExprExpanded && renderExprExpandItems(nestedItems, blk.lineIndex, pi, [], 0, `line-${blk.lineIndex}-p-${pi}`, Math.max(0, Math.floor(leadingSpaces / 4)))}
+                            {isExprExpanded && renderExprExpandItems(nestedItems, blk.lineIndex, ai, [], 0, `line-${blk.lineIndex}-p-${ai}`, Math.max(0, Math.floor(leadingSpaces / 4)))}
                           </Fragment>
                         )
                       })}

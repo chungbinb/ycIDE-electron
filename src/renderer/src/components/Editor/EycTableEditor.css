@@ -27,6 +27,9 @@
   --eyc-diff-deleted-placeholder-border: color-mix(in srgb, var(--eyc-diff-deleted-bar) 78%, transparent);
   --eyc-minimap-width: 75px;
   --eyc-gutter-width: 80px;
+  /* 「当前编辑行」用中性淡色高亮，刻意区别于行选中的蓝色（--table-selection-bg），
+     否则编辑态盖过选中态、多选看不出来。主题可覆盖此变量。 */
+  --eyc-current-line-bg: color-mix(in srgb, var(--table-text, var(--text-primary, #d4d4d4)) 9%, transparent);
 }
 
 .eyc-editor-main {
@@ -471,15 +474,15 @@ td.eyc-cell-bool-focus {
   background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 
-/* 正在编辑（获得焦点）的行：焦点背景，gutter 一并着色（与行选中同款焦点色） */
+/* 正在编辑（获得焦点）的当前行：中性淡色高亮，明显区别于行选中的蓝色，避免编辑态盖过选中态 */
 .eyc-line-editing {
-  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
+  background: var(--eyc-current-line-bg);
 }
 .eyc-gutter-cell.eyc-line-editing {
-  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
+  background: var(--eyc-current-line-bg);
 }
 .eyc-block-row.eyc-line-editing > .eyc-line-gutter {
-  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
+  background: var(--eyc-current-line-bg);
 }
 /* 调试/diff 高亮行的 gutter 保持对应背景 */
 .eyc-debug-line > .eyc-line-gutter {
@@ -1199,6 +1202,25 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 .eyc-param-expand-row-clickable {
   cursor: text;
 }
+/* 展开参数行多选高亮（Ctrl/Shift 点选）：左侧强调条 + 较实底色，
+   在任何底色（错误粉底/行选蓝底/普通编辑器底）上都清晰可辨，区别于整行选择的浅色底。 */
+.eyc-param-expand-row-selected {
+  background: color-mix(in srgb, var(--border-focus, #007fd4) 26%, transparent);
+  box-shadow: inset 3px 0 0 var(--border-focus, #007fd4);
+  border-radius: 2px;
+}
+/* 正在编辑的参数行：中性淡色高亮 + 左侧强调条，在整块淡色「当前行」底上清楚指出正在编辑哪个参数，
+   与蓝色的「参数多选」(selected)、蓝色的「整行选中」明确区分开——编辑=中性，选中=蓝。 */
+.eyc-param-expand-row-editing {
+  background: color-mix(in srgb, var(--table-text, var(--text-primary, #d4d4d4)) 13%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--table-text, var(--text-primary, #d4d4d4)) 50%, transparent);
+  border-radius: 2px;
+}
+/* 行选中时不让整行选择底色透进展开参数区（否则命令行+全部参数行像被一起选中，无法判断）：
+   参数区恢复编辑器底色，仅命令行本身显示选中态。 */
+.eyc-block-row.eyc-line-selected > .eyc-param-expand {
+  background: var(--table-bg, var(--bg-primary, #1e1e1e));
+}
 .eyc-param-expand-secondary {
   --eyc-param-expand-indent: 20px;
   position: relative;
@@ -1400,14 +1422,14 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   pointer-events: none;
 }
 
-/* 正在编辑（获得焦点）的表格行：与选中同款焦点背景（含 td 本体覆盖与右侧补色） */
+/* 正在编辑（获得焦点）的表格行：中性淡色「当前行」背景（区别于选中蓝，含 td 本体覆盖与右侧补色） */
 .eyc-data-row.eyc-line-editing,
 .eyc-data-row.eyc-line-editing:hover {
-  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
+  background: var(--eyc-current-line-bg);
 }
 .eyc-data-row.eyc-line-editing > td.Rowheight,
 .eyc-data-row.eyc-line-editing:hover > td.Rowheight {
-  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
+  background: var(--eyc-current-line-bg);
 }
 .eyc-data-row.eyc-line-editing > td:last-child {
   position: relative;
@@ -1419,7 +1441,7 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   top: -1px;
   bottom: -1px;
   width: 100vw;
-  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
+  background: var(--eyc-current-line-bg);
   pointer-events: none;
 }
 
@@ -1539,10 +1561,10 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
   background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
 
-/* 正在编辑的行在 hover 时保持焦点背景，不被悬停色覆盖（否则悬停色盖住编辑背景显得错乱） */
+/* 正在编辑的行：中性淡色「当前行」背景（区别于选中蓝），hover 时保持不被悬停色覆盖 */
 .eyc-line-editing .eyc-code-line,
 .eyc-line-editing .eyc-code-line:hover {
-  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
+  background: var(--eyc-current-line-bg);
 }
 
 .eyc-code-line.eyc-code-line-error .eyc-code-spans {
@@ -1608,6 +1630,17 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
 .conscolor {
   color: var(--syntax-keyword, #4fc1ff);
   font-weight: bold;
+}
+
+/* 颜色字面量（#hex / #名色 / rgb()）行内色块预览 */
+.eyc-color-swatch {
+  display: inline-block;
+  width: 0.72em;
+  height: 0.72em;
+  margin-right: 3px;
+  vertical-align: -0.08em;
+  border: 1px solid rgba(128, 128, 128, 0.6);
+  border-radius: 2px;
 }
 
 /* 标点符号（括号/运算符/逗号）— 与 conscolor 同色但不加粗，

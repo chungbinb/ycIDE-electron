@@ -1076,6 +1076,7 @@
   background-image: var(--vd-preview-bgimg, none);
   background-repeat: var(--vd-preview-bgrepeat, no-repeat);
   background-position: var(--vd-preview-bgpos, left top);
+  background-size: var(--vd-preview-bgsize, auto);
   border: 1px solid var(--border-color);
   overflow: hidden;
   position: relative;

@@ -1877,9 +1877,17 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const vAlign = Number(props['纵向对齐方式'] ?? 0)  // 0顶 1中 2底
         const border = Number(props['边框'] ?? 0)          // 0无 1凹入 2凸出 3浅凹 4镜框 5单线 6渐变镜框
         const transparent = Number(props['效果'] ?? 0) === 4
-        // 底图（data URL）+ 底图方式（0居左上/1平铺/2居中）——与运行时 YcLblBgProc 绘制一致
+        // 底图（data URL）+ 底图方式（0居左上/1平铺/2居中/3缩放）——与运行时 YcLblBgProc 绘制一致
         const lblBgImg = typeof props['底图'] === 'string' && (props['底图'] as string).startsWith('data:image') ? (props['底图'] as string) : ''
         const lblBgMode = Number(props['底图方式'] ?? 0)
+        // 渐变背景（未设底图时生效，与运行时 LinearGradientBrush 3 色一致）：方式 0无/1上下/2左右/3-4-7-8对角/5-6反向
+        const lblGradMode = Number(props['渐变背景方式'] ?? 0)
+        const gradDir = (m: number): string => m === 1 ? 'to bottom' : m === 2 ? 'to right' : m === 3 ? 'to bottom right'
+          : m === 4 ? 'to bottom left' : m === 5 ? 'to top' : m === 6 ? 'to left' : m === 7 ? 'to top left' : 'to top right'
+        const gc = (v: unknown): string => colorFromNumber(typeof v === 'number' ? v : 0) || 'rgb(0,0,0)'
+        const lblGradCss = (!lblBgImg && lblGradMode !== 0)
+          ? `linear-gradient(${gradDir(lblGradMode)}, ${gc(props['渐变背景颜色1'])}, ${gc(props['渐变背景颜色2'])}, ${gc(props['渐变背景颜色3'])})`
+          : ''
         // 背景颜色 -1=默认（融入窗口，与运行时不进颜色表一致；0 是纯黑的合法 COLORREF 不能当哨兵）；显式白/黑=真白/真黑。透明只由「效果=透明」驱动
         const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : -1
         const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
@@ -1894,8 +1902,8 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               backgroundImage: `url("${lblBgImg}")`,
               backgroundRepeat: lblBgMode === 1 ? 'repeat' : 'no-repeat',
               backgroundPosition: lblBgMode === 2 ? 'center' : '0 0',
-              backgroundSize: 'auto',
-            } : undefined}
+              backgroundSize: lblBgMode === 3 ? '100% 100%' : 'auto',
+            } : lblGradCss ? { backgroundImage: lblGradCss } : undefined}
             ref={(element) => setCssVars(element, {
               '--vd-preview-bg': transparent || bgNum < 0 ? 'transparent' : (colorFromNumber(bgNum) || 'transparent'),
               '--vd-preview-text': colorFromNumber(textNum) || controlColors.text,
@@ -1934,19 +1942,20 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const border = Number(props['边框'] ?? 0)
         const bgNum = typeof props['画板背景色'] === 'number' ? (props['画板背景色'] as number) : 16777215
         const pic = typeof props['底图'] === 'string' && (props['底图'] as string).startsWith('data:image') ? (props['底图'] as string) : ''
-        const picMode = Number(props['底图方式'] ?? 0) // 0居左上 1平铺 2居中
+        const picMode = Number(props['底图方式'] ?? 0) // 0居左上 1平铺 2居中 3缩放
         const borderCls = border === 1 || border === 3 ? ' vd-preview-label-sunken'
           : border === 2 ? ' vd-preview-label-raised'
           : border === 4 || border === 5 ? ' vd-preview-label-bordered' : ''
         return (
           <div
             className={`vd-preview vd-preview-drawpanel${borderCls}`}
-            // 画板是自绘画布：背景色恒显示，可选底图（平铺/居中/居左上）；设计期只画背景不画运行时绘图内容。
+            // 画板是自绘画布：背景色恒显示，可选底图（平铺/居中/居左上/缩放）；设计期只画背景不画运行时绘图内容。
             ref={(element) => setCssVars(element, {
               '--vd-preview-bg': colorFromNumber(bgNum) || '#ffffff',
               '--vd-preview-bgimg': pic ? `url(${pic})` : 'none',
               '--vd-preview-bgrepeat': picMode === 1 ? 'repeat' : 'no-repeat',
               '--vd-preview-bgpos': picMode === 2 ? 'center' : 'left top',
+              '--vd-preview-bgsize': picMode === 3 ? '100% 100%' : 'auto',
             })}
           >
             <span className="vd-preview-drawpanel-label">{ctrl.name}</span>

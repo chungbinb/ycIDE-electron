@@ -2,6 +2,8 @@ import { formatOps } from '@/components/Editor/editorCoreUtils'
 import { describe, it, expect } from 'vitest'
 import {
   balanceArgParens,
+  insertCallArgAfter,
+  removeCallArgs,
   isArgParensBalanced,
   parseAssignmentDetail,
   parseAssignmentLineParts,
@@ -87,8 +89,99 @@ describe('replaceCallArg', () => {
     expect(replaceCallArg('信息框 ("提示")', 2, '"标题"')).toBe('信息框 ("提示",,"标题")')
   })
 
+  it('空值写入尚不存在的尾参：原样返回（不追加空尾参）', () => {
+    // 展开参数行连续回车走到空的可选尾参再回车/失焦时，不应凭空多出一个空实参
+    expect(replaceCallArg('信息框 ("你好", 0, "标题")', 3, '')).toBe('信息框 ("你好", 0, "标题")')
+    expect(replaceCallArg('信息框 ()', 2, '')).toBe('信息框 ()')
+    // 尾参写入非空值仍照常补齐分隔符
+    expect(replaceCallArg('信息框 ("你好", 0, "标题")', 3, '父窗口')).toBe('信息框 ("你好", 0, "标题",父窗口)')
+  })
+
   it('无括号时原样返回', () => {
     expect(replaceCallArg('返回', 0, 'x')).toBe('返回')
+  })
+})
+
+describe('insertCallArgAfter（展开参数行「新增当前层级参数行」）', () => {
+  it('在指定参数之后插入空槽（半/全角分隔符跟随括号）', () => {
+    expect(insertCallArgAfter('调试输出(a)', 0, '')).toBe('调试输出(a,)')
+    expect(insertCallArgAfter('调试输出（a）', 0, '')).toBe('调试输出（a，）')
+  })
+
+  it('中间插入：不动其后已有参数', () => {
+    expect(insertCallArgAfter('调试输出(a,b,c)', 0, 'x')).toBe('调试输出(a,x,b,c)')
+    expect(insertCallArgAfter('调试输出(a,b,c)', 1, 'x')).toBe('调试输出(a,b,x,c)')
+  })
+
+  it('空调用：首个插入直接落进括号内、不加前导分隔符', () => {
+    expect(insertCallArgAfter('调试输出()', 0, '')).toBe('调试输出()')
+    expect(insertCallArgAfter('调试输出()', 0, 'v')).toBe('调试输出(v)')
+  })
+
+  it('越界索引：追加到末参之后', () => {
+    expect(insertCallArgAfter('调试输出(a)', 5, 'z')).toBe('调试输出(a,z)')
+  })
+
+  it('嵌套调用内的逗号不误当参数边界', () => {
+    expect(insertCallArgAfter('调试输出(到文本(1,2))', 0, 'x')).toBe('调试输出(到文本(1,2),x)')
+  })
+
+  it('无括号时原样返回', () => {
+    expect(insertCallArgAfter('返回', 0, 'x')).toBe('返回')
+  })
+
+  // 回归：逐值一行（replaceCallArg 写回本槽 + insertCallArgAfter 追加空槽）不产生尾部级联重复。
+  // 旧 bug：在单个展开参数行里连打多个逗号值，replaceCallArg 反复把含逗号的整串写回单槽，
+  // 重解析后尾部旧实参残留，行括号内堆出大量重复参数（用户报告的「多出不少重复的参数」）。
+  it('回归：逐值追加不出现重复参数（模拟 appendRepeatParamRow）', () => {
+    let line = '调试输出()'
+    // 逐个值：写回当前槽 → 其后插入空槽 → 焦点到新槽
+    let argIdx = 0
+    for (const val of ['1', '变量', 'bian1']) {
+      line = replaceCallArg(line, argIdx, val)
+      line = insertCallArgAfter(line, argIdx, '')
+      argIdx += 1
+    }
+    // 三个值各一槽 + 末尾一个待输入空槽，无任何重复
+    expect(parseCallArgs(line)).toEqual(['1', '变量', 'bian1', ''])
+    expect(line).toBe('调试输出(1,变量,bian1,)')
+  })
+})
+
+describe('removeCallArgs（展开参数行多选删除）', () => {
+  it('删除中间参数：其余按分隔符重连', () => {
+    expect(removeCallArgs('调试输出(a,b,c)', [1])).toBe('调试输出(a,c)')
+    expect(removeCallArgs('调试输出(a,b,c,d)', [1, 2])).toBe('调试输出(a,d)')
+  })
+
+  it('删首/删尾', () => {
+    expect(removeCallArgs('调试输出(a,b,c)', [0])).toBe('调试输出(b,c)')
+    expect(removeCallArgs('调试输出(a,b,c)', [2])).toBe('调试输出(a,b)')
+  })
+
+  it('删光所有参数 → 留空括号', () => {
+    expect(removeCallArgs('调试输出(a,b,c)', [0, 1, 2])).toBe('调试输出()')
+  })
+
+  it('全角括号用全角分隔符重连', () => {
+    expect(removeCallArgs('调试输出（a，b，c）', [1])).toBe('调试输出（a，c）')
+  })
+
+  it('嵌套调用内的逗号不误当边界', () => {
+    expect(removeCallArgs('调试输出(到文本(1,2),b)', [1])).toBe('调试输出(到文本(1,2))')
+    expect(removeCallArgs('调试输出(到文本(1,2),b)', [0])).toBe('调试输出(b)')
+  })
+
+  it('越界/空下标忽略；无括号原样返回', () => {
+    expect(removeCallArgs('调试输出(a,b)', [5])).toBe('调试输出(a,b)')
+    expect(removeCallArgs('调试输出(a,b)', [])).toBe('调试输出(a,b)')
+    expect(removeCallArgs('返回', [0])).toBe('返回')
+  })
+
+  // 回归：清理旧 bug 堆出的重复参数（用户实测场景）
+  it('回归：从一堆重复参数里多选删除', () => {
+    const line = '调试输出(1,变量,变量,bianl,bian,bia,bi,b)'
+    expect(removeCallArgs(line, [2, 3, 4, 5, 6, 7])).toBe('调试输出(1,变量)')
   })
 })
 

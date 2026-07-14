@@ -315,7 +315,7 @@ function isPureNumericExpression(
     .replace(/[（]/g, '(')
     .replace(/[）]/g, ')')
 
-  const tokenRegex = /[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*|-?\d+(?:\.\d+)?|[+\-*/%()]/g
+  const tokenRegex = /[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*|-?\d+(?:\.\d+)?|[+\-*/%()]/g
   const tokens = canonical.match(tokenRegex)
   if (!tokens || tokens.join('') !== canonical.replace(/\s+/g, '')) return false
 
@@ -395,8 +395,8 @@ function isSingleQuotedLiteral(arg: string): boolean {
 }
 
 const NUMERIC_LITERAL_RE = /^[+-]?[0-9０-９]+(?:[.．][0-9０-９]+)?$/
-const IDENTIFIER_RE = /^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/
-const CALL_HEAD_RE = /^([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)\s*[（(]/
+const IDENTIFIER_RE = /^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/
+const CALL_HEAD_RE = /^([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)\s*[（(]/
 
 /**
  * 数字开头但不是合法数值字面量的"单词型"实参（如 1.txt、3x）：
@@ -406,7 +406,7 @@ const CALL_HEAD_RE = /^([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)\s*[（(]/
 function isInvalidDigitStartToken(arg: string): boolean {
   if (!/^[+-]?[0-9０-９]/.test(arg)) return false
   if (NUMERIC_LITERAL_RE.test(arg)) return false
-  return /^[+-]?[0-9０-９][0-9０-９A-Za-z_一-龥.．。]*$/.test(arg)
+  return /^[+-]?[0-9０-９][0-9０-９A-Za-z_一-龥㐀-䶿가-힣぀-ヿ.．。]*$/.test(arg)
 }
 
 /** 推断实参类型族；'' = 无法可靠推断（跳过检查） */
@@ -463,11 +463,11 @@ function checkCommandArgTypes(
       continue
     }
     if (ch === '"' || ch === '“') { inStr = true; continue }
-    if (!/[一-龥A-Za-z_]/.test(ch)) continue
+    if (!/[一-龥㐀-䶿가-힣぀-ヿA-Za-z_]/.test(ch)) continue
 
     // 读出标识符
     let j = i
-    while (j < text.length && /[一-龥A-Za-z0-9_]/.test(text[j])) j++
+    while (j < text.length && /[一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]/.test(text[j])) j++
     const name = text.slice(i, j)
     // 名后紧跟开括号（允许空格）才是调用
     let k = j
@@ -571,7 +571,7 @@ export function buildEditorDiagnosticsProblems(
         }
         // 表达式/流程条件里被引用的干净标识符（如判断条件里的变量）：既非命令/子程序/变量/流程关键字（validCommandNames 已含这些），
         // 也非保留字 → 判为未定义变量。#常量走 conscolor、命令调用走 funccolor、数字不匹配标识符正则，均不会误报。
-        if (s.cls === '' && /^[一-龥A-Za-z_][一-龥A-Za-z0-9_]*$/.test(s.text)
+        if (s.cls === '' && /^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(s.text)
           && !validCommandNames.has(s.text) && !allKnownVarNames.has(s.text) && !reservedNameSet.has(s.text)) {
           problems.push({ line: i + 1, column: col, message: `未定义变量"${s.text}"`, severity: 'error' })
         }
@@ -590,7 +590,7 @@ export function buildEditorDiagnosticsProblems(
       //（如设计器没放置 编辑框1 时写 编辑框1.内容）。链式 a.b.c 只查首段（后段无类型信息）。
       {
         const masked = maskQuotedText(rawLine)
-        const memberHeadRe = /(^|[^一-龥A-Za-z0-9_.．。])([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)[.．。](?=[一-龥A-Za-z_])/g
+        const memberHeadRe = /(^|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_.．。])([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)[.．。](?=[一-龥㐀-䶿가-힣぀-ヿA-Za-z_])/g
         let mm: RegExpExecArray | null
         while ((mm = memberHeadRe.exec(masked)) !== null) {
           const head = mm[2]
@@ -662,7 +662,7 @@ export function buildEditorDiagnosticsProblems(
     // `编辑框1.内容 ＝ 到文本(n)` 应报类型不匹配、`＝ n` 才合法）。
     // 右值类型无法可靠推断时保守跳过（与命令参数类型检查同一策略）。
     if (assign && request.controlPropTypes) {
-      const pm = assign.target.match(/^([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)[.．。]([一-龥A-Za-z_][一-龥A-Za-z0-9_]*)$/)
+      const pm = assign.target.match(/^([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)[.．。]([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)$/)
       const propType = pm ? request.controlPropTypes[pm[1]]?.[pm[2]] : undefined
       if (pm && propType) {
         const propFam = classifyTypeFamily(propType)

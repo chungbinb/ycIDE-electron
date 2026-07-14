@@ -1853,7 +1853,7 @@ app.whenReady().then(() => {
       // 3. 更新磁盘上未打开源码文件中的类名引用
       const escaped = oldClassName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const classNameRegex = new RegExp(
-        '(?<=[^\\u4e00-\\u9fa5A-Za-z0-9_.]|^)' + escaped + '(?=[^\\u4e00-\\u9fa5A-Za-z0-9_.]|$)',
+        '(?<=[^\\u4e00-\\u9fa5\\u3400-\\u4dbf\\uac00-\\ud7a3\\u3040-\\u30ffA-Za-z0-9_.]|^)' + escaped + '(?=[^\\u4e00-\\u9fa5\\u3400-\\u4dbf\\uac00-\\ud7a3\\u3040-\\u30ffA-Za-z0-9_.]|$)',
         'g'
       )
       const sourceFiles = readdirSync(projectDir).filter(f => /\.(eyc|ecc|egv|ecs|edt|ell)$/i.test(f))

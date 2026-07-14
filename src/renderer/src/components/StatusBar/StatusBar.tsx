@@ -106,7 +106,7 @@ function StatusBar({
         )}
         <CursorPositionIndicator />
         {docType && <span className="statusbar-item">{docType}</span>}
-        <span className="statusbar-item">ycIDE v0.0.5-beta.4</span>
+        <span className="statusbar-item">ycIDE v0.0.5-beta.6</span>
       </div>
     </footer>
   )

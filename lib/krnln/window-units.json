@@ -345,7 +345,16 @@
     {"unit": "画板", "member": "刷子颜色", "memberEnglishName": "BrushColor", "get": "yc_dp_get_prop({n}, 7)", "set": "yc_dp_set_prop({n}, 7, (int)({v}))"},
     {"unit": "画板", "member": "画板背景色", "memberEnglishName": "BackColor", "get": "yc_dp_get_prop({n}, 8)", "set": "yc_dp_set_prop({n}, 8, (int)({v}))"},
     {"unit": "画板", "member": "文本颜色", "memberEnglishName": "TextColor", "get": "yc_dp_get_prop({n}, 9)", "set": "yc_dp_set_prop({n}, 9, (int)({v}))"},
-    {"unit": "画板", "member": "文本背景颜色", "memberEnglishName": "TextBkColor", "get": "yc_dp_get_prop({n}, 10)", "set": "yc_dp_set_prop({n}, 10, (int)({v}))"}
+    {"unit": "画板", "member": "文本背景颜色", "memberEnglishName": "TextBkColor", "get": "yc_dp_get_prop({n}, 10)", "set": "yc_dp_set_prop({n}, 10, (int)({v}))"},
+    {"unit": "标签", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "编辑框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "选择框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "单选框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "列表框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "组合框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "分组框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "月历", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"},
+    {"unit": "超级链接框", "member": "文本颜色", "memberEnglishName": "TextColor", "set": "yc_ctrl_set_text_color({h}, (COLORREF)({v}))"}
   ],
   "windowUnits": [
     {
@@ -1063,7 +1072,8 @@
           "pickOptions": [
             "图片居左上",
             "图片平铺",
-            "图片居中"
+            "图片居中",
+            "图片缩放"
           ],
           "defaultValue": 0
         },
@@ -3018,7 +3028,8 @@
           "pickOptions": [
             "图片居左上",
             "图片平铺",
-            "图片居中"
+            "图片居中",
+            "图片缩放"
           ],
           "defaultValue": 0
         },

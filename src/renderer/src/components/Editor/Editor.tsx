@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo, useImperativeHandle, forwardRef, Component, type ErrorInfo, type ReactNode } from 'react'
 import './monaco-setup' // 必须在 @monaco-editor/react 首次 init 前：用本地 monaco 替代 CDN（离线可用）
 import MonacoEditor, { OnMount, OnChange, type Monaco } from '@monaco-editor/react'
-import type { editor } from 'monaco-editor'
+import type { editor, languages } from 'monaco-editor'
 import EycTableEditor, { type EycTableEditorHandle, type FileProblem } from './EycTableEditor'
 import { useEditorDiagnosticsProblems } from './editorDiagnostics'
 import type { EditorDiagnosticsProblem } from './editorDiagnosticsShared'
@@ -10,6 +10,7 @@ import { buildCompletionCatalog } from './editorCompletionCatalogUtils'
 import VisualDesigner, { type DesignForm, type DesignControl, type SelectionTarget, type LibWindowUnit, type LibUnitEvent } from './VisualDesigner'
 import { eycToInternalFormat, eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
 import { parseLines } from './eycBlocks'
+import { parseColorLiteralToColorref } from '../../../../shared/colorNames'
 import { buildMultiLinePasteResult } from './editorPasteUtils'
 import { buildMonacoThemeTokens } from './monacoThemeTokens'
 import { parseFontSpec, stringifyFontSpec } from './fontSpec'
@@ -79,6 +80,9 @@ function registerEycLanguage(monaco: Monaco): void {
     // 逻辑常量
     constants: ['真', '假', '空'],
 
+    // 名色（#红色 等）——颜色字面量高亮用
+    colorNames: ['黑色', '白色', '红色', '绿色', '蓝色', '黄色', '青色', '紫红色', '灰色'],
+
     // 运算符
     operators: ['＝', '≠', '＞', '＜', '≥', '≤', '＋', '－', '×', '÷', '且', '或', '非'],
 
@@ -88,7 +92,7 @@ function registerEycLanguage(monaco: Monaco): void {
     tokenizer: {
       root: [
         // 以 . 开头的声明关键字
-        [/\.([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*)/, {
+        [/\.([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]*)/, {
           cases: {
             '$1@declarations': 'keyword.declaration',
             '@default': 'keyword.declaration',
@@ -107,12 +111,19 @@ function registerEycLanguage(monaco: Monaco): void {
         [/\uff08/, 'delimiter.parenthesis'],
         [/\uff09/, 'delimiter.parenthesis'],
 
+        // 颜色字面量：#hex(3/6/8 位) / #名色 / rgb()rgba() → constant.color（配 DocumentColorProvider 出色块）
+        [/#[0-9a-fA-F]{8}(?![0-9a-fA-F])/, 'constant.color'],
+        [/#[0-9a-fA-F]{6}(?![0-9a-fA-F])/, 'constant.color'],
+        [/#[0-9a-fA-F]{3}(?![0-9a-fA-F])/, 'constant.color'],
+        [/#([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)/, { cases: { '$1@colorNames': 'constant.color', '@default': 'constant' } }],
+        [/[rR][gG][bB][aA]?(?=\s*[（(])/, 'constant.color'],
+
         // 数字
         [/\d+\.\d*/, 'number.float'],
         [/\d+/, 'number'],
 
         // 标识符匹配
-        [/[\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*/, {
+        [/[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]*/, {
           cases: {
             '@keywords': 'keyword',
             '@typeKeywords': 'type',
@@ -160,6 +171,42 @@ function registerEycLanguage(monaco: Monaco): void {
     indentationRules: {
       increaseIndentPattern: /^\s*\.(子程序|如果|否则|判断开始|判断|计次循环首|循环判断首|变量循环首)/,
       decreaseIndentPattern: /^\s*\.(如果结束|如果真结束|否则|判断结束|计次循环尾|循环判断尾|变量循环尾)/,
+    },
+  })
+
+  // 颜色字面量色块：Monaco 原生可编辑色块 + 真实颜色（#hex / #名色 / rgb()rgba()）。
+  // 字符串内的颜色由 Monarch 的 string 规则先吃掉、这里正则也不会误命中（跳过引号内）。
+  monaco.languages.registerColorProvider('eyc', {
+    provideDocumentColors(model: editor.ITextModel) {
+      const out: { range: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number }; color: { red: number; green: number; blue: number; alpha: number } }[] = []
+      const re = /#(?:[0-9a-fA-F]{8}(?![0-9a-fA-F])|[0-9a-fA-F]{6}(?![0-9a-fA-F])|[0-9a-fA-F]{3}(?![0-9a-fA-F])|[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)|[rR][gG][bB][aA]?\s*[（(]\s*\d+\s*[,，]\s*\d+\s*[,，]\s*\d+/g
+      for (let ln = 1; ln <= model.getLineCount(); ln++) {
+        const text = model.getLineContent(ln)
+        re.lastIndex = 0
+        let m: RegExpExecArray | null
+        while ((m = re.exec(text)) !== null) {
+          const tok = m[0]
+          let cref: number | null = null
+          if (tok[0] === '#') {
+            cref = parseColorLiteralToColorref(tok)
+          } else {
+            const am = tok.match(/(\d+)\s*[,，]\s*(\d+)\s*[,，]\s*(\d+)/)
+            if (am) cref = Math.min(255, +am[1]) | (Math.min(255, +am[2]) << 8) | (Math.min(255, +am[3]) << 16)
+          }
+          if (cref === null) continue
+          const r = cref & 0xff, g = (cref >> 8) & 0xff, b = (cref >> 16) & 0xff
+          out.push({
+            range: { startLineNumber: ln, startColumn: m.index + 1, endLineNumber: ln, endColumn: m.index + 1 + tok.length },
+            color: { red: r / 255, green: g / 255, blue: b / 255, alpha: 1 },
+          })
+        }
+      }
+      return out
+    },
+    provideColorPresentations(_model: editor.ITextModel, colorInfo: languages.IColorInformation) {
+      const c = colorInfo.color
+      const hex = `#${[c.red, c.green, c.blue].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join('')}`
+      return [{ label: hex }]
     },
   })
 
@@ -987,7 +1034,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     if (!content.includes(oldName)) return content
     const escaped = oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const regex = new RegExp(
-      '(?<=[^\\u4e00-\\u9fa5A-Za-z0-9_.]|^)' + escaped + '(?=[^\\u4e00-\\u9fa5A-Za-z0-9_.]|$)',
+      '(?<=[^\\u4e00-\\u9fa5\\u3400-\\u4dbf\\uac00-\\ud7a3\\u3040-\\u30ffA-Za-z0-9_.]|^)' + escaped + '(?=[^\\u4e00-\\u9fa5\\u3400-\\u4dbf\\uac00-\\ud7a3\\u3040-\\u30ffA-Za-z0-9_.]|$)',
       'g'
     )
     return content.replace(regex, newName)

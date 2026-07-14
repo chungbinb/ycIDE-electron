@@ -1,7 +1,8 @@
 import { splitCSV } from './eycBlocks'
 import { FLOW_KW } from './eycFlow'
+import { parseColorLiteralToColorref, colorrefToHex } from '../../../../shared/colorNames'
 
-export interface Span { text: string; cls: string }
+export interface Span { text: string; cls: string; swatch?: string }
 
 export interface CompletionParam {
   name: string
@@ -306,7 +307,7 @@ export function colorize(raw: string): Span[] {
     // 非 . 开头行在易语言里通常是命令调用；这里补齐“无括号调用”的着色判定。
     if (exprSpans.length > 0 && exprSpans[0].cls === '') {
       const firstText = exprSpans[0].text
-      const m = firstText.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)(.*)/)
+      const m = firstText.match(/^([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*)(.*)/)
       if (m) {
         const ident = m[1]
         const rest = m[2]
@@ -379,27 +380,28 @@ function colorExpr(expr: string): Span[] {
     if (r.startsWith('#')) {
       const end = r.slice(1).search(/[\s(（），=＝<>+\-*\/]/)
       const cn = end >= 0 ? r.slice(0, end + 1) : r
-      out.push({ text: cn, cls: 'conscolor' })
+      const cr = parseColorLiteralToColorref(cn)  // #hex / #名色 → 附色块
+      out.push(cr !== null ? { text: cn, cls: 'conscolor', swatch: colorrefToHex(cr) } : { text: cn, cls: 'conscolor' })
       r = r.slice(cn.length)
       continue
     }
 
     // 词边界=后面不是标识符字符：半角 ,、) 等也算边界（如 数组排序 (排序数组, 真) 的 真）
-    const bm = r.match(/^(真|假)(?=$|[^一-龥A-Za-z0-9_])/)
+    const bm = r.match(/^(真|假)(?=$|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])/)
     if (bm) {
       out.push({ text: bm[0], cls: 'conscolor' })
       r = r.slice(bm[0].length)
       continue
     }
 
-    const lm = r.match(/^(且|或)(?=$|[^一-龥A-Za-z0-9_])/)
+    const lm = r.match(/^(且|或)(?=$|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])/)
     if (lm) {
       out.push({ text: lm[0], cls: 'funccolor' })
       r = r.slice(lm[0].length)
       continue
     }
 
-    const flow = r.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)(?=[\s(（），=＝<>+\-*\/]|$)/)
+    const flow = r.match(/^([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*)(?=[\s(（），=＝<>+\-*\/]|$)/)
     if (flow && FLOW_KW.has(flow[1])) {
       out.push({ text: flow[1], cls: 'comecolor' })
       r = r.slice(flow[1].length)
@@ -412,8 +414,24 @@ function colorExpr(expr: string): Span[] {
       continue
     }
 
+    // rgb()/rgba() 颜色构造：名标 conscolor（勿落 funccolor，否则诊断误报未知命令），
+    // 参数为纯数字字面量时附色块；名字消费后由后续迭代正常着色括号与参数。
+    const rgbName = r.match(/^(rgba?)(?=\s*[(（])/i)
+    if (rgbName) {
+      const nm = rgbName[1]
+      const argsM = r.slice(nm.length).match(/^\s*[(（]\s*(\d+)\s*[,，]\s*(\d+)\s*[,，]\s*(\d+)/)
+      if (argsM) {
+        const rr = Math.min(255, parseInt(argsM[1], 10)), gg = Math.min(255, parseInt(argsM[2], 10)), bb = Math.min(255, parseInt(argsM[3], 10))
+        out.push({ text: nm, cls: 'conscolor', swatch: `#${((rr << 16) | (gg << 8) | bb).toString(16).padStart(6, '0')}` })
+      } else {
+        out.push({ text: nm, cls: 'conscolor' })
+      }
+      r = r.slice(nm.length)
+      continue
+    }
+
     // 仅在“标识符后紧跟括号”时按函数/成员调用着色。
-    const fm = r.match(/^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)\s*(?=[(\uff08])/)
+    const fm = r.match(/^([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*)\s*(?=[(\uff08])/)
     if (fm) {
       const name = fm[1]
       if (name.includes('.')) out.push({ text: name, cls: 'cometwolr' })
@@ -439,7 +457,7 @@ function colorExpr(expr: string): Span[] {
 
 export function getMissingAssignmentRhsTarget(rawLine: string): string | null {
   const trimmed = rawLine.replace(/[\r\t]/g, '').trim()
-  const m = /^([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)\s*(?:=|＝)\s*$/.exec(trimmed)
+  const m = /^([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*)\s*(?:=|＝)\s*$/.exec(trimmed)
   return m ? m[1] : null
 }
 
@@ -452,7 +470,7 @@ export function isKnownAssignmentTarget(target: string, knownVars: Set<string>):
 }
 
 export function isValidVariableLikeName(name: string): boolean {
-  return /^[\u4e00-\u9fa5A-Za-z_]/.test(name.trim())
+  return /^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_]/.test(name.trim())
 }
 
 export function normalizeMemberTypeName(s: string): string {
@@ -465,7 +483,7 @@ export function normalizeMemberTypeName(s: string): string {
 export function splitDebugRenderableText(text: string): Array<{ text: string; token?: string }> {
   if (!text) return [{ text }]
   const parts: Array<{ text: string; token?: string }> = []
-  const regex = /([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_.]*)/g
+  const regex = /([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*)/g
   let lastIndex = 0
   let match: RegExpExecArray | null
   while ((match = regex.exec(text)) !== null) {

@@ -563,6 +563,7 @@ test('colorize: parentheses and operators use eyc-punct (non-bold) class', () =>
     './eycFlow': {
       FLOW_KW: new Set(),
     },
+    '../../../../shared/colorNames': loadTsModule(path.resolve(process.cwd(), 'src/shared/colorNames.ts')),
   })
   const spans = colorize('    求和(1, 2)')
   const punctTexts = spans.filter(s => s.cls === 'eyc-punct').map(s => s.text)

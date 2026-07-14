@@ -4123,7 +4123,7 @@ function App(): React.JSX.Element {
         const content = await readProjectFile(otherId)
         if (!content) continue
         for (const nm of names) {
-          if (new RegExp(`(^|[^一-龥A-Za-z0-9_])${escapeReg(nm)}($|[^一-龥A-Za-z0-9_])`, 'm').test(content)) {
+          if (new RegExp(`(^|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])${escapeReg(nm)}($|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])`, 'm').test(content)) {
             referencedIn = otherId
             break outer
           }
@@ -4522,7 +4522,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.5-beta.4（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.5-beta.6（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
