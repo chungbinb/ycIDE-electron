@@ -357,6 +357,8 @@ describe('控件成员声明式派发', () => {
       'a ＝ “日志”',
       '编辑框1.加入文本 (a)',
       '编辑框1.加入文本 (“ 直接量”)',
+      '编辑框1.加入文本 (“甲”, “乙”, a)',   // 尾参可重复：一次加入多个，全部都要追加（不得静默丢弃）
+      '编辑框1.加入文本 (“丙”, )',          // 展开参数行回车会在源码留尾部空实参，空值不得发调用
       '',
     ].join('\n'), 'utf-8')
 
@@ -369,6 +371,15 @@ describe('控件成员声明式派发', () => {
     const gen = readFileSync(join(dir, 'temp', '_启动窗口.cpp'), 'utf-8')
     expect(gen).toContain('krnln_ctrl_append_text(')                       // 加入文本 → 声明式 helper
     expect(gen).toContain('yc_get_control_handle_by_name(L"编辑框1")')      // {h} 占位展开
+    // 尾参可重复：三个值各发一次调用、逗号表达式串起来（旧的 {0} 模板会把「乙」「a」静默丢掉）
+    const multi = gen.split('\n').find(l => l.includes('甲'))
+    expect(multi, '未找到多值加入文本的调用').toBeTruthy()
+    expect(multi).toContain('乙')
+    expect((multi!.match(/krnln_ctrl_append_text\(/g) || []).length, '三个值应各发一次调用').toBe(3)
+    // 尾部空实参（回车追加待填行）只发一次调用，不为空值发调用
+    const trailing = gen.split('\n').find(l => l.includes('丙'))
+    expect(trailing, '未找到尾部空实参的调用').toBeTruthy()
+    expect((trailing!.match(/krnln_ctrl_append_text\(/g) || []).length, '空实参不该发调用').toBe(1)
     rmSync(dir, { recursive: true, force: true })
   }, 120000)
 })

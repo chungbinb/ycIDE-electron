@@ -1736,8 +1736,10 @@ extern "C" void krnln_ctrl_set_seltext(HWND h, const wchar_t* t) {
   SendMessageW(ed, EM_REPLACESEL, TRUE, (LPARAM)(t ? t : L""));
 }
 
-// 「加入文本」：把文本追加到编辑框末尾（易语言语义，多行编辑框做日志常用）。
+// 「加入文本」：把一个文本追加到编辑框末尾（易语言语义，多行编辑框做日志常用）。
 // 先把光标移到末尾清空选区，再 EM_REPLACESEL 追加（TRUE=保留撤销）。组合框经子 Edit。
+// 注：帮助文件标注该命令「最后一个参数可以被重复添加」，多值由编译器按 callEach 逐值发一次调用
+// 实现（不做成变参：文本型实参是 YC_TEXT 对象，过 variadic 会 non-pod-varargs 编译错误）。
 extern "C" void krnln_ctrl_append_text(HWND h, const wchar_t* t) {
   HWND ed = krnln_edit_target(h);
   if (!ed) return;

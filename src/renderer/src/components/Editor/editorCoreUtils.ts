@@ -73,7 +73,8 @@ export const WINDOW_OBJECT_METHODS: Array<{ name: string; returnType: string; de
 // 各控件类型专属方法（对象通用方法之外的），敲「控件名.」时按类型追加为方法成员。
 export const CONTROL_TYPE_METHODS: Record<string, Array<{ name: string; returnType: string; description: string; params: CompletionParam[] }>> = {
   '编辑框': [
-    { name: '加入文本', returnType: '无返回值', description: '在编辑框内容末尾追加文本。', params: [{ name: '欲加入文本', type: '文本型', description: '', optional: false }] },
+    // 尾参可重复（帮助文件：「命令参数表中最后一个参数可以被重复添加」）→ 展开参数行回车可追加下一个值行
+    { name: '加入文本', returnType: '无返回值', description: '将指定文本加入到编辑框内容的尾部。可一次加入多个文本（在展开的参数行上回车追加）。', params: [{ name: '欲加入文本', type: '文本型', description: '', optional: false, repeatable: true }] },
   ],
   '标签': [
     { name: '调用反馈事件', returnType: '整数型', description: '产生标签的“反馈事件”，调用其用户事件处理子程序（可用于多线程将控制权转移到主线程）。返回事件子程序的返回值。', params: [{ name: '参数一', type: '整数型', description: '，可省略，默认 0。', optional: true }, { name: '参数二', type: '整数型', description: '，可省略，默认 0。', optional: true }, { name: '事件传递方式', type: '逻辑型', description: '，可省略。真=发送（等待处理完），假=投递（不等待）。默认真。', optional: true }] },

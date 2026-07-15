@@ -258,6 +258,9 @@ interface LibraryCompileProtocol {
   }>
   // 顶层控件成员【方法】绑定：unit=控件类型，member=方法名，call=C 表达式模板。
   // 模板占位 {h}=句柄、{n}=控件名 L"…"、{0}/{1|默认}/{args}=实参。返回文本的方法其 helper 名须在 isTextExpression 列出。
+  // callEach=「尾参可重复」方法用（如 编辑框.加入文本(a,b,c)）：逐个实参展开一次模板（占位 {arg}=当前实参），
+  // 用逗号表达式串成一个表达式 `(f(a), f(b), f(c))`。**不要改用变参 helper**——文本型实参是 YC_TEXT 对象，
+  // 过 C variadic 会 `cannot pass object of non-trivial type through variadic function` 编译错误（踩过）。
   controlMethodBindings?: Array<{
     library?: string
     unit?: string
@@ -265,6 +268,7 @@ interface LibraryCompileProtocol {
     member?: string
     memberEnglishName?: string
     call?: string
+    callEach?: string
   }>
   windowUnits?: Array<{
     name?: string
@@ -353,6 +357,8 @@ interface NormalizedControlMethodBinding {
   member: string
   memberEnglishName: string
   call: string
+  /** 尾参可重复的方法：逐实参展开一次（占位 {arg}），逗号表达式串起来。与 call 二选一。 */
+  callEach: string
 }
 
 interface LoadedCompileProtocols {
@@ -373,7 +379,7 @@ interface TranspileCacheFile {
   entries: Record<string, TranspileCacheEntry>
 }
 
-const TRANSPILE_CACHE_VERSION = 26
+const TRANSPILE_CACHE_VERSION = 27
 
 interface BuildArtifactCacheFile {
   version: number
@@ -1365,16 +1371,16 @@ function parseControlMethodBindingsFromProtocol(content: string, libName: string
     return []
   }
   const result: NormalizedControlMethodBinding[] = []
-  const push = (library: string, unit: string, unitEn: string, member: string, memberEn: string, call: string): void => {
-    const c = (call || '').trim()
+  const push = (library: string, unit: string, unitEn: string, member: string, memberEn: string, call: string, callEach: string): void => {
+    const c = (call || '').trim(); const ce = (callEach || '').trim()
     const m = normalizeKey(member); const mEn = normalizeKey(memberEn)
     const u = normalizeKey(unit); const uEn = normalizeKey(unitEn)
-    if (!c || (!m && !mEn) || (!u && !uEn)) return
-    result.push({ library: normalizeKey(library || libName), unit: u, unitEnglishName: uEn, member: m, memberEnglishName: mEn, call: c })
+    if ((!c && !ce) || (!m && !mEn) || (!u && !uEn)) return
+    result.push({ library: normalizeKey(library || libName), unit: u, unitEnglishName: uEn, member: m, memberEnglishName: mEn, call: c, callEach: ce })
   }
   if (Array.isArray(json.controlMethodBindings)) {
     for (const b of json.controlMethodBindings) {
-      if (b && typeof b === 'object') push(b.library || libName, b.unit || '', b.unitEnglishName || '', b.member || '', b.memberEnglishName || '', b.call || '')
+      if (b && typeof b === 'object') push(b.library || libName, b.unit || '', b.unitEnglishName || '', b.member || '', b.memberEnglishName || '', b.call || '', b.callEach || '')
     }
   }
   // 就地形式：windowUnits[].methods[] 尚未在 schema 展开（留待需要），当前只读顶层数组。
@@ -1515,6 +1521,7 @@ function applyEmitTemplate(template: string, args: string[]): string {
 
 // 控件成员访问模板展开：{h}=控件句柄表达式、{v}=原始值 C 表达式、{vtext}=文本化值（非文本自动 yc_value_to_text）、
 // {n}=控件名 L"…"、{0..}/{args}=方法实参、{N|默认}=第 N 实参缺省时取「默认」字面量。属性 get 无值时 valueExpr 传 ''。
+// （尾参可重复的方法不在这里展开，走 controlMethodBindings 的 callEach：逐实参各展开一次模板。）
 // 注意：valueExpr 与 cArgs 均须为**已转译的 C 表达式**（调用方先跑 translateExpressionToC/tx），本函数不再二次转译。
 function applyMemberTemplate(template: string, handleExpr: string, valueExpr: string, cArgs: string[] = [], nameExpr = ''): string {
   const vtext = valueExpr
@@ -1533,20 +1540,21 @@ function applyMemberTemplate(template: string, handleExpr: string, valueExpr: st
     })
 }
 
-// 按（控件类型, 方法名）解析方法 call 模板；先精确类型、再回退通用 '*'。
-function resolveControlMethod(bindings: NormalizedControlMethodBinding[], unitType: string, method: string): string | null {
+// 按（控件类型, 方法名）解析方法绑定（call 或 callEach）；先精确类型、再回退通用 '*'。
+function resolveControlMethod(bindings: NormalizedControlMethodBinding[], unitType: string, method: string): NormalizedControlMethodBinding | null {
   if (bindings.length === 0) return null
   const ut = normalizeKey(unitType)
   const mb = normalizeKey(method)
   if (!ut || !mb) return null
   const memberMatches = (b: NormalizedControlMethodBinding) =>
     (!!b.member && b.member === mb) || (!!b.memberEnglishName && b.memberEnglishName === mb)
+  const hasTpl = (b: NormalizedControlMethodBinding) => !!b.call || !!b.callEach
   for (const b of bindings) {
     const unitMatch = (!!b.unit && b.unit === ut) || (!!b.unitEnglishName && b.unitEnglishName === ut)
-    if (unitMatch && memberMatches(b) && b.call) return b.call
+    if (unitMatch && memberMatches(b) && hasTpl(b)) return b
   }
   for (const b of bindings) {
-    if (b.unit === '*' && memberMatches(b) && b.call) return b.call
+    if (b.unit === '*' && memberMatches(b) && hasTpl(b)) return b
   }
   return null
 }
@@ -1561,10 +1569,21 @@ function translateControlMethodCall(call: { name: string; args: string[] }, tx: 
   if (!/^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(objName)) return null
   const type = resolveProjectControlType(objName)
   if (!type) return null
-  const tpl = resolveControlMethod(loadCompileProtocols().controlMethods, type, method)
-  if (!tpl) return null
+  const binding = resolveControlMethod(loadCompileProtocols().controlMethods, type, method)
+  if (!binding) return null
   const cArgs = (call.args || []).map(a => tx(a ?? '0'))
-  return applyMemberTemplate(tpl, `yc_get_control_handle_by_name(L"${escapeCString(objName)}")`, '', cArgs, `L"${escapeCString(objName)}"`)
+  const hExpr = `yc_get_control_handle_by_name(L"${escapeCString(objName)}")`
+  const nExpr = `L"${escapeCString(objName)}"`
+  // 尾参可重复（如 编辑框.加入文本(甲, 乙, 丙)）：逐实参展开一次模板、用逗号表达式串成单个表达式，
+  // 语义=依次执行。跳过空实参——展开参数行「回车追加下一个值行」会在源码里留下尾部空实参
+  // （如 `加入文本(“甲”,乙,)`，与 调试输出 同款），空值不该发调用；全空则发 ((void)0) 保持合法表达式。
+  if (binding.callEach) {
+    const eachArgs = (call.args || []).filter(a => (a ?? '').trim() !== '').map(a => tx(a))
+    if (eachArgs.length === 0) return '((void)0)'
+    const calls = eachArgs.map(a => applyMemberTemplate(binding.callEach.replace(/\{arg\}/g, () => a), hExpr, '', [a], nExpr))
+    return calls.length === 1 ? calls[0] : `(${calls.join(', ')})`
+  }
+  return applyMemberTemplate(binding.call, hExpr, '', cArgs, nExpr)
 }
 
 // 按（控件类型, 成员名）解析属性读写模板。控件类型全局唯一，故不按 library 过滤（与 resolveControlByProtocol 一致宽松）。
@@ -2229,6 +2248,11 @@ function mapTypeToCType(type: string): string {
     '整数型': 'int', '长整数型': 'long long', '小数型': 'float',
     '双精度小数型': 'double', '文本型': 'YC_TEXT', '逻辑型': 'int', '字节集': 'YC_BIN', '大整数型': 'YC_BIG', '大数': 'YC_BIG',
     '字节型': 'unsigned char', '短整数型': 'short',
+    // 日期时间型=OLE 自动化日期（1899-12-30 起的天数、小数部分为时刻），krnln impl 全按 double 收发
+    //（krnln_year/month/day/hour/minute/second/TimeChg/TimeDiff/now… 皆是）。
+    // 此前本表漏了它 → 掉进下面的默认 'int'，声明与 impl 错位：传参把 double 当 int、
+    // 取返回值读错寄存器（如 取现行时间 必拿垃圾）。见签名审计 C 类。
+    '日期时间型': 'double',
   }
   return map[trimmed] || 'int'
 }
@@ -4296,22 +4320,79 @@ function ycmdArrayCallElemKind(cmd: ResolvedCommand, args: string[]): ArrayElemK
   return kind
 }
 
+// 【签名对齐】清单标「通用型」但 impl 实收数值的命令：通用映射会把实参转成**文本指针**传给收
+// double/long long 的实现——C 链接不跨 TU 校验签名，故能编能链，只在调用时把指针当数值算（运行时静默出错）。
+// 与 YCMD_ARRAY_PARAM_KINDS 同思路：按符号显式给定形参/返回类型，让声明与 impl 对齐。
+// 注：这只是对齐 ABI；这些命令在易语言里本是「通用型」(数值或文本)，此处按 impl 的数值语义收敛，
+// 文本形态（如 相加("a","b") 文本连接）仍不支持——要支持须把 impl 改成 const char* 泛型实现。
+const YCMD_NATIVE_PARAM_TYPE_OVERRIDES: Record<string, string[]> = {
+  krnln_equal: ['双精度小数型', '双精度小数型'],            // impl: int(double, double)
+  krnln_notEqual: ['双精度小数型', '双精度小数型'],
+  krnln_less: ['双精度小数型', '双精度小数型'],
+  krnln_greater: ['双精度小数型', '双精度小数型'],
+  krnln_lessOrEqual: ['双精度小数型', '双精度小数型'],
+  krnln_greaterOrEqual: ['双精度小数型', '双精度小数型'],
+  krnln_add: ['长整数型', '长整数型'],                      // impl: long long(long long, long long)
+}
+const YCMD_NATIVE_RETURN_TYPE_OVERRIDES: Record<string, string> = {
+  krnln_add: '长整数型',                                    // 清单标「通用型」→ 会被映射成 int，与 impl 的 long long 不符
+}
+
 function buildYcmdNativeSignature(cmd: ResolvedCommand, elemKind: ArrayElemKind = 'int'): { symbol: string; returnType: ReturnType<typeof mapYcmdNativeReturnType>; params: ReturnType<typeof mapYcmdNativeParamType>[] } {
   const symbol = getYcmdNativeSymbol(cmd)
   const arrayKinds = YCMD_ARRAY_PARAM_KINDS[symbol]
+  const paramOverride = YCMD_NATIVE_PARAM_TYPE_OVERRIDES[symbol]
   return {
     symbol,
-    returnType: mapYcmdNativeReturnType(cmd.returnType || ''),
+    returnType: mapYcmdNativeReturnType(YCMD_NATIVE_RETURN_TYPE_OVERRIDES[symbol] || cmd.returnType || ''),
     params: arrayKinds
       ? arrayKinds.map(kind => (kind === 'int64' && elemKind !== 'int'
         ? mapYcmdArrayElemValueParam(elemKind)
         : mapYcmdArrayParamKind(kind, cmd.name || symbol)))
-      : (cmd.params || []).map(p => mapYcmdNativeParamType(p.type || '')),
+      : (paramOverride || (cmd.params || []).map(p => p.type || '')).map(t => mapYcmdNativeParamType(t)),
   }
+}
+
+// 「尾参可重复」的原生命令（帮助文件：命令参数表中最后一个参数可以被重复添加）：impl 一次只收一个值，
+// 多值按易语言「依次执行」语义展开成逐次调用（前 k-1 实参固定复用、末参逐值各发一次）。
+// **只收录 ycmd 元数据与原生签名一致、且语义确为「逐值重复执行」的命令**——
+// 光凭「尾参可重复」标记不能进这里：相加(通用型→const char* vs impl long long 签名不符)、
+// 写出数据(ycmd 少了文件号)、读入数据(const char* vs void*) 都是坏的；多项选择 语义是「选一个」不是重复写。
+const YCMD_REPEAT_TAIL_SYMBOLS = new Set<string>([
+  'krnln_AddElement',                                  // 加入成员(数组, 值…)
+  'krnln_WriteText', 'krnln_WriteLine',                // 写出文本 / 写文本行
+  'krnln_InsText', 'krnln_InsLine',                    // 插入文本 / 插入文本行
+  'krnln_WriteBin', 'krnln_InsBin',                    // 写出字节集 / 插入字节集
+  'krnln_fputs', 'krnln_OutputDebugText',              // 标准输出 / 输出调试文本
+  'krnln_write',                                       // 写出数据（ycmd 曾漏「文件号」参数+返回值标错，已对齐帮助与 impl）
+])
+
+/** 尾参可重复的多值展开：返回逐次调用的 C 片段（前 k-1 实参复用），空值跳过（展开参数行回车会留尾部空实参）。 */
+function buildYcmdRepeatTailCalls(
+  sig: ReturnType<typeof buildYcmdNativeSignature>,
+  args: string[],
+  commandMap?: Map<string, ResolvedCommand>,
+  directCallables?: DirectCallableNames,
+): string[] | null {
+  if (!YCMD_REPEAT_TAIL_SYMBOLS.has(sig.symbol)) return null
+  if (sig.params.length === 0 || args.length <= sig.params.length) return null
+  const leadCount = sig.params.length - 1
+  const lead = sig.params.slice(0, leadCount).map((p, i) => p.expr(args[i] || '', commandMap, directCallables))
+  const tailP = sig.params[leadCount]
+  const tailArgs = args.slice(leadCount).filter(a => (a ?? '').trim() !== '')
+  if (tailArgs.length === 0) return null
+  return tailArgs.map(v => `${sig.symbol}(${[...lead, tailP.expr(v, commandMap, directCallables)].join(', ')})`)
 }
 
 function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
   const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemKind(cmd, args))
+  // 尾参可重复的多值：逐次调用用逗号表达式串起（值=最后一次调用的结果，与易语言一致）
+  const repeatCalls = buildYcmdRepeatTailCalls(sig, args, commandMap, directCallables)
+  if (repeatCalls) {
+    const chained = repeatCalls.length === 1 ? repeatCalls[0] : `(${repeatCalls.join(', ')})`
+    if (sig.returnType.isVoid) return `([&]() -> int { ${chained}; return 0; })()`
+    return `([&]() -> ${mapTypeToCType(cmd.returnType || '整数型')} { return ${sig.returnType.expr(chained)}; })()`
+  }
   const argCount = Math.max(args.length, sig.params.length)
   const callArgs = Array.from({ length: argCount }, (_unused, index) => {
     const param = sig.params[index] || sig.params[sig.params.length - 1] || mapYcmdNativeParamType('')
@@ -4351,11 +4432,11 @@ function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], com
     }
     return `{ (void)spec_Trace(yc_wide_to_utf8(${joined})); }`
   }
-  // 加入成员 (数组, 值1, 值2, …)：impl 一次收一个值，多值展开为逐次调用
-  if (sig.symbol === 'krnln_AddElement' && args.length > 2) {
-    const arrExpr = sig.params[0].expr(args[0] || '', commandMap, directCallables)
-    const calls = args.slice(1).map(v => `krnln_AddElement(${arrExpr}, ${sig.params[1].expr(v, commandMap, directCallables)});`)
-    return `{ ${calls.join(' ')} }`
+  // 尾参可重复（加入成员(数组,值…) / 写出文本(文件号,文本…) / 输出调试文本(值…) 等）：
+  // impl 一次只收一个值，多值展开为逐次调用（前 k-1 实参复用）。
+  const repeatCalls = buildYcmdRepeatTailCalls(sig, args, commandMap, directCallables)
+  if (repeatCalls) {
+    return `{ ${repeatCalls.map(c => `(void)${c};`).join(' ')} }`
   }
   const argCount = Math.max(args.length, sig.params.length)
   const callArgs = Array.from({ length: argCount }, (_unused, index) => {
@@ -5104,7 +5185,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   // 编辑框/组合框「被选择文本」（库返 owned wchar_t*，main.cpp 包 YC_TEXT）
   result += 'extern YC_TEXT yc_ctrl_get_seltext(HWND h);\n'
   result += 'extern "C" void krnln_ctrl_set_seltext(HWND h, const wchar_t* t);\n'
-  result += 'extern "C" void krnln_ctrl_append_text(HWND h, const wchar_t* t);\n\n'  // 编辑框「加入文本」
+  result += 'extern "C" void krnln_ctrl_append_text(HWND h, const wchar_t* t);\n\n'  // 编辑框「加入文本」（多值由 callEach 逐值发一次调用）
   result += 'static wchar_t* yc_wcsdup_text(const wchar_t* s);\n'
   result += 'static wchar_t* yc_empty_text(void);\n'
   result += 'static YC_TEXT yc_utf8_to_wide(const char* s);\n'
