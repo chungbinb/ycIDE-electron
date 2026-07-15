@@ -198,8 +198,8 @@ const CORE_LIBRARY_GUID = 'D09F2340818511D396F6AE4C17150413'
 const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
   'impl/linux.cpp': '088edd74d09dac6c9e70da4feed932e3e0d4aceba36b6aab5d9fb152077aef34',
   'impl/macos.mm': '798149470018bf45a3e996d82db1db41f473f6a6aca2fd3badf7b8ad1538b4ac',
-  'impl/windows.cpp': '28b6d1e89945662ad13fe424a0b8c8bad45a4a032b11b86e8988a2d78f254220',
-  'krnln.commands.ycmd.json': '9f5162b288a94c662e3e5ff69733f636e1ac37a0b162c0b6a1ad0e4b99945796',
+  'impl/windows.cpp': 'd963a6c85880e9c7d56eea338e5719310cdd0ff7e1d57966a1ad398f45711c44',
+  'krnln.commands.ycmd.json': '036a4b4ba86b93249ac6a7a8b91ea5d6677d9ab12c120940162ddbbfa5fa1d65',
   'krnln.constants.json': '02e83c81be209c290b335be9daec43df9fa23f5035e204b19280232b7fc894c3',
   'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
   'window-units.json': '1d3fb75e37413e1fa86042b8e1c00f418af1e75bd94317fec2a5b9c2a6931458',

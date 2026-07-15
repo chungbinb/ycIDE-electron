@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <share.h>   // _fsopen 的共享标志 _SH_DENY*（打开文件 的「共享方式」）
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -2609,23 +2610,36 @@ extern "C" double krnln_FileDateTime(const char* fileName) {
   }
 }
 
-extern "C" int krnln_open(const char* fileName, int openMode, int /*shareMode*/) {
+// 打开文件（帮助：〈整数型〉打开文件（文本型 欲打开的文件名称，［整数型 打开方式］，［整数型 共享方式］)）。
+// 打开方式常量(krnln.constants)：1#读入 2#写出 3#读写 4#重写 5#改写 6#改读；省略(0)默认 #读写。
+//   #读入/#写出/#读写 = 文件不存在则失败（r/r+ 系语义）；
+//   #重写 = 不存在则建、存在则清空（w）；#改写/#改读 = 不存在则建、存在则直接打开且不清空（r+ 打不开再回退创建）。
+// 共享方式常量：1#无限制 2#禁止读 3#禁止写 4#禁止读写；省略(0)默认 #无限制。Windows 用 _fsopen 落实。
+extern "C" int krnln_open(const char* fileName, int openMode, int shareMode) {
   if (!fileName || !*fileName) return 0;
 
-  const char* mode = "rb";
+  const char* mode;
+  bool createIfMissing = false;
   switch (openMode) {
-    case 1: mode = "rb"; break;
-    case 2: mode = "wb"; break;
-    case 3: mode = "r+b"; break;
-    case 4: mode = "ab"; break;
-    default: mode = "rb"; break;
+    case 1: mode = "rb";  break;                          // #读入
+    case 2: mode = "r+b"; break;                          // #写出（不存在即失败，故用 r+ 而非 w）
+    case 4: mode = "wb";  break;                          // #重写（建/清空）
+    case 5: mode = "r+b"; createIfMissing = true; break;  // #改写
+    case 6: mode = "r+b"; createIfMissing = true; break;  // #改读
+    case 3:
+    default: mode = "r+b"; break;                         // #读写（含省略默认）
   }
 
-  FILE* fp = nullptr;
-  fp = std::fopen(fileName, mode);
-  if (!fp && openMode == 3) {
-    fp = std::fopen(fileName, "w+b");
+  int shFlag = _SH_DENYNO;
+  switch (shareMode) {
+    case 2: shFlag = _SH_DENYRD; break;   // #禁止读
+    case 3: shFlag = _SH_DENYWR; break;   // #禁止写
+    case 4: shFlag = _SH_DENYRW; break;   // #禁止读写
+    default: shFlag = _SH_DENYNO; break;  // #无限制（含省略默认）
   }
+
+  FILE* fp = _fsopen(fileName, mode, shFlag);
+  if (!fp && createIfMissing) fp = _fsopen(fileName, "w+b", shFlag);
   if (!fp) return 0;
   return registerFileHandle(fp, false);
 }
