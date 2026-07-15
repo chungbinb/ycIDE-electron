@@ -2194,13 +2194,47 @@ extern "C" int krnln_WriteFile(const char* fileName, const void* binData) {
   return out.good() ? 1 : 0;
 }
 
-extern "C" void krnln_set(void* targetVar, void* valueVar) {
-  if (!targetVar) return;
-  *reinterpret_cast<uintptr_t*>(targetVar) = reinterpret_cast<uintptr_t>(valueVar);
+// ============ 「按引用操作变量」族（赋值 / 连续赋值 / 交换变量 / 强制交换变量）============
+// 帮助里这族的参数写作「通用型变量/变量数组」（vs 值参的「通用型数组/非数组」）——按引用语义。
+// 裸 void* 没有类型信息，通用型赋值/交换就没法做对；故转译期把「变量地址 + 类型标签」一起交来
+// （标签由生成侧的 yc_vt_of(变量) 经 C++ 重载解析得出，与下面这组常量一一对应）。
+//
+// 旧实现是 `*(uintptr_t*)目标 = (uintptr_t)值指针`——把指针值当数据写；而通用编组交给它的
+// 还是**值的文本形态**、连地址都不是。两头都错，这族命令此前全是坏的。
+//
+// 【为什么 krnln 不必认识 YC_TEXT】YC_TEXT 是 `struct { std::wstring s; …只有成员函数 }`：
+// 单数据成员、无虚函数、无基类 → 标准布局，对象地址即首成员地址，按 std::wstring* 处理即可。
+// 与 YcBin(= std::vector<unsigned char>) 是同一类布局假设，不新增耦合、不用同步第三份结构定义。
+#define YC_VT_INT    1
+#define YC_VT_INT64  2
+#define YC_VT_SHORT  3
+#define YC_VT_BYTE   4
+#define YC_VT_FLOAT  5
+#define YC_VT_DOUBLE 6
+#define YC_VT_TEXT   7
+#define YC_VT_BIN    8
+#define YC_VT_ARY    9
+
+extern "C" void krnln_set(void* target, const void* value, int dataType) {
+  if (!target || !value) return;
+  switch (dataType) {
+    case YC_VT_INT:    *reinterpret_cast<int*>(target) = *reinterpret_cast<const int*>(value); break;
+    case YC_VT_INT64:  *reinterpret_cast<long long*>(target) = *reinterpret_cast<const long long*>(value); break;
+    case YC_VT_SHORT:  *reinterpret_cast<short*>(target) = *reinterpret_cast<const short*>(value); break;
+    case YC_VT_BYTE:   *reinterpret_cast<unsigned char*>(target) = *reinterpret_cast<const unsigned char*>(value); break;
+    case YC_VT_FLOAT:  *reinterpret_cast<float*>(target) = *reinterpret_cast<const float*>(value); break;
+    case YC_VT_DOUBLE: *reinterpret_cast<double*>(target) = *reinterpret_cast<const double*>(value); break;
+    case YC_VT_TEXT:   *reinterpret_cast<std::wstring*>(target) = *reinterpret_cast<const std::wstring*>(value); break;
+    case YC_VT_BIN:    *reinterpret_cast<YcBin*>(target) = *reinterpret_cast<const YcBin*>(value); break;
+    case YC_VT_ARY:    *reinterpret_cast<std::vector<long long>*>(target) = *reinterpret_cast<const std::vector<long long>*>(value); break;
+    default: break;
+  }
 }
 
-extern "C" void krnln_store(void* valueVar, void* targetVar) {
-  krnln_set(targetVar, valueVar);
+// 连续赋值(值, 变量1, 变量2…)：帮助里值在前、变量在后（与 赋值 相反），尾参可重复；
+// 转译期按目标逐个展开成一次调用，各目标可以是不同类型。
+extern "C" void krnln_store(const void* value, void* target, int dataType) {
+  krnln_set(target, value, dataType);
 }
 
 extern "C" void krnln_ReDim(void* arrayVar, int keepOld, int upperBound) {
@@ -3012,15 +3046,31 @@ extern "C" int krnln_InputBox(const char* prompt,
   return 1;
 }
 
-extern "C" void krnln_XchgVar(void* a, void* b) {
+// 交换变量（通用型变量, 通用型变量）——见上方「按引用操作变量」族的说明。
+// 文本/字节集/数组走 std::swap：本就是 O(1) 的内部指针交换，不拷贝数据。
+// 【不能按字节交换】std::wstring/std::vector 的短串优化(SSO)里存在**指向对象自身缓冲的指针**
+// （libstdc++ 的 _M_p 指向 _M_local_buf），整体 memcpy 交换后两个变量的指针都会指进对方，双双坏掉。
+extern "C" void krnln_XchgVar(void* a, void* b, int dataType) {
   if (!a || !b) return;
-  auto pa = reinterpret_cast<uintptr_t*>(a);
-  auto pb = reinterpret_cast<uintptr_t*>(b);
-  std::swap(*pa, *pb);
+  switch (dataType) {
+    case YC_VT_INT:    std::swap(*reinterpret_cast<int*>(a), *reinterpret_cast<int*>(b)); break;
+    case YC_VT_INT64:  std::swap(*reinterpret_cast<long long*>(a), *reinterpret_cast<long long*>(b)); break;
+    case YC_VT_SHORT:  std::swap(*reinterpret_cast<short*>(a), *reinterpret_cast<short*>(b)); break;
+    case YC_VT_BYTE:   std::swap(*reinterpret_cast<unsigned char*>(a), *reinterpret_cast<unsigned char*>(b)); break;
+    case YC_VT_FLOAT:  std::swap(*reinterpret_cast<float*>(a), *reinterpret_cast<float*>(b)); break;
+    case YC_VT_DOUBLE: std::swap(*reinterpret_cast<double*>(a), *reinterpret_cast<double*>(b)); break;
+    case YC_VT_TEXT:   std::swap(*reinterpret_cast<std::wstring*>(a), *reinterpret_cast<std::wstring*>(b)); break;
+    case YC_VT_BIN:    std::swap(*reinterpret_cast<YcBin*>(a), *reinterpret_cast<YcBin*>(b)); break;
+    case YC_VT_ARY:    std::swap(*reinterpret_cast<std::vector<long long>*>(a), *reinterpret_cast<std::vector<long long>*>(b)); break;
+    default: break;
+  }
 }
 
-extern "C" void krnln_ForceXchgVar(void* a, void* b) {
-  krnln_XchgVar(a, b);
+// 强制交换变量——帮助说它跳过类型检查、仅要求尺寸一致，且「文本/字节集只交换指针值」。
+// 我们的 交换变量 本就是 O(1) 指针交换，那点性能优势在这里不存在；而放开类型检查只剩风险
+// （按字节换非平凡类型会踩 SSO 自指指针，见上）。故两者等价，类型一致性由转译期 static_assert 挡。
+extern "C" void krnln_ForceXchgVar(void* a, void* b, int dataType) {
+  krnln_XchgVar(a, b, dataType);
 }
 
 extern "C" int krnln_GetRuntimeDataType(const void* dataPtr) {

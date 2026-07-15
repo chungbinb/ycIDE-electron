@@ -4578,25 +4578,47 @@ function requireVarArg(arg: string, cmdName: string): string {
   return t
 }
 
-// 【转译期内建】「变量操作」族的语义是**按引用操作变量**，而 krnln 的 void* ABI 不带类型信息、
-// 通用型赋值/交换根本表达不了——现 impl 是 `*(uintptr_t*)目标 = (uintptr_t)值指针`，把指针值
-// 当数据写，纯错；且通用编组交给它的还是**值的文本形态**，连地址都不是。
-// 转译期本来就知道每个变量的类型 → 直接发类型正确的 C++，完全绕开 krnln（这 5 条不再需要原生符号）。
-const YCMD_INTRINSIC_CALLS: Record<string, (args: string[], tx: (e: string) => string, name: string) => string> = {
+/**
+ * 【变量操作族的调用生成】「赋值/连续赋值/交换变量/强制交换变量/数组清零」在帮助里的参数是
+ * 「**通用型变量/变量数组**」（vs 值参的「通用型数组/非数组」）——是**按引用**语义。
+ * 通用编组把实参译成「值的文本形态」，连变量地址都不是，故这几条必须专门生成调用。
+ *
+ * **实现仍在支持库**（krnln_set/store/XchgVar/ForceXchgVar/ZeroAry）：这里只负责把
+ * 「变量地址 + 类型标签」交过去。标签经生成侧的 yc_vt_of(变量) 由 C++ 重载解析得出——
+ * 转译期不必再查一次变量类型表，且遇到不支持的类型直接编译失败，不会静默按错类型写内存。
+ * 值参用 decltype(目标) 落到临时量上，类型转换交给 C++ 完成后再取址交给 krnln。
+ */
+const YCMD_VARREF_CALLS: Record<string, (args: string[], tx: (e: string) => string, name: string) => string> = {
   // 赋值(被赋值的变量, 值)
-  krnln_set: (args, tx, name) => `{ ${requireVarArg(args[0], name)} = ${tx(args[1] || '')}; }`,
+  krnln_set: (args, tx, name) => {
+    const t = requireVarArg(args[0], name)
+    return `{ decltype(${t}) __yc_v = (${tx(args[1] || '')}); krnln_set((void*)&${t}, (const void*)&__yc_v, yc_vt_of(${t})); }`
+  },
   // 连续赋值(值, 变量1, 变量2…)——注意参数顺序与 赋值 相反（帮助如此），尾参可重复
   krnln_store: (args, tx, name) => {
     const value = tx(args[0] || '')
     const targets = args.slice(1).filter(a => (a || '').trim()).map(a => requireVarArg(a, name))
     if (targets.length === 0) throw new Error(`命令“${name}”至少需要一个被赋值的变量`)
-    return `{ ${targets.map(t => `${t} = ${value};`).join(' ')} }`
+    // 每个目标各按自己的类型转换一次（多个目标类型可以不同）
+    return `{ ${targets.map((t, i) => `{ decltype(${t}) __yc_v${i} = (${value}); krnln_store((const void*)&__yc_v${i}, (void*)&${t}, yc_vt_of(${t})); }`).join(' ')} }`
   },
-  // 交换变量 / 强制交换变量：std::swap 要求两边同类型。帮助说 强制交换变量「不对数据类型进行检查」，
-  // 我们这里仍按同类型编译期校验——比原语义严，但绝不会交换出用不了的变量。
-  krnln_XchgVar: (args, _tx, name) => `{ std::swap(${requireVarArg(args[0], name)}, ${requireVarArg(args[1], name)}); }`,
-  krnln_ForceXchgVar: (args, _tx, name) => `{ std::swap(${requireVarArg(args[0], name)}, ${requireVarArg(args[1], name)}); }`,
-  // 数组清零(数值数组变量)——帮助：全部成员置零，不影响维定义
+  // 交换变量：帮助要求类型一致 → static_assert 挡在编译期
+  krnln_XchgVar: (args, _tx, name) => {
+    const a = requireVarArg(args[0], name)
+    const b = requireVarArg(args[1], name)
+    return `{ static_assert(std::is_same<decltype(${a}), decltype(${b})>::value, "\\u4ea4\\u6362\\u53d8\\u91cf: two variables must have the same type"); krnln_XchgVar((void*)&${a}, (void*)&${b}, yc_vt_of(${a})); }`
+  },
+  // 强制交换变量：帮助说它「不对数据类型进行检查，仅要求数据尺寸一致，文本/字节集只交换指针值」。
+  // 我们这里仍要求类型一致——按字节交换 std::wstring/vector 会踩 SSO 的自指指针（libstdc++ 的
+  // 短串优化里 _M_p 指向对象内部缓冲），换完两个变量都是坏的。而且我们的实现本就是 O(1) 指针交换，
+  // 原命令那点性能优势在这里不存在，放开类型检查只剩风险。
+  krnln_ForceXchgVar: (args, _tx, name) => {
+    const a = requireVarArg(args[0], name)
+    const b = requireVarArg(args[1], name)
+    return `{ static_assert(std::is_same<decltype(${a}), decltype(${b})>::value, "\\u5f3a\\u5236\\u4ea4\\u6362\\u53d8\\u91cf: two variables must have the same type"); krnln_ForceXchgVar((void*)&${a}, (void*)&${b}, yc_vt_of(${a})); }`
+  },
+  // 数组清零(数值数组变量)——帮助：全部成员置零，不影响维定义。
+  // 元素类别是转译期才知道的信息，故「只收数值数组」这个诊断留在这边；清零本身仍在 krnln。
   krnln_ZeroAry: (args, _tx, name) => {
     const t = requireVarArg(args[0], name)
     const info = currentTranspileArrayVars.get(t)
@@ -4605,13 +4627,13 @@ const YCMD_INTRINSIC_CALLS: Record<string, (args: string[], tx: (e: string) => s
     if (kind === 'text' || kind === 'bin') {
       throw new Error(`命令“${name}”只支持数值数组（帮助：数值数组变量），但“${t}”是 ${info.elemType} 数组`)
     }
-    return `{ std::fill(${t}.begin(), ${t}.end(), 0); }`
+    return `{ krnln_ZeroAry((void*)&${t}); }`
   },
 }
 
 function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
-  const intrinsic = YCMD_INTRINSIC_CALLS[getYcmdNativeSymbol(cmd)]
-  if (intrinsic) return intrinsic(args, (e) => formatArgForC(e, commandMap, directCallables), cmd.name || getYcmdNativeSymbol(cmd))
+  const varrefCall = YCMD_VARREF_CALLS[getYcmdNativeSymbol(cmd)]
+  if (varrefCall) return varrefCall(args, (e) => formatArgForC(e, commandMap, directCallables), cmd.name || getYcmdNativeSymbol(cmd))
   assertYcmdArrayReturnSupported(cmd, getYcmdNativeSymbol(cmd))
   const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemKind(cmd, args))
   // 调试输出：impl 单参（const char*）。所有值经 yc_dbg_fmt 格式化（照易语言——文本带
@@ -4654,8 +4676,9 @@ function generateYcmdNativeDeclarations(targetPlatform: TargetPlatform): string 
   const seen = new Set<string>()
   for (const cmd of buildCommandMap(targetPlatform).values()) {
     if (!isYcmdNativeCommand(cmd)) continue
-    // 转译期内建（变量操作族）不走原生路径 → 不发声明。发了也没人调，白留一份与 impl 错位的声明。
-    if (YCMD_INTRINSIC_CALLS[getYcmdNativeSymbol(cmd)]) continue
+    // 变量操作族的声明是手写的（「地址+类型标签」通用映射译不出，见 prelude 里的 extern 块）→ 这里跳过，
+    // 否则会按清单的「通用型」再发一份 const char* 的错声明。
+    if (YCMD_VARREF_CALLS[getYcmdNativeSymbol(cmd)]) continue
     const sig = buildYcmdNativeSignature(cmd)
     if (seen.has(sig.symbol)) continue
     seen.add(sig.symbol)
@@ -5056,7 +5079,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
 
   const lines = eycContent.split('\n')
   let result = `/* 由 ycIDE 自动从 ${fileName} 生成 */\n`
-  result += '#include <windows.h>\n#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <direct.h>\n#include <wchar.h>\n#include <wctype.h>\n#include <string.h>\n#include <filesystem>\n#include <vector>\n#include <string>\n#include <algorithm>\n#include <fstream>\n\n'
+  result += '#include <windows.h>\n#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <direct.h>\n#include <wchar.h>\n#include <wctype.h>\n#include <string.h>\n#include <filesystem>\n#include <vector>\n#include <string>\n#include <algorithm>\n#include <type_traits>\n#include <fstream>\n\n'
   result += generateYcmdNativeDeclarations(targetPlatform)
   result += 'namespace ycfs = std::filesystem;\n\n'
   result += 'typedef std::vector<unsigned char> YC_BIN;\n'
@@ -5122,6 +5145,31 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    s = std::move(v);\n'
   result += '    return s;\n'
   result += '}\n\n'
+  // ========== 「按引用操作变量」族的类型标签（赋值/连续赋值/交换变量/强制交换变量）==========
+  // 这族是「通用型变量」语义：krnln 收到变量地址后，得知道该按什么类型去赋值/交换——裸 void*
+  // 没有类型信息。转译期本来就知道类型，故把标签一起交过去，**实现仍留在支持库**。
+  // 独立编号、不复用 YC_SDT_*：那套是易语言的数据类型 ID（YC_MDATA_INF 在用），
+  // 字节集/数组的真实 ID 我们没有确证，不在这里瞎认领。
+  result += '#define YC_VT_INT 1\n#define YC_VT_INT64 2\n#define YC_VT_SHORT 3\n#define YC_VT_BYTE 4\n'
+  result += '#define YC_VT_FLOAT 5\n#define YC_VT_DOUBLE 6\n#define YC_VT_TEXT 7\n#define YC_VT_BIN 8\n#define YC_VT_ARY 9\n'
+  // 标签由 C++ 重载解析得出，转译期不必再查一次变量类型表；不支持的类型直接编译失败（诚实），
+  // 不会静默按错类型写内存。逻辑型/整数型同为 int，赋值与交换的行为本就一致，不必区分。
+  result += 'static inline int yc_vt_of(int) { return YC_VT_INT; }\n'
+  result += 'static inline int yc_vt_of(long long) { return YC_VT_INT64; }\n'
+  result += 'static inline int yc_vt_of(short) { return YC_VT_SHORT; }\n'
+  result += 'static inline int yc_vt_of(unsigned char) { return YC_VT_BYTE; }\n'
+  result += 'static inline int yc_vt_of(float) { return YC_VT_FLOAT; }\n'
+  result += 'static inline int yc_vt_of(double) { return YC_VT_DOUBLE; }\n'
+  result += 'static inline int yc_vt_of(const YC_TEXT&) { return YC_VT_TEXT; }\n'
+  result += 'static inline int yc_vt_of(const YC_BIN&) { return YC_VT_BIN; }\n'
+  result += 'static inline int yc_vt_of(const std::vector<long long>&) { return YC_VT_ARY; }\n\n'
+  // 变量操作族的原生签名（清单里这几条的参数是「通用型变量/变量数组」，通用映射译不出「地址+标签」，
+  // 故手写声明、并在 generateYcmdNativeDeclarations 里跳过它们）。
+  result += 'extern "C" void krnln_set(void* target, const void* value, int dataType);\n'
+  result += 'extern "C" void krnln_store(const void* value, void* target, int dataType);\n'
+  result += 'extern "C" void krnln_XchgVar(void* a, void* b, int dataType);\n'
+  result += 'extern "C" void krnln_ForceXchgVar(void* a, void* b, int dataType);\n'
+  result += 'extern "C" void krnln_ZeroAry(void* arrayVar);\n\n'
   result += 'struct YC_BIG {\n'
   result += '    bool neg;\n'
   result += '    std::string digits;\n'

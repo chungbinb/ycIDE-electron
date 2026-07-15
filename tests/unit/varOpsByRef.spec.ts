@@ -1,12 +1,14 @@
-// 【变量操作族 · 转译期内建】赋值/连续赋值/交换变量/强制交换变量/数组清零。
+// 【变量操作族 · 按引用 ABI】赋值/连续赋值/交换变量/强制交换变量/数组清零。
 //
-// 这族的语义是「**按引用**操作变量」，而 krnln 的 void* ABI 不带类型信息、通用型赋值/交换根本
-// 表达不了：impl 是 `*(uintptr_t*)目标 = (uintptr_t)值指针`（把指针值当数据写），而通用编组
-// 交给它的还是**值的文本形态**，连地址都不是——两头都错。
-// 修法不是对齐 ABI，是把这 5 条做成转译期内建：转译期本来就知道每个变量的类型，直接发
-// 类型正确的 C++，完全绕开 krnln。
+// 帮助里这族的参数写作「通用型变量/变量数组」（vs 值参的「通用型数组/非数组」）——是**按引用**语义。
+// 旧法两头都错：通用编组把实参译成「值的文本形态」（连变量地址都不是），而 impl 是
+// `*(uintptr_t*)目标 = (uintptr_t)值指针`（把指针值当数据写）。这 5 条此前全是坏的。
+//
+// 现法：**实现仍在支持库**（krnln_set/store/XchgVar/ForceXchgVar/ZeroAry），转译期只负责把
+// 「变量地址 + 类型标签」交过去——裸 void* 没有类型信息，赋值/交换就没法做对，而类型转译期本就知道。
+// 标签经生成侧 yc_vt_of(变量) 由 C++ 重载解析得出；值参用 decltype(目标) 落临时量，类型转换交给 C++。
 import { describe, it, expect, beforeAll } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'fs'
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs'
 import { execFileSync } from 'child_process'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
@@ -43,16 +45,17 @@ async function build(lines: string[]) {
   const r = await compileProject({ projectDir: dir, mode: 'build' })
   const errs = messages.slice(before).filter(m => m.type === 'error').map(m => m.text).join('\n')
   const out = r.success ? execFileSync(r.outputFile, [], { encoding: 'buffer', timeout: 30000 }).toString('utf-8') : ''
+  const gen = existsSync(join(dir, 'temp', '程序.cpp')) ? readFileSync(join(dir, 'temp', '程序.cpp'), 'utf-8') : ''
   rmSync(dir, { recursive: true, force: true })
-  return { r, errs, out }
+  return { r, errs, out, gen }
 }
 
 const say = (label: string, expr: string[]) =>
   `标准输出 (0, “${label}=” ${expr.map(e => `＋ ${e}`).join(' ')} ＋ #换行符)`
 
-describe('变量操作族 · 转译期内建', () => {
-  it.skipIf(!zigAvailable)('赋值/连续赋值/交换变量/强制交换变量/数组清零 真的生效', async () => {
-    const { r, errs, out } = await build([
+describe('变量操作族 · 按引用 ABI（实现在支持库）', () => {
+  it.skipIf(!zigAvailable)('赋值/连续赋值/交换变量/强制交换变量/数组清零 真的生效（经 krnln）', async () => {
+    const { r, errs, out, gen } = await build([
       // 赋值(变量, 值)——注意帮助里第 1 参是被赋值的变量
       '赋值 (a, 7)',
       '赋值 (s, “甲”)',
@@ -83,6 +86,14 @@ describe('变量操作族 · 转译期内建', () => {
     expect(val('交换变量'), '1↔2').toBe('2/1')
     expect(val('强制交换变量'), '文本也要能交换').toBe('乙/甲')
     expect(val('数组清零'), '成员全置零，成员数不变').toBe('2|0/0')
+
+    // 【架构钉】实现必须留在支持库：转译期只发「变量地址 + 类型标签」的 krnln 调用，
+    // 不许把操作内联成 C++（那等于把支持库的实现搬进转译器）。
+    expect(gen, '赋值 应调 krnln_set 而非内联 =').toMatch(/krnln_set\(\(void\*\)&a, \(const void\*\)&__yc_v, yc_vt_of\(a\)\)/)
+    expect(gen, '连续赋值 应调 krnln_store').toContain('krnln_store((const void*)&')
+    expect(gen, '交换变量 应调 krnln_XchgVar 而非内联 std::swap').toContain('krnln_XchgVar((void*)&')
+    expect(gen, '数组清零 应调 krnln_ZeroAry 而非内联 std::fill').toContain('krnln_ZeroAry((void*)&')
+    expect(gen, '交换变量 的类型一致性由 static_assert 挡在编译期').toContain('std::is_same<decltype(')
   }, 180000)
 
   it.skipIf(!zigAvailable)('按引用的实参必须是变量，不是就友好报错', async () => {
