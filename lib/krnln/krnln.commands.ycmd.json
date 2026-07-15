@@ -9738,10 +9738,23 @@
     {
       "commandId": "krnln.GetPic",
       "displayName": "取图片",
-      "summary": "如果本对象为 COM 图片对象，则取回其具体图片数据。成功返回图片数据字节集，失败返回空字节集。本命令为初级对象成员命令。",
-      "params": [],
+      "summary": "取得画板中的图片数据。本命令为初级对象成员命令。",
+      "params": [
+        {
+          "name": "输出宽度",
+          "type": "整数型",
+          "optional": true,
+          "description": "，可以被省略。小于0=相对原宽的百分比(最小10%)；等于0=按原宽输出；大于0=绝对宽度。省略默认0。"
+        },
+        {
+          "name": "输出高度",
+          "type": "整数型",
+          "optional": true,
+          "description": "，可以被省略。小于0=相对原高的百分比(最小10%)；等于0=按原高输出；大于0=绝对高度。省略默认0。"
+        }
+      ],
       "returnType": "字节集",
-      "category": "控制台操作",
+      "category": "画板",
       "supportedPlatforms": [
         "windows"
       ]
@@ -10924,17 +10937,23 @@
     {
       "commandId": "krnln.SelItem",
       "displayName": "选中项目",
-      "summary": "在所有项目中寻找首部包含指定文本的项目，如找到，则选中它，并返回该项目的位置索引，否则返回 -1。本命令为初级对象成员命令。",
+      "summary": "选择或取消选择选择列表框中的指定项目。本命令为初级对象成员命令。",
       "params": [
         {
-          "name": "欲选择的项目文本",
-          "type": "文本型",
+          "name": "欲选择或取消选择的项目索引",
+          "type": "整数型",
           "optional": false,
-          "description": "。"
+          "description": "。0 为项目一，1 为项目二，如此类推。"
+        },
+        {
+          "name": "欲置入的项目选择状态",
+          "type": "逻辑型",
+          "optional": true,
+          "description": "，可以被省略。省略或为真则选择该项目，否则取消选择。"
         }
       ],
-      "returnType": "整数型",
-      "category": "控制台操作",
+      "returnType": "逻辑型",
+      "category": "选择列表框",
       "supportedPlatforms": [
         "windows"
       ]
@@ -11170,15 +11189,53 @@
     {
       "commandId": "krnln.SetCustomPaperType",
       "displayName": "置自定义纸张类型",
-      "summary": "取当前默认打印机所支持的所有纸张类型（包括系统定义纸张类型和自定义纸张类型），返回一维文本数组，其中存放了的各纸张类型的名称。本方法仅在Windows NT/2000/XP下有效。本命令为高级对象成员命令。",
+      "summary": "设置自定义纸张类型。本命令为初级对象成员命令。",
       "params": [
         {
-          "name": "纸张定义",
-          "type": "通用型"
+          "name": "自定义纸张类型名称",
+          "type": "文本型",
+          "optional": false,
+          "description": "。"
+        },
+        {
+          "name": "纸张宽度",
+          "type": "整数型",
+          "optional": false,
+          "description": "。单位为 0.1 毫米。"
+        },
+        {
+          "name": "纸张高度",
+          "type": "整数型",
+          "optional": false,
+          "description": "。单位为 0.1 毫米。"
+        },
+        {
+          "name": "上边距",
+          "type": "整数型",
+          "optional": true,
+          "description": "，可以被省略。单位为 0.1 毫米。省略默认0。"
+        },
+        {
+          "name": "下边距",
+          "type": "整数型",
+          "optional": true,
+          "description": "，可以被省略。单位为 0.1 毫米。省略默认0。"
+        },
+        {
+          "name": "左边距",
+          "type": "整数型",
+          "optional": true,
+          "description": "，可以被省略。单位为 0.1 毫米。省略默认0。"
+        },
+        {
+          "name": "右边距",
+          "type": "整数型",
+          "optional": true,
+          "description": "，可以被省略。单位为 0.1 毫米。省略默认0。"
         }
       ],
-      "returnType": "文本型数组",
-      "category": "控制台操作",
+      "returnType": "逻辑型",
+      "category": "打印机",
       "supportedPlatforms": [
         "windows"
       ]
