@@ -4459,6 +4459,22 @@ const YCMD_ARRAY_RETURN_SYMBOLS = new Set<string>([
 ])
 
 /**
+ * 「对象.xxx」是**对象成员命令**，帮助里的「对象．」是占位符（=任意对象），不是能直接写的命令名。
+ * 但 ycmd 的 displayName 字面就是「对象.移动」，于是它们进了命令表、补全补得出来、写出来还能编过——
+ * 而 impl 收的是「前导对象句柄 + 清单里那几个参数」，清单不含句柄 → 生成的调用**少一个参数**，
+ * 运行时按错位的栈/寄存器取值。堵在转译期，并指路正确写法。
+ *
+ * 只堵「当自由命令调用」这一条路：提示面板走的是 findControlMethodEntry（剥「对象.」前缀去匹配
+ * `编辑框1.加入文本`），那条路不经过这里，不受影响。
+ */
+function assertNotBareObjectMemberCommand(cmd: ResolvedCommand): void {
+  const name = (cmd.name || '').trim()
+  if (!/^对象[.．]/.test(name)) return
+  const member = name.replace(/^对象[.．]/, '')
+  throw new Error(`“${name}”是对象成员命令，不能这样直接调用；请写成「控件名.${member}(…)」的形式`)
+}
+
+/**
  * 清单标了数组返回、但 impl 还没按数组 ABI 落地 → 转译期友好报错。
  * 好过静默返回垃圾：这些命令此前 mapTypeToCType 认不得「X数组」而掉默认 int，
  * 声明 int 收 impl 的 const char*，调用处拿到的是被截断的指针值（且从不报错）。
@@ -4541,6 +4557,7 @@ function buildYcmdRepeatTailCalls(
 }
 
 function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
+  assertNotBareObjectMemberCommand(cmd)
   assertYcmdArrayReturnSupported(cmd, getYcmdNativeSymbol(cmd))
   const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemKind(cmd, args))
   // 尾参可重复的多值：逐次调用用逗号表达式串起（值=最后一次调用的结果，与易语言一致）
@@ -4634,6 +4651,7 @@ const YCMD_VARREF_CALLS: Record<string, (args: string[], tx: (e: string) => stri
 function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
   const varrefCall = YCMD_VARREF_CALLS[getYcmdNativeSymbol(cmd)]
   if (varrefCall) return varrefCall(args, (e) => formatArgForC(e, commandMap, directCallables), cmd.name || getYcmdNativeSymbol(cmd))
+  assertNotBareObjectMemberCommand(cmd)
   assertYcmdArrayReturnSupported(cmd, getYcmdNativeSymbol(cmd))
   const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemKind(cmd, args))
   // 调试输出：impl 单参（const char*）。所有值经 yc_dbg_fmt 格式化（照易语言——文本带
