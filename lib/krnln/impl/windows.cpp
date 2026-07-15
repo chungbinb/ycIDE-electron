@@ -1952,52 +1952,90 @@ extern "C" const char* krnln_dir(const char* fileOrDirName, int /*attributes*/) 
   return keepWideAsUtf8(findData.cFileName);
 }
 
-extern "C" int krnln_BinLen(const char* binData) {
-  return static_cast<int>(std::strlen(binData ? binData : ""));
+// ========================= 字节集 ABI v2 =========================
+// 字节集（YC_BIN = std::vector<unsigned char>）跨 ABI 一律按**指针**传：
+//   · 入参  const void* = const YC_BIN*（生成侧发 (const void*)&yc_bin_tmp(…)；实参省略 → nullptr）
+//   · 返回  void*       = 堆上 new YC_BIN（生成侧 yc_bin_take 接管：移走内容后 delete）
+// 【为什么换】旧法是 const char*、长度靠 NUL 结尾（yc_bin_to_cstr 返回 c_str()、
+// yc_cstr_to_bin/krnln_BinLen 按 strlen 算）——可字节集本就是任意二进制，含 0x00 即被整条截断，
+// 于是「读入文件→取字节集长度」这类最基本的用法在二进制文件上全是错的。
+// 新法复用数组那套既有的跨 TU vector 指针契约（krnln_AddElement 等早就在用），不引入新假设。
+typedef std::vector<unsigned char> YcBin;
+
+/** 入参还原；nullptr（实参省略）→ 空字节集 */
+static const YcBin& ycBinArg(const void* p) {
+  static const YcBin kEmpty;
+  return p ? *reinterpret_cast<const YcBin*>(p) : kEmpty;
+}
+/** 交回堆上的字节集，所有权转给调用处的 yc_bin_take */
+static void* ycBinRet(YcBin b) { return new YcBin(std::move(b)); }
+/** UTF-8 文本 → 字节集（到字节集/文本到UTF8 等：通用型/文本型经通用编组到达时已是 UTF-8） */
+static YcBin ycBinFromUtf8(const char* s) {
+  const char* p = s ? s : "";
+  return YcBin(reinterpret_cast<const unsigned char*>(p), reinterpret_cast<const unsigned char*>(p) + std::strlen(p));
+}
+/** 正向找子字节集：返回 0 基下标，找不到 -1 */
+static long ycBinFind(const YcBin& hay, const YcBin& needle, size_t from) {
+  if (needle.empty() || from > hay.size() || needle.size() > hay.size() - from) return -1;
+  auto it = std::search(hay.begin() + static_cast<long>(from), hay.end(), needle.begin(), needle.end());
+  return it == hay.end() ? -1 : static_cast<long>(it - hay.begin());
+}
+/** 反向找：在「起始下标 ≤ upto」的范围内取最后一次出现（同 std::string::rfind 语义） */
+static long ycBinRFind(const YcBin& hay, const YcBin& needle, size_t upto) {
+  if (needle.empty() || needle.size() > hay.size()) return -1;
+  size_t last = std::min(upto, hay.size() - needle.size());
+  for (size_t i = last + 1; i-- > 0;) {
+    if (std::equal(needle.begin(), needle.end(), hay.begin() + static_cast<long>(i))) return static_cast<long>(i);
+  }
+  return -1;
 }
 
-extern "C" const char* krnln_ToBin(const char* anyData) {
-  return keepUtf8(anyData ? anyData : "");
+extern "C" int krnln_BinLen(const void* binData) {
+  return static_cast<int>(ycBinArg(binData).size());
 }
 
-extern "C" const char* krnln_BinLeft(const char* binData, int count) {
-  std::string s = binData ? binData : "";
-  if (count <= 0) return keepUtf8("");
-  if (static_cast<size_t>(count) >= s.size()) return keepUtf8(s);
-  return keepUtf8(s.substr(0, static_cast<size_t>(count)));
+extern "C" void* krnln_ToBin(const char* anyData) {
+  return ycBinRet(ycBinFromUtf8(anyData));
 }
 
-extern "C" const char* krnln_BinRight(const char* binData, int count) {
-  std::string s = binData ? binData : "";
-  if (count <= 0) return keepUtf8("");
-  if (static_cast<size_t>(count) >= s.size()) return keepUtf8(s);
-  return keepUtf8(s.substr(s.size() - static_cast<size_t>(count)));
+extern "C" void* krnln_BinLeft(const void* binData, int count) {
+  const YcBin& s = ycBinArg(binData);
+  if (count <= 0) return ycBinRet(YcBin());
+  if (static_cast<size_t>(count) >= s.size()) return ycBinRet(s);
+  return ycBinRet(YcBin(s.begin(), s.begin() + count));
 }
 
-extern "C" const char* krnln_BinMid(const char* binData, int startPos, int count) {
-  std::string s = binData ? binData : "";
-  if (count <= 0) return keepUtf8("");
+extern "C" void* krnln_BinRight(const void* binData, int count) {
+  const YcBin& s = ycBinArg(binData);
+  if (count <= 0) return ycBinRet(YcBin());
+  if (static_cast<size_t>(count) >= s.size()) return ycBinRet(s);
+  return ycBinRet(YcBin(s.end() - count, s.end()));
+}
+
+extern "C" void* krnln_BinMid(const void* binData, int startPos, int count) {
+  const YcBin& s = ycBinArg(binData);
+  if (count <= 0) return ycBinRet(YcBin());
   if (startPos < 1) startPos = 1;
   size_t start = static_cast<size_t>(startPos - 1);
-  if (start >= s.size()) return keepUtf8("");
-  return keepUtf8(s.substr(start, static_cast<size_t>(count)));
+  if (start >= s.size()) return ycBinRet(YcBin());
+  size_t n = std::min(static_cast<size_t>(count), s.size() - start);
+  return ycBinRet(YcBin(s.begin() + static_cast<long>(start), s.begin() + static_cast<long>(start + n)));
 }
 
-extern "C" int krnln_InBin(const char* sourceBin, const char* findBin, int startPos) {
-  std::string source = sourceBin ? sourceBin : "";
-  std::string find = findBin ? findBin : "";
+extern "C" int krnln_InBin(const void* sourceBin, const void* findBin, int startPos) {
+  const YcBin& source = ycBinArg(sourceBin);
+  const YcBin& find = ycBinArg(findBin);
   if (find.empty()) return 1;
   if (startPos < 1) startPos = 1;
   size_t start = static_cast<size_t>(startPos - 1);
   if (start >= source.size()) return -1;
-  size_t found = source.find(find, start);
-  if (found == std::string::npos) return -1;
-  return static_cast<int>(found + 1);
+  long found = ycBinFind(source, find, start);
+  return found < 0 ? -1 : static_cast<int>(found + 1);
 }
 
-extern "C" int krnln_InBinRev(const char* sourceBin, const char* findBin, int startPos) {
-  std::string source = sourceBin ? sourceBin : "";
-  std::string find = findBin ? findBin : "";
+extern "C" int krnln_InBinRev(const void* sourceBin, const void* findBin, int startPos) {
+  const YcBin& source = ycBinArg(sourceBin);
+  const YcBin& find = ycBinArg(findBin);
   if (source.empty()) return -1;
   if (find.empty()) return static_cast<int>(source.size());
 
@@ -2005,73 +2043,71 @@ extern "C" int krnln_InBinRev(const char* sourceBin, const char* findBin, int st
   if (startPos >= 1 && static_cast<size_t>(startPos) <= source.size()) {
     start = static_cast<size_t>(startPos - 1);
   }
-
-  size_t found = source.rfind(find, start);
-  if (found == std::string::npos) return -1;
-  return static_cast<int>(found + 1);
+  long found = ycBinRFind(source, find, start);
+  return found < 0 ? -1 : static_cast<int>(found + 1);
 }
 
-extern "C" const char* krnln_RpBin(const char* sourceBin, int startPos, int replaceLen, const char* replacementBin) {
-  std::string out = sourceBin ? sourceBin : "";
+extern "C" void* krnln_RpBin(const void* sourceBin, int startPos, int replaceLen, const void* replacementBin) {
+  YcBin out = ycBinArg(sourceBin);
+  const YcBin& rep = ycBinArg(replacementBin);
   if (startPos < 1) startPos = 1;
   size_t start = static_cast<size_t>(startPos - 1);
   if (start > out.size()) start = out.size();
   if (replaceLen < 0) replaceLen = 0;
   size_t eraseLen = std::min(static_cast<size_t>(replaceLen), out.size() - start);
-  out.replace(start, eraseLen, replacementBin ? replacementBin : "");
-  return keepUtf8(out);
+  out.erase(out.begin() + static_cast<long>(start), out.begin() + static_cast<long>(start + eraseLen));
+  out.insert(out.begin() + static_cast<long>(start), rep.begin(), rep.end());
+  return ycBinRet(std::move(out));
 }
 
-extern "C" const char* krnln_RpSubBin(const char* sourceBin,
-                                        const char* oldSubBin,
-                                        const char* newSubBin,
-                                        int startPos,
-                                        int replaceCount) {
-  std::string out = sourceBin ? sourceBin : "";
-  std::string oldValue = oldSubBin ? oldSubBin : "";
-  std::string newValue = newSubBin ? newSubBin : "";
-  if (oldValue.empty()) return keepUtf8(out);
+extern "C" void* krnln_RpSubBin(const void* sourceBin,
+                                const void* oldSubBin,
+                                const void* newSubBin,
+                                int startPos,
+                                int replaceCount) {
+  YcBin out = ycBinArg(sourceBin);
+  const YcBin& oldValue = ycBinArg(oldSubBin);
+  const YcBin& newValue = ycBinArg(newSubBin);
+  if (oldValue.empty()) return ycBinRet(std::move(out));
 
   if (startPos < 1) startPos = 1;
   size_t cursor = static_cast<size_t>(startPos - 1);
-  if (cursor >= out.size()) return keepUtf8(out);
+  if (cursor >= out.size()) return ycBinRet(std::move(out));
 
   int maxReplace = replaceCount;
   if (maxReplace <= 0) maxReplace = std::numeric_limits<int>::max();
 
   int replaced = 0;
   while (replaced < maxReplace) {
-    size_t found = out.find(oldValue, cursor);
-    if (found == std::string::npos) break;
-    out.replace(found, oldValue.size(), newValue);
-    cursor = found + newValue.size();
+    long found = ycBinFind(out, oldValue, cursor);
+    if (found < 0) break;
+    out.erase(out.begin() + found, out.begin() + found + static_cast<long>(oldValue.size()));
+    out.insert(out.begin() + found, newValue.begin(), newValue.end());
+    cursor = static_cast<size_t>(found) + newValue.size();
     ++replaced;
   }
 
-  return keepUtf8(out);
+  return ycBinRet(std::move(out));
 }
 
-extern "C" const char* krnln_SpaceBin(int zeroCount) {
-  if (zeroCount <= 0) return keepUtf8("");
-  std::string out(static_cast<size_t>(zeroCount), '\0');
-  return keepUtf8(out);
+extern "C" void* krnln_SpaceBin(int zeroCount) {
+  if (zeroCount <= 0) return ycBinRet(YcBin());
+  return ycBinRet(YcBin(static_cast<size_t>(zeroCount), 0));   // 真的 zeroCount 个 0 字节（旧 ABI 下会被当空串）
 }
 
-extern "C" const char* krnln_bin(int repeatCount, const char* unitBin) {
-  if (repeatCount <= 0) return keepUtf8("");
-  std::string unit = unitBin ? unitBin : "";
-  if (unit.empty()) return keepUtf8("");
-
-  std::string out;
+extern "C" void* krnln_bin(int repeatCount, const void* unitBin) {
+  const YcBin& unit = ycBinArg(unitBin);
+  if (repeatCount <= 0 || unit.empty()) return ycBinRet(YcBin());
+  YcBin out;
   out.reserve(unit.size() * static_cast<size_t>(repeatCount));
-  for (int i = 0; i < repeatCount; ++i) out += unit;
-  return keepUtf8(out);
+  for (int i = 0; i < repeatCount; ++i) out.insert(out.end(), unit.begin(), unit.end());
+  return ycBinRet(std::move(out));
 }
 
-extern "C" const char* krnln_pbin(long long dataPtr, int dataLen) {
-  if (dataPtr == 0 || dataLen <= 0) return keepUtf8("");
-  const char* ptr = reinterpret_cast<const char*>(static_cast<intptr_t>(dataPtr));
-  return keepUtf8(std::string(ptr, ptr + static_cast<size_t>(dataLen)));
+extern "C" void* krnln_pbin(long long dataPtr, int dataLen) {
+  if (dataPtr == 0 || dataLen <= 0) return ycBinRet(YcBin());
+  const unsigned char* ptr = reinterpret_cast<const unsigned char*>(static_cast<intptr_t>(dataPtr));
+  return ycBinRet(YcBin(ptr, ptr + static_cast<size_t>(dataLen)));   // 内存块原样收，0 字节不再截断
 }
 
 extern "C" int krnln_p2int(long long dataPtr) {
@@ -2098,8 +2134,8 @@ extern "C" double krnln_p2double(long long dataPtr) {
   return *ptr;
 }
 
-extern "C" int krnln_GetIntInsideBin(const char* binData, int offset, int reverseBytes) {
-  std::string s = binData ? binData : "";
+extern "C" int krnln_GetIntInsideBin(const void* binData, int offset, int reverseBytes) {
+  const YcBin& s = ycBinArg(binData);
   if (offset < 0) return 0;
 
   size_t start = static_cast<size_t>(offset);
@@ -2117,36 +2153,44 @@ extern "C" int krnln_GetIntInsideBin(const char* binData, int offset, int revers
   return value;
 }
 
-extern "C" void krnln_SetIntInsideBin(char* binData, int offset, int value, int reverseBytes) {
+// 置字节集内整数〈无返回值〉——**就地改写**入参，故收非 const YC_BIN*（生成侧按 binref 绑到用户变量本身，
+// 见 YCMD_ARRAY_PARAM_KINDS['krnln_SetIntInsideBin']）。旧法收 char*，而调用方交的是
+// yc_bin_to_cstr 轮转槽里的临时副本 —— 写进去就丢，这条命令此前是**彻底的空操作**。
+// 另：旧法 memcpy(binData + offset, …) **没有任何边界检查**，offset 靠近末尾即缓冲区溢出。
+extern "C" void krnln_SetIntInsideBin(void* binData, int offset, int value, int reverseBytes) {
   if (!binData || offset < 0) return;
+  YcBin& s = *reinterpret_cast<YcBin*>(binData);
+  if (static_cast<size_t>(offset) + sizeof(int) > s.size()) return;   // 越界即不写（旧法在这里溢出）
 
   unsigned char bytes[sizeof(int)]{};
   std::memcpy(bytes, &value, sizeof(int));
   if (reverseBytes) {
     std::reverse(bytes, bytes + sizeof(int));
   }
-
-  std::memcpy(binData + static_cast<size_t>(offset), bytes, sizeof(int));
+  std::memcpy(s.data() + static_cast<size_t>(offset), bytes, sizeof(int));
 }
 
-extern "C" const char* krnln_ReadFile(const char* fileName) {
-  if (!fileName || !*fileName) return keepUtf8("");
+extern "C" void* krnln_ReadFile(const char* fileName) {
+  if (!fileName || !*fileName) return ycBinRet(YcBin());
 
   std::ifstream in(fileName, std::ios::binary);
-  if (!in) return keepUtf8("");
+  if (!in) return ycBinRet(YcBin());
 
-  std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  return keepUtf8(data);
+  // 二进制原样读入（旧法经 const char* 交回，遇文件里第一个 0x00 就整条截断——
+  // 读任何真正的二进制文件都是错的）
+  YcBin data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  return ycBinRet(std::move(data));
 }
 
-extern "C" int krnln_WriteFile(const char* fileName, const char* binData) {
+extern "C" int krnln_WriteFile(const char* fileName, const void* binData) {
   if (!fileName || !*fileName) return 0;
 
   std::ofstream out(fileName, std::ios::binary | std::ios::trunc);
   if (!out) return 0;
 
-  const char* text = binData ? binData : "";
-  out.write(text, static_cast<std::streamsize>(std::strlen(text)));
+  // 原样写出（旧法按 strlen 取长度 → 写二进制时在第一个 0x00 处就截断了）
+  const YcBin& b = ycBinArg(binData);
+  if (!b.empty()) out.write(reinterpret_cast<const char*>(b.data()), static_cast<std::streamsize>(b.size()));
   return out.good() ? 1 : 0;
 }
 
@@ -2376,26 +2420,39 @@ extern "C" const char* krnln_pstr(uintptr_t ptr) {
   return keepUtf8(p ? p : "");
 }
 
-extern "C" const char* krnln_StrToUTF8(const char* text) {
-  return keepUtf8(text ? text : "");
+// 文本到UTF8〈字节集〉——帮助：「注意所返回UTF8文本数据**包括结束零字符**」。
+// 旧法 keepUtf8(text) 既没加结束零、回到调用侧又被 strlen 还原，两头都不对。
+extern "C" void* krnln_StrToUTF8(const char* text) {
+  YcBin out = ycBinFromUtf8(text);
+  out.push_back(0);
+  return ycBinRet(std::move(out));
 }
 
-extern "C" const char* krnln_UTF8ToStr(const char* utf8Data) {
-  return keepUtf8(utf8Data ? utf8Data : "");
+// UTF8到文本〈文本型〉（字节集 待转换的UTF8文本数据）——按长度收，不依赖结束零
+extern "C" const char* krnln_UTF8ToStr(const void* utf8Data) {
+  const YcBin& b = ycBinArg(utf8Data);
+  std::string s(reinterpret_cast<const char*>(b.data()), b.size());
+  s.resize(std::strlen(s.c_str()));            // 容忍数据自带结束零（帮助说 文本到UTF8 会带）
+  return keepUtf8(s);
 }
 
-extern "C" const char* krnln_StrToUTF16(const char* text) {
+// 文本到UTF16〈字节集〉——帮助：返回值包括结束零字符。
+// 【旧法必坏】UTF-16 里 ASCII 字符的高字节全是 0x00，keepUtf8 交回后调用侧按 strlen 还原
+// → “A” 的 4 个字节只剩 1 个。这条命令在旧的 const char* 字节集 ABI 下不可能正确。
+extern "C" void* krnln_StrToUTF16(const char* text) {
   std::wstring w = utf8ToWide(text ? text : "");
-  std::string bytes;
-  bytes.resize((w.size() + 1) * sizeof(wchar_t));
-  std::memcpy(bytes.data(), w.c_str(), bytes.size());
-  return keepUtf8(bytes);
+  const unsigned char* p = reinterpret_cast<const unsigned char*>(w.c_str());
+  return ycBinRet(YcBin(p, p + (w.size() + 1) * sizeof(wchar_t)));   // +1 = 结束零字符
 }
 
-extern "C" const char* krnln_UTF16ToStr(const char* utf16Data) {
-  if (!utf16Data) return keepUtf8("");
-  const wchar_t* w = reinterpret_cast<const wchar_t*>(utf16Data);
-  return keepWideAsUtf8(std::wstring(w));
+// UTF16到文本〈文本型〉（字节集 待转换的UTF16文本数据）——按长度收，不依赖结束零
+extern "C" const char* krnln_UTF16ToStr(const void* utf16Data) {
+  const YcBin& b = ycBinArg(utf16Data);
+  size_t n = b.size() / sizeof(wchar_t);
+  if (n == 0) return keepUtf8("");
+  std::wstring w(reinterpret_cast<const wchar_t*>(b.data()), n);
+  w.resize(wcslen(w.c_str()));                 // 容忍数据自带结束零
+  return keepWideAsUtf8(w);
 }
 
 extern "C" double krnln_TimeChg(double oaDate, int part, int delta) {
@@ -2576,37 +2633,55 @@ extern "C" const char* krnln_NumToText(double value, int decimals, int useThousa
   return keepUtf8(oss.str());
 }
 
-extern "C" long long krnln_GetBinElement(const char* binData, int dataType, int startIndex) {
-  std::string s = binData ? binData : "";
+// 取字节集数据〈通用型〉（字节集 欲取出其中数据的字节集，整数型 欲取出数据的类型，［整数型 起始索引位置］）
+// 【类型常量此前整个错位】帮助：1=#字节型 2=#短整数型 3=#整数型 4=#长整数型 5=#小数型
+// 6=#双精度小数型 7=#逻辑型 8=#日期时间型 9=#子程序指针型 10=#文本型；
+// 旧实现却按 1=int / 2=float / 3=double / 其余=首字节 —— 每个类型都取错。
+// 注：返回值声明按 长整数型 对齐 impl（清单标〈通用型〉，通用映射会掉默认 int 而与 impl 的
+// long long 错位）；文本型(10) 这套整数返回表达不了，返回 0。
+extern "C" long long krnln_GetBinElement(const void* binData, int dataType, int startIndex) {
+  const YcBin& s = ycBinArg(binData);
   if (s.empty()) return 0;
 
   if (startIndex < 0) startIndex = 0;
   size_t start = static_cast<size_t>(startIndex);
   if (start >= s.size()) return 0;
 
-  const unsigned char* ptr = reinterpret_cast<const unsigned char*>(s.data() + start);
+  const unsigned char* ptr = s.data() + start;
   size_t remain = s.size() - start;
+  auto take = [&](size_t n) { return remain >= n; };
   switch (dataType) {
-    case 1: {
-      if (remain < sizeof(int)) return 0;
-      int value = 0;
-      std::memcpy(&value, ptr, sizeof(int));
-      return static_cast<long long>(value);
-    }
-    case 2: {
-      if (remain < sizeof(float)) return 0;
-      float value = 0.0f;
-      std::memcpy(&value, ptr, sizeof(float));
-      return static_cast<long long>(value);
-    }
-    case 3: {
-      if (remain < sizeof(double)) return 0;
-      double value = 0.0;
-      std::memcpy(&value, ptr, sizeof(double));
-      return static_cast<long long>(value);
-    }
-    default:
+    case 1:                                            // #字节型
       return static_cast<long long>(ptr[0]);
+    case 2: {                                          // #短整数型
+      if (!take(sizeof(short))) return 0;
+      short v = 0; std::memcpy(&v, ptr, sizeof(v)); return static_cast<long long>(v);
+    }
+    case 3: {                                          // #整数型
+      if (!take(sizeof(int))) return 0;
+      int v = 0; std::memcpy(&v, ptr, sizeof(v)); return static_cast<long long>(v);
+    }
+    case 4: {                                          // #长整数型
+      if (!take(sizeof(long long))) return 0;
+      long long v = 0; std::memcpy(&v, ptr, sizeof(v)); return v;
+    }
+    case 5: {                                          // #小数型
+      if (!take(sizeof(float))) return 0;
+      float v = 0.0f; std::memcpy(&v, ptr, sizeof(v)); return static_cast<long long>(v);
+    }
+    case 6:                                            // #双精度小数型
+    case 8: {                                          // #日期时间型（OLE 自动化日期，也是 double）
+      if (!take(sizeof(double))) return 0;
+      double v = 0.0; std::memcpy(&v, ptr, sizeof(v)); return static_cast<long long>(v);
+    }
+    case 7:                                            // #逻辑型
+      return ptr[0] ? 1 : 0;
+    case 9: {                                          // #子程序指针型
+      if (!take(sizeof(void*))) return 0;
+      long long v = 0; std::memcpy(&v, ptr, sizeof(void*)); return v;
+    }
+    default:                                           // 含 10=#文本型：整数返回表达不了
+      return 0;
   }
 }
 
@@ -2774,23 +2849,23 @@ extern "C" int krnln_SeekToEnd(int fileNo) {
   return std::fseek(fp, 0, SEEK_END) == 0 ? 1 : 0;
 }
 
-extern "C" const char* krnln_ReadBin(int fileNo, int readLen) {
+extern "C" void* krnln_ReadBin(int fileNo, int readLen) {
   FILE* fp = getFileById(fileNo);
-  if (!fp || readLen <= 0) return keepUtf8("");
+  if (!fp || readLen <= 0) return ycBinRet(YcBin());
 
-  std::string out;
-  out.resize(static_cast<size_t>(readLen));
+  YcBin out(static_cast<size_t>(readLen));
   size_t n = std::fread(out.data(), 1, out.size(), fp);
-  out.resize(n);
-  return keepUtf8(out);
+  out.resize(n);                                  // 短读按实读长度收（旧法交回后还会被 strlen 再截一刀）
+  return ycBinRet(std::move(out));
 }
 
-extern "C" int krnln_WriteBin(int fileNo, const char* binData) {
+extern "C" int krnln_WriteBin(int fileNo, const void* binData) {
   FILE* fp = getFileById(fileNo);
   if (!fp || !binData) return 0;
-  size_t len = std::strlen(binData);
-  size_t n = std::fwrite(binData, 1, len, fp);
-  return n == len ? 1 : 0;
+  const YcBin& b = ycBinArg(binData);
+  if (b.empty()) return 1;
+  size_t n = std::fwrite(b.data(), 1, b.size(), fp);   // 原样写（旧法 strlen 取长度，二进制必截断）
+  return n == b.size() ? 1 : 0;
 }
 
 extern "C" const char* krnln_ReadText(int fileNo, int readLen) {
@@ -2895,7 +2970,7 @@ extern "C" int krnln_lof(int fileNo) {
   return static_cast<int>(end);
 }
 
-extern "C" int krnln_InsBin(int fileNo, const char* binData) {
+extern "C" int krnln_InsBin(int fileNo, const void* binData) {
   return krnln_WriteBin(fileNo, binData);
 }
 
@@ -2953,12 +3028,19 @@ extern "C" int krnln_GetRuntimeDataType(const void* dataPtr) {
   return 1;
 }
 
-extern "C" const char* krnln_GetUTextBin(const char* text) {
-  std::wstring w = utf8ToWide(text ? text : "");
-  std::string out;
-  out.resize((w.size() + 1) * sizeof(wchar_t));
-  std::memcpy(out.data(), w.c_str(), out.size());
-  return keepUtf8(out);
+// 取统一文本〈字节集〉（文本型 待转换常量文本，［逻辑型 转换到宽文本］，［逻辑型 添加结束零字符］）
+// 帮助：两个可省参数**默认都为真**（宽文本=UTF-16、加结束零）。
+// 旧实现只收 1 个参数（清单有 3 个 → 声明与实现错位），且恒定 UTF-16+结束零，两个开关都不认。
+extern "C" void* krnln_GetUTextBin(const char* text, int wide, int addNul) {
+  if (wide) {
+    std::wstring w = utf8ToWide(text ? text : "");
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(w.c_str());
+    size_t n = (w.size() + (addNul ? 1 : 0)) * sizeof(wchar_t);
+    return ycBinRet(YcBin(p, p + n));
+  }
+  YcBin out = ycBinFromUtf8(text);
+  if (addNul) out.push_back(0);
+  return ycBinRet(std::move(out));
 }
 
 extern "C" int krnln_GetUTextLength(const char* text) {
@@ -3291,8 +3373,11 @@ extern "C" int krnln_GetNumRegItem(...) {
   return fakeRegItemExists() ? 1 : -1;
 }
 
-extern "C" const char* krnln_GetBinRegItem(...) {
-  return fakeRegItemExists() ? keepUtf8("bin") : keepUtf8("");
+// 【字节集返回的占位桩】本命令尚未实现。签名按字节集 ABI v2 给（void*），与生成侧声明一致；
+// 返回 nullptr 时 yc_bin_take 得到空字节集。**绝不能沿用旧桩的 keepUtf8(...)/long long**：
+// 那会被 yc_bin_take 当 YC_BIN* 解引用并 delete —— 直接崩。
+extern "C" void* krnln_GetBinRegItem(...) {
+  return nullptr;
 }
 
 extern "C" int krnln_SaveRegItem(...) {
@@ -3314,8 +3399,8 @@ extern "C" int krnln_GetBackColor(...) {
   return static_cast<int>(GetSysColor(COLOR_WINDOW));
 }
 
-extern "C" const char* krnln_GetWinPic(...) {
-  return keepUtf8("WINPIC");
+extern "C" void* krnln_GetWinPic(...) {   // 快照〈字节集〉——占位桩，见上方字节集返回桩说明
+  return nullptr;
 }
 
 extern "C" const char* krnln_GetKeyText(...) {
@@ -3545,8 +3630,8 @@ extern "C" int krnln_GetCount(...) {
   return runtimeDbState().rowCount;
 }
 
-extern "C" long long krnln_GetData(...) {
-  return runtimeDbState().dataValue;
+extern "C" void* krnln_GetData(...) {     // 取数据〈字节集〉——占位桩（旧桩返回的是 long long，类型都不对）
+  return nullptr;
 }
 
 extern "C" int krnln_SetData(...) {
@@ -3576,8 +3661,8 @@ extern "C" double krnln_GetNum(...) {
   return runtimeDbState().numericValue;
 }
 
-extern "C" const char* krnln_GetBin(...) {
-  return keepUtf8(runtimeDbState().binValue);
+extern "C" void* krnln_GetBin(...) {      // 取字节集〈字节集〉——占位桩
+  return nullptr;
 }
 
 extern "C" double krnln_GetDateTime(...) {
@@ -4164,8 +4249,8 @@ extern "C" int krnln_GetPageWidth(...) {
   return GetSystemMetrics(SM_CXSCREEN);
 }
 
-extern "C" const char* krnln_GetPic(...) {
-  return keepUtf8(runtimeEditorState().picName);
+extern "C" void* krnln_GetPic(...) {      // 画板.取图片〈字节集〉——占位桩
+  return nullptr;
 }
 
 extern "C" int krnln_GetPicHeight(...) {
@@ -4417,11 +4502,8 @@ extern "C" long long krnln_r(...) {
   return static_cast<long long>(net.queuedPackets + 1);
 }
 
-extern "C" long long krnln_recv(...) {
-  RuntimeNetState& net = runtimeNetState();
-  if (!net.started || net.queuedPackets <= 0) return 0;
-  --net.queuedPackets;
-  return static_cast<long long>(net.queuedPackets + 1);
+extern "C" void* krnln_recv(...) {        // 接收〈字节集〉——占位桩（旧桩返回的是包计数，类型都不对）
+  return nullptr;
 }
 
 extern "C" int krnln_Refrush(...) {
@@ -4500,18 +4582,12 @@ extern "C" int krnln_SaveChange(...) {
   return 1;
 }
 
-extern "C" int krnln_SaveDS(...) {
-  RuntimeDbState& st = runtimeDbState();
-  if (!st.connected) return 0;
-  st.dirty = false;
-  return 1;
+extern "C" void* krnln_SaveDS(...) {      // 保存数据源〈字节集〉——占位桩（旧桩返回的是成功标志）
+  return nullptr;
 }
 
-extern "C" int krnln_SaveDSCell(...) {
-  RuntimeDbState& st = runtimeDbState();
-  if (!st.connected) return 0;
-  st.dirty = false;
-  return 1;
+extern "C" void* krnln_SaveDSCell(...) {  // 保存数据源单元〈字节集〉——占位桩
+  return nullptr;
 }
 
 extern "C" int krnln_SaveDSCellFile(...) {

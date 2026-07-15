@@ -4260,8 +4260,17 @@ function mapYcmdNativeParamType(typeName: string): { cType: string; expr: (arg: 
   if (cType === 'YC_TEXT') {
     return { cType: 'const char*', expr: (arg, commandMap, directCallables) => (arg ? `yc_wide_to_utf8(${formatArgForC(arg, commandMap, directCallables)})` : '(const char*)""') }
   }
+  // 【字节集 ABI v2】按 const YC_BIN*（= const std::vector<unsigned char>*）传，不再是 const char*。
+  // 旧法 yc_bin_to_cstr 返回 out.c_str()、长度靠 NUL 结尾 → 含 0x00 的字节集整条截断，
+  // 而字节集本就是任意二进制。改用指针传递（复用数组那套既有的跨 TU vector 指针契约），长度完整。
+  // 临时量取不了址 → 先落 yc_bin_tmp 轮转槽；实参省略 → nullptr（impl 据此取默认值）。
   if (cType === 'YC_BIN') {
-    return { cType: 'const char*', expr: (arg, commandMap, directCallables) => (arg ? `yc_bin_to_cstr(${formatArgForC(arg, commandMap, directCallables)})` : '(const char*)""') }
+    return {
+      cType: 'const void*',
+      expr: (arg, commandMap, directCallables) => (arg
+        ? `(const void*)&yc_bin_tmp(${formatArgForC(arg, commandMap, directCallables)})`
+        : '(const void*)nullptr'),
+    }
   }
   if (cType === 'YC_BIG') {
     return { cType: 'long long', expr: (arg, commandMap, directCallables) => `(long long)(${formatArgForC(arg, commandMap, directCallables)})` }
@@ -4284,8 +4293,10 @@ function mapYcmdNativeReturnType(typeName: string): { cType: string; expr: (call
   if (cType === 'YC_TEXT') {
     return { cType: 'const char*', expr: callExpr => `yc_utf8_to_wide(${callExpr})`, isVoid: false }
   }
+  // 【字节集 ABI v2】impl 在堆上 new YC_BIN 交回 void*，yc_bin_take 接管（移走内容并 delete）。
+  // 与数组返回的 yc_ary_take 同款；旧法 yc_cstr_to_bin 按 strlen 还原，遇 0x00 即截断。
   if (cType === 'YC_BIN') {
-    return { cType: 'const char*', expr: callExpr => `yc_cstr_to_bin(${callExpr})`, isVoid: false }
+    return { cType: 'void*', expr: callExpr => `yc_bin_take(${callExpr})`, isVoid: false }
   }
   if (cType === 'YC_BIG') {
     return { cType: 'long long', expr: callExpr => `YC_BIG(std::to_wstring((long long)(${callExpr})).c_str())`, isVoid: false }
@@ -4295,10 +4306,10 @@ function mapYcmdNativeReturnType(typeName: string): { cType: string; expr: (call
 
 // 数组类命令的原生 ABI（krnln impl：数组经 void* 传 std::vector<long long>*，值为 long long）。
 // 这些命令的参数在清单里是「通用型」，通用映射会把实参转成文本指针，与 impl 形参错位——按符号显式给定。
-const YCMD_ARRAY_PARAM_KINDS: Record<string, Array<'arrayptr' | 'binptr' | 'int' | 'int64'>> = {
-  // 分割字节集：字节集不走通用 ABI（那是 const char*、NUL 结尾、含 0x00 即截断），改传 YC_BIN*。
-  // 见 mapYcmdArrayParamKind 的 binptr 分支与 windows.cpp 里 krnln_SplitBin 的注释。
-  krnln_SplitBin: ['binptr', 'binptr', 'int'],
+const YCMD_ARRAY_PARAM_KINDS: Record<string, Array<'arrayptr' | 'binref' | 'int' | 'int64'>> = {
+  // 置字节集内整数：要**就地改写**待处理的字节集（帮助：〈无返回值〉）。通用字节集编组交的是
+  // yc_bin_tmp 轮转槽里的临时副本，写进去就丢——必须绑到用户变量本身，故按符号特办成 binref。
+  krnln_SetIntInsideBin: ['binref', 'int', 'int', 'int'],
   krnln_AddElement: ['arrayptr', 'int64'],
   krnln_InsElement: ['arrayptr', 'int', 'int64'],
   krnln_RemoveElement: ['arrayptr', 'int', 'int'],
@@ -4348,18 +4359,19 @@ function tryTranslateArrayValueExpr(expr: string, commandMap?: Map<string, Resol
   return generateYcmdNativeCommandExpr(resolved, call.args || [], commandMap, directCallables)
 }
 
-function mapYcmdArrayParamKind(kind: 'arrayptr' | 'binptr' | 'int' | 'int64', cmdName: string): ReturnType<typeof mapYcmdNativeParamType> {
-  // 字节集按 YC_BIN* 传（而非通用的 const char*）：通用编组 yc_bin_to_cstr 把字节集当 NUL 结尾串，
-  // 含 0x00 就截断——分割字节集 省略分隔符时默认分隔符**正是字节 0**，那套 ABI 表达不了。
-  // 复用数组那套既有的跨 TU 指针契约。临时量取不了址 → 先落 yc_bin_tmp 轮转槽。
-  // 实参省略 → nullptr，impl 据此取默认值（与显式空字节集区分）。
-  if (kind === 'binptr') {
+function mapYcmdArrayParamKind(kind: 'arrayptr' | 'binref' | 'int' | 'int64', cmdName: string): ReturnType<typeof mapYcmdNativeParamType> {
+  // 「参考」形态的字节集实参：命令要就地改写它，故必须绑到用户变量本身——通用字节集编组交的是
+  // yc_bin_tmp 轮转槽里的临时副本，写进去就丢。yc_bin_ref 借重载解析当类型闸：
+  // 实参不是 YC_BIN 左值就编译失败，而不是 (void*)& 出一个错类型指针后在运行时踩内存。
+  if (kind === 'binref') {
     return {
-      cType: 'const void*',
-      expr: (arg, commandMap, directCallables) => {
+      cType: 'void*',
+      expr: (arg) => {
         const t = (arg || '').trim()
-        if (!t) return '(const void*)nullptr'
-        return `(const void*)&yc_bin_tmp(${formatArgForC(t, commandMap, directCallables)})`
+        if (!/^[^\s(),]+$/.test(t)) {
+          throw new Error(`命令“${cmdName}”需要字节集变量作为参数（它会就地改写该变量），但收到：${t || '(空)'}`)
+        }
+        return `(void*)&yc_bin_ref(${t})`
       },
     }
   }
@@ -4429,6 +4441,8 @@ const YCMD_NATIVE_PARAM_TYPE_OVERRIDES: Record<string, string[]> = {
   krnln_add: ['长整数型', '长整数型'],                      // impl: long long(long long, long long)
 }
 const YCMD_NATIVE_RETURN_TYPE_OVERRIDES: Record<string, string> = {
+  // 取字节集数据：清单标〈通用型〉，通用映射掉默认 int 而 impl 返回 long long（长整数/双精度都塞在里头）
+  krnln_GetBinElement: '长整数型',
   krnln_add: '长整数型',                                    // 清单标「通用型」→ 会被映射成 int，与 impl 的 long long 不符
 }
 
@@ -4458,18 +4472,21 @@ function assertYcmdArrayReturnSupported(cmd: ResolvedCommand, symbol: string): v
   throw new Error(`命令“${cmd.name || symbol}”在核心支持库中尚未实现（占位桩），暂不能调用`)
 }
 
-// 「省略」与「显式空文本」语义不同的命令：省略 → 传 nullptr，impl 据此取默认值。
-// （通用文本映射把两者都译成 (const char*)""，分不开——但转译期是知道的：实参根本没写 vs 写了 ""。
-//  如 分割文本 的分隔符：省略默认半角空格；显式空文本则整段不分割、只返回一个成员。）
-const YCMD_NULL_WHEN_OMITTED_PARAMS: Record<string, number[]> = {
-  krnln_split: [1],   // 分割文本 的「分隔的文本」
+// 【省略 ≠ 零值】通用映射把「实参省略」一律译成零值（0 / "" / nullptr），但帮助里不少可省参数的
+// 默认值并不是零值，且「省略」与「显式给了零值」语义不同——转译期本来就分得清（实参没写 vs 写了）。
+// 按 符号→形参序号→省略时发的 C 表达式 显式给定。
+const YCMD_OMITTED_PARAM_EXPRS: Record<string, Record<number, string>> = {
+  // 分割文本 的「用作分割的文本」：省略→默认半角逗号；显式空文本→整段不分割。impl 靠 nullptr 区分。
+  krnln_split: { 1: '(const char*)nullptr' },
+  // 取统一文本 的「转换到宽文本」「添加结束零字符」：帮助明说省略时**默认均为真**（通用映射会给 0=假）
+  krnln_GetUTextBin: { 1: '1', 2: '1' },
 }
 
-/** 省略即 nullptr 的形参包装：实参为空则发 nullptr，否则照原映射译 */
-function withNullWhenOmitted(p: ReturnType<typeof mapYcmdNativeParamType>): ReturnType<typeof mapYcmdNativeParamType> {
+/** 省略时改发指定 C 表达式的形参包装；实参给了则照原映射译 */
+function withOmittedDefault(p: ReturnType<typeof mapYcmdNativeParamType>, omittedExpr: string): ReturnType<typeof mapYcmdNativeParamType> {
   return {
     cType: p.cType,
-    expr: (arg, commandMap, directCallables) => ((arg || '').trim() ? p.expr(arg, commandMap, directCallables) : `(${p.cType})nullptr`),
+    expr: (arg, commandMap, directCallables) => ((arg || '').trim() ? p.expr(arg, commandMap, directCallables) : omittedExpr),
   }
 }
 
@@ -4482,11 +4499,11 @@ function buildYcmdNativeSignature(cmd: ResolvedCommand, elemKind: ArrayElemKind 
       ? mapYcmdArrayElemValueParam(elemKind)
       : mapYcmdArrayParamKind(kind, cmd.name || symbol)))
     : (paramOverride || (cmd.params || []).map(p => p.type || '')).map(t => mapYcmdNativeParamType(t))
-  const nullWhenOmitted = YCMD_NULL_WHEN_OMITTED_PARAMS[symbol]
+  const omitted = YCMD_OMITTED_PARAM_EXPRS[symbol]
   return {
     symbol,
     returnType: mapYcmdNativeReturnType(YCMD_NATIVE_RETURN_TYPE_OVERRIDES[symbol] || cmd.returnType || ''),
-    params: nullWhenOmitted ? params.map((p, i) => (nullWhenOmitted.includes(i) ? withNullWhenOmitted(p) : p)) : params,
+    params: omitted ? params.map((p, i) => (omitted[i] !== undefined ? withOmittedDefault(p, omitted[i]) : p)) : params,
   }
 }
 
@@ -4991,6 +5008,9 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += generateYcmdNativeDeclarations(targetPlatform)
   result += 'namespace ycfs = std::filesystem;\n\n'
   result += 'typedef std::vector<unsigned char> YC_BIN;\n'
+  // 字节集连接：易语言里 字节集 ＋ 字节集 是基本操作，但 YC_BIN 是 std::vector 别名、没有 operator+
+  //（`到字节集(…) ＋ 到字节集(…)` 此前直接编译失败：invalid operands to binary expression）。
+  result += 'static inline YC_BIN operator+(const YC_BIN& a, const YC_BIN& b) { YC_BIN r; r.reserve(a.size() + b.size()); r.insert(r.end(), a.begin(), a.end()); r.insert(r.end(), b.begin(), b.end()); return r; }\n'
   // 文本型：包裹 std::wstring 的值类型（RAII、拷贝即值语义、出作用域自动释放，无泄漏）；
   // operator const wchar_t*() 让它无缝落进所有既有 const wchar_t* 调用点与原生 ABI。
   result += 'struct YC_TEXT {\n'
@@ -5357,8 +5377,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'static wchar_t* yc_empty_text(void);\n'
   result += 'static YC_TEXT yc_utf8_to_wide(const char* s);\n'
   result += 'static const char* yc_wide_to_utf8(const wchar_t* s);\n'
-  result += 'static const char* yc_bin_to_cstr(const YC_BIN& value);\n'
-  result += 'static YC_BIN yc_cstr_to_bin(const char* value);\n'
+  result += 'static YC_BIN yc_bin_take(void* p);\n'
+  result += 'static YC_BIN& yc_bin_ref(YC_BIN& b);\n'
   result += 'static YC_TEXT yc_format_win32_error(DWORD errorCode);\n'
   result += 'static void yc_runtime_note_begin(void);\n'
   result += 'static void yc_runtime_note_part(const wchar_t* s);\n'
@@ -5540,19 +5560,17 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    return out.c_str();\n'
   result += '}\n\n'
 
-  result += 'static const char* yc_bin_to_cstr(const YC_BIN& value) {\n'
-  result += '    std::string& out = yc_c_str_slot();\n'
-  result += '    out.assign((const char*)value.data(), value.size());\n'
-  result += '    return out.c_str();\n'
+  // 【字节集 ABI v2】接管 krnln impl 交回的堆 YC_BIN（移走内容后 delete）。与 yc_ary_take 同款。
+  result += 'static YC_BIN yc_bin_take(void* p) {\n'
+  result += '    YC_BIN* v = reinterpret_cast<YC_BIN*>(p);\n'
+  result += '    if (!v) return YC_BIN();\n'
+  result += '    YC_BIN r = std::move(*v);\n'
+  result += '    delete v;\n'
+  result += '    return r;\n'
   result += '}\n\n'
-
-  result += 'static YC_BIN yc_cstr_to_bin(const char* value) {\n'
-  result += '    YC_BIN out;\n'
-  result += '    if (!value) return out;\n'
-  result += '    const size_t n = strlen(value);\n'
-  result += '    out.assign((const unsigned char*)value, (const unsigned char*)value + n);\n'
-  result += '    return out;\n'
-  result += '}\n\n'
+  // 「参考」形态的字节集实参（置字节集内整数 要就地改写）：必须绑到用户变量本身、不能是临时副本。
+  // 借 C++ 重载解析当类型闸——实参不是 YC_BIN 左值就编译失败，而非 (void*)& 出一个错类型指针。
+  result += 'static YC_BIN& yc_bin_ref(YC_BIN& b) { return b; }\n\n'
   result += 'static wchar_t* yc_get_local_hostname(void) {\n'
   result += '    static wchar_t host[256];\n'
   result += '    DWORD n = (DWORD)(sizeof(host) / sizeof(host[0]));\n'
