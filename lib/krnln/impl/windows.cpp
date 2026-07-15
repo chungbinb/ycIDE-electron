@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <share.h>   // _fsopen 的共享标志 _SH_DENY*（打开文件 的「共享方式」）
 #include <cstring>
+#include <cwchar>   // wcslen/wmemcpy（数组返回 ABI 的文本元素构造用；此前本文件未用过宽串 C 函数）
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -2329,8 +2330,44 @@ extern "C" const char* krnln_string(int count, const char* value) {
   return keepUtf8(out);
 }
 
-extern "C" const char* krnln_split(...) {
-  return keepUtf8("[]");
+// ============================ 数组返回 ABI ============================
+// 运行时数组统一是 std::vector<long long>（与 krnln_AddElement/krnln_CopyAry 等收 void* 的既定契约
+// 同一个）。「返回数组」的命令在堆上 new 一个填好的 vector 并以 void* 交回，调用处生成的
+// yc_ary_take 接管所有权（移走内容后 delete）——impl 只管 new，不管回收。
+// 文本元素存「堆上宽串的指针位模式」，与生成侧 yc_ary_lit_text 的存法、
+// ((wchar_t*)(intptr_t)元素) 的读法一致；元素串本身不回收（同 yc_ary_lit_text，全程序生命期）。
+static void* ycMakeTextArray(const std::vector<std::wstring>& items) {
+  auto* out = new std::vector<long long>();
+  out->reserve(items.size());
+  for (const std::wstring& s : items) {
+    wchar_t* p = new wchar_t[s.size() + 1];
+    wmemcpy(p, s.c_str(), s.size() + 1);
+    out->push_back(static_cast<long long>(reinterpret_cast<intptr_t>(p)));
+  }
+  return out;
+}
+
+// 分割文本〈文本型数组〉（文本型 待分割文本，［文本型 用作分割的文本］，［整数型 要返回的子文本数目］）
+// 帮助语义（逐条对齐）：
+//  · 待分割文本为空 → 返回空数组（没有任何成员）
+//  · 用作分割的文本「省略」→ 默认半角逗号；「显式空文本」→ 不分割、整段作唯一成员
+//    （两者转译期就已区分：省略发 nullptr、显式空文本发 ""；见 YCMD_NULL_WHEN_OMITTED_PARAMS）
+//  · 要返回的子文本数目 省略/≤0 → 全部；给 n>0 → 最多 n 段，末段为剩余全文（含其中的分隔符）
+extern "C" void* krnln_split(const char* text, const char* sep, int count) {
+  std::vector<std::wstring> parts;
+  std::wstring src = utf8ToWide(text);
+  if (src.empty()) return ycMakeTextArray(parts);
+  std::wstring d = (sep == nullptr) ? std::wstring(L",") : utf8ToWide(sep);
+  if (d.empty()) { parts.push_back(src); return ycMakeTextArray(parts); }
+  size_t pos = 0;
+  while (count <= 0 || static_cast<int>(parts.size()) < count - 1) {
+    size_t hit = src.find(d, pos);
+    if (hit == std::wstring::npos) break;
+    parts.push_back(src.substr(pos, hit - pos));
+    pos = hit + d.size();
+  }
+  parts.push_back(src.substr(pos));
+  return ycMakeTextArray(parts);
 }
 
 extern "C" const char* krnln_pstr(uintptr_t ptr) {
@@ -3112,8 +3149,13 @@ extern "C" void krnln_AddText(...) {
   touchNonStub();
 }
 
-extern "C" const char* krnln_GetAllPY(...) {
-  return keepUtf8("PY");
+// 取所有发音〈文本型数组〉——**尚未实现**：需要一份国标汉字→多音字拼音表（数据活，非 ABI 活）。
+// 签名按数组返回 ABI 给（void*），与生成侧声明一致；返回 nullptr 时 yc_ary_take 得到空数组。
+// 调用会被转译期 assertYcmdArrayReturnSupported 友好拦下（未进 YCMD_ARRAY_RETURN_SYMBOLS 白名单），
+// 这里的 nullptr 只是万一被绕过时的安全退化 —— 绝不能沿用旧桩的 keepUtf8("PY")：
+// 那是 const char*，被 yc_ary_take 当 vector* 解引用并 delete 会直接崩。
+extern "C" void* krnln_GetAllPY(...) {
+  return nullptr;
 }
 
 extern "C" int krnln_GetPYCount(...) {
@@ -3185,12 +3227,77 @@ extern "C" int krnln_SetKeyText(...) {
   return 1;
 }
 
-extern "C" const char* krnln_GetSectionNames(...) {
-  return keepUtf8("default");
+// 取配置节名〈文本型数组〉（文本型 配置文件名）——返回 ini 中所有已有节名
+// 【坑】GetPrivateProfileSectionNamesW 对相对路径是按 %WINDIR% 解析的（不是当前目录）——
+// 先转成绝对路径再查，否则用户传 "cfg.ini" 会去读 C:\Windows\cfg.ini。
+extern "C" void* krnln_GetSectionNames(const char* fileName) {
+  std::vector<std::wstring> names;
+  std::wstring path = utf8ToWide(fileName);
+  if (path.empty()) return ycMakeTextArray(names);
+  std::error_code ec;
+  std::filesystem::path abs = std::filesystem::absolute(std::filesystem::path(path), ec);
+  if (!ec) path = abs.wstring();
+  // 返回形如 "节1\0节2\0\0"；缓冲不足时返回 size-2，按倍增重试
+  std::vector<wchar_t> buf(1024, L'\0');
+  for (;;) {
+    DWORD n = GetPrivateProfileSectionNamesW(buf.data(), static_cast<DWORD>(buf.size()), path.c_str());
+    if (n == 0) return ycMakeTextArray(names);
+    if (n < buf.size() - 2) break;
+    if (buf.size() >= (1u << 20)) break;
+    buf.assign(buf.size() * 2, L'\0');
+  }
+  for (const wchar_t* p = buf.data(); *p; p += wcslen(p) + 1) names.push_back(std::wstring(p));
+  return ycMakeTextArray(names);
 }
 
-extern "C" const char* krnln_OpenManyFileDialog(...) {
-  return keepUtf8("");
+// 多文件对话框〈文本型数组〉（［标题］，［过滤器］，［初始过滤器］，［初始目录］，［保持本目录］，［父窗口］）
+// 用户取消/未选 → 返回空数组（帮助原话：成员数为 0 的空文本数组）
+extern "C" void* krnln_OpenManyFileDialog(const char* title, const char* filter, int filterIndex,
+                                          const char* initDir, int keepDir, const char* parent) {
+  std::vector<std::wstring> results;
+  std::wstring wTitle = utf8ToWide(title);
+  std::wstring wInit = utf8ToWide(initDir);
+  // 过滤器：帮助里是「说明|通配」成对、以 | 分隔（如 "文本文件|*.txt|所有文件|*.*"）；
+  // OPENFILENAME 要的是 \0 分隔、\0\0 收尾 —— 逐字符换过去。
+  std::wstring wFilter = utf8ToWide(filter);
+  std::vector<wchar_t> filterBuf;
+  if (!wFilter.empty()) {
+    for (wchar_t c : wFilter) filterBuf.push_back(c == L'|' ? L'\0' : c);
+    filterBuf.push_back(L'\0');
+    filterBuf.push_back(L'\0');
+  }
+  // 父窗口是「通用型」，经通用映射到达时已是值的文本形态；整数窗口句柄这一形态能还原，
+  // 「窗口」类型数据还原不了 —— 还原不了就按无父窗口处理。
+  HWND owner = nullptr;
+  if (parent && *parent) {
+    long long h = _wtoi64(utf8ToWide(parent).c_str());
+    if (h != 0) owner = reinterpret_cast<HWND>(static_cast<intptr_t>(h));
+  }
+  // 多选结果形如 "目录\0文件1\0文件2\0\0"；只选一个时是整条全路径 + "\0\0"
+  std::vector<wchar_t> buf(64 * 1024, L'\0');
+  OPENFILENAMEW ofn = {};
+  ofn.lStructSize = sizeof(ofn);
+  ofn.hwndOwner = owner;
+  ofn.lpstrFilter = filterBuf.empty() ? nullptr : filterBuf.data();
+  ofn.nFilterIndex = static_cast<DWORD>(filterIndex > 0 ? filterIndex + 1 : 1);  // 帮助：0 为第一个
+  ofn.lpstrFile = buf.data();
+  ofn.nMaxFile = static_cast<DWORD>(buf.size());
+  ofn.lpstrTitle = wTitle.empty() ? nullptr : wTitle.c_str();
+  ofn.lpstrInitialDir = wInit.empty() ? nullptr : wInit.c_str();
+  ofn.Flags = OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+  if (keepDir) ofn.Flags |= OFN_NOCHANGEDIR;
+  if (!GetOpenFileNameW(&ofn)) return ycMakeTextArray(results);
+
+  const wchar_t* p = buf.data();
+  std::wstring first(p);
+  p += first.size() + 1;
+  if (*p == L'\0') {
+    results.push_back(first);            // 单选：first 就是全路径
+  } else {
+    std::filesystem::path dir(first);    // 多选：first 是目录，其后逐个文件名
+    for (; *p; p += wcslen(p) + 1) results.push_back((dir / std::wstring(p)).wstring());
+  }
+  return ycMakeTextArray(results);
 }
 
 extern "C" int krnln_LoadWin(...) {
@@ -4004,8 +4111,12 @@ extern "C" int krnln_GetSelCount(...) {
   return runtimeEditorState().selCount;
 }
 
-extern "C" long long krnln_GetSelItems(...) {
-  return runtimeEditorState().selCount;
+// 取所有被选择项目〈整数型数组〉——本符号是残留：该命令是对象成员命令，实际派发经
+// window-units.json 的「列表框.取所有被选择项目」绑到生成侧的 yc_lb_get_sel_items（真实现）。
+// 这里只保留一个与数组返回 ABI 一致的空壳，让声明与实现不错位（旧桩返回的是「选中计数」，
+// 既非数组、类型也不符）。
+extern "C" void* krnln_GetSelItems(...) {
+  return nullptr;
 }
 
 extern "C" int krnln_GetTextColor(...) {

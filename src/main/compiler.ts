@@ -379,7 +379,7 @@ interface TranspileCacheFile {
   entries: Record<string, TranspileCacheEntry>
 }
 
-const TRANSPILE_CACHE_VERSION = 27
+const TRANSPILE_CACHE_VERSION = 28
 
 interface BuildArtifactCacheFile {
   version: number
@@ -2239,10 +2239,20 @@ function parseWindowFile(efwPath: string): WindowFileInfo {
 }
 
 // 易语言数据类型 → C 类型
+// 清单里的「X数组」返回类型（如 分割文本 的〈文本型数组〉）。运行时数组统一是 std::vector<long long>
+// （与 ARRAY_ELEM_INTEGER_TYPES/ARRAY_ELEM_FLOAT_TYPES 同一套元素存储：int 直存、f64 位模式、text 指针位模式）。
+// 注：「字节集数组」不在此表——元素存储没有 bin 类别，字节集数组变量本身就还不支持。
+const YCMD_ARRAY_RETURN_TYPES: Record<string, ArrayElemKind> = {
+  '字节型数组': 'int', '短整数型数组': 'int', '整数型数组': 'int', '长整数型数组': 'int', '逻辑型数组': 'int',
+  '小数型数组': 'f64', '双精度小数型数组': 'f64',
+  '文本型数组': 'text',
+}
+
 function mapTypeToCType(type: string): string {
   const trimmed = (type || '').trim()
   if (activeProjectClassNames.has(trimmed)) return trimmed
   if (activeProjectCustomTypeNames.has(trimmed)) return `struct ${trimmed}`
+  if (YCMD_ARRAY_RETURN_TYPES[trimmed]) return 'std::vector<long long>'
   if (trimmed.includes('指针') || trimmed.includes('ptr') || trimmed.includes('PTR')) return 'intptr_t'
   const map: Record<string, string> = {
     '整数型': 'int', '长整数型': 'long long', '小数型': 'float',
@@ -4215,17 +4225,9 @@ function mapYcmdNativeParamType(typeName: string): { cType: string; expr: (arg: 
       expr: (arg, commandMap, directCallables) => {
         const t = (arg || '').trim()
         if (!t) return '(const char*)""'
-        // 数组（变量或字面量）按元素存储类别选打印：f64 位模式/文本指针位模式需专用还原
-        const info = currentTranspileArrayVars.get(t)
-        const lit = matchArrayLiteral(t)
-        const litElems = lit ? splitArguments(lit.inner) : []
-        const kind: ArrayElemKind = info ? arrayElemKindOf(info)
-          : lit && litElems.some(e => /^["“]/.test(e.trim())) ? 'text'
-          : lit && litElems.some(e => /[.．]/.test(e)) ? 'f64'
-          : 'int'
-        const toText = (info || lit) && kind === 'f64' ? 'yc_ary_to_text_f64'
-          : (info || lit) && kind === 'text' ? 'yc_ary_to_text_str'
-          : 'yc_value_to_text'
+        // 数组（变量/字面量/返回数组的命令）按元素存储类别选打印：f64 位模式、文本指针位模式需专用还原
+        const kind = arrayValueElemKind(t, commandMap)
+        const toText = kind === 'f64' ? 'yc_ary_to_text_f64' : kind === 'text' ? 'yc_ary_to_text_str' : 'yc_value_to_text'
         return `yc_wide_to_utf8(${toText}(${formatArgForC(t, commandMap, directCallables)}))`
       },
     }
@@ -4247,6 +4249,12 @@ function mapYcmdNativeReturnType(typeName: string): { cType: string; expr: (call
   const trimmed = (typeName || '').trim()
   if (!trimmed || trimmed === '无返回值' || trimmed === 'void') {
     return { cType: 'void', expr: callExpr => callExpr, isVoid: true }
+  }
+  // 【数组返回 ABI】impl 在堆上 new std::vector<long long> 填好后以 void* 交回，yc_ary_take 接管所有权
+  // （移走内容并 delete）。跨 TU 传 std::vector<long long>* 的契约与 YCMD_ARRAY_PARAM_KINDS 的
+  // (void*)&数组变量 是同一个，不引入新假设。返回值的 C++ 侧类型由 mapTypeToCType 给成 vector<long long>。
+  if (YCMD_ARRAY_RETURN_TYPES[trimmed]) {
+    return { cType: 'void*', expr: callExpr => `yc_ary_take(${callExpr})`, isVoid: false }
   }
   const cType = mapTypeToCType(trimmed)
   if (cType === 'YC_TEXT') {
@@ -4275,16 +4283,56 @@ const YCMD_ARRAY_PARAM_KINDS: Record<string, Array<'arrayptr' | 'int' | 'int64'>
   krnln_SortAry: ['arrayptr', 'int'],
 }
 
+/**
+ * 表达式的数组元素存储类别：数组变量 / 数组字面量 / 返回数组的原生命令（如 分割文本(…)）。
+ * 不是数组值则返回 null。数组的元素存储类别只有转译期知道（f64/text 都是位模式），
+ * 打印/编组前必须据此选还原函数，否则文本数组会被按指针整数印出来。
+ */
+function arrayValueElemKind(expr: string, commandMap?: Map<string, ResolvedCommand>): ArrayElemKind | null {
+  const t = (expr || '').trim()
+  if (!t) return null
+  const info = currentTranspileArrayVars.get(t)
+  if (info) return arrayElemKindOf(info)
+  const lit = matchArrayLiteral(t)
+  if (lit) {
+    const elems = splitArguments(lit.inner)
+    if (elems.some(e => /^["“]/.test(e.trim()))) return 'text'
+    if (elems.some(e => /[.．]/.test(e))) return 'f64'
+    return 'int'
+  }
+  const call = commandMap ? parseCommandCall(t) : null
+  const resolved = call ? commandMap?.get(call.name) : undefined
+  if (resolved && isYcmdNativeCommand(resolved)) return YCMD_ARRAY_RETURN_TYPES[(resolved.returnType || '').trim()] || null
+  return null
+}
+
+/**
+ * 试把表达式当「数组值」译出：目前只认「返回数组的原生命令」（如 分割文本(…)）。
+ * 不是数组值则返回 null，由调用处照旧友好报错——绝不能兜底乱译，否则 (void*)& 一个非数组
+ * 会把任意值当 vector* 解引用。
+ */
+function tryTranslateArrayValueExpr(expr: string, commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string | null {
+  const t = (expr || '').trim()
+  if (!t || !commandMap) return null
+  const call = parseCommandCall(t)
+  const resolved = call ? commandMap.get(call.name) : undefined
+  if (!call || !resolved || !isYcmdNativeCommand(resolved)) return null
+  if (!YCMD_ARRAY_RETURN_TYPES[(resolved.returnType || '').trim()]) return null
+  return generateYcmdNativeCommandExpr(resolved, call.args || [], commandMap, directCallables)
+}
+
 function mapYcmdArrayParamKind(kind: 'arrayptr' | 'int' | 'int64', cmdName: string): ReturnType<typeof mapYcmdNativeParamType> {
   if (kind === 'arrayptr') {
     return {
       cType: 'void*',
-      expr: (arg) => {
+      expr: (arg, commandMap, directCallables) => {
         const t = (arg || '').trim()
-        if (!t || !currentTranspileArrayVars.has(t)) {
-          throw new Error(`命令“${cmdName}”需要数组变量作为参数，但收到：${t || '(空)'}`)
-        }
-        return `(void*)&${t}`
+        if (t && currentTranspileArrayVars.has(t)) return `(void*)&${t}`
+        // 数组命令收 (void*)&数组变量，但帮助文件里数组返回的规范用法正是
+        // 「复制数组(目标数组, 分割文本(…))」——右边是临时量、取不了址，先落进轮转槽再取址。
+        const arrayValue = tryTranslateArrayValueExpr(t, commandMap, directCallables)
+        if (arrayValue) return `(void*)&yc_ary_tmp(${arrayValue})`
+        throw new Error(`命令“${cmdName}”需要数组变量作为参数，但收到：${t || '(空)'}`)
       },
     }
   }
@@ -4338,18 +4386,59 @@ const YCMD_NATIVE_RETURN_TYPE_OVERRIDES: Record<string, string> = {
   krnln_add: '长整数型',                                    // 清单标「通用型」→ 会被映射成 int，与 impl 的 long long 不符
 }
 
+// 【数组返回】impl 已按数组 ABI（返回 void* = 堆上新建的 std::vector<long long>*）落地的命令白名单。
+// **必须按符号显式登记，不能只看清单的「X数组」返回类型**：krnln 512 条命令里 379 条是自动桩，
+// 桩体形如 `return keepUtf8("[]")`（const char*）。若让桩也吃数组 ABI，yc_ary_take 会把字符串
+// 字面量当 vector* 解引用并 delete —— 比现在「静默返回垃圾」更糟（直接崩）。与 YCMD_ARRAY_PARAM_KINDS 同思路。
+const YCMD_ARRAY_RETURN_SYMBOLS = new Set<string>([
+  'krnln_split',               // 分割文本    〈文本型数组〉
+  'krnln_GetSectionNames',     // 取配置节名  〈文本型数组〉
+  'krnln_OpenManyFileDialog',  // 多文件对话框〈文本型数组〉
+])
+
+/**
+ * 清单标了数组返回、但 impl 还没按数组 ABI 落地 → 转译期友好报错。
+ * 好过静默返回垃圾：这些命令此前 mapTypeToCType 认不得「X数组」而掉默认 int，
+ * 声明 int 收 impl 的 const char*，调用处拿到的是被截断的指针值（且从不报错）。
+ */
+function assertYcmdArrayReturnSupported(cmd: ResolvedCommand, symbol: string): void {
+  const rt = (cmd.returnType || '').trim()
+  if (!/数组$/.test(rt) || YCMD_ARRAY_RETURN_SYMBOLS.has(symbol)) return
+  if (!YCMD_ARRAY_RETURN_TYPES[rt]) {
+    throw new Error(`命令“${cmd.name || symbol}”返回「${rt}」，编译器暂不支持该数组元素类型`)
+  }
+  throw new Error(`命令“${cmd.name || symbol}”在核心支持库中尚未实现（占位桩），暂不能调用`)
+}
+
+// 「省略」与「显式空文本」语义不同的命令：省略 → 传 nullptr，impl 据此取默认值。
+// （通用文本映射把两者都译成 (const char*)""，分不开——但转译期是知道的：实参根本没写 vs 写了 ""。
+//  如 分割文本 的分隔符：省略默认半角空格；显式空文本则整段不分割、只返回一个成员。）
+const YCMD_NULL_WHEN_OMITTED_PARAMS: Record<string, number[]> = {
+  krnln_split: [1],   // 分割文本 的「分隔的文本」
+}
+
+/** 省略即 nullptr 的形参包装：实参为空则发 nullptr，否则照原映射译 */
+function withNullWhenOmitted(p: ReturnType<typeof mapYcmdNativeParamType>): ReturnType<typeof mapYcmdNativeParamType> {
+  return {
+    cType: p.cType,
+    expr: (arg, commandMap, directCallables) => ((arg || '').trim() ? p.expr(arg, commandMap, directCallables) : `(${p.cType})nullptr`),
+  }
+}
+
 function buildYcmdNativeSignature(cmd: ResolvedCommand, elemKind: ArrayElemKind = 'int'): { symbol: string; returnType: ReturnType<typeof mapYcmdNativeReturnType>; params: ReturnType<typeof mapYcmdNativeParamType>[] } {
   const symbol = getYcmdNativeSymbol(cmd)
   const arrayKinds = YCMD_ARRAY_PARAM_KINDS[symbol]
   const paramOverride = YCMD_NATIVE_PARAM_TYPE_OVERRIDES[symbol]
+  const params = arrayKinds
+    ? arrayKinds.map(kind => (kind === 'int64' && elemKind !== 'int'
+      ? mapYcmdArrayElemValueParam(elemKind)
+      : mapYcmdArrayParamKind(kind, cmd.name || symbol)))
+    : (paramOverride || (cmd.params || []).map(p => p.type || '')).map(t => mapYcmdNativeParamType(t))
+  const nullWhenOmitted = YCMD_NULL_WHEN_OMITTED_PARAMS[symbol]
   return {
     symbol,
     returnType: mapYcmdNativeReturnType(YCMD_NATIVE_RETURN_TYPE_OVERRIDES[symbol] || cmd.returnType || ''),
-    params: arrayKinds
-      ? arrayKinds.map(kind => (kind === 'int64' && elemKind !== 'int'
-        ? mapYcmdArrayElemValueParam(elemKind)
-        : mapYcmdArrayParamKind(kind, cmd.name || symbol)))
-      : (paramOverride || (cmd.params || []).map(p => p.type || '')).map(t => mapYcmdNativeParamType(t)),
+    params: nullWhenOmitted ? params.map((p, i) => (nullWhenOmitted.includes(i) ? withNullWhenOmitted(p) : p)) : params,
   }
 }
 
@@ -4385,6 +4474,7 @@ function buildYcmdRepeatTailCalls(
 }
 
 function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
+  assertYcmdArrayReturnSupported(cmd, getYcmdNativeSymbol(cmd))
   const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemKind(cmd, args))
   // 尾参可重复的多值：逐次调用用逗号表达式串起（值=最后一次调用的结果，与易语言一致）
   const repeatCalls = buildYcmdRepeatTailCalls(sig, args, commandMap, directCallables)
@@ -4407,6 +4497,7 @@ function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], com
 }
 
 function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
+  assertYcmdArrayReturnSupported(cmd, getYcmdNativeSymbol(cmd))
   const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemKind(cmd, args))
   // 调试输出：impl 单参（const char*）。所有值经 yc_dbg_fmt 格式化（照易语言——文本带
   // 全角引号、数值裸、数组/字节集带类型头），多值拼成一行（值间双空格）单次输出。
@@ -4414,16 +4505,11 @@ function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], com
   if (sig.symbol === 'spec_Trace' && args.length >= 1) {
     const fmtOne = (a: string): string => {
       const t = (a || '').trim()
-      const info = currentTranspileArrayVars.get(t)
-      const lit = matchArrayLiteral(t)
-      const litElems = lit ? splitArguments(lit.inner) : []
-      const kind: ArrayElemKind = info ? arrayElemKindOf(info)
-        : lit && litElems.some(e => /^["“]/.test(e.trim())) ? 'text'
-        : lit && litElems.some(e => /[.．]/.test(e)) ? 'f64'
-        : 'int'
-      if ((info || lit) && kind === 'f64') return `yc_ary_to_text_f64(${formatArgForC(t, commandMap, directCallables)})`
-      if ((info || lit) && kind === 'text') return `yc_ary_to_text_str(${formatArgForC(t, commandMap, directCallables)})`
-      return `yc_dbg_fmt(${formatArgForC(t, commandMap, directCallables)})`
+      const kind = arrayValueElemKind(t, commandMap)
+      const arg = formatArgForC(t, commandMap, directCallables)
+      if (kind === 'f64') return `yc_ary_to_text_f64(${arg})`
+      if (kind === 'text') return `yc_ary_to_text_str(${arg})`
+      return `yc_dbg_fmt(${arg})`
     }
     const wideParts = args.map(fmtOne)
     let joined = wideParts[0]
@@ -4883,6 +4969,25 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   // 文本数组字面量：元素堆拷贝后存指针位模式（需要前向声明 yc_wcsdup_text，其定义在后段）
   result += 'static wchar_t* yc_wcsdup_text(const wchar_t* s);\n'
   result += 'static std::vector<long long> yc_ary_lit_text(std::initializer_list<const wchar_t*> v) { std::vector<long long> r; r.reserve(v.size()); for (const wchar_t* s : v) r.push_back((long long)(intptr_t)yc_wcsdup_text(s ? s : L"")); return r; }\n\n'
+  // 【数组返回 ABI】接管 krnln impl 交回的堆 vector：移走内容后 delete，所有权到此为止归调用处。
+  // impl 只负责 new + 填充（文本元素用 _wcsdup 出的宽串指针存位模式，与 yc_ary_lit_text 同款、同样不回收）。
+  result += 'static std::vector<long long> yc_ary_take(void* p) {\n'
+  result += '    std::vector<long long>* v = reinterpret_cast<std::vector<long long>*>(p);\n'
+  result += '    if (!v) return std::vector<long long>();\n'
+  result += '    std::vector<long long> r = std::move(*v);\n'
+  result += '    delete v;\n'
+  result += '    return r;\n'
+  result += '}\n'
+  // 数组「值」表达式（如 分割文本(…) 的返回、数组字面量）要当数组命令实参时的落地槽：
+  // 数组命令收 (void*)&数组变量，而临时量取不了址——先落进轮转池再取址（同 yc_c_str_slot 的路子）。
+  result += 'static std::vector<long long> yc_ary_tmp_slots[8];\n'
+  result += 'static int yc_ary_tmp_pos = 0;\n'
+  result += 'static std::vector<long long>& yc_ary_tmp(std::vector<long long> v) {\n'
+  result += '    std::vector<long long>& s = yc_ary_tmp_slots[yc_ary_tmp_pos];\n'
+  result += '    yc_ary_tmp_pos = (yc_ary_tmp_pos + 1) % 8;\n'
+  result += '    s = std::move(v);\n'
+  result += '    return s;\n'
+  result += '}\n\n'
   result += 'struct YC_BIG {\n'
   result += '    bool neg;\n'
   result += '    std::string digits;\n'
@@ -8801,9 +8906,10 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       sendMessage({ type: 'info', text: '项目类型: 控制台程序' })
     }
 
-    // 平台系统库（advapi32=注册表、ole32=COM 初始化，webview2 等支持库需要）
+    // 平台系统库（advapi32=注册表、ole32=COM 初始化，webview2 等支持库需要；
+    // comdlg32=通用对话框 GetOpenFileNameW，多文件对话框 用）
     if (targetPlatform === 'windows') {
-      args.push('-lkernel32', '-luser32', '-lgdi32', '-lcomctl32', '-loleaut32', '-ladvapi32', '-lole32', '-lgdiplus')
+      args.push('-lkernel32', '-luser32', '-lgdi32', '-lcomctl32', '-loleaut32', '-ladvapi32', '-lole32', '-lgdiplus', '-lcomdlg32')
     }
 
     // ========== 支持库链接 ==========

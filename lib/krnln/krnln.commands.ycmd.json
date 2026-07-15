@@ -3682,23 +3682,29 @@
     {
       "commandId": "krnln.split",
       "displayName": "分割文本",
-      "summary": "分解数据源中指定的已经组合的单元格，行列参数指向被组合单元格内的任何一个单元格即可。注意如果数据源所使用的数据提供者不支持此特性，本命令将被忽略。本命令为初级对象成员命令。",
+      "summary": "将指定文本进行分割，返回分割后的一维文本数组。本命令为初级命令。",
       "params": [
         {
-          "name": "行号",
-          "type": "整数型",
+          "name": "待分割文本",
+          "type": "文本型",
           "optional": false,
-          "description": "。行号从1开始。"
+          "description": "。如果参数值是一个长度为零的文本，则返回一个空数组，即没有任何成员的数组。"
         },
         {
-          "name": "列号",
+          "name": "用作分割的文本",
+          "type": "文本型",
+          "optional": true,
+          "description": "，可以被省略。参数值用于标识子文本边界。如果被省略，则默认使用半角逗号字符作为分隔符。如果是一个长度为零的文本，则返回的数组仅包含一个成员，即完整的“待分割文本”。"
+        },
+        {
+          "name": "要返回的子文本数目",
           "type": "整数型",
-          "optional": false,
-          "description": "。列号从1开始。"
+          "optional": true,
+          "description": "，可以被省略。如果被省略，则默认返回所有的子文本。"
         }
       ],
-      "returnType": "无返回值",
-      "category": "控制台操作",
+      "returnType": "文本型数组",
+      "category": "文本操作",
       "supportedPlatforms": [
         "windows"
       ]
@@ -9931,11 +9937,11 @@
     },
     {
       "commandId": "krnln.GetSelItems",
-      "displayName": "取选中项",
+      "displayName": "取所有被选择项目",
       "summary": "返回一个整数数组，內含所有当前被选择项目的位置索引。如果当前没有被选择项目，返回空数组。本命令为初级对象成员命令。",
       "params": [],
       "returnType": "整数型数组",
-      "category": "控制台操作",
+      "category": "列表框",
       "supportedPlatforms": [
         "windows"
       ]
