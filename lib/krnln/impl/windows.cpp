@@ -3149,29 +3149,88 @@ extern "C" void krnln_AddText(...) {
   touchNonStub();
 }
 
-// 取所有发音〈文本型数组〉——**尚未实现**：需要一份国标汉字→多音字拼音表（数据活，非 ABI 活）。
-// 签名按数组返回 ABI 给（void*），与生成侧声明一致；返回 nullptr 时 yc_ary_take 得到空数组。
-// 调用会被转译期 assertYcmdArrayReturnSupported 友好拦下（未进 YCMD_ARRAY_RETURN_SYMBOLS 白名单），
-// 这里的 nullptr 只是万一被绕过时的安全退化 —— 绝不能沿用旧桩的 keepUtf8("PY")：
-// 那是 const char*，被 yc_ary_take 当 vector* 解引用并 delete 会直接崩。
-extern "C" void* krnln_GetAllPY(...) {
-  return nullptr;
+// ============================ 拼音处理 ============================
+// 取所有发音/取发音数目/取拼音/取声母/取韵母 五条共用下面这张国标汉字拼音表。
+#include "pinyin-table.inc"   // 国标汉字拼音表（自动生成，见 scripts/krnln/generate-pinyin-table.mjs）
+
+/** 取文本首字的全部拼音编码（无声调、小写，首项为常用音）；非国标汉字 → 空 */
+static std::vector<std::wstring> ycPinyinOf(const char* text) {
+  std::vector<std::wstring> out;
+  std::wstring w = utf8ToWide(text);
+  if (w.empty()) return out;
+  unsigned short ch = static_cast<unsigned short>(w[0]);
+  int lo = 0, hi = g_ycPinyinTableCount - 1;
+  while (lo <= hi) {                                  // 表按码位升序，二分
+    int mid = lo + (hi - lo) / 2;
+    if (g_ycPinyinTable[mid].ch == ch) {
+      std::string s = g_ycPinyinTable[mid].py;         // "xing,hang,heng"
+      size_t pos = 0;
+      for (;;) {
+        size_t c = s.find(',', pos);
+        out.push_back(utf8ToWide(s.substr(pos, c == std::string::npos ? std::string::npos : c - pos).c_str()));
+        if (c == std::string::npos) break;
+        pos = c + 1;
+      }
+      return out;
+    }
+    if (g_ycPinyinTable[mid].ch < ch) lo = mid + 1; else hi = mid - 1;
+  }
+  return out;
 }
 
-extern "C" int krnln_GetPYCount(...) {
-  return 1;
+/** 索引取某个发音（帮助：索引一基，应在 1..发音数目 之间）；越界 → 空 */
+static std::wstring ycPinyinAt(const char* text, int index1) {
+  std::vector<std::wstring> all = ycPinyinOf(text);
+  if (index1 < 1 || static_cast<size_t>(index1) > all.size()) return std::wstring();
+  return all[static_cast<size_t>(index1 - 1)];
 }
 
-extern "C" const char* krnln_GetPY(...) {
-  return keepUtf8("PY");
+// 取所有发音〈文本型数组〉（文本型 欲取其拼音的汉字）
+// 帮助：只取用文本首部的第一个汉字；首部不是国标汉字 → 成员数目为 0 的空文本数组。
+extern "C" void* krnln_GetAllPY(const char* text) {
+  return ycMakeTextArray(ycPinyinOf(text));
 }
 
-extern "C" const char* krnln_GetSM(...) {
-  return keepUtf8("SM");
+// 取发音数目〈整数型〉（文本型 欲取其发音数目的汉字）——非国标汉字 → 0
+extern "C" int krnln_GetPYCount(const char* text) {
+  return static_cast<int>(ycPinyinOf(text).size());
 }
 
-extern "C" const char* krnln_GetYM(...) {
-  return keepUtf8("YM");
+// 取拼音〈文本型〉（文本型 欲取其拼音编码的汉字，整数型 欲取拼音编码的索引）
+extern "C" const char* krnln_GetPY(const char* text, int index1) {
+  return keepUtf8(wideToUtf8(ycPinyinAt(text, index1).c_str()));
+}
+
+// 取声母〈文本型〉——按汉语拼音方案的 21 声母表取最长前缀（zh/ch/sh 必须先于 z/c/s 试）。
+// y/w 不在声母表内（零声母），故 “一”(yi)、“我”(wo) 取声母得空文本 —— 与帮助
+// 「该汉字此发音无声母，将返回空文本」一致。
+static const char* const YC_SHENGMU[] = {
+  "zh", "ch", "sh",
+  "b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h", "j", "q", "x", "r", "z", "c", "s",
+};
+
+static size_t ycShengmuLen(const std::wstring& py) {
+  for (const char* sm : YC_SHENGMU) {
+    size_t n = strlen(sm);
+    if (py.size() < n) continue;
+    bool hit = true;
+    for (size_t k = 0; k < n; k++) { if (py[k] != static_cast<wchar_t>(sm[k])) { hit = false; break; } }
+    if (hit) return n;
+  }
+  return 0;
+}
+
+extern "C" const char* krnln_GetSM(const char* text, int index1) {
+  std::wstring py = ycPinyinAt(text, index1);
+  if (py.empty()) return keepUtf8("");
+  return keepUtf8(wideToUtf8(py.substr(0, ycShengmuLen(py)).c_str()));
+}
+
+// 取韵母〈文本型〉——声母之后的部分（零声母则整串，如 “一”→"yi"）
+extern "C" const char* krnln_GetYM(const char* text, int index1) {
+  std::wstring py = ycPinyinAt(text, index1);
+  if (py.empty()) return keepUtf8("");
+  return keepUtf8(wideToUtf8(py.substr(ycShengmuLen(py)).c_str()));
 }
 
 extern "C" int krnln_CompPY(...) {

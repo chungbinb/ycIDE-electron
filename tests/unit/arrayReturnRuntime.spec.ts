@@ -67,4 +67,51 @@ describe('数组返回 ABI · 运行时', () => {
 
     rmSync(dir, { recursive: true, force: true })
   }, 180000)
+
+  // 「拼音处理」五条共用 impl/pinyin-table.inc（6763 个国标汉字，由 pinyin-pro 生成）。
+  // 此前五条全是桩：取发音数目 恒返回 1、取拼音/取声母/取韵母 返回写死的 "PY"/"SM"/"YM"。
+  it.skipIf(!zigAvailable)('拼音处理五条命令的运行结果对齐帮助语义', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ycide-pyrt-'))
+    const say = (label: string, expr: string[]) =>
+      `标准输出 (0, “${label}=” ${expr.map(e => `＋ ${e}`).join(' ')} ＋ #换行符)`
+    writeFileSync(join(dir, 'p.epp'), ['ProjectName=拼音运行时', 'OutputType=Console', 'Platform=x64', 'File=EYC|程序.eyc|0', ''].join('\n'), 'utf-8')
+    writeFileSync(join(dir, '程序.eyc'), [
+      '.版本 2', '.程序集 程序集1', '',
+      '.子程序 _启动子程序',
+      '.局部变量 a, 文本型, , "0"',
+      '',
+      'a ＝ 取所有发音 (“行”)',                        // 多音字：xing(常用音在首)/hang/heng
+      say('多音字', ['到文本 (取数组成员数 (a))', '“|”', 'a [1]', '“/”', 'a [2]', '“/”', 'a [3]']),
+      'a ＝ 取所有发音 (“中”)',                        // 单音字
+      say('单音字', ['到文本 (取数组成员数 (a))', '“|”', 'a [1]']),
+      'a ＝ 取所有发音 (“A”)',                         // 非汉字 → 空数组
+      say('非汉字', ['到文本 (取数组成员数 (a))']),
+      'a ＝ 取所有发音 (“行走”)',                      // 帮助：只取首字
+      say('只取首字', ['到文本 (取数组成员数 (a))', '“|”', 'a [1]']),
+      say('取发音数目', ['到文本 (取发音数目 (“长”))', '“/”', '到文本 (取发音数目 (“中”))', '“/”', '到文本 (取发音数目 (“A”))']),
+      say('取拼音', ['取拼音 (“长”, 1)', '“/”', '取拼音 (“长”, 2)', '“/[”', '取拼音 (“长”, 9)', '“]”']),  // 索引越界 → 空文本
+      say('取声母', ['取声母 (“重”, 1)', '“/”', '取声母 (“行”, 2)', '“/[”', '取声母 (“一”, 1)', '“]”']),   // 一=yi 零声母 → 空
+      say('取韵母', ['取韵母 (“重”, 1)', '“/”', '取韵母 (“行”, 2)', '“/”', '取韵母 (“一”, 1)']),
+      '',
+    ].join('\n'), 'utf-8')
+
+    const before = messages.length
+    const r = await compileProject({ projectDir: dir, mode: 'build' })
+    const errs = messages.slice(before).filter(m => m.type === 'error').map(m => m.text).join('\n')
+    expect(r.success, `编译失败：\n${errs}`).toBe(true)
+
+    const out = execFileSync(r.outputFile, [], { encoding: 'buffer', timeout: 30000 }).toString('utf-8')
+    const val = (label: string) => (out.split('\n').find(l => l.startsWith(`${label}=`)) || '').trim().slice(label.length + 1)
+
+    expect(val('多音字'), '行 → 三个音，常用音 xing 在首（帮助：第一个发音为常用音）').toBe('3|xing/hang/heng')
+    expect(val('单音字'), '中 → 单音').toBe('1|zhong')
+    expect(val('非汉字'), '非国标汉字 → 成员数目为 0 的空数组').toBe('0')
+    expect(val('只取首字'), '帮助：只取用文本首部的第一个汉字').toBe('3|xing')
+    expect(val('取发音数目'), '长=2 中=1 非汉字=0（此前桩恒返回 1）').toBe('2/1/0')
+    expect(val('取拼音'), '一基索引；越界 → 空文本').toBe('chang/zhang/[]')
+    expect(val('取声母'), 'zh 要先于 z 匹配；一=yi 是零声母 → 空文本').toBe('zh/h/[]')
+    expect(val('取韵母'), '声母之后的部分；零声母则整串').toBe('ong/ang/yi')
+
+    rmSync(dir, { recursive: true, force: true })
+  }, 180000)
 })

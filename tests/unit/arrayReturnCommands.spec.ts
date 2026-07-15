@@ -91,14 +91,9 @@ describe('数组返回 ABI', () => {
   }, 120000)
 
   it.skipIf(!zigAvailable)('仍是占位桩的数组命令 → 转译期友好报错，不静默返回垃圾', async () => {
-    // 取所有发音〈文本型数组〉：ABI 有了，但缺国标汉字→多音字拼音表，未进白名单
-    const a = await build(['文本数组 ＝ 取所有发音 (“行”)'])
-    expect(a.r.success).toBe(false)
-    expect(a.errs).toContain('尚未实现')
-
-    // 分割字节集〈字节集数组〉：元素存储没有 bin 类别（字节集数组变量本身就不支持）
+    // 分割字节集〈字节集数组〉：元素存储没有 bin 类别（「字节集数组」变量本身就不支持）
     const b = await build(['文本数组 ＝ 分割字节集 (到字节集 (“a”), 到字节集 (“,”))'])
     expect(b.r.success).toBe(false)
     expect(b.errs).toContain('暂不支持该数组元素类型')
-  }, 240000)
+  }, 120000)
 })

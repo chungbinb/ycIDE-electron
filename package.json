@@ -40,6 +40,7 @@
     "test:theme:full": "node scripts/theme/run-theme-full.mjs",
     "krnln:mapping:generate": "node scripts/krnln/generate-command-mapping.mjs",
     "krnln:mapping:check": "node scripts/krnln/generate-command-mapping.mjs --check",
+    "krnln:pinyin:generate": "node scripts/krnln/generate-pinyin-table.mjs",
     "libraries:package": "node scripts/package-libraries.mjs",
     "package:win": "electron-vite build && electron-builder --win",
     "package:win:zip": "npm run package:win && node scripts/package-win-zip.mjs",

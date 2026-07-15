@@ -4394,6 +4394,7 @@ const YCMD_ARRAY_RETURN_SYMBOLS = new Set<string>([
   'krnln_split',               // 分割文本    〈文本型数组〉
   'krnln_GetSectionNames',     // 取配置节名  〈文本型数组〉
   'krnln_OpenManyFileDialog',  // 多文件对话框〈文本型数组〉
+  'krnln_GetAllPY',            // 取所有发音  〈文本型数组〉（国标汉字拼音表见 impl/pinyin-table.inc）
 ])
 
 /**
