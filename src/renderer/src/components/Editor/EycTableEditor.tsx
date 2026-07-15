@@ -429,6 +429,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const paramSelAnchorRef = useRef<number | null>(null)  // 上次点选的 argIdx，供 Shift 连选
   // 展开参数行「按住左键拖动跨行多选」：mousedown 记锚点，mousemove 过阈值转拖选、按 argIdx 连选
   const paramDragRef = useRef<{ lineIndex: number; anchorArg: number; startX: number; startY: number; active: boolean } | null>(null)
+  // 在「正在编辑的参数行」上按下左键：不能直接抢成拖选（输入框要落光标/选文字），
+  // 先记待定；等鼠标拖出该输入框边界再转成参数行拖选（照 pendingInputDragRef 的既有套路）。
+  const pendingParamDragRef = useRef<{ lineIndex: number; anchorArg: number; x: number; y: number } | null>(null)
   const suppressParamClickRef = useRef(false)  // 拖选刚结束时吞掉随后的 click，避免误进入编辑
 
   // 悬停命令说明窗（照易语言）：鼠标停在命令名上稍候弹出签名+解释的浮动提示
@@ -1315,6 +1318,21 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   // mousemove 和 mouseup 全局监听
   useEffect(() => {
     const onMove = (e: MouseEvent): void => {
+      // 在正在编辑的参数行上按下左键起的「待定拖选」：鼠标一旦拖出该参数输入框边界，就转成参数行拖选。
+      // （按下当时不能抢——那会夺走输入框的落光标/选文字；拖出去了才说明用户是要跨行多选。）
+      if (!paramDragRef.current && pendingParamDragRef.current) {
+        const pp = pendingParamDragRef.current
+        const inputEl = paramInputRef.current
+        let outside = true
+        if (inputEl) {
+          const r = inputEl.getBoundingClientRect()
+          outside = e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom
+        }
+        if (outside) {
+          paramDragRef.current = { lineIndex: pp.lineIndex, anchorArg: pp.anchorArg, startX: pp.x, startY: pp.y, active: false }
+          pendingParamDragRef.current = null
+        }
+      }
       // 展开参数行拖选：优先处理（param mousedown 已 stopPropagation，故行拖选相关 ref 未激活）
       if (paramDragRef.current) {
         const pd = paramDragRef.current
@@ -1407,6 +1425,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
     }
     const onUp = (e: MouseEvent): void => {
+      pendingParamDragRef.current = null  // 没拖出输入框就松手＝普通点击/框选文字，待定作废
       if (paramDragRef.current) {
         const wasActive = paramDragRef.current.active
         paramDragRef.current = null
@@ -8353,7 +8372,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                               onMouseDown={(e) => {
                                 suppressParamClickRef.current = false  // 清掉上一次拖选可能残留的吞点击标记
                                 if (e.ctrlKey || e.metaKey || e.shiftKey) { e.stopPropagation(); e.preventDefault(); return }
-                                if (isEditingParam || e.button !== 0) return
+                                if (e.button !== 0) return
+                                if (isEditingParam) {
+                                  // 正在编辑的行：不抢 mousedown（输入框要落光标/选文字），只记待定拖选；
+                                  // 拖出输入框边界后由全局 mousemove 转成参数行多选（用户反馈：焦点在这行时拖不动多选）。
+                                  pendingParamDragRef.current = { lineIndex: blk.lineIndex, anchorArg: ai, x: e.clientX, y: e.clientY }
+                                  return
+                                }
                                 // 普通左键：阻止冒泡到行 mousedown（否则起整行拖选/乐观进代码行编辑），记录拖选锚点。
                                 // stopPropagation 跳过了行 mousedown 的提交、preventDefault 又压掉失焦提交，故此处显式提交活跃编辑。
                                 e.stopPropagation(); e.preventDefault()
