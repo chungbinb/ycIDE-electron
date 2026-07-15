@@ -7470,6 +7470,36 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     focusParamInputAt()
   }, [applyTextChange, pushUndo, formatParamOperators, focusParamInputAt])
 
+  // 参数行编辑收尾（最后一个参数行按回车）：写回本槽后把光标落到**下一代码行**继续编辑。
+  // 不能只退编辑态——参数输入框随即卸载、没人接管焦点就掉到 <body>，键盘导航直接断（用户反馈「丢光标」）。
+  // 写回策略照 advanceParamEdit：仅当值真改动才写，穿行不重格式化未触碰的实参。
+  const finishParamEditToNextLine = useCallback((lineIndex: number, argIdx: number, currentVal: string) => {
+    const ls = prevRef.current.split('\n')
+    const codeLine = ls[lineIndex]
+    if (codeLine === undefined) return
+    suppressBlurCommitUntilRef.current = Date.now() + 250
+    if (liveUpdateTimerRef.current != null) { window.clearTimeout(liveUpdateTimerRef.current); liveUpdateTimerRef.current = null }
+    pendingLiveUpdateValRef.current = null
+    const origArg = parseCallArgs(codeLine)[argIdx] ?? ''
+    if (currentVal !== origArg) {
+      const written = replaceCallArg(codeLine, argIdx, formatParamOperators(balanceArgParens(currentVal)))
+      if (written !== codeLine) {
+        pushUndo(prevRef.current)
+        ls[lineIndex] = written
+        applyTextChange(ls.join('\n'))
+      }
+    }
+    setAcVisible(false)
+    const nextLi = lineIndex + 1
+    if (nextLi < ls.length) {
+      beginCodeLineEdit(nextLi, ls[nextLi] ?? '')
+      focusCodeInputAt(0)
+      return
+    }
+    setEditCell(null)   // 已是最后一行：无处可落，至少把焦点交回 wrapper 而不是 <body>
+    focusWrapper()
+  }, [applyTextChange, pushUndo, formatParamOperators, beginCodeLineEdit, focusCodeInputAt, focusWrapper])
+
   useEffect(() => {
     return () => {
       if (liveUpdateTimerRef.current != null) {
@@ -8375,16 +8405,15 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                       if (isTopLevelComma) { e.preventDefault(); return }
                                       if (e.key === 'Enter') {
                                         e.preventDefault()
-                                        // 连续回车：本行不是最后一个参数行 → 提交本行并前进到下一参数行继续编辑
+                                        // 可重复参数：回车恒追加下一个值行——**不管当前值空不空**（照易语言「重复添加」，
+                                        // 用户明确要求：可重复的就一直回车一直加；要退出用 Esc/点别处）。
+                                        if (row.repeatable) { appendRepeatParamRow(blk.lineIndex, ai, editVal); return }
+                                        // 不可重复：本行不是最后一个参数行 → 提交本行并前进到下一参数行继续编辑
                                         const curPos = paramRows.findIndex(r => r.argIdx === ai)
                                         const nextRow = curPos >= 0 ? paramRows[curPos + 1] : undefined
                                         if (nextRow) { advanceParamEdit(blk.lineIndex, ai, editVal, nextRow.argIdx); return }
-                                        // 最后一行：可重复参数（值非空）→ 追加下一个值行；否则提交收尾
-                                        if (row.repeatable && editVal.trim() !== '') { appendRepeatParamRow(blk.lineIndex, ai, editVal); return }
-                                        // 收尾必须把焦点交回 wrapper：参数输入框随即卸载，不接管焦点会掉到 <body>，
-                                        // 键盘导航直接断（用户反馈「再回车就丢光标了」）。commit() 本身不管焦点（blur 提交时不该抢）。
-                                        commit()
-                                        focusWrapper()
+                                        // 最后一个参数行 → 收尾并把光标落到下一代码行（不能只退编辑，否则焦点掉 <body>）
+                                        finishParamEditToNextLine(blk.lineIndex, ai, editVal)
                                         return
                                       }
                                       if (e.key === 'Escape') { setEditCell(null); focusWrapper() }
