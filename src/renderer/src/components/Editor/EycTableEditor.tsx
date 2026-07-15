@@ -8318,6 +8318,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           if (e.ctrlKey || e.metaKey) {
                             e.stopPropagation()
                             setEditCell(null)
+                            focusWrapper()  // 退编辑后输入框卸载：焦点须交回 wrapper（否则掉 <body>），Delete 才稳定删选中实参
                             setSelectedLines(prev => (prev.size === 0 ? prev : new Set()))
                             setSelectedParamRows(prev => {
                               const base = prev && prev.lineIndex === blk.lineIndex ? new Set(prev.argIdxs) : new Set<number>()
@@ -8330,6 +8331,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           if (e.shiftKey && paramSelAnchorRef.current != null) {
                             e.stopPropagation()
                             setEditCell(null)
+                            focusWrapper()
                             setSelectedLines(prev => (prev.size === 0 ? prev : new Set()))
                             const lo = Math.min(paramSelAnchorRef.current, ai), hi = Math.max(paramSelAnchorRef.current, ai)
                             const set = new Set<number>()
@@ -8358,7 +8360,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                 if (editCellRef.current) commitRef.current()
                                 paramDragRef.current = { lineIndex: blk.lineIndex, anchorArg: ai, startX: e.clientX, startY: e.clientY, active: false }
                               }}
-                              onClick={isEditingParam ? undefined : onParamRowClick}
+                              // 正在编辑的行只接管 Ctrl/Shift 多选，普通点击留给输入框落光标（不重启编辑）。
+                              // 此前整个置 undefined → 焦点停在某参数行时该行选不中（用户反馈：回车新增的空行想选中删掉却选不了）。
+                              onClick={(e) => {
+                                if (isEditingParam && !(e.ctrlKey || e.metaKey || e.shiftKey)) return
+                                onParamRowClick(e)
+                              }}
                             >
                               {showExprFold && (
                                 <span
