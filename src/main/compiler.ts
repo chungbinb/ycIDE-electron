@@ -4480,6 +4480,8 @@ const YCMD_OMITTED_PARAM_EXPRS: Record<string, Record<number, string>> = {
   krnln_split: { 1: '(const char*)nullptr' },
   // 取统一文本 的「转换到宽文本」「添加结束零字符」：帮助明说省略时**默认均为真**（通用映射会给 0=假）
   krnln_GetUTextBin: { 1: '1', 2: '1' },
+  // 取统一文本长度 的「转换到宽文本」：同上，省略默认真
+  krnln_GetUTextLength: { 1: '1' },
 }
 
 /** 省略时改发指定 C 表达式的形参包装；实参给了则照原映射译 */
@@ -4561,7 +4563,55 @@ function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], com
   return `([&]() -> ${mapTypeToCType(cmd.returnType || '整数型')} { return ${sig.returnType.expr(callExpr)}; })()`
 }
 
+/**
+ * 内建要求实参是变量本身（裸标识符）——「参考」语义下传字面量/表达式没有意义。
+ * 必须用标识符正则（与本文件其它处一致），不能只判「没有空格括号」：那样 `交换变量(1, 2)`
+ * 里的 1/2 会被当成变量名放行，最后炸在 C++ 的 no matching function for call to 'swap'。
+ */
+const YC_IDENT_RE = /^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/
+
+function requireVarArg(arg: string, cmdName: string): string {
+  const t = (arg || '').trim()
+  if (!YC_IDENT_RE.test(t)) {
+    throw new Error(`命令“${cmdName}”需要变量作为参数（它按引用操作该变量），但收到：${t || '(空)'}`)
+  }
+  return t
+}
+
+// 【转译期内建】「变量操作」族的语义是**按引用操作变量**，而 krnln 的 void* ABI 不带类型信息、
+// 通用型赋值/交换根本表达不了——现 impl 是 `*(uintptr_t*)目标 = (uintptr_t)值指针`，把指针值
+// 当数据写，纯错；且通用编组交给它的还是**值的文本形态**，连地址都不是。
+// 转译期本来就知道每个变量的类型 → 直接发类型正确的 C++，完全绕开 krnln（这 5 条不再需要原生符号）。
+const YCMD_INTRINSIC_CALLS: Record<string, (args: string[], tx: (e: string) => string, name: string) => string> = {
+  // 赋值(被赋值的变量, 值)
+  krnln_set: (args, tx, name) => `{ ${requireVarArg(args[0], name)} = ${tx(args[1] || '')}; }`,
+  // 连续赋值(值, 变量1, 变量2…)——注意参数顺序与 赋值 相反（帮助如此），尾参可重复
+  krnln_store: (args, tx, name) => {
+    const value = tx(args[0] || '')
+    const targets = args.slice(1).filter(a => (a || '').trim()).map(a => requireVarArg(a, name))
+    if (targets.length === 0) throw new Error(`命令“${name}”至少需要一个被赋值的变量`)
+    return `{ ${targets.map(t => `${t} = ${value};`).join(' ')} }`
+  },
+  // 交换变量 / 强制交换变量：std::swap 要求两边同类型。帮助说 强制交换变量「不对数据类型进行检查」，
+  // 我们这里仍按同类型编译期校验——比原语义严，但绝不会交换出用不了的变量。
+  krnln_XchgVar: (args, _tx, name) => `{ std::swap(${requireVarArg(args[0], name)}, ${requireVarArg(args[1], name)}); }`,
+  krnln_ForceXchgVar: (args, _tx, name) => `{ std::swap(${requireVarArg(args[0], name)}, ${requireVarArg(args[1], name)}); }`,
+  // 数组清零(数值数组变量)——帮助：全部成员置零，不影响维定义
+  krnln_ZeroAry: (args, _tx, name) => {
+    const t = requireVarArg(args[0], name)
+    const info = currentTranspileArrayVars.get(t)
+    if (!info) throw new Error(`命令“${name}”需要数组变量作为参数，但收到：${t}`)
+    const kind = arrayElemKindOf(info)
+    if (kind === 'text' || kind === 'bin') {
+      throw new Error(`命令“${name}”只支持数值数组（帮助：数值数组变量），但“${t}”是 ${info.elemType} 数组`)
+    }
+    return `{ std::fill(${t}.begin(), ${t}.end(), 0); }`
+  },
+}
+
 function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
+  const intrinsic = YCMD_INTRINSIC_CALLS[getYcmdNativeSymbol(cmd)]
+  if (intrinsic) return intrinsic(args, (e) => formatArgForC(e, commandMap, directCallables), cmd.name || getYcmdNativeSymbol(cmd))
   assertYcmdArrayReturnSupported(cmd, getYcmdNativeSymbol(cmd))
   const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemKind(cmd, args))
   // 调试输出：impl 单参（const char*）。所有值经 yc_dbg_fmt 格式化（照易语言——文本带
@@ -4604,6 +4654,8 @@ function generateYcmdNativeDeclarations(targetPlatform: TargetPlatform): string 
   const seen = new Set<string>()
   for (const cmd of buildCommandMap(targetPlatform).values()) {
     if (!isYcmdNativeCommand(cmd)) continue
+    // 转译期内建（变量操作族）不走原生路径 → 不发声明。发了也没人调，白留一份与 impl 错位的声明。
+    if (YCMD_INTRINSIC_CALLS[getYcmdNativeSymbol(cmd)]) continue
     const sig = buildYcmdNativeSignature(cmd)
     if (seen.has(sig.symbol)) continue
     seen.add(sig.symbol)

@@ -1351,8 +1351,8 @@ extern "C" const char* krnln_mid(const char* text, int startPos, int count) {
   return keepUtf8(s.substr(start, static_cast<size_t>(count)));
 }
 
-extern "C" const char* krnln_chr(int code) {
-  char ch = static_cast<char>(code & 0xFF);
+extern "C" const char* krnln_chr(unsigned char code) {   // 帮助：参数为「字节型」→ 声明侧是 unsigned char
+  char ch = static_cast<char>(code);
   std::string out(1, ch);
   return keepUtf8(out);
 }
@@ -1482,7 +1482,7 @@ extern "C" int krnln_ToByte(const char* text) {
   return static_cast<int>(static_cast<unsigned char>(std::atoi(text ? text : "0")));
 }
 
-extern "C" int krnln_ToShort(const char* text) {
+extern "C" short krnln_ToShort(const char* text) {       // 〈短整数型〉→ 声明侧是 short
   int v = std::atoi(text ? text : "0");
   if (v > 32767) v = 32767;
   if (v < -32768) v = -32768;
@@ -2414,9 +2414,9 @@ extern "C" void* krnln_split(const char* text, const char* sep, int count) {
   return ycMakeTextArray(parts);
 }
 
-extern "C" const char* krnln_pstr(uintptr_t ptr) {
+extern "C" const char* krnln_pstr(long long ptr) {       // 帮助：参数为「长整数型」
   if (ptr == 0) return keepUtf8("");
-  const char* p = reinterpret_cast<const char*>(ptr);
+  const char* p = reinterpret_cast<const char*>(static_cast<intptr_t>(ptr));
   return keepUtf8(p ? p : "");
 }
 
@@ -3043,9 +3043,12 @@ extern "C" void* krnln_GetUTextBin(const char* text, int wide, int addNul) {
   return ycBinRet(std::move(out));
 }
 
-extern "C" int krnln_GetUTextLength(const char* text) {
-  std::wstring w = utf8ToWide(text ? text : "");
-  return static_cast<int>(w.size());
+// 取统一文本长度〈整数型〉（文本型 待转换常量文本，［逻辑型 转换到宽文本］）
+// 帮助：「转换到宽文本」省略时**默认为真**（UTF-16），为假则算 UTF-8 长度。
+// 旧实现只收 1 个参数（清单有 2 个 → 声明与实现错位），且恒按宽文本算，开关完全不认。
+extern "C" int krnln_GetUTextLength(const char* text, int wide) {
+  if (wide) return static_cast<int>(utf8ToWide(text ? text : "").size());
+  return static_cast<int>(std::strlen(text ? text : ""));
 }
 
 extern "C" long long krnln_choose(int index, ...) {

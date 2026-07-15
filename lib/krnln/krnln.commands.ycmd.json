@@ -2497,23 +2497,23 @@
     {
       "commandId": "krnln.set",
       "displayName": "赋值",
-      "summary": "设置本对象的内容，成功返回真，失败返回假。本命令为初级对象成员命令。",
+      "summary": "将指定的值或资源赋于指定的变量或变量数组。本命令为初级命令。",
       "params": [
         {
-          "name": "欲写入数据",
+          "name": "被赋值的变量或变量数组",
           "type": "通用型",
-          "optional": true,
-          "description": "，可以被省略，提供参数数据时可以同时提供数组或非数组数据。参数值可以为文本、数值、逻辑值、日期时间值、COM对象型数据类型或者这些数据类型及“变体型”数据类型本身的数组形式。如果本参数被省略，则将对象清空。"
+          "optional": false,
+          "description": "。提供参数数据时只能提供变量及变量数组。"
         },
         {
-          "name": "成员索引",
-          "type": "整数型",
-          "optional": true,
-          "description": "，可以被省略。如果当前对象内为数组型数据，且欲对数组内的某个成员进行操作，则可以在此参数中指定其引用索引值，该索引值从 1 开始。除开上述情况外，请省略本参数。"
+          "name": "用作赋于的值或资源",
+          "type": "通用型",
+          "optional": false,
+          "description": "。提供参数数据时可以同时提供数组或非数组数据。"
         }
       ],
-      "returnType": "逻辑型",
-      "category": "控制台操作",
+      "returnType": "无返回值",
+      "category": "变量操作",
       "supportedPlatforms": [
         "windows"
       ]
@@ -2533,7 +2533,8 @@
           "name": "被赋值的变量或变量数组",
           "type": "通用型",
           "optional": false,
-          "description": "，提供参数数据时只能提供变量及变量数组。"
+          "description": "，提供参数数据时只能提供变量及变量数组。",
+          "repeatable": true
         }
       ],
       "returnType": "无返回值",
