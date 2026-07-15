@@ -88,6 +88,7 @@ import {
   rebuildLineField,
   rebuildLineFlagField,
   splitDebugRenderableText,
+  findControlMethodCompletion,
 } from './editorCoreUtils'
 import type { CompletionItem, CompletionParam } from './editorCoreUtils'
 import { buildCompletionCatalog } from './editorCompletionCatalogUtils'
@@ -3474,9 +3475,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             break
           }
         }
-        // 对象.方法（项目类公开方法）同样支持参数展开
+        // 对象.方法（项目类公开方法 / 控件方法如 编辑框1.加入文本）同样支持参数展开
         if (span.cls === 'funccolor' || span.cls === 'cometwolr') {
-          const clsMethod = findProjectClassMethodByName(span.text)
+          const clsMethod = findProjectClassMethodByName(span.text) || findControlMethodCompletion(span.text)
           if (clsMethod && clsMethod.params.length > 0) {
             lineCmd = clsMethod
             break
@@ -7089,9 +7090,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const cmd = allCommandsRef.current.find(c => c.name === s.text) || dllCompletionItemsRef.current.find(c => c.name === s.text)
         if (cmd && cmd.params.length > 0) return cmd
       }
-      // 对象.方法（项目类公开方法）同样支持参数展开
+      // 对象.方法（项目类公开方法 / 控件方法如 编辑框1.加入文本）同样支持参数展开
       if (s.cls === 'funccolor' || s.cls === 'cometwolr') {
-        const clsMethod = findProjectClassMethodByName(s.text)
+        const clsMethod = findProjectClassMethodByName(s.text) || findControlMethodCompletion(s.text)
         if (clsMethod && clsMethod.params.length > 0) return clsMethod
       }
     }
@@ -7107,7 +7108,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (!cmdName) return null
     const cmd = allCommandsRef.current.find(c => c.name === cmdName)
       || dllCompletionItemsRef.current.find(c => c.name === cmdName)
-      || ((cmdName.includes('.') || cmdName.includes('。') || cmdName.includes('．')) ? findProjectClassMethodByName(cmdName) : null)
+      || ((cmdName.includes('.') || cmdName.includes('。') || cmdName.includes('．'))
+        ? (findProjectClassMethodByName(cmdName) || findControlMethodCompletion(cmdName))
+        : null)
     if (!cmd || cmd.params.length === 0) return null
     const args = parseCallArgs(normalized)
     return { cmd, args }
