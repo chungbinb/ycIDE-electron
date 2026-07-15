@@ -68,6 +68,51 @@ describe('数组返回 ABI · 运行时', () => {
     rmSync(dir, { recursive: true, force: true })
   }, 180000)
 
+  // 字节集数组（元素存储的第 4 类 bin：堆上 YC_BIN 的指针位模式，同文本型的路子）。
+  // 顺带钉住两个此前**根本编译不过**的写法：加入成员到文本数组、文本数组[i] ＝ 值
+  //（原为 `(intptr_t)yc_value_to_text(...)`，C 风格转换不肯把 YC_TEXT 连着经
+  //  operator const wchar_t*() 再转 intptr_t → no matching conversion）。
+  it.skipIf(!zigAvailable)('字节集数组可用；文本数组的 加入成员/下标赋值 也终于能编能跑', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ycide-binrt-'))
+    const say = (label: string, expr: string[]) =>
+      `标准输出 (0, “${label}=” ${expr.map(e => `＋ ${e}`).join(' ')} ＋ #换行符)`
+    writeFileSync(join(dir, 'p.epp'), ['ProjectName=字节集数组运行时', 'OutputType=Console', 'Platform=x64', 'File=EYC|程序.eyc|0', ''].join('\n'), 'utf-8')
+    writeFileSync(join(dir, '程序.eyc'), [
+      '.版本 2', '.程序集 程序集1', '',
+      '.子程序 _启动子程序',
+      '.局部变量 b, 字节集, , "0"',
+      '.局部变量 t, 文本型, , "0"',
+      '',
+      // —— 字节集数组变量：加入成员 / 下标读 / 成员数（到文本(字节集) 给的是 字节集:N{…} 形态）
+      '加入成员 (b, 到字节集 (“A”))',
+      '加入成员 (b, 到字节集 (“BC”))',
+      say('字节集数组', ['到文本 (取数组成员数 (b))', '“|”', '到文本 (b [1])', '“/”', '到文本 (b [2])']),
+      // —— 分割字节集：显式分隔符（省略分隔符=按字节 0 分那条实现了但喂不进料——见下方注释）
+      'b ＝ 分割字节集 (到字节集 (“A,B,C”), 到字节集 (“,”))',
+      say('显式分隔', ['到文本 (取数组成员数 (b))', '“|”', '到文本 (b [1])', '“/”', '到文本 (b [3])']),
+      // —— 文本数组：加入成员 + 下标赋值（此前两条都编不过）
+      '加入成员 (t, “甲”)',
+      '加入成员 (t, “乙”)',
+      't [2] ＝ “丙”',
+      say('文本数组', ['到文本 (取数组成员数 (t))', '“|”', 't [1]', '“/”', 't [2]']),
+      '',
+    ].join('\n'), 'utf-8')
+
+    const before = messages.length
+    const r = await compileProject({ projectDir: dir, mode: 'build' })
+    const errs = messages.slice(before).filter(m => m.type === 'error').map(m => m.text).join('\n')
+    expect(r.success, `编译失败：\n${errs}`).toBe(true)
+
+    const out = execFileSync(r.outputFile, [], { encoding: 'buffer', timeout: 30000 }).toString('utf-8')
+    const val = (label: string) => (out.split('\n').find(l => l.startsWith(`${label}=`)) || '').trim().slice(label.length + 1)
+
+    expect(val('字节集数组'), '加入成员到字节集数组 → 元素各自独立、读回原值').toBe('2|字节集:1{65}/字节集:2{66,67}')
+    expect(val('显式分隔'), '分割字节集 显式分隔符').toBe('3|字节集:1{65}/字节集:1{67}')
+    expect(val('文本数组'), '加入成员 + 下标赋值（此前都编不过）').toBe('2|甲/丙')
+
+    rmSync(dir, { recursive: true, force: true })
+  }, 180000)
+
   // 「拼音处理」五条共用 impl/pinyin-table.inc（6763 个国标汉字，由 pinyin-pro 生成）。
   // 此前五条全是桩：取发音数目 恒返回 1、取拼音/取声母/取韵母 返回写死的 "PY"/"SM"/"YM"。
   it.skipIf(!zigAvailable)('拼音处理五条命令的运行结果对齐帮助语义', async () => {

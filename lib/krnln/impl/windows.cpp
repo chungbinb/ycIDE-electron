@@ -2610,8 +2610,50 @@ extern "C" long long krnln_GetBinElement(const char* binData, int dataType, int 
   }
 }
 
-extern "C" const char* krnln_SplitBin(...) {
-  return keepUtf8("[]");
+// 字节集数组的构造（数组返回 ABI）：元素存「堆上 YC_BIN 的指针位模式」，与生成侧
+// yc_ary_lit_bin 的存法、(*(YC_BIN*)(intptr_t)元素) 的读法一致。YC_BIN 即 std::vector<unsigned char>。
+static void* ycMakeBinArray(const std::vector<std::vector<unsigned char>>& items) {
+  auto* out = new std::vector<long long>();
+  out->reserve(items.size());
+  for (const std::vector<unsigned char>& b : items) {
+    out->push_back(static_cast<long long>(reinterpret_cast<intptr_t>(new std::vector<unsigned char>(b))));
+  }
+  return out;
+}
+
+// 分割字节集〈字节集数组〉（字节集 待分割字节集，［字节集 用作分割的字节集］，［整数型 要返回的子字节集数目］）
+//
+// 【为什么这条不走通用字节集 ABI】krnln 的「字节集」跨 ABI 一律是 const char*（NUL 结尾——
+// yc_bin_to_cstr/yc_cstr_to_bin、krnln_BinLen 全按 strlen 算长度），含 0x00 的字节集会被整条截断。
+// 而本命令**省略分隔符时默认分隔符正是字节 0**，用那套 ABI 根本表达不了。故按符号特办：
+// 字节集经 const void* 传 YC_BIN*（复用数组那套既有的跨 TU 指针契约），长度完整、0 字节安全。
+// 见 compiler.ts 的 YCMD_ARRAY_PARAM_KINDS['krnln_SplitBin'] = ['binptr','binptr','int']。
+//
+// 帮助语义：待分割字节集为空 → 空数组；分隔符省略(nullptr) → 默认字节 0；
+// 子字节集数目 省略/≤0 → 全部，给 n>0 → 最多 n 段、末段为余下全部（同 分割文本）。
+extern "C" void* krnln_SplitBin(const void* binPtr, const void* sepPtr, int count) {
+  std::vector<std::vector<unsigned char>> parts;
+  const std::vector<unsigned char>* src = reinterpret_cast<const std::vector<unsigned char>*>(binPtr);
+  if (!src || src->empty()) return ycMakeBinArray(parts);
+
+  std::vector<unsigned char> sep;
+  if (sepPtr) sep = *reinterpret_cast<const std::vector<unsigned char>*>(sepPtr);
+  else sep.push_back(0);                       // 省略 → 默认字节 0
+  if (sep.empty()) {                           // 显式空字节集 → 不分割（对齐 分割文本 的同款语义）
+    parts.push_back(*src);
+    return ycMakeBinArray(parts);
+  }
+
+  size_t pos = 0;
+  while (count <= 0 || static_cast<int>(parts.size()) < count - 1) {
+    auto hit = std::search(src->begin() + static_cast<long>(pos), src->end(), sep.begin(), sep.end());
+    if (hit == src->end()) break;
+    size_t at = static_cast<size_t>(hit - src->begin());
+    parts.push_back(std::vector<unsigned char>(src->begin() + static_cast<long>(pos), src->begin() + static_cast<long>(at)));
+    pos = at + sep.size();
+  }
+  parts.push_back(std::vector<unsigned char>(src->begin() + static_cast<long>(pos), src->end()));
+  return ycMakeBinArray(parts);
 }
 
 extern "C" double krnln_FileDateTime(const char* fileName) {

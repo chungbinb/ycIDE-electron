@@ -2240,12 +2240,13 @@ function parseWindowFile(efwPath: string): WindowFileInfo {
 
 // 易语言数据类型 → C 类型
 // 清单里的「X数组」返回类型（如 分割文本 的〈文本型数组〉）。运行时数组统一是 std::vector<long long>
-// （与 ARRAY_ELEM_INTEGER_TYPES/ARRAY_ELEM_FLOAT_TYPES 同一套元素存储：int 直存、f64 位模式、text 指针位模式）。
-// 注：「字节集数组」不在此表——元素存储没有 bin 类别，字节集数组变量本身就还不支持。
+// （与 ARRAY_ELEM_INTEGER_TYPES/ARRAY_ELEM_FLOAT_TYPES 同一套元素存储：int 直存、f64 位模式、
+//  text/bin 存堆指针位模式）。
 const YCMD_ARRAY_RETURN_TYPES: Record<string, ArrayElemKind> = {
   '字节型数组': 'int', '短整数型数组': 'int', '整数型数组': 'int', '长整数型数组': 'int', '逻辑型数组': 'int',
   '小数型数组': 'f64', '双精度小数型数组': 'f64',
   '文本型数组': 'text',
+  '字节集数组': 'bin',
 }
 
 function mapTypeToCType(type: string): string {
@@ -3318,14 +3319,29 @@ function isTextArrayElem(info: TranspileArrayInfo | undefined): boolean {
   return !!info && info.elemType === '文本型'
 }
 
-/** 数组元素存储类别：int=直存、f64=double 位模式、text=堆拷贝文本指针位模式 */
-type ArrayElemKind = 'int' | 'f64' | 'text'
+// 字节集（YC_BIN=std::vector<unsigned char>）是值类型、装不进 long long，与文本型同策：
+// 元素存「堆上 YC_BIN 的指针位模式」，读回是 (*(YC_BIN*)(intptr_t)元素)。
+// 注意别和 ARRAY_ELEM_INTEGER_TYPES 里的「字节型」（0-255 的数）混了——那是数、这是二进制块。
+function isBinArrayElem(info: TranspileArrayInfo | undefined): boolean {
+  return !!info && info.elemType === '字节集'
+}
+
+/** 数组元素存储类别：int=直存、f64=double 位模式、text=堆拷贝文本指针、bin=堆拷贝字节集指针 */
+type ArrayElemKind = 'int' | 'f64' | 'text' | 'bin'
 
 function arrayElemKindOf(info: TranspileArrayInfo | undefined): ArrayElemKind {
   if (isTextArrayElem(info)) return 'text'
+  if (isBinArrayElem(info)) return 'bin'
   if (isFloatArrayElem(info)) return 'f64'
   return 'int'
 }
+
+/** 数组元素类型是否受支持（整数族直存 / 小数族位模式 / 文本型·字节集存堆指针位模式） */
+function isSupportedArrayElemType(elemType: string): boolean {
+  return ARRAY_ELEM_INTEGER_TYPES.has(elemType) || ARRAY_ELEM_FLOAT_TYPES.has(elemType)
+    || elemType === '文本型' || elemType === '字节集'
+}
+const SUPPORTED_ARRAY_ELEM_HINT = '当前支持整数族/小数族/文本型/字节集元素'
 
 /** \u58f0\u660e parts \u4e2d\u7684\u6570\u7ec4\u5c3a\u5bf8\u5b57\u6bb5\uff08\u53ef\u7a7a\u3001\u53ef\u5e26\u5f15\u53f7\uff1b"0"=\u52a8\u6001\u4e00\u7ef4\uff0c"100,100"=\u4e8c\u7ef4\u5b9a\u957f\uff09 */
 function parseArrayDimsField(field: string | undefined): { isArray: boolean; dims: number[]; invalid?: string } {
@@ -3430,6 +3446,7 @@ function rewriteArrayIndexOnce(
     const kind = arrayElemKindOf(info)
     const wrapped = kind === 'f64' ? `yc_f64_from_bits(${ref})`
       : kind === 'text' ? `((wchar_t*)(intptr_t)${ref})`
+      : kind === 'bin' ? `(*(YC_BIN*)(intptr_t)${ref})`
       : ref
     return `${expr.slice(0, i)}${wrapped}${expr.slice(consumedEnd + 1)}`
   }
@@ -3476,6 +3493,10 @@ function buildArrayLiteralExpr(
   const parts = elems.map(e => translateExpressionToC(e, commandMap, directCallables, variableTypeResolver))
   if (kind === 'text') {
     return `yc_ary_lit_text({${parts.map(p => `(const wchar_t*)(${p})`).join(', ')}})`
+  }
+  // 字节集元素无从按字面推断（forceKind 来自「赋给字节集数组」），故只有 forceKind='bin' 才走这支
+  if (kind === 'bin') {
+    return `yc_ary_lit_bin({${parts.map(p => `YC_BIN(${p})`).join(', ')}})`
   }
   if (kind === 'f64') {
     return `yc_ary_lit_f64({${parts.map(p => `(double)(${p})`).join(', ')}})`
@@ -4225,9 +4246,12 @@ function mapYcmdNativeParamType(typeName: string): { cType: string; expr: (arg: 
       expr: (arg, commandMap, directCallables) => {
         const t = (arg || '').trim()
         if (!t) return '(const char*)""'
-        // 数组（变量/字面量/返回数组的命令）按元素存储类别选打印：f64 位模式、文本指针位模式需专用还原
+        // 数组（变量/字面量/返回数组的命令）按元素存储类别选打印：f64/文本/字节集都是位模式，需专用还原
         const kind = arrayValueElemKind(t, commandMap)
-        const toText = kind === 'f64' ? 'yc_ary_to_text_f64' : kind === 'text' ? 'yc_ary_to_text_str' : 'yc_value_to_text'
+        const toText = kind === 'f64' ? 'yc_ary_to_text_f64'
+          : kind === 'text' ? 'yc_ary_to_text_str'
+          : kind === 'bin' ? 'yc_ary_to_text_bin'
+          : 'yc_value_to_text'
         return `yc_wide_to_utf8(${toText}(${formatArgForC(t, commandMap, directCallables)}))`
       },
     }
@@ -4271,7 +4295,10 @@ function mapYcmdNativeReturnType(typeName: string): { cType: string; expr: (call
 
 // 数组类命令的原生 ABI（krnln impl：数组经 void* 传 std::vector<long long>*，值为 long long）。
 // 这些命令的参数在清单里是「通用型」，通用映射会把实参转成文本指针，与 impl 形参错位——按符号显式给定。
-const YCMD_ARRAY_PARAM_KINDS: Record<string, Array<'arrayptr' | 'int' | 'int64'>> = {
+const YCMD_ARRAY_PARAM_KINDS: Record<string, Array<'arrayptr' | 'binptr' | 'int' | 'int64'>> = {
+  // 分割字节集：字节集不走通用 ABI（那是 const char*、NUL 结尾、含 0x00 即截断），改传 YC_BIN*。
+  // 见 mapYcmdArrayParamKind 的 binptr 分支与 windows.cpp 里 krnln_SplitBin 的注释。
+  krnln_SplitBin: ['binptr', 'binptr', 'int'],
   krnln_AddElement: ['arrayptr', 'int64'],
   krnln_InsElement: ['arrayptr', 'int', 'int64'],
   krnln_RemoveElement: ['arrayptr', 'int', 'int'],
@@ -4321,7 +4348,21 @@ function tryTranslateArrayValueExpr(expr: string, commandMap?: Map<string, Resol
   return generateYcmdNativeCommandExpr(resolved, call.args || [], commandMap, directCallables)
 }
 
-function mapYcmdArrayParamKind(kind: 'arrayptr' | 'int' | 'int64', cmdName: string): ReturnType<typeof mapYcmdNativeParamType> {
+function mapYcmdArrayParamKind(kind: 'arrayptr' | 'binptr' | 'int' | 'int64', cmdName: string): ReturnType<typeof mapYcmdNativeParamType> {
+  // 字节集按 YC_BIN* 传（而非通用的 const char*）：通用编组 yc_bin_to_cstr 把字节集当 NUL 结尾串，
+  // 含 0x00 就截断——分割字节集 省略分隔符时默认分隔符**正是字节 0**，那套 ABI 表达不了。
+  // 复用数组那套既有的跨 TU 指针契约。临时量取不了址 → 先落 yc_bin_tmp 轮转槽。
+  // 实参省略 → nullptr，impl 据此取默认值（与显式空字节集区分）。
+  if (kind === 'binptr') {
+    return {
+      cType: 'const void*',
+      expr: (arg, commandMap, directCallables) => {
+        const t = (arg || '').trim()
+        if (!t) return '(const void*)nullptr'
+        return `(const void*)&yc_bin_tmp(${formatArgForC(t, commandMap, directCallables)})`
+      },
+    }
+  }
   if (kind === 'arrayptr') {
     return {
       cType: 'void*',
@@ -4343,14 +4384,19 @@ function mapYcmdArrayParamKind(kind: 'arrayptr' | 'int' | 'int64', cmdName: stri
   }
 }
 
-/** int64 元素值参的存储形态变体：f64=double 位模式、text=堆拷贝文本指针（加入成员/插入成员） */
+/** int64 元素值参的存储形态变体：f64=double 位模式、text/bin=堆拷贝后存指针（加入成员/插入成员） */
 function mapYcmdArrayElemValueParam(kind: ArrayElemKind): ReturnType<typeof mapYcmdNativeParamType> {
   return {
     cType: 'long long',
     expr: (arg, commandMap, directCallables) => {
       const src = arg ? formatArgForC(arg, commandMap, directCallables) : "0"
       if (kind === 'f64') return `yc_f64_bits((double)(${src}))`
-      if (kind === 'text') return `(long long)(intptr_t)yc_value_to_text(${src})`
+      // 【此前编不过】原为 `(long long)(intptr_t)yc_value_to_text(...)`：C 风格转换不肯把 YC_TEXT
+      // 连着经 operator const wchar_t*() 再转 intptr_t（no matching conversion），故「加入成员到
+      // 文本数组」一直是死路。须先显式转 const wchar_t*（同 yc_ary_lit_text 的写法），
+      // 再 yc_wcsdup_text 堆拷贝——直接存 YC_TEXT 临时量的内部指针会在整表达式结束时悬垂。
+      if (kind === 'text') return `(long long)(intptr_t)yc_wcsdup_text((const wchar_t*)yc_value_to_text(${src}))`
+      if (kind === 'bin') return `(long long)(intptr_t)yc_bin_dup(${src})`
       return `(long long)(${src})`
     },
   }
@@ -4395,6 +4441,7 @@ const YCMD_ARRAY_RETURN_SYMBOLS = new Set<string>([
   'krnln_GetSectionNames',     // 取配置节名  〈文本型数组〉
   'krnln_OpenManyFileDialog',  // 多文件对话框〈文本型数组〉
   'krnln_GetAllPY',            // 取所有发音  〈文本型数组〉（国标汉字拼音表见 impl/pinyin-table.inc）
+  'krnln_SplitBin',            // 分割字节集  〈字节集数组〉
 ])
 
 /**
@@ -4510,6 +4557,7 @@ function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], com
       const arg = formatArgForC(t, commandMap, directCallables)
       if (kind === 'f64') return `yc_ary_to_text_f64(${arg})`
       if (kind === 'text') return `yc_ary_to_text_str(${arg})`
+      if (kind === 'bin') return `yc_ary_to_text_bin(${arg})`
       return `yc_dbg_fmt(${arg})`
     }
     const wideParts = args.map(fmtOne)
@@ -4970,6 +5018,10 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   // 文本数组字面量：元素堆拷贝后存指针位模式（需要前向声明 yc_wcsdup_text，其定义在后段）
   result += 'static wchar_t* yc_wcsdup_text(const wchar_t* s);\n'
   result += 'static std::vector<long long> yc_ary_lit_text(std::initializer_list<const wchar_t*> v) { std::vector<long long> r; r.reserve(v.size()); for (const wchar_t* s : v) r.push_back((long long)(intptr_t)yc_wcsdup_text(s ? s : L"")); return r; }\n\n'
+  // 字节集数组：元素存堆上 YC_BIN 的指针位模式（YC_BIN 是值类型、装不进 long long）。
+  // 与 yc_wcsdup_text 同策——全程序生命期，不回收（数组元素没有析构时机）。
+  result += 'static YC_BIN* yc_bin_dup(const YC_BIN& b) { return new YC_BIN(b); }\n'
+  result += 'static std::vector<long long> yc_ary_lit_bin(std::initializer_list<YC_BIN> v) { std::vector<long long> r; r.reserve(v.size()); for (const YC_BIN& b : v) r.push_back((long long)(intptr_t)yc_bin_dup(b)); return r; }\n\n'
   // 【数组返回 ABI】接管 krnln impl 交回的堆 vector：移走内容后 delete，所有权到此为止归调用处。
   // impl 只负责 new + 填充（文本元素用 _wcsdup 出的宽串指针存位模式，与 yc_ary_lit_text 同款、同样不回收）。
   result += 'static std::vector<long long> yc_ary_take(void* p) {\n'
@@ -4986,6 +5038,15 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'static std::vector<long long>& yc_ary_tmp(std::vector<long long> v) {\n'
   result += '    std::vector<long long>& s = yc_ary_tmp_slots[yc_ary_tmp_pos];\n'
   result += '    yc_ary_tmp_pos = (yc_ary_tmp_pos + 1) % 8;\n'
+  result += '    s = std::move(v);\n'
+  result += '    return s;\n'
+  result += '}\n'
+  // 字节集要按 YC_BIN* 交给 krnln 时的落地槽（同上：临时量取不了址）。见 mapYcmdArrayParamKind 的 binptr。
+  result += 'static YC_BIN yc_bin_tmp_slots[8];\n'
+  result += 'static int yc_bin_tmp_pos = 0;\n'
+  result += 'static YC_BIN& yc_bin_tmp(YC_BIN v) {\n'
+  result += '    YC_BIN& s = yc_bin_tmp_slots[yc_bin_tmp_pos];\n'
+  result += '    yc_bin_tmp_pos = (yc_bin_tmp_pos + 1) % 8;\n'
   result += '    s = std::move(v);\n'
   result += '    return s;\n'
   result += '}\n\n'
@@ -5625,6 +5686,13 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    out += L"}";\n'
   result += '    return YC_TEXT(std::move(out));\n'
   result += '}\n\n'
+  // 字节集数组转文本（元素为堆拷贝的 YC_BIN* 指针位模式）——套用上面的 字节集:N{…} 逐元素打印
+  result += 'static YC_TEXT yc_ary_to_text_bin(const std::vector<long long>& a) {\n'
+  result += '    std::wstring out = L"数组:" + std::to_wstring(a.size()) + L"{";\n'
+  result += '    for (size_t i = 0; i < a.size(); i++) { if (i) out += L","; const YC_BIN* p = (const YC_BIN*)(intptr_t)a[i]; out += p ? yc_value_to_text(*p).s : std::wstring(L"字节集:0{}"); }\n'
+  result += '    out += L"}";\n'
+  result += '    return YC_TEXT(std::move(out));\n'
+  result += '}\n\n'
   result += 'static YC_TEXT yc_value_to_text(const YC_BIG& value) {\n'
   result += '    std::wstring out;\n'
   result += '    if (value.neg && value.digits != "0") out.push_back(L\'-\');\n'
@@ -6237,8 +6305,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       const dims = parseArrayDimsField(parts[3])
       if (dims.isArray && !isClassModuleSource) {
         if (dims.invalid) throwSourceError(lineIndex + 1, dims.invalid)
-        if (!ARRAY_ELEM_INTEGER_TYPES.has(varType) && !ARRAY_ELEM_FLOAT_TYPES.has(varType) && varType !== '文本型') {
-          throwSourceError(lineIndex + 1, `暂不支持 ${varType} 数组（当前支持整数族/小数族/文本型元素）`)
+        if (!isSupportedArrayElemType(varType)) {
+          throwSourceError(lineIndex + 1, `暂不支持 ${varType} 数组（${SUPPORTED_ARRAY_ELEM_HINT}）`)
         }
         const dimTotal = dims.dims.reduce((acc, n) => acc * n, 1)
         result += `static std::vector<long long> ${varName}${dims.dims.length > 0 ? `(${dimTotal}, 0)` : ''};\n`
@@ -6289,8 +6357,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       const paramType = (parts[1] || '整数型').trim()
       if (paramName) {
         const isArrayParam = parts.slice(2).includes('数组')
-        if (isArrayParam && !ARRAY_ELEM_INTEGER_TYPES.has(paramType) && !ARRAY_ELEM_FLOAT_TYPES.has(paramType) && paramType !== '文本型') {
-          throwSourceError(lineIndex + 1, `暂不支持 ${paramType} 数组参数（当前支持整数族/小数族/文本型元素）`)
+        if (isArrayParam && !isSupportedArrayElemType(paramType)) {
+          throwSourceError(lineIndex + 1, `暂不支持 ${paramType} 数组参数（${SUPPORTED_ARRAY_ELEM_HINT}）`)
         }
         subParams.push({ name: paramName, type: paramType, isArray: isArrayParam })
         if (isArrayParam) {
@@ -6311,8 +6379,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       const dims = parseArrayDimsField(parts[3])
       if (dims.isArray) {
         if (dims.invalid) throwSourceError(lineIndex + 1, dims.invalid)
-        if (!ARRAY_ELEM_INTEGER_TYPES.has(varType) && !ARRAY_ELEM_FLOAT_TYPES.has(varType) && varType !== '文本型') {
-          throwSourceError(lineIndex + 1, `暂不支持 ${varType} 数组（当前支持整数族/小数族/文本型元素）`)
+        if (!isSupportedArrayElemType(varType)) {
+          throwSourceError(lineIndex + 1, `暂不支持 ${varType} 数组（${SUPPORTED_ARRAY_ELEM_HINT}）`)
         }
         const dimTotal = dims.dims.reduce((acc, n) => acc * n, 1)
         emitSubLine(`std::vector<long long> ${varName}${dims.dims.length > 0 ? `(${dimTotal}, 0)` : ''};`)
@@ -6500,8 +6568,12 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
           const linear = buildAryLinearIndexExpr(idxParts, info.dims)
           const rhsC = translateExpressionToC(idxAssignTarget.rhs, commandMap, directCallables, resolveVisibleVarType)
           const kind = arrayElemKindOf(info)
+          // text/bin 与 mapYcmdArrayElemValueParam 同策：先显式转到指针类型再堆拷贝存指针位模式。
+          // （原文本分支 `(intptr_t)yc_value_to_text(...)` 编不过——C 风格转换不肯把 YC_TEXT
+          //  连着经 operator const wchar_t*() 再转 intptr_t，故「文本数组[i] ＝ 值」一直是死路。）
           const valueExpr = kind === 'f64' ? `yc_f64_bits((double)(${rhsC}))`
-            : kind === 'text' ? `(long long)(intptr_t)yc_value_to_text(${rhsC})`
+            : kind === 'text' ? `(long long)(intptr_t)yc_wcsdup_text((const wchar_t*)yc_value_to_text(${rhsC}))`
+            : kind === 'bin' ? `(long long)(intptr_t)yc_bin_dup(${rhsC})`
             : `(long long)(${rhsC})`
           emitSubLine(`yc_ary_at(${idxAssignTarget.name}, ${linear}) = ${valueExpr};`)
           continue

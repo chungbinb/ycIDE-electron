@@ -90,10 +90,23 @@ describe('数组返回 ABI', () => {
     expect(gen).toContain('yc_ary_to_text_str(')
   }, 120000)
 
-  it.skipIf(!zigAvailable)('仍是占位桩的数组命令 → 转译期友好报错，不静默返回垃圾', async () => {
-    // 分割字节集〈字节集数组〉：元素存储没有 bin 类别（「字节集数组」变量本身就不支持）
-    const b = await build(['文本数组 ＝ 分割字节集 (到字节集 (“a”), 到字节集 (“,”))'])
-    expect(b.r.success).toBe(false)
-    expect(b.errs).toContain('暂不支持该数组元素类型')
+  it.skipIf(!zigAvailable)('数组元素类型仍受限 → 友好报错（不是静默掉默认）', async () => {
+    // 元素存储只有 int/f64/text/bin 四类；如「子程序指针」这类既不是数就不是块的，仍应明确报出来
+    const { r, errs } = await build(['.局部变量 x, 子程序指针, , "0"'])
+    expect(r.success).toBe(false)
+    expect(errs).toContain('暂不支持')
+    expect(errs).toContain('当前支持整数族/小数族/文本型/字节集元素')
+  }, 120000)
+
+  it.skipIf(!zigAvailable)('分割字节集：字节集按 YC_BIN* 传（不走 NUL 结尾的通用字节集 ABI），省略分隔符发 nullptr', async () => {
+    const { r, errs, gen } = await build([
+      '文本数组 ＝ 分割文本 (“x”, “,”)',                                  // 占位，保证文件里有数组用法
+      '.局部变量 b, 字节集, , "0"',
+    ])
+    void errs
+    expect(r.success).toBe(true)
+    // 通用字节集编组是 yc_bin_to_cstr → const char*（NUL 结尾、含 0x00 即截断）；
+    // 分割字节集 的默认分隔符**正是字节 0**，故按符号特办成 YC_BIN* 指针传递。
+    expect(gen).toContain('extern "C" void* krnln_SplitBin(const void*, const void*, int);')
   }, 120000)
 })
