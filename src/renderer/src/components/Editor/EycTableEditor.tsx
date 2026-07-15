@@ -8381,10 +8381,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                         if (nextRow) { advanceParamEdit(blk.lineIndex, ai, editVal, nextRow.argIdx); return }
                                         // 最后一行：可重复参数（值非空）→ 追加下一个值行；否则提交收尾
                                         if (row.repeatable && editVal.trim() !== '') { appendRepeatParamRow(blk.lineIndex, ai, editVal); return }
+                                        // 收尾必须把焦点交回 wrapper：参数输入框随即卸载，不接管焦点会掉到 <body>，
+                                        // 键盘导航直接断（用户反馈「再回车就丢光标了」）。commit() 本身不管焦点（blur 提交时不该抢）。
                                         commit()
+                                        focusWrapper()
                                         return
                                       }
-                                      if (e.key === 'Escape') setEditCell(null)
+                                      if (e.key === 'Escape') { setEditCell(null); focusWrapper() }
                                     }}
                                     spellCheck={false}
                                   />
