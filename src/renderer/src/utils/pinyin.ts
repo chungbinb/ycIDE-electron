@@ -5,30 +5,33 @@
 
 import { pinyin } from 'pinyin-pro'
 
-// 缓存已查询过的汉字拼音，避免重复调用
-const pinyinCache = new Map<string, string>()
+// 缓存已查询过的汉字读音，避免重复调用
+const pinyinCache = new Map<string, string[]>()
 
 /**
- * 获取一个汉字的拼音（无声调，小写）
+ * 获取一个汉字的**全部**读音（无声调、小写，首项为常用音）；非汉字 → 空数组。
+ *
+ * 【为什么必须取全部读音】此前只取 `[0]`（常用音），多音字就只认一个读法：
+ * `换行符` 的「行」常用音是 xíng，于是只有 `hxf` 能匹配——可这个词里「行」实际读 háng，
+ * 用户敲 `hhf`（正确读法！）反而匹配不上。补全匹配要的是宽容：任一读音命中即算命中。
  */
-function getCharPinyin(ch: string): string {
+function getCharPinyins(ch: string): string[] {
   const cached = pinyinCache.get(ch)
   if (cached !== undefined) return cached
-  if (!/[\u4e00-\u9fff]/.test(ch)) {
-    pinyinCache.set(ch, '')
-    return ''
+  let out: string[] = []
+  if (/[\u4e00-\u9fff]/.test(ch)) {
+    // 去重且保序（pinyin-pro 的首项是常用音）
+    out = [...new Set(pinyin(ch, { toneType: 'none', multiple: true, type: 'array' }).filter(Boolean))]
   }
-  const py = pinyin(ch, { toneType: 'none', type: 'array' })[0] || ''
-  pinyinCache.set(ch, py)
-  return py
+  pinyinCache.set(ch, out)
+  return out
 }
 
-/**
- * 获取一个汉字的拼音首字母
- */
-function getCharInitial(ch: string): string {
-  const py = getCharPinyin(ch)
-  return py ? py[0] : ''
+/** 一个汉字全部读音的首字母（去重）；非汉字 → 空数组 */
+function getCharInitials(ch: string): string[] {
+  const set = new Set<string>()
+  for (const py of getCharPinyins(ch)) set.add(py[0])
+  return [...set]
 }
 
 /**
@@ -103,20 +106,22 @@ function pinyinTokenMatchEnds(token: string, chars: string[], cPos: number): num
     if (pos >= chars.length) return
 
     const ch = chars[pos]
-    const py = getCharPinyin(ch)
+    const pys = getCharPinyins(ch)
 
-    if (!py) {
+    if (pys.length === 0) {
       if (token[iPos] === ch.toLowerCase()) dfs(iPos + 1, pos + 1)
       return
     }
 
-    // 首字母匹配
-    if (py[0] === token[iPos]) dfs(iPos + 1, pos + 1)
+    // 首字母匹配（多音字：任一读音的首字母命中即可）
+    if (getCharInitials(ch).includes(token[iPos])) dfs(iPos + 1, pos + 1)
 
-    // 全拼前缀匹配（允许 1..py.length，支持如 "s" / "sh" / "shu"）
-    for (let len = py.length; len >= 1; len--) {
-      if (iPos + len <= token.length && token.slice(iPos, iPos + len) === py.slice(0, len)) {
-        dfs(iPos + len, pos + 1)
+    // 全拼前缀匹配（允许 1..py.length，支持如 "s" / "sh" / "shu"）——逐个读音试
+    for (const py of pys) {
+      for (let len = py.length; len >= 1; len--) {
+        if (iPos + len <= token.length && token.slice(iPos, iPos + len) === py.slice(0, len)) {
+          dfs(iPos + len, pos + 1)
+        }
       }
     }
   }
@@ -177,24 +182,26 @@ function matchFrom(input: string, iPos: number, chars: string[], cPos: number): 
   if (cPos >= chars.length) return false
 
   const ch = chars[cPos]
-  const py = getCharPinyin(ch)
+  const pys = getCharPinyins(ch)
 
-  if (!py) {
+  if (pys.length === 0) {
     if (ch.toLowerCase() === input[iPos]) {
       return matchFrom(input, iPos + 1, chars, cPos + 1)
     }
     return false
   }
 
-  // 尝试首字母匹配
-  if (py[0] === input[iPos]) {
+  // 尝试首字母匹配（多音字：任一读音的首字母命中即可）
+  if (getCharInitials(ch).includes(input[iPos])) {
     if (matchFrom(input, iPos + 1, chars, cPos + 1)) return true
   }
 
-  // 尝试全拼前缀匹配（贪心）
-  for (let len = py.length; len >= 2; len--) {
-    if (iPos + len <= input.length && input.slice(iPos, iPos + len) === py.slice(0, len)) {
-      if (matchFrom(input, iPos + len, chars, cPos + 1)) return true
+  // 尝试全拼前缀匹配（贪心）——逐个读音试
+  for (const py of pys) {
+    for (let len = py.length; len >= 2; len--) {
+      if (iPos + len <= input.length && input.slice(iPos, iPos + len) === py.slice(0, len)) {
+        if (matchFrom(input, iPos + len, chars, cPos + 1)) return true
+      }
     }
   }
 
@@ -215,42 +222,49 @@ function matchFromCoverage(input: string, iPos: number, chars: string[], cPos: n
   if (cPos >= chars.length) return -1
 
   const ch = chars[cPos]
-  const py = getCharPinyin(ch)
+  const pys = getCharPinyins(ch)
 
-  if (!py) {
+  if (pys.length === 0) {
     if (ch.toLowerCase() === input[iPos]) {
       return matchFromCoverage(input, iPos + 1, chars, cPos + 1)
     }
     return -1
   }
 
-  // 尝试首字母匹配
-  if (py[0] === input[iPos]) {
+  // 尝试首字母匹配（多音字：任一读音的首字母命中即可）
+  if (getCharInitials(ch).includes(input[iPos])) {
     const r = matchFromCoverage(input, iPos + 1, chars, cPos + 1)
     if (r >= 0) return r
   }
 
-  // 尝试全拼前缀匹配（贪心）
-  for (let len = py.length; len >= 2; len--) {
-    if (iPos + len <= input.length && input.slice(iPos, iPos + len) === py.slice(0, len)) {
-      const r = matchFromCoverage(input, iPos + len, chars, cPos + 1)
-      if (r >= 0) return r
+  // 尝试全拼前缀匹配（贪心）——逐个读音试
+  for (const py of pys) {
+    for (let len = py.length; len >= 2; len--) {
+      if (iPos + len <= input.length && input.slice(iPos, iPos + len) === py.slice(0, len)) {
+        const r = matchFromCoverage(input, iPos + len, chars, cPos + 1)
+        if (r >= 0) return r
+      }
     }
   }
 
   return -1
 }
 
-// 候选名 → 拼音首字母串缓存（补全打分会在每次按键时对全部候选调用）
-const initialsCache = new Map<string, string>()
-
-function getInitials(name: string): string {
-  let cached = initialsCache.get(name)
-  if (cached === undefined) {
-    cached = [...name].map(getCharInitial).join('')
-    initialsCache.set(name, cached)
+/**
+ * 输入是否为 name 的「拼音首字母串」（逐字 1:1 对齐）。
+ * 此前是把整名的首字母拼成一个串再 ===/startsWith——多音字只能取一个读法（`换行符` 恒为 hxf，
+ * 敲 hhf 落空）。改成逐字比对：**任一读音的首字母命中即可**，且不匹配立即短路
+ * （比原来每次按键对每个候选构整串更快，故不再需要 initialsCache）。
+ */
+function initialsMatch(input: string, name: string): 'exact' | 'prefix' | null {
+  const chars = [...name]
+  if (input.length > chars.length) return null
+  for (let i = 0; i < input.length; i++) {
+    const inits = getCharInitials(chars[i])
+    const ok = inits.length > 0 ? inits.includes(input[i]) : chars[i].toLowerCase() === input[i]
+    if (!ok) return null
   }
-  return cached
+  return input.length === chars.length ? 'exact' : 'prefix'
 }
 
 /**
@@ -264,8 +278,8 @@ function canPinyinAnchorAtStart(lowerInput: string, cmdName: string): boolean {
   if (firstCp === undefined) return false
   const first = String.fromCodePoint(firstCp)
   if (/[a-z]/.test(f)) {
-    const py = getCharPinyin(first)
-    if (py) return py[0] === f
+    const inits = getCharInitials(first)
+    if (inits.length > 0) return inits.includes(f)
     return first.toLowerCase() === f
   }
   return first === f || first.toLowerCase() === f
@@ -285,9 +299,9 @@ export function matchScore(input: string, cmdName: string, cmdEnglishName: strin
 
   // 拼音匹配（中优先级）。首字母串仅由 a-z 组成，输入不含小写字母时不可能命中。
   if (/[a-z]/.test(lower)) {
-    const initials = getInitials(cmdName)
-    if (initials === lower) return 70
-    if (initials.startsWith(lower)) return 65
+    const m = initialsMatch(lower, cmdName)
+    if (m === 'exact') return 70
+    if (m === 'prefix') return 65
   }
 
   if (canPinyinAnchorAtStart(lower, cmdName)) {
