@@ -125,10 +125,13 @@ const api = {
     isRunning: () => ipcRenderer.invoke('compiler:isRunning') as Promise<boolean>,
   },
   terminal: {
-    start: () => ipcRenderer.invoke('terminal:start') as Promise<{ running: boolean; output: string[]; commands: string[]; lastCommand: string }>,
+    start: () => ipcRenderer.invoke('terminal:start') as Promise<{ running: boolean; output: string[]; commands: string[]; lastCommand: string; seq: number }>,
     send: (command: string) => ipcRenderer.invoke('terminal:send', command) as Promise<{ ok: boolean; error?: string }>,
+    // 交互式原始输入（xterm 按键/粘贴透传）与尺寸同步：高频，用 send 免 invoke 往返开销。
+    input: (data: string) => ipcRenderer.send('terminal:input', data),
+    resize: (cols: number, rows: number) => ipcRenderer.send('terminal:resize', cols, rows),
     interrupt: () => ipcRenderer.invoke('terminal:interrupt') as Promise<{ ok: boolean; error?: string }>,
-    getSnapshot: () => ipcRenderer.invoke('terminal:getSnapshot') as Promise<{ running: boolean; output: string[]; commands: string[]; lastCommand: string }>,
+    getSnapshot: () => ipcRenderer.invoke('terminal:getSnapshot') as Promise<{ running: boolean; output: string[]; commands: string[]; lastCommand: string; seq: number }>,
     getLastCommand: () => ipcRenderer.invoke('terminal:getLastCommand') as Promise<string>,
   },
   // 支持库管理

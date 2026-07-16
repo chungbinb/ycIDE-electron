@@ -88,6 +88,7 @@ import {
   rebuildLineField,
   rebuildLineFlagField,
   splitDebugRenderableText,
+  findControlMethodCompletion,
 } from './editorCoreUtils'
 import type { CompletionItem, CompletionParam } from './editorCoreUtils'
 import { buildCompletionCatalog } from './editorCompletionCatalogUtils'
@@ -428,6 +429,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const paramSelAnchorRef = useRef<number | null>(null)  // 上次点选的 argIdx，供 Shift 连选
   // 展开参数行「按住左键拖动跨行多选」：mousedown 记锚点，mousemove 过阈值转拖选、按 argIdx 连选
   const paramDragRef = useRef<{ lineIndex: number; anchorArg: number; startX: number; startY: number; active: boolean } | null>(null)
+  // 在「正在编辑的参数行」上按下左键：不能直接抢成拖选（输入框要落光标/选文字），
+  // 先记待定；等鼠标拖出该输入框边界再转成参数行拖选（照 pendingInputDragRef 的既有套路）。
+  const pendingParamDragRef = useRef<{ lineIndex: number; anchorArg: number; x: number; y: number } | null>(null)
   const suppressParamClickRef = useRef(false)  // 拖选刚结束时吞掉随后的 click，避免误进入编辑
 
   // 悬停命令说明窗（照易语言）：鼠标停在命令名上稍候弹出签名+解释的浮动提示
@@ -1314,6 +1318,21 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   // mousemove 和 mouseup 全局监听
   useEffect(() => {
     const onMove = (e: MouseEvent): void => {
+      // 在正在编辑的参数行上按下左键起的「待定拖选」：鼠标一旦拖出该参数输入框边界，就转成参数行拖选。
+      // （按下当时不能抢——那会夺走输入框的落光标/选文字；拖出去了才说明用户是要跨行多选。）
+      if (!paramDragRef.current && pendingParamDragRef.current) {
+        const pp = pendingParamDragRef.current
+        const inputEl = paramInputRef.current
+        let outside = true
+        if (inputEl) {
+          const r = inputEl.getBoundingClientRect()
+          outside = e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom
+        }
+        if (outside) {
+          paramDragRef.current = { lineIndex: pp.lineIndex, anchorArg: pp.anchorArg, startX: pp.x, startY: pp.y, active: false }
+          pendingParamDragRef.current = null
+        }
+      }
       // 展开参数行拖选：优先处理（param mousedown 已 stopPropagation，故行拖选相关 ref 未激活）
       if (paramDragRef.current) {
         const pd = paramDragRef.current
@@ -1406,6 +1425,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
     }
     const onUp = (e: MouseEvent): void => {
+      pendingParamDragRef.current = null  // 没拖出输入框就松手＝普通点击/框选文字，待定作废
       if (paramDragRef.current) {
         const wasActive = paramDragRef.current.active
         paramDragRef.current = null
@@ -3474,9 +3494,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             break
           }
         }
-        // 对象.方法（项目类公开方法）同样支持参数展开
+        // 对象.方法（项目类公开方法 / 控件方法如 编辑框1.加入文本）同样支持参数展开
         if (span.cls === 'funccolor' || span.cls === 'cometwolr') {
-          const clsMethod = findProjectClassMethodByName(span.text)
+          const clsMethod = findProjectClassMethodByName(span.text) || findControlMethodCompletion(span.text)
           if (clsMethod && clsMethod.params.length > 0) {
             lineCmd = clsMethod
             break
@@ -7089,9 +7109,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         const cmd = allCommandsRef.current.find(c => c.name === s.text) || dllCompletionItemsRef.current.find(c => c.name === s.text)
         if (cmd && cmd.params.length > 0) return cmd
       }
-      // 对象.方法（项目类公开方法）同样支持参数展开
+      // 对象.方法（项目类公开方法 / 控件方法如 编辑框1.加入文本）同样支持参数展开
       if (s.cls === 'funccolor' || s.cls === 'cometwolr') {
-        const clsMethod = findProjectClassMethodByName(s.text)
+        const clsMethod = findProjectClassMethodByName(s.text) || findControlMethodCompletion(s.text)
         if (clsMethod && clsMethod.params.length > 0) return clsMethod
       }
     }
@@ -7107,7 +7127,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (!cmdName) return null
     const cmd = allCommandsRef.current.find(c => c.name === cmdName)
       || dllCompletionItemsRef.current.find(c => c.name === cmdName)
-      || ((cmdName.includes('.') || cmdName.includes('。') || cmdName.includes('．')) ? findProjectClassMethodByName(cmdName) : null)
+      || ((cmdName.includes('.') || cmdName.includes('。') || cmdName.includes('．'))
+        ? (findProjectClassMethodByName(cmdName) || findControlMethodCompletion(cmdName))
+        : null)
     if (!cmd || cmd.params.length === 0) return null
     const args = parseCallArgs(normalized)
     return { cmd, args }
@@ -7466,6 +7488,36 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setEditVal(nextArgs[nextArgIdx] !== undefined ? nextArgs[nextArgIdx] : '')
     focusParamInputAt()
   }, [applyTextChange, pushUndo, formatParamOperators, focusParamInputAt])
+
+  // 参数行编辑收尾（最后一个参数行按回车）：写回本槽后把光标落到**下一代码行**继续编辑。
+  // 不能只退编辑态——参数输入框随即卸载、没人接管焦点就掉到 <body>，键盘导航直接断（用户反馈「丢光标」）。
+  // 写回策略照 advanceParamEdit：仅当值真改动才写，穿行不重格式化未触碰的实参。
+  const finishParamEditToNextLine = useCallback((lineIndex: number, argIdx: number, currentVal: string) => {
+    const ls = prevRef.current.split('\n')
+    const codeLine = ls[lineIndex]
+    if (codeLine === undefined) return
+    suppressBlurCommitUntilRef.current = Date.now() + 250
+    if (liveUpdateTimerRef.current != null) { window.clearTimeout(liveUpdateTimerRef.current); liveUpdateTimerRef.current = null }
+    pendingLiveUpdateValRef.current = null
+    const origArg = parseCallArgs(codeLine)[argIdx] ?? ''
+    if (currentVal !== origArg) {
+      const written = replaceCallArg(codeLine, argIdx, formatParamOperators(balanceArgParens(currentVal)))
+      if (written !== codeLine) {
+        pushUndo(prevRef.current)
+        ls[lineIndex] = written
+        applyTextChange(ls.join('\n'))
+      }
+    }
+    setAcVisible(false)
+    const nextLi = lineIndex + 1
+    if (nextLi < ls.length) {
+      beginCodeLineEdit(nextLi, ls[nextLi] ?? '')
+      focusCodeInputAt(0)
+      return
+    }
+    setEditCell(null)   // 已是最后一行：无处可落，至少把焦点交回 wrapper 而不是 <body>
+    focusWrapper()
+  }, [applyTextChange, pushUndo, formatParamOperators, beginCodeLineEdit, focusCodeInputAt, focusWrapper])
 
   useEffect(() => {
     return () => {
@@ -8285,6 +8337,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           if (e.ctrlKey || e.metaKey) {
                             e.stopPropagation()
                             setEditCell(null)
+                            focusWrapper()  // 退编辑后输入框卸载：焦点须交回 wrapper（否则掉 <body>），Delete 才稳定删选中实参
                             setSelectedLines(prev => (prev.size === 0 ? prev : new Set()))
                             setSelectedParamRows(prev => {
                               const base = prev && prev.lineIndex === blk.lineIndex ? new Set(prev.argIdxs) : new Set<number>()
@@ -8297,6 +8350,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           if (e.shiftKey && paramSelAnchorRef.current != null) {
                             e.stopPropagation()
                             setEditCell(null)
+                            focusWrapper()
                             setSelectedLines(prev => (prev.size === 0 ? prev : new Set()))
                             const lo = Math.min(paramSelAnchorRef.current, ai), hi = Math.max(paramSelAnchorRef.current, ai)
                             const set = new Set<number>()
@@ -8318,14 +8372,25 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                               onMouseDown={(e) => {
                                 suppressParamClickRef.current = false  // 清掉上一次拖选可能残留的吞点击标记
                                 if (e.ctrlKey || e.metaKey || e.shiftKey) { e.stopPropagation(); e.preventDefault(); return }
-                                if (isEditingParam || e.button !== 0) return
+                                if (e.button !== 0) return
+                                if (isEditingParam) {
+                                  // 正在编辑的行：不抢 mousedown（输入框要落光标/选文字），只记待定拖选；
+                                  // 拖出输入框边界后由全局 mousemove 转成参数行多选（用户反馈：焦点在这行时拖不动多选）。
+                                  pendingParamDragRef.current = { lineIndex: blk.lineIndex, anchorArg: ai, x: e.clientX, y: e.clientY }
+                                  return
+                                }
                                 // 普通左键：阻止冒泡到行 mousedown（否则起整行拖选/乐观进代码行编辑），记录拖选锚点。
                                 // stopPropagation 跳过了行 mousedown 的提交、preventDefault 又压掉失焦提交，故此处显式提交活跃编辑。
                                 e.stopPropagation(); e.preventDefault()
                                 if (editCellRef.current) commitRef.current()
                                 paramDragRef.current = { lineIndex: blk.lineIndex, anchorArg: ai, startX: e.clientX, startY: e.clientY, active: false }
                               }}
-                              onClick={isEditingParam ? undefined : onParamRowClick}
+                              // 正在编辑的行只接管 Ctrl/Shift 多选，普通点击留给输入框落光标（不重启编辑）。
+                              // 此前整个置 undefined → 焦点停在某参数行时该行选不中（用户反馈：回车新增的空行想选中删掉却选不了）。
+                              onClick={(e) => {
+                                if (isEditingParam && !(e.ctrlKey || e.metaKey || e.shiftKey)) return
+                                onParamRowClick(e)
+                              }}
                             >
                               {showExprFold && (
                                 <span
@@ -8372,16 +8437,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                       if (isTopLevelComma) { e.preventDefault(); return }
                                       if (e.key === 'Enter') {
                                         e.preventDefault()
-                                        // 连续回车：本行不是最后一个参数行 → 提交本行并前进到下一参数行继续编辑
+                                        // 可重复参数：回车恒追加下一个值行——**不管当前值空不空**（照易语言「重复添加」，
+                                        // 用户明确要求：可重复的就一直回车一直加；要退出用 Esc/点别处）。
+                                        if (row.repeatable) { appendRepeatParamRow(blk.lineIndex, ai, editVal); return }
+                                        // 不可重复：本行不是最后一个参数行 → 提交本行并前进到下一参数行继续编辑
                                         const curPos = paramRows.findIndex(r => r.argIdx === ai)
                                         const nextRow = curPos >= 0 ? paramRows[curPos + 1] : undefined
                                         if (nextRow) { advanceParamEdit(blk.lineIndex, ai, editVal, nextRow.argIdx); return }
-                                        // 最后一行：可重复参数（值非空）→ 追加下一个值行；否则提交收尾
-                                        if (row.repeatable && editVal.trim() !== '') { appendRepeatParamRow(blk.lineIndex, ai, editVal); return }
-                                        commit()
+                                        // 最后一个参数行 → 收尾并把光标落到下一代码行（不能只退编辑，否则焦点掉 <body>）
+                                        finishParamEditToNextLine(blk.lineIndex, ai, editVal)
                                         return
                                       }
-                                      if (e.key === 'Escape') setEditCell(null)
+                                      if (e.key === 'Escape') { setEditCell(null); focusWrapper() }
                                     }}
                                     spellCheck={false}
                                   />

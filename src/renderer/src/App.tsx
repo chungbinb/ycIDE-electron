@@ -18,6 +18,7 @@ import SettingsDialog from './components/SettingsDialog/SettingsDialog'
 import AIAssistantPanel from './components/AIAssistantPanel/AIAssistantPanel'
 import type { SelectionTarget, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
+import { resolveControlMethodDetail } from './components/Editor/editorCoreUtils'
 import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
 import { mountIdeActionLogger } from './utils/ideActionLogger'
 import {
@@ -803,7 +804,7 @@ function App(): React.JSX.Element {
   const [themeSaveFeedback, setThemeSaveFeedback] = useState<string | null>(null)
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
   const [outputMessages, setOutputMessages] = useState<OutputMessage[]>([])
-  const [terminalOutputLines, setTerminalOutputLines] = useState<string[]>([])
+  // 终端输出不再在 App 层累积（避免每块输出触发全量重渲染）；xterm 由 OutputPanel 直连 PTY。
   const [terminalCommands, setTerminalCommands] = useState<string[]>([])
   const [terminalRunning, setTerminalRunning] = useState(false)
   const aiActiveChatRequestIdsRef = useRef<Set<string>>(new Set())
@@ -1133,24 +1134,16 @@ function App(): React.JSX.Element {
         const snapshot = await window.api?.terminal?.getSnapshot()
         if (!snapshot) return
         setTerminalRunning(!!snapshot.running)
-        setTerminalOutputLines(Array.isArray(snapshot.output) ? snapshot.output : [])
         setTerminalCommands(Array.isArray(snapshot.commands) ? snapshot.commands : [])
       } catch {
         // ignore terminal snapshot failure
       }
     })()
 
-    const handleTerminalOutput = (text: unknown): void => {
-      if (typeof text !== 'string' || !text) return
-      setTerminalOutputLines(prev => {
-        const next = [...prev, text]
-        if (next.length > 2000) return next.slice(next.length - 2000)
-        return next
-      })
-      setTerminalRunning(true)
-    }
+    // 实时输出由 OutputPanel 的 xterm 直接订阅 terminal:output；App 只跟踪状态栏用的命令历史与运行态。
     const handleTerminalCommand = (command: unknown): void => {
       if (typeof command !== 'string' || !command.trim()) return
+      setTerminalRunning(true)
       setTerminalCommands(prev => {
         const next = [...prev, command.trim()]
         if (next.length > 500) return next.slice(next.length - 500)
@@ -1161,11 +1154,9 @@ function App(): React.JSX.Element {
       setTerminalRunning(false)
     }
 
-    window.api.on('terminal:output', handleTerminalOutput)
     window.api.on('terminal:command', handleTerminalCommand)
     window.api.on('terminal:exit', handleTerminalExit)
     return () => {
-      window.api.off('terminal:output')
       window.api.off('terminal:command')
       window.api.off('terminal:exit')
     }
@@ -1200,7 +1191,6 @@ function App(): React.JSX.Element {
       const snapshot = await window.api?.terminal?.start()
       if (!snapshot) return
       setTerminalRunning(!!snapshot.running)
-      setTerminalOutputLines(Array.isArray(snapshot.output) ? snapshot.output : [])
       setTerminalCommands(Array.isArray(snapshot.commands) ? snapshot.commands : [])
     } catch {
       // ignore terminal activation failure
@@ -1537,11 +1527,18 @@ function App(): React.JSX.Element {
       commandCacheRef.current.set(name, detail)
       setCommandDetail(detail)
     } else {
-      const projectDllDetail = await findProjectDllDetail(name, currentProjectDirRef.current, openTabsRef.current || [], joinPath)
-      if (projectDllDetail) {
-        setCommandDetail(projectDllDetail)
+      // 控件方法（编辑框.加入文本 等）：库命令目录里没有，查编辑器补全真源 CONTROL_TYPE_METHODS 补出签名
+      const ctrlMethodDetail = resolveControlMethodDetail(name)
+      if (ctrlMethodDetail) {
+        commandCacheRef.current.set(name, ctrlMethodDetail)
+        setCommandDetail(ctrlMethodDetail)
       } else {
-        setCommandDetail({ name, englishName: '', description: NOT_FOUND_DESC, returnType: '', category: '', libraryName: '', params: [] })
+        const projectDllDetail = await findProjectDllDetail(name, currentProjectDirRef.current, openTabsRef.current || [], joinPath)
+        if (projectDllDetail) {
+          setCommandDetail(projectDllDetail)
+        } else {
+          setCommandDetail({ name, englishName: '', description: NOT_FOUND_DESC, returnType: '', category: '', libraryName: '', params: [] })
+        }
       }
     }
     setShowOutput(true)
@@ -4522,7 +4519,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.5-beta.6（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.5-beta.10（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -5671,7 +5668,6 @@ function App(): React.JSX.Element {
               onDebugContinue={handleDebugContinueClick}
               forceTab={forceOutputTab}
               onProblemClick={handleProblemClick}
-              terminalOutput={terminalOutputLines}
               terminalRunning={terminalRunning}
               terminalLastCommand={terminalCommands.length > 0 ? terminalCommands[terminalCommands.length - 1] : ''}
               onTerminalSend={handleTerminalSend}

@@ -245,7 +245,7 @@ describe('控件成员声明式派发', () => {
     rmSync(dir, { recursive: true, force: true })
   }, 120000)
 
-  it.skipIf(!zigAvailable)('标签/选择框显式白色背景进运行时颜色表(白=白)，未设背景不进表(默认融入)', async () => {
+  it.skipIf(!zigAvailable)('标签/选择框背景颜色进运行时颜色表(白=白/黑=黑)，未设背景默认白色也进表(beta.6)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ycide-whitebg-'))
     writeFileSync(join(dir, 'p.epp'), [
       '# YiCode Project File', 'Version=1', 'ProjectName=白底验证',
@@ -270,9 +270,31 @@ describe('控件成员声明式派发', () => {
 
     const mainCpp = readFileSync(join(dir, 'temp', 'main.cpp'), 'utf-8')
     expect(mainCpp).toContain('{ IDC_白标, (COLORREF)0, (COLORREF)16777215, NULL, 0 }')  // 显式白 → 进表画白
-    expect(mainCpp).not.toContain('IDC_素标, (COLORREF)')                                  // 未设 → 不进表(融入窗口)
+    expect(mainCpp).toContain('{ IDC_素标, (COLORREF)0, (COLORREF)16777215, NULL, 0 }')   // 未设 → beta.6 默认白 → 进表画白(此前 -1 融入窗口不进表)
     expect(mainCpp).toContain('{ IDC_白选, (COLORREF)0, (COLORREF)16777215, NULL, 0 }')  // 选择框同款
     expect(mainCpp).toContain('{ IDC_黑标, (COLORREF)0, (COLORREF)0, NULL, 0 }')          // 显式纯黑(0)进表画黑(默认哨兵是 -1 不是 0)
+    rmSync(dir, { recursive: true, force: true })
+  }, 120000)
+
+  it.skipIf(!zigAvailable)('空窗口(无控件/无命令)也能链接：窗口程序无条件依赖 krnln 运行时', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ycide-emptywin-'))
+    writeFileSync(join(dir, 'p.epp'), [
+      '# YiCode Project File', 'Version=1', 'ProjectName=空窗口链接验证',
+      'OutputType=WindowsApp', 'Platform=windows', '',
+      'File=EFW|_启动窗口.efw|1', 'File=EYC|_启动窗口.eyc|0', '',
+    ].join('\n'), 'utf-8')
+    // 空窗口：无控件
+    writeFileSync(join(dir, '_启动窗口.efw'), JSON.stringify({
+      name: '_启动窗口', title: '窗口', width: 400, height: 300, sourceFile: '_启动窗口.eyc', controls: [],
+    }), 'utf-8')
+    // 空事件：什么都不做（新建项目直接运行的场景）
+    writeFileSync(join(dir, '_启动窗口.eyc'), ['.版本 2', '.程序集 窗口程序集_启动窗口', '', '.子程序 __启动窗口_创建完毕', ''].join('\n'), 'utf-8')
+
+    const before = messages.length
+    const result = await compileProject({ projectDir: dir, mode: 'run' })
+    const errors = messages.slice(before).filter(m => m.type === 'error').map(m => m.text).join('\n')
+    expect(result.success, `编译失败：\n${errors}`).toBe(true)     // 曾因 krnln 未链接而 undefined symbol
+    expect(existsSync(result.outputFile)).toBe(true)
     rmSync(dir, { recursive: true, force: true })
   }, 120000)
 
@@ -305,8 +327,8 @@ describe('控件成员声明式派发', () => {
     expect(err1).toContain('_启动窗口.eyc:')   // 带 文件:行号 定位
     rmSync(dir1, { recursive: true, force: true })
 
-    // 方法调用：编辑框.加入文本 无绑定（补全侧有、编译侧无的已知缺口）
-    const dir2 = mkProj(['编辑框1.加入文本 (“x”)'])
+    // 方法调用：标签.加入文本 无绑定（加入文本 只绑定到编辑框；标签上调用 → 友好报错）
+    const dir2 = mkProj(['标签1.加入文本 (“x”)'])
     before = messages.length
     const r2 = await compileProject({ projectDir: dir2, mode: 'run' })
     expect(r2.success).toBe(false)
@@ -314,4 +336,50 @@ describe('控件成员声明式派发', () => {
     expect(err2).toContain('暂不支持在代码中调用')
     rmSync(dir2, { recursive: true, force: true })
   }, 180000)
+
+  it.skipIf(!zigAvailable)('编辑框.加入文本 方法经声明式绑定派发并可编译(beta.7)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ycide-append-'))
+    writeFileSync(join(dir, 'p.epp'), [
+      '# YiCode Project File', 'Version=1', 'ProjectName=加入文本验证',
+      'OutputType=WindowsApp', 'Platform=windows', '',
+      'File=EFW|_启动窗口.efw|1', 'File=EYC|_启动窗口.eyc|0', '',
+    ].join('\n'), 'utf-8')
+    writeFileSync(join(dir, '_启动窗口.efw'), JSON.stringify({
+      name: '_启动窗口', title: '窗口', width: 400, height: 300, sourceFile: '_启动窗口.eyc',
+      controls: [
+        { id: 'c1', type: '编辑框', name: '编辑框1', left: 10, top: 10, width: 200, height: 120, text: '', visible: true, enabled: true, properties: {} },
+      ],
+    }), 'utf-8')
+    writeFileSync(join(dir, '_启动窗口.eyc'), [
+      '.版本 2', '.程序集 窗口程序集_启动窗口', '',
+      '.子程序 __启动窗口_创建完毕',
+      '.局部变量 a, 文本型',
+      'a ＝ “日志”',
+      '编辑框1.加入文本 (a)',
+      '编辑框1.加入文本 (“ 直接量”)',
+      '编辑框1.加入文本 (“甲”, “乙”, a)',   // 尾参可重复：一次加入多个，全部都要追加（不得静默丢弃）
+      '编辑框1.加入文本 (“丙”, )',          // 展开参数行回车会在源码留尾部空实参，空值不得发调用
+      '',
+    ].join('\n'), 'utf-8')
+
+    const before = messages.length
+    const result = await compileProject({ projectDir: dir, mode: 'run' })
+    const errors = messages.slice(before).filter(m => m.type === 'error').map(m => m.text).join('\n')
+    expect(result.success, `编译失败：\n${errors}`).toBe(true)
+    expect(existsSync(result.outputFile)).toBe(true)
+
+    const gen = readFileSync(join(dir, 'temp', '_启动窗口.cpp'), 'utf-8')
+    expect(gen).toContain('krnln_ctrl_append_text(')                       // 加入文本 → 声明式 helper
+    expect(gen).toContain('yc_get_control_handle_by_name(L"编辑框1")')      // {h} 占位展开
+    // 尾参可重复：三个值各发一次调用、逗号表达式串起来（旧的 {0} 模板会把「乙」「a」静默丢掉）
+    const multi = gen.split('\n').find(l => l.includes('甲'))
+    expect(multi, '未找到多值加入文本的调用').toBeTruthy()
+    expect(multi).toContain('乙')
+    expect((multi!.match(/krnln_ctrl_append_text\(/g) || []).length, '三个值应各发一次调用').toBe(3)
+    // 尾部空实参（回车追加待填行）只发一次调用，不为空值发调用
+    const trailing = gen.split('\n').find(l => l.includes('丙'))
+    expect(trailing, '未找到尾部空实参的调用').toBeTruthy()
+    expect((trailing!.match(/krnln_ctrl_append_text\(/g) || []).length, '空实参不该发调用').toBe(1)
+    rmSync(dir, { recursive: true, force: true })
+  }, 120000)
 })

@@ -258,6 +258,9 @@ interface LibraryCompileProtocol {
   }>
   // 顶层控件成员【方法】绑定：unit=控件类型，member=方法名，call=C 表达式模板。
   // 模板占位 {h}=句柄、{n}=控件名 L"…"、{0}/{1|默认}/{args}=实参。返回文本的方法其 helper 名须在 isTextExpression 列出。
+  // callEach=「尾参可重复」方法用（如 编辑框.加入文本(a,b,c)）：逐个实参展开一次模板（占位 {arg}=当前实参），
+  // 用逗号表达式串成一个表达式 `(f(a), f(b), f(c))`。**不要改用变参 helper**——文本型实参是 YC_TEXT 对象，
+  // 过 C variadic 会 `cannot pass object of non-trivial type through variadic function` 编译错误（踩过）。
   controlMethodBindings?: Array<{
     library?: string
     unit?: string
@@ -265,6 +268,7 @@ interface LibraryCompileProtocol {
     member?: string
     memberEnglishName?: string
     call?: string
+    callEach?: string
   }>
   windowUnits?: Array<{
     name?: string
@@ -353,6 +357,8 @@ interface NormalizedControlMethodBinding {
   member: string
   memberEnglishName: string
   call: string
+  /** 尾参可重复的方法：逐实参展开一次（占位 {arg}），逗号表达式串起来。与 call 二选一。 */
+  callEach: string
 }
 
 interface LoadedCompileProtocols {
@@ -373,7 +379,9 @@ interface TranspileCacheFile {
   entries: Record<string, TranspileCacheEntry>
 }
 
-const TRANSPILE_CACHE_VERSION = 25
+// 29: 条件表达式括号配对修复 + 生成代码每行加 /*@eyc行号*/ 来源标记（旧缓存产物没有标记，报错回溯不到）
+// 30: ÷ 相除改生成双精度除法（旧产物里是截断的整数除法）+ 整体括号表达式改为递归翻译
+const TRANSPILE_CACHE_VERSION = 30
 
 interface BuildArtifactCacheFile {
   version: number
@@ -473,6 +481,11 @@ function localizeCompilerMessage(line: string): string {
     return `>>> 引用位置: ${referencedBy[1]}`
   }
 
+  const generatedSummary = text.match(/^(\d+)\s+(error|warning)s?\s+generated\.$/i)
+  if (generatedSummary) {
+    return `共 ${generatedSummary[1]} 个${generatedSummary[2].toLowerCase() === 'error' ? '错误' : '警告'}。`
+  }
+
   text = text.replace(/^lld-link:\s*error:\s*/i, '链接器错误: ')
   text = text.replace(/^lld-link:\s*warning:\s*/i, '链接器警告: ')
   text = text.replace(/^clang:\s*error:\s*/i, '编译器错误: ')
@@ -480,6 +493,170 @@ function localizeCompilerMessage(line: string): string {
   text = text.replace(/^zig:\s*error:\s*/i, '编译器错误: ')
   text = text.replace(/^zig:\s*warning:\s*/i, '编译器警告: ')
   return text
+}
+
+/* ============ C++ 编译诊断 → 易语言源码位置 + 中文说明 ============
+ *
+ * 易语言用户读不懂 clang 的英文诊断，且它指的是 temp/*.cpp（用户从没写过的中间产物）的行号。
+ * 这一层把 `_启动窗口.cpp:2164:9: error: …` 还原成「_启动窗口.eyc 第 152 行」+ 回显那行易语言
+ * 源码 + 中文说明；C++ 原文全量留给编译诊断日志。
+ *
+ * 行号映射靠生成代码每行开头的 /*@<eyc行号>*\/ 标记（appendSubLine 打上）。标记**留在 .cpp 文件
+ * 里**而不是转译完就剥掉，为的是：① 转译缓存命中时压根不重跑转译，映射必须能从产物自身恢复；
+ * ② 人工翻 temp/*.cpp 排查时能直接看出每行来自 .eyc 哪一行。
+ */
+
+const EYC_ORIGIN_MARK_RE = /^\/\*@(\d+)\*\//
+const EYC_GEN_HEADER_RE = /^\/\* 由 ycIDE 自动从 (.+?) 生成 \*\//
+// clang 诊断首行：<路径>:<行>:<列>: error|warning|note: <正文>
+const CLANG_DIAGNOSTIC_RE = /^(.*?):(\d+):(\d+):\s*(error|warning|note):\s*(.+)$/i
+// 诊断后跟的源码回显行（` 2164 |     if (…`）与插入符行（`      | ^~~~`）——展示的是用户没写过的 C++
+const CLANG_ECHO_RE = /^\s*(?:\d+\s*)?\|/
+
+type EycOrigin = { eycFileName: string; lineOf: Map<number, number> }
+
+// 每次编译重建：源码会变，缓存跨编译不能留
+const eycOriginCache = new Map<string, EycOrigin | null>()
+const activeEycSourceLines = new Map<string, string[]>()
+
+function resetCompileDiagnosticContext(): void {
+  eycOriginCache.clear()
+  activeEycSourceLines.clear()
+}
+
+// 从生成的 .cpp 里恢复「.cpp 行号 → .eyc 行号」映射
+function loadEycOrigin(cppPath: string): EycOrigin | null {
+  const cached = eycOriginCache.get(cppPath)
+  if (cached !== undefined) return cached
+
+  let origin: EycOrigin | null = null
+  try {
+    const lines = readFileSync(cppPath, 'utf-8').split('\n')
+    const header = lines[0]?.match(EYC_GEN_HEADER_RE)
+    if (header) {
+      const lineOf = new Map<number, number>()
+      let current = 0
+      for (let i = 0; i < lines.length; i++) {
+        const mark = lines[i].match(EYC_ORIGIN_MARK_RE)
+        if (mark) {
+          // 一条易语言语句可能摊成多行 C++，故标记之后的行继续归属它
+          current = Number(mark[1])
+        } else if (lines[i].startsWith('}')) {
+          // 顶格的 } 是子程序收尾：出了函数体就不再归属上一条语句
+          current = 0
+        }
+        if (current > 0) lineOf.set(i + 1, current)
+      }
+      origin = { eycFileName: header[1], lineOf }
+    }
+  } catch {
+    origin = null
+  }
+  eycOriginCache.set(cppPath, origin)
+  return origin
+}
+
+/**
+ * clang 诊断正文 → 中文说明 + 归咎方。
+ * 只覆盖实测见过/可预期的形态；命不中就返回 null 让调用方保留英文原文——瞎猜一句中文比留原文更糟。
+ *
+ * blame 的判据是「用户改自己的易语言代码能不能解决」：
+ *  - user   : 能。名字拼错、变量没声明。
+ *  - codegen: 不能。生成的 C++ 语法就不合法（用户再怎么写也写不出 lambda 转 bool 失败），必是 ycIDE 的锅。
+ *  - mixed  : 说不准。类型对不上通常是用户自己类型用错了（只是 ycIDE 没在转译期拦住），
+ *             但也可能是 ycIDE 编组错了。**不能**咬定「不是你的代码写错了」——那句话在这里多半是假的。
+ */
+type DiagnosticBlame = 'user' | 'codegen' | 'mixed'
+type TranslatedDiagnostic = { text: string; blame: DiagnosticBlame }
+
+function translateCppDiagnosticBody(body: string): TranslatedDiagnostic | null {
+  const undeclared = body.match(/use of undeclared identifier '(.+?)'/)
+  if (undeclared) {
+    const name = undeclared[1]
+    // 中日韩名字 = 用户自己写的标识符（变量/命令/流程语句名）；
+    // 纯 ASCII（krnln_Xxx 等）是 ycIDE 或支持库生成的符号，用户改不动
+    const byUser = /[㐀-䶿一-鿿가-힣぀-ヿ]/.test(name)
+    return byUser
+      ? { text: `找不到「${name}」这个变量或命令。请检查拼写、是否已经声明，以及流程语句名是否写对。`, blame: 'user' }
+      : { text: `生成的代码里用到了未声明的符号「${name}」。`, blame: 'codegen' }
+  }
+
+  if (/is not contextually convertible to 'bool'/.test(body)) {
+    return { text: '这一行的条件没能生成成合法的判断表达式。', blame: 'codegen' }
+  }
+  if (/^expected /.test(body)) {
+    return { text: `生成的 C++ 代码语法不完整（${body}）。`, blame: 'codegen' }
+  }
+
+  const noMember = body.match(/no member named '(.+?)' in '(.+?)'/)
+  if (noMember) {
+    return { text: `生成的代码在类型「${noMember[2]}」上取了不存在的成员「${noMember[1]}」。`, blame: 'codegen' }
+  }
+
+  // 以下都是「类型对不上」族：多半是用户自己类型用错了（转译期没拦住），少数是 ycIDE 编组错了。
+  // cType 是 C++ 类型名（int/wchar_t*/YC_TEXT…），对易语言用户没意义，故只报现象不报类型名。
+  const noMatch = body.match(/no matching function for call to '(.+?)'/)
+  if (noMatch) {
+    return { text: `调用「${noMatch[1]}」时，参数的个数或类型对不上。`, blame: 'mixed' }
+  }
+
+  if (/cannot initialize a parameter of type/.test(body)) {
+    return { text: '这一行传给命令的参数类型不对（比如该给数值的地方给了文本）。', blame: 'mixed' }
+  }
+
+  // clang 这条有好几种前缀形态，实测至少两种：
+  //   assigning to 'int' from incompatible type 'YC_TEXT'
+  //   incompatible pointer to integer conversion assigning to 'int' from 'const wchar_t *'
+  // 故只认中间的 assigning to … from，不锚定前缀。
+  if (/assigning to '.+?' from /.test(body)) {
+    return { text: '这一行赋值两边的类型不兼容（比如把文本赋给整数型变量）。', blame: 'mixed' }
+  }
+
+  if (/invalid operands to binary expression/.test(body)) {
+    return { text: '这一行运算符两边的类型不能这样运算（比如拿文本去做减法）。', blame: 'mixed' }
+  }
+
+  return null
+}
+
+function blameHint(blame: DiagnosticBlame | null): string {
+  if (blame === 'user') return '↳ 这一行需要你修改易语言代码。'
+  if (blame === 'codegen') return '↳ 这是 ycIDE 生成代码的问题，不是你的代码写错了，请反馈。'
+  if (blame === 'mixed') return '↳ 请先检查这一行的类型用得对不对；确认没问题的话就是 ycIDE 的问题，请反馈。'
+  // 没命中翻译规则 = 不知道谁的锅，就别装作知道。上面留的是 C++ 英文原文。
+  return '↳ ycIDE 还没认识这条错误。请先检查这一行的写法；确认没问题的话，把编译诊断日志一起反馈。'
+}
+
+/**
+ * 处理一行 zig/clang 输出：能定位回 .eyc 的就换成友好形态并返回 true（调用方不再发原文）。
+ * 定位不到（报错落在生成代码的公共前导部分、链接期错误等）返回 false，走原有的 localizeCompilerMessage。
+ */
+function reportFriendlyCppDiagnostic(line: string, kind: 'error' | 'warning'): boolean {
+  const matched = line.match(CLANG_DIAGNOSTIC_RE)
+  if (!matched) return false
+
+  const [, rawPath, cppLineText, , severity, body] = matched
+  if (severity.toLowerCase() !== kind) return false
+  if (!/\.cpp$/i.test(rawPath.trim())) return false
+
+  const origin = loadEycOrigin(rawPath.trim())
+  if (!origin) return false
+  const eycLine = origin.lineOf.get(Number(cppLineText))
+  if (!eycLine) return false
+
+  const label = kind === 'error' ? '错误' : '警告'
+  const type: CompileMessage['type'] = kind === 'error' ? 'error' : 'warning'
+  sendMessage({ type, text: `${label}: ${origin.eycFileName} 第 ${eycLine} 行` })
+
+  const sourceLine = activeEycSourceLines.get(origin.eycFileName)?.[eycLine - 1]
+  if (sourceLine !== undefined) {
+    sendMessage({ type, text: `  ${String(eycLine).padStart(4)} |  ${sourceLine.trim()}` })
+  }
+
+  const translated = translateCppDiagnosticBody(body)
+  sendMessage({ type, text: `  ${translated ? `↳ ${translated.text}` : `↳ ${body}`}` })
+  sendMessage({ type, text: `  ${blameHint(translated?.blame ?? null)}` })
+  return true
 }
 
 // 获取应用目录（开发模式下是项目根目录）
@@ -1365,16 +1542,16 @@ function parseControlMethodBindingsFromProtocol(content: string, libName: string
     return []
   }
   const result: NormalizedControlMethodBinding[] = []
-  const push = (library: string, unit: string, unitEn: string, member: string, memberEn: string, call: string): void => {
-    const c = (call || '').trim()
+  const push = (library: string, unit: string, unitEn: string, member: string, memberEn: string, call: string, callEach: string): void => {
+    const c = (call || '').trim(); const ce = (callEach || '').trim()
     const m = normalizeKey(member); const mEn = normalizeKey(memberEn)
     const u = normalizeKey(unit); const uEn = normalizeKey(unitEn)
-    if (!c || (!m && !mEn) || (!u && !uEn)) return
-    result.push({ library: normalizeKey(library || libName), unit: u, unitEnglishName: uEn, member: m, memberEnglishName: mEn, call: c })
+    if ((!c && !ce) || (!m && !mEn) || (!u && !uEn)) return
+    result.push({ library: normalizeKey(library || libName), unit: u, unitEnglishName: uEn, member: m, memberEnglishName: mEn, call: c, callEach: ce })
   }
   if (Array.isArray(json.controlMethodBindings)) {
     for (const b of json.controlMethodBindings) {
-      if (b && typeof b === 'object') push(b.library || libName, b.unit || '', b.unitEnglishName || '', b.member || '', b.memberEnglishName || '', b.call || '')
+      if (b && typeof b === 'object') push(b.library || libName, b.unit || '', b.unitEnglishName || '', b.member || '', b.memberEnglishName || '', b.call || '', b.callEach || '')
     }
   }
   // 就地形式：windowUnits[].methods[] 尚未在 schema 展开（留待需要），当前只读顶层数组。
@@ -1515,6 +1692,7 @@ function applyEmitTemplate(template: string, args: string[]): string {
 
 // 控件成员访问模板展开：{h}=控件句柄表达式、{v}=原始值 C 表达式、{vtext}=文本化值（非文本自动 yc_value_to_text）、
 // {n}=控件名 L"…"、{0..}/{args}=方法实参、{N|默认}=第 N 实参缺省时取「默认」字面量。属性 get 无值时 valueExpr 传 ''。
+// （尾参可重复的方法不在这里展开，走 controlMethodBindings 的 callEach：逐实参各展开一次模板。）
 // 注意：valueExpr 与 cArgs 均须为**已转译的 C 表达式**（调用方先跑 translateExpressionToC/tx），本函数不再二次转译。
 function applyMemberTemplate(template: string, handleExpr: string, valueExpr: string, cArgs: string[] = [], nameExpr = ''): string {
   const vtext = valueExpr
@@ -1533,20 +1711,21 @@ function applyMemberTemplate(template: string, handleExpr: string, valueExpr: st
     })
 }
 
-// 按（控件类型, 方法名）解析方法 call 模板；先精确类型、再回退通用 '*'。
-function resolveControlMethod(bindings: NormalizedControlMethodBinding[], unitType: string, method: string): string | null {
+// 按（控件类型, 方法名）解析方法绑定（call 或 callEach）；先精确类型、再回退通用 '*'。
+function resolveControlMethod(bindings: NormalizedControlMethodBinding[], unitType: string, method: string): NormalizedControlMethodBinding | null {
   if (bindings.length === 0) return null
   const ut = normalizeKey(unitType)
   const mb = normalizeKey(method)
   if (!ut || !mb) return null
   const memberMatches = (b: NormalizedControlMethodBinding) =>
     (!!b.member && b.member === mb) || (!!b.memberEnglishName && b.memberEnglishName === mb)
+  const hasTpl = (b: NormalizedControlMethodBinding) => !!b.call || !!b.callEach
   for (const b of bindings) {
     const unitMatch = (!!b.unit && b.unit === ut) || (!!b.unitEnglishName && b.unitEnglishName === ut)
-    if (unitMatch && memberMatches(b) && b.call) return b.call
+    if (unitMatch && memberMatches(b) && hasTpl(b)) return b
   }
   for (const b of bindings) {
-    if (b.unit === '*' && memberMatches(b) && b.call) return b.call
+    if (b.unit === '*' && memberMatches(b) && hasTpl(b)) return b
   }
   return null
 }
@@ -1561,10 +1740,21 @@ function translateControlMethodCall(call: { name: string; args: string[] }, tx: 
   if (!/^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(objName)) return null
   const type = resolveProjectControlType(objName)
   if (!type) return null
-  const tpl = resolveControlMethod(loadCompileProtocols().controlMethods, type, method)
-  if (!tpl) return null
+  const binding = resolveControlMethod(loadCompileProtocols().controlMethods, type, method)
+  if (!binding) return null
   const cArgs = (call.args || []).map(a => tx(a ?? '0'))
-  return applyMemberTemplate(tpl, `yc_get_control_handle_by_name(L"${escapeCString(objName)}")`, '', cArgs, `L"${escapeCString(objName)}"`)
+  const hExpr = `yc_get_control_handle_by_name(L"${escapeCString(objName)}")`
+  const nExpr = `L"${escapeCString(objName)}"`
+  // 尾参可重复（如 编辑框.加入文本(甲, 乙, 丙)）：逐实参展开一次模板、用逗号表达式串成单个表达式，
+  // 语义=依次执行。跳过空实参——展开参数行「回车追加下一个值行」会在源码里留下尾部空实参
+  // （如 `加入文本(“甲”,乙,)`，与 调试输出 同款），空值不该发调用；全空则发 ((void)0) 保持合法表达式。
+  if (binding.callEach) {
+    const eachArgs = (call.args || []).filter(a => (a ?? '').trim() !== '').map(a => tx(a))
+    if (eachArgs.length === 0) return '((void)0)'
+    const calls = eachArgs.map(a => applyMemberTemplate(binding.callEach.replace(/\{arg\}/g, () => a), hExpr, '', [a], nExpr))
+    return calls.length === 1 ? calls[0] : `(${calls.join(', ')})`
+  }
+  return applyMemberTemplate(binding.call, hExpr, '', cArgs, nExpr)
 }
 
 // 按（控件类型, 成员名）解析属性读写模板。控件类型全局唯一，故不按 library 过滤（与 resolveControlByProtocol 一致宽松）。
@@ -1881,7 +2071,7 @@ function buildStdLabelCodegen(extraProps: Record<string, unknown>): {
   const border = readIntProp(extraProps['边框'], 0)          // 0无 1凹入 2凸出 3浅凹 4镜框 5单线 6渐变镜框
   const effect = readIntProp(extraProps['效果'], 0)          // 0通常 1凹入 2凸出 3阴影 4透明
   const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], -1)  // -1=默认（不进颜色表，融入窗口）；0 是纯黑合法色，显式白/黑=真白/真黑
+  const backColor = readIntProp(extraProps['背景颜色'], 16777215)  // 默认白色（进颜色表填白，创建即白底不再融入窗口）；-1 兼容旧工程=融入窗口；0=纯黑；显式白/黑=真白/真黑
   const autoWrap = readBoolProp(extraProps['是否自动折行'], false)
   const parts = ['WS_CHILD', 'SS_NOTIFY']
   // 横向对齐：居中/右总是折行；左对齐时按「是否自动折行」选 SS_LEFT(折行)/SS_LEFTNOWORDWRAP(不折行)
@@ -1914,7 +2104,7 @@ function buildStdCheckableCodegen(extraProps: Record<string, unknown>, isRadio: 
   const leftText = readBoolProp(extraProps['标题居左'], false)
   const checked = readBoolProp(extraProps['选中'], false)
   const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], -1)  // -1=默认（不进颜色表，融入窗口）；0 是纯黑合法色，显式白/黑=真白/真黑
+  const backColor = readIntProp(extraProps['背景颜色'], 16777215)  // 默认白色（进颜色表填白，创建即白底不再融入窗口）；-1 兼容旧工程=融入窗口；0=纯黑；显式白/黑=真白/真黑
   const parts = ['WS_CHILD', 'WS_TABSTOP', isRadio ? 'BS_AUTORADIOBUTTON' : 'BS_AUTOCHECKBOX']
   if (pushLike) parts.push('BS_PUSHLIKE')
   if (flat) parts.push('BS_FLAT')
@@ -1934,7 +2124,7 @@ function buildStdGroupBoxCodegen(extraProps: Record<string, unknown>): {
 } {
   const hAlign = readIntProp(extraProps['对齐方式'], 0)  // 0左 1中 2右
   const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], -1)  // -1=默认（不进颜色表，融入窗口）；0 是纯黑合法色，显式白/黑=真白/真黑
+  const backColor = readIntProp(extraProps['背景颜色'], 16777215)  // 默认白色（进颜色表填白，创建即白底不再融入窗口）；-1 兼容旧工程=融入窗口；0=纯黑；显式白/黑=真白/真黑
   const parts = ['WS_CHILD', 'BS_GROUPBOX']
   parts.push(hAlign === 1 ? 'BS_CENTER' : hAlign === 2 ? 'BS_RIGHT' : 'BS_LEFT')
   return {
@@ -1943,8 +2133,9 @@ function buildStdGroupBoxCodegen(extraProps: Record<string, unknown>): {
   }
 }
 
-// 标准 STATIC·图片框：边框走 exStyle，背景色经 WM_CTLCOLORSTATIC；有图片则 SS_BITMAP + 创建后 STM_SETIMAGE，
-// 显示方式=居中→SS_CENTERIMAGE。缩放/播放动画/数据源/数据列暂声明占位。
+// 标准 STATIC·图片框：边框走 exStyle，背景色经 WM_CTLCOLORSTATIC；有图片则 SS_BITMAP + SS_REALSIZECONTROL
+// + 创建后 STM_SETIMAGE。显示方式=居中→SS_CENTERIMAGE；=缩放→STM_SETIMAGE 前把位图拉伸到控件客户区（见图片赋值处）。
+// SS_REALSIZECONTROL 关键：不加则 SS_BITMAP 会把控件放大到图片原始尺寸（运行后图片框异常变大），加了才保持设计尺寸。
 function buildStdPicBoxCodegen(extraProps: Record<string, unknown>, hasImage: boolean): {
   style: string; exStyle: string; colorEntry: { textColor: number; backColor: number } | null
 } {
@@ -1952,8 +2143,8 @@ function buildStdPicBoxCodegen(extraProps: Record<string, unknown>, hasImage: bo
   const drawMode = readIntProp(extraProps['显示方式'], 0) // 0居左上 1缩放 2居中
   const backColor = readIntProp(extraProps['背景颜色'], 0xffffff)
   const parts = ['WS_CHILD', 'SS_NOTIFY']
-  if (hasImage) parts.push('SS_BITMAP')
-  if (drawMode === 2) parts.push('SS_CENTERIMAGE')  // 图片居中
+  if (hasImage) parts.push('SS_BITMAP', 'SS_REALSIZECONTROL')  // REALSIZECONTROL：控件不随位图自动放大，恒守设计尺寸
+  if (drawMode === 2) parts.push('SS_CENTERIMAGE')  // 图片居中（真实尺寸居中，裁剪）
   const exStyle = border === 1 ? 'WS_EX_CLIENTEDGE'
     : border === 2 ? 'WS_EX_WINDOWEDGE'
     : border === 3 ? 'WS_EX_STATICEDGE'
@@ -2219,15 +2410,31 @@ function parseWindowFile(efwPath: string): WindowFileInfo {
 }
 
 // 易语言数据类型 → C 类型
+// 清单里的「X数组」返回类型（如 分割文本 的〈文本型数组〉）。运行时数组统一是 std::vector<long long>
+// （与 ARRAY_ELEM_INTEGER_TYPES/ARRAY_ELEM_FLOAT_TYPES 同一套元素存储：int 直存、f64 位模式、
+//  text/bin 存堆指针位模式）。
+const YCMD_ARRAY_RETURN_TYPES: Record<string, ArrayElemKind> = {
+  '字节型数组': 'int', '短整数型数组': 'int', '整数型数组': 'int', '长整数型数组': 'int', '逻辑型数组': 'int',
+  '小数型数组': 'f64', '双精度小数型数组': 'f64',
+  '文本型数组': 'text',
+  '字节集数组': 'bin',
+}
+
 function mapTypeToCType(type: string): string {
   const trimmed = (type || '').trim()
   if (activeProjectClassNames.has(trimmed)) return trimmed
   if (activeProjectCustomTypeNames.has(trimmed)) return `struct ${trimmed}`
+  if (YCMD_ARRAY_RETURN_TYPES[trimmed]) return 'std::vector<long long>'
   if (trimmed.includes('指针') || trimmed.includes('ptr') || trimmed.includes('PTR')) return 'intptr_t'
   const map: Record<string, string> = {
     '整数型': 'int', '长整数型': 'long long', '小数型': 'float',
     '双精度小数型': 'double', '文本型': 'YC_TEXT', '逻辑型': 'int', '字节集': 'YC_BIN', '大整数型': 'YC_BIG', '大数': 'YC_BIG',
     '字节型': 'unsigned char', '短整数型': 'short',
+    // 日期时间型=OLE 自动化日期（1899-12-30 起的天数、小数部分为时刻），krnln impl 全按 double 收发
+    //（krnln_year/month/day/hour/minute/second/TimeChg/TimeDiff/now… 皆是）。
+    // 此前本表漏了它 → 掉进下面的默认 'int'，声明与 impl 错位：传参把 double 当 int、
+    // 取返回值读错寄存器（如 取现行时间 必拿垃圾）。见签名审计 C 类。
+    '日期时间型': 'double',
   }
   return map[trimmed] || 'int'
 }
@@ -2487,6 +2694,13 @@ function collectUsedLibraryFileNames(project: ProjectInfo, editorFiles?: Map<str
       const libFile = libNameToFileName.get(normalizeKey(unit.libraryName))
       if (libFile) used.add(libFile)
     }
+  }
+
+  // 3) 窗口程序无条件依赖核心库 krnln 运行时：生成的 main.cpp 总会发窗口运行时封装
+  //    （yc_ctrl_get_text→krnln_ctrl_*、yc_ll_get_text→krnln_ll_* 等），故即使空窗口
+  //    （无控件、无命令）也必须链接 krnln，否则链接期缺 krnln_* 符号。
+  if (project.outputType === 'WindowsApp') {
+    used.add('krnln')
   }
 
   return used
@@ -3181,9 +3395,33 @@ function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Ma
   return errors
 }
 
-// 将全角运算符转换为C运算符
-function convertFullWidthOps(expr: string): string {
-  return expr
+/**
+ * 【相除 ÷ 的哨兵】÷(相除) 与 ＼(整除) 都长得像 C 的 /，语义却不同：÷ **恒返回双精度小数**
+ * （易语言 20 ÷ 7 ＝ 2.857142857143），＼ 才是截断整数商（20 ＼ 7 ＝ 2）。C 的 / 在两个整数
+ * 操作数下就是截断除法，所以 ÷ 直接映射成 / 会把小数部分丢掉。
+ *
+ * 转换阶段先把 ÷ 记成这个哨兵带过表达式拆分，由 translateExpressionToC 的乘除分支按操作数
+ * 类型分诊生成（大数仍走整数商——大数没有小数表示）。哨兵取自 Unicode 私用区（类别 Co，
+ * 不被 \p{L} 与本文件的标识符区间命中），源码与生成的 C 都不可能出现。
+ *
+ * 哨兵不是合法 C：凡是没走到乘除分支的路径（旧的库命令实参编组、项目常量、拆分兜底）
+ * 都必须经 inlineRealDiv 落地。
+ */
+const REAL_DIV_MARK = '\uE000'
+
+/**
+ * 没走乘除拆分时的 ÷ 就地形态：`a ÷ b` → `a /(double) b`。
+ * 是合法 C 且语义正确——右操作数转 double 后整个除法即走浮点，且 (double) 的结合力高于 /、*，
+ * 故 `a ÷ b × c` → `a /(double) b * c` 仍是 (a / (double)b) * c。
+ * 只是拿不到拆分器那份大数/文本分诊，故仅作兜底，正路走 translateExpressionToC 的乘除分支。
+ */
+function inlineRealDiv(expr: string): string {
+  return expr.split(REAL_DIV_MARK).join('/(double)')
+}
+
+// 将全角运算符转换为C运算符（仅用于字符串字面量**之外**的片段，见 convertFullWidthOps）
+function convertFullWidthOpsInCode(segment: string): string {
+  return segment
     .replace(/<>/g, '!=')
     .replace(/≠/g, '!=')
     .replace(/≤/g, '<=')
@@ -3194,10 +3432,40 @@ function convertFullWidthOps(expr: string): string {
     .replace(/＋/g, '+')
     .replace(/－/g, '-')
     .replace(/×/g, '*')
-    .replace(/÷/g, '/')
+    // ÷ 相除：恒双精度，不能直接给 /（会截断）——见 REAL_DIV_MARK
+    .replace(/÷/g, REAL_DIV_MARK)
     .replace(/％/g, '%')
     // ＼ 整除：整数操作数下 C 的 / 即截断除法
     .replace(/＼/g, '/')
+}
+
+/**
+ * 将全角运算符转换为 C 运算符。**字符串字面量内一律不改写**——引号里的 ＋÷＝ 是要原样打印给
+ * 用户的文本，不是运算符。此前整串无脑 replace：`“20 ＋ 7 ＝ 27”` 会被打成 `20 + 7 == 27`，
+ * `“ ÷ ”` 更会变成 REAL_DIV_MARK 那个私用区字符（打印出来是个看不见的方块）。
+ *
+ * 引号约定同 findTopLevel* 系列与本文件的字面量正则：“…” 与 "…"，都不支持转义。
+ */
+function convertFullWidthOps(expr: string): string {
+  let out = ''
+  let i = 0
+  while (i < expr.length) {
+    const ch = expr[i]
+    if (ch === '"' || ch === '“') {
+      const close = ch === '“' ? '”' : '"'
+      const end = expr.indexOf(close, i + 1)
+      // 引号未闭合 → 剩下整段按字面量原样带走，不当运算式改写（真有语法错另有报错管）
+      if (end < 0) { out += expr.slice(i); break }
+      out += expr.slice(i, end + 1)
+      i = end + 1
+      continue
+    }
+    let j = i
+    while (j < expr.length && expr[j] !== '"' && expr[j] !== '“') j++
+    out += convertFullWidthOpsInCode(expr.slice(i, j))
+    i = j
+  }
+  return out
 }
 
 function replaceConstantRefs(expr: string): string {
@@ -3276,14 +3544,29 @@ function isTextArrayElem(info: TranspileArrayInfo | undefined): boolean {
   return !!info && info.elemType === '文本型'
 }
 
-/** 数组元素存储类别：int=直存、f64=double 位模式、text=堆拷贝文本指针位模式 */
-type ArrayElemKind = 'int' | 'f64' | 'text'
+// 字节集（YC_BIN=std::vector<unsigned char>）是值类型、装不进 long long，与文本型同策：
+// 元素存「堆上 YC_BIN 的指针位模式」，读回是 (*(YC_BIN*)(intptr_t)元素)。
+// 注意别和 ARRAY_ELEM_INTEGER_TYPES 里的「字节型」（0-255 的数）混了——那是数、这是二进制块。
+function isBinArrayElem(info: TranspileArrayInfo | undefined): boolean {
+  return !!info && info.elemType === '字节集'
+}
+
+/** 数组元素存储类别：int=直存、f64=double 位模式、text=堆拷贝文本指针、bin=堆拷贝字节集指针 */
+type ArrayElemKind = 'int' | 'f64' | 'text' | 'bin'
 
 function arrayElemKindOf(info: TranspileArrayInfo | undefined): ArrayElemKind {
   if (isTextArrayElem(info)) return 'text'
+  if (isBinArrayElem(info)) return 'bin'
   if (isFloatArrayElem(info)) return 'f64'
   return 'int'
 }
+
+/** 数组元素类型是否受支持（整数族直存 / 小数族位模式 / 文本型·字节集存堆指针位模式） */
+function isSupportedArrayElemType(elemType: string): boolean {
+  return ARRAY_ELEM_INTEGER_TYPES.has(elemType) || ARRAY_ELEM_FLOAT_TYPES.has(elemType)
+    || elemType === '文本型' || elemType === '字节集'
+}
+const SUPPORTED_ARRAY_ELEM_HINT = '当前支持整数族/小数族/文本型/字节集元素'
 
 /** \u58f0\u660e parts \u4e2d\u7684\u6570\u7ec4\u5c3a\u5bf8\u5b57\u6bb5\uff08\u53ef\u7a7a\u3001\u53ef\u5e26\u5f15\u53f7\uff1b"0"=\u52a8\u6001\u4e00\u7ef4\uff0c"100,100"=\u4e8c\u7ef4\u5b9a\u957f\uff09 */
 function parseArrayDimsField(field: string | undefined): { isArray: boolean; dims: number[]; invalid?: string } {
@@ -3388,6 +3671,7 @@ function rewriteArrayIndexOnce(
     const kind = arrayElemKindOf(info)
     const wrapped = kind === 'f64' ? `yc_f64_from_bits(${ref})`
       : kind === 'text' ? `((wchar_t*)(intptr_t)${ref})`
+      : kind === 'bin' ? `(*(YC_BIN*)(intptr_t)${ref})`
       : ref
     return `${expr.slice(0, i)}${wrapped}${expr.slice(consumedEnd + 1)}`
   }
@@ -3434,6 +3718,10 @@ function buildArrayLiteralExpr(
   const parts = elems.map(e => translateExpressionToC(e, commandMap, directCallables, variableTypeResolver))
   if (kind === 'text') {
     return `yc_ary_lit_text({${parts.map(p => `(const wchar_t*)(${p})`).join(', ')}})`
+  }
+  // 字节集元素无从按字面推断（forceKind 来自「赋给字节集数组」），故只有 forceKind='bin' 才走这支
+  if (kind === 'bin') {
+    return `yc_ary_lit_bin({${parts.map(p => `YC_BIN(${p})`).join(', ')}})`
   }
   if (kind === 'f64') {
     return `yc_ary_lit_f64({${parts.map(p => `(double)(${p})`).join(', ')}})`
@@ -3754,7 +4042,9 @@ function findTopLevelAdditive(expr: string): { left: string; operator: string; r
     let j = i - 1
     while (j >= 0 && /\s/.test(expr[j])) j--
     const prev = j >= 0 ? expr[j] : ''
-    if (!prev || /[+\-*/%(<>=!&|,]/.test(prev)) continue
+    // 前一个非空白是运算符 → 这个 -/+ 是一元符号不是二元运算，不在此处切分。
+    // ÷ 的哨兵也算运算符：漏了它 `a ÷ －b` 会被切成 `(a ÷) - b`，左半成了半截表达式。
+    if (!prev || prev === REAL_DIV_MARK || /[+\-*/%(<>=!&|,]/.test(prev)) continue
 
     return {
       left: expr.slice(0, i).trim(),
@@ -3791,7 +4081,8 @@ function findTopLevelMultiplicative(expr: string): { left: string; operator: str
       continue
     }
     if (depth !== 0) continue
-    if (ch !== '*' && ch !== '/' && ch !== '%') continue
+    // REAL_DIV_MARK = 相除 ÷（恒双精度）；'/' 此时只可能来自整除 ＼（截断）
+    if (ch !== '*' && ch !== '/' && ch !== '%' && ch !== REAL_DIV_MARK) continue
 
     return {
       left: expr.slice(0, i).trim(),
@@ -3800,6 +4091,39 @@ function findTopLevelMultiplicative(expr: string): { left: string; operator: str
     }
   }
 
+  return null
+}
+
+/**
+ * 表达式整体是否正好是「一层括号包住的一整块」，是则返回括号内的内容，否则 null。
+ *
+ * 「首字符是 ( 且尾字符是 )」证明不了这件事——`(a) ＋ (b)` 的首尾括号并不互相配对，
+ * 首个 ( 的配对括号必须正好是末字符（同 isSingleParenGroup 的判据，但这里认全角括号与
+ * 全角引号，因为吃的是易语言源码而非生成的 C）。判不准一律返回 null（不剥只多余，不出错）。
+ */
+function matchEnclosingParens(expr: string): string | null {
+  const first = expr[0]
+  if (first !== '(' && first !== '（') return null
+  const last = expr[expr.length - 1]
+  if (last !== ')' && last !== '）') return null
+
+  let depth = 0
+  let inString = false
+  let stringChar = ''
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]
+    if (inString) {
+      if ((stringChar === '"' && ch === '"') || (stringChar === '“' && ch === '”')) inString = false
+      continue
+    }
+    if (ch === '"' || ch === '“') { inString = true; stringChar = ch; continue }
+    if (ch === '(' || ch === '（') { depth++; continue }
+    if (ch === ')' || ch === '）') {
+      depth--
+      if (depth === 0) return i === expr.length - 1 ? expr.slice(1, -1) : null
+      if (depth < 0) return null
+    }
+  }
   return null
 }
 
@@ -3820,6 +4144,17 @@ function translateExpressionToC(
   // \u6570\u7ec4\u4e0b\u6807\u5f15\u7528\u5148\u6539\u5199\u4e3a yc_ary_at(\u540d\u79f0, \u4e0b\u6807) \u5f62\u5f0f\uff08\u62ec\u53f7\u5f62\u5f0f\u4e0e\u540e\u7eed\u6309\u62ec\u53f7\u611f\u77e5\u7684
   // \u8868\u8fbe\u5f0f\u5207\u5206\u517c\u5bb9\uff1b\u65b9\u62ec\u53f7\u5207\u5206\u4e0d\u611f\u77e5\uff0c\u5982 \u6570\u7ec4[j \uff0b 1] \u4f1a\u88ab\u52a0\u6cd5\u5207\u5206\u6495\u88c2\uff09
   trimmed = rewriteArrayIndexRefs(trimmed, commandMap, directCallables, variableTypeResolver)
+
+  // \u6574\u4f53\u88ab\u4e00\u5c42\u62ec\u53f7\u5305\u4f4f \u2192 \u5265\u6389\u9012\u5f52\u7ffb\u8bd1\uff0c\u518d\u539f\u6837\u5305\u56de\u3002
+  // \u4e0d\u5265\u7684\u8bdd\u4e0b\u9762\u7684\u62c6\u5206\u5668\u5168\u5728 depth>0 \u4e0a\u7a7a\u8f6c\uff0c\u8fd9\u4e00\u6574\u5757\u4f1a**\u539f\u6837**\u843d\u8fdb C++\uff1a
+  // `(\u201c\u7532\u201d \uff0b \u201c\u4e59\u201d)` \u6f0f\u5168\u89d2\u5f15\u53f7\u7f16\u4e0d\u8fc7\u3001`(20 \uff0b 7)` \u7684\u5b57\u9762\u91cf\u62ff\u4e0d\u5230 LL \u540e\u7f00\u3001\u00f7 \u7684\u54e8\u5175\u4e5f\u4f1a\u6f0f\u51fa\u53bb\u3002
+  // \u62ec\u53f7\u5fc5\u987b\u5305\u56de\u53bb\u2014\u2014\u8c03\u7528\u65b9\uff08\u5982\u4e58\u9664\u62c6\u5206\u7684\u5de6\u534a\uff09\u9760\u5b83\u7ef4\u6301\u4f18\u5148\u7ea7\uff1a`(a \uff0b b) \u00d7 c` \u5265\u6ca1\u4e86\u5c31\u6210\u4e86 a + b * c\u3002
+  const enclosed = matchEnclosingParens(trimmed)
+  if (enclosed !== null) {
+    const inner = enclosed.trim()
+    if (!inner) return '0'
+    return `(${translateExpressionToC(inner, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)})`
+  }
 
   // \u6574\u4f53\u5b57\u9762\u91cf\u5224\u5b9a\u5fc5\u987b\u8981\u6c42\u5185\u90e8\u4e0d\u518d\u51fa\u73b0\u540c\u7c7b\u5f15\u53f7\uff1a
   // \u5426\u5219 \u201c\u5171\u201d \uff0b \u5230\u6587\u672c(n) \uff0b \u201c\u4e2a\u201d \u4f1a\u88ab\u8d2a\u5a6a\u5339\u914d\u6574\u4f53\u541e\u6210\u4e00\u4e2a\u5b57\u9762\u91cf\uff0c
@@ -4023,7 +4358,14 @@ function translateExpressionToC(
       if (multiplicative.operator === '%') {
         return `yc_big_mod(yc_value_to_big(${left}), yc_value_to_big(${right}))`
       }
-      return `(yc_value_to_big(${left}) ${multiplicative.operator} yc_value_to_big(${right}))`
+      // 大数没有小数表示：÷ 与 ＼ 在大数上同为整数商（除零由 YC_BIG 自己报「除数不能为0」）
+      const bigOp = multiplicative.operator === REAL_DIV_MARK ? '/' : multiplicative.operator
+      return `(yc_value_to_big(${left}) ${bigOp} yc_value_to_big(${right}))`
+    }
+    // ÷ 相除恒返回双精度小数：两边都转 double，否则 20 ÷ 7 会走 C 的整数截断除法得 2 而非 2.857…
+    // （整除 ＼ 走下面的 '/'，截断正是它要的语义）
+    if (multiplicative.operator === REAL_DIV_MARK) {
+      return `((double)(${left}) / (double)(${right}))`
     }
     return `(${left} ${multiplicative.operator} ${right})`
   }
@@ -4046,7 +4388,9 @@ function translateExpressionToC(
     throw new Error(`未定义的变量或标识符“${translated}”（若这是一段文本，请用引号括起来，例如 "${translated}"）`)
   }
 
-  return translated
+  // 兜底：走到这里还带着 ÷ 哨兵，说明它没被上面的乘除分支接住（如藏在未识别命令的实参里）。
+  // 哨兵不是合法 C，必须就地落地成 /(double) —— 语义仍对，只是没经过类型分诊。
+  return inlineRealDiv(translated)
 }
 
 function buildComparisonExpression(leftArg: string, rightArg: string, operator: '==' | '!=' | '<' | '>' | '<=' | '>=', commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
@@ -4183,16 +4527,11 @@ function mapYcmdNativeParamType(typeName: string): { cType: string; expr: (arg: 
       expr: (arg, commandMap, directCallables) => {
         const t = (arg || '').trim()
         if (!t) return '(const char*)""'
-        // 数组（变量或字面量）按元素存储类别选打印：f64 位模式/文本指针位模式需专用还原
-        const info = currentTranspileArrayVars.get(t)
-        const lit = matchArrayLiteral(t)
-        const litElems = lit ? splitArguments(lit.inner) : []
-        const kind: ArrayElemKind = info ? arrayElemKindOf(info)
-          : lit && litElems.some(e => /^["“]/.test(e.trim())) ? 'text'
-          : lit && litElems.some(e => /[.．]/.test(e)) ? 'f64'
-          : 'int'
-        const toText = (info || lit) && kind === 'f64' ? 'yc_ary_to_text_f64'
-          : (info || lit) && kind === 'text' ? 'yc_ary_to_text_str'
+        // 数组（变量/字面量/返回数组的命令）按元素存储类别选打印：f64/文本/字节集都是位模式，需专用还原
+        const kind = arrayValueElemKind(t, commandMap)
+        const toText = kind === 'f64' ? 'yc_ary_to_text_f64'
+          : kind === 'text' ? 'yc_ary_to_text_str'
+          : kind === 'bin' ? 'yc_ary_to_text_bin'
           : 'yc_value_to_text'
         return `yc_wide_to_utf8(${toText}(${formatArgForC(t, commandMap, directCallables)}))`
       },
@@ -4202,8 +4541,17 @@ function mapYcmdNativeParamType(typeName: string): { cType: string; expr: (arg: 
   if (cType === 'YC_TEXT') {
     return { cType: 'const char*', expr: (arg, commandMap, directCallables) => (arg ? `yc_wide_to_utf8(${formatArgForC(arg, commandMap, directCallables)})` : '(const char*)""') }
   }
+  // 【字节集 ABI v2】按 const YC_BIN*（= const std::vector<unsigned char>*）传，不再是 const char*。
+  // 旧法 yc_bin_to_cstr 返回 out.c_str()、长度靠 NUL 结尾 → 含 0x00 的字节集整条截断，
+  // 而字节集本就是任意二进制。改用指针传递（复用数组那套既有的跨 TU vector 指针契约），长度完整。
+  // 临时量取不了址 → 先落 yc_bin_tmp 轮转槽；实参省略 → nullptr（impl 据此取默认值）。
   if (cType === 'YC_BIN') {
-    return { cType: 'const char*', expr: (arg, commandMap, directCallables) => (arg ? `yc_bin_to_cstr(${formatArgForC(arg, commandMap, directCallables)})` : '(const char*)""') }
+    return {
+      cType: 'const void*',
+      expr: (arg, commandMap, directCallables) => (arg
+        ? `(const void*)&yc_bin_tmp(${formatArgForC(arg, commandMap, directCallables)})`
+        : '(const void*)nullptr'),
+    }
   }
   if (cType === 'YC_BIG') {
     return { cType: 'long long', expr: (arg, commandMap, directCallables) => `(long long)(${formatArgForC(arg, commandMap, directCallables)})` }
@@ -4216,12 +4564,20 @@ function mapYcmdNativeReturnType(typeName: string): { cType: string; expr: (call
   if (!trimmed || trimmed === '无返回值' || trimmed === 'void') {
     return { cType: 'void', expr: callExpr => callExpr, isVoid: true }
   }
+  // 【数组返回 ABI】impl 在堆上 new std::vector<long long> 填好后以 void* 交回，yc_ary_take 接管所有权
+  // （移走内容并 delete）。跨 TU 传 std::vector<long long>* 的契约与 YCMD_ARRAY_PARAM_KINDS 的
+  // (void*)&数组变量 是同一个，不引入新假设。返回值的 C++ 侧类型由 mapTypeToCType 给成 vector<long long>。
+  if (YCMD_ARRAY_RETURN_TYPES[trimmed]) {
+    return { cType: 'void*', expr: callExpr => `yc_ary_take(${callExpr})`, isVoid: false }
+  }
   const cType = mapTypeToCType(trimmed)
   if (cType === 'YC_TEXT') {
     return { cType: 'const char*', expr: callExpr => `yc_utf8_to_wide(${callExpr})`, isVoid: false }
   }
+  // 【字节集 ABI v2】impl 在堆上 new YC_BIN 交回 void*，yc_bin_take 接管（移走内容并 delete）。
+  // 与数组返回的 yc_ary_take 同款；旧法 yc_cstr_to_bin 按 strlen 还原，遇 0x00 即截断。
   if (cType === 'YC_BIN') {
-    return { cType: 'const char*', expr: callExpr => `yc_cstr_to_bin(${callExpr})`, isVoid: false }
+    return { cType: 'void*', expr: callExpr => `yc_bin_take(${callExpr})`, isVoid: false }
   }
   if (cType === 'YC_BIG') {
     return { cType: 'long long', expr: callExpr => `YC_BIG(std::to_wstring((long long)(${callExpr})).c_str())`, isVoid: false }
@@ -4231,7 +4587,10 @@ function mapYcmdNativeReturnType(typeName: string): { cType: string; expr: (call
 
 // 数组类命令的原生 ABI（krnln impl：数组经 void* 传 std::vector<long long>*，值为 long long）。
 // 这些命令的参数在清单里是「通用型」，通用映射会把实参转成文本指针，与 impl 形参错位——按符号显式给定。
-const YCMD_ARRAY_PARAM_KINDS: Record<string, Array<'arrayptr' | 'int' | 'int64'>> = {
+const YCMD_ARRAY_PARAM_KINDS: Record<string, Array<'arrayptr' | 'binref' | 'int' | 'int64'>> = {
+  // 置字节集内整数：要**就地改写**待处理的字节集（帮助：〈无返回值〉）。通用字节集编组交的是
+  // yc_bin_tmp 轮转槽里的临时副本，写进去就丢——必须绑到用户变量本身，故按符号特办成 binref。
+  krnln_SetIntInsideBin: ['binref', 'int', 'int', 'int'],
   krnln_AddElement: ['arrayptr', 'int64'],
   krnln_InsElement: ['arrayptr', 'int', 'int64'],
   krnln_RemoveElement: ['arrayptr', 'int', 'int'],
@@ -4243,16 +4602,71 @@ const YCMD_ARRAY_PARAM_KINDS: Record<string, Array<'arrayptr' | 'int' | 'int64'>
   krnln_SortAry: ['arrayptr', 'int'],
 }
 
-function mapYcmdArrayParamKind(kind: 'arrayptr' | 'int' | 'int64', cmdName: string): ReturnType<typeof mapYcmdNativeParamType> {
-  if (kind === 'arrayptr') {
+/**
+ * 表达式的数组元素存储类别：数组变量 / 数组字面量 / 返回数组的原生命令（如 分割文本(…)）。
+ * 不是数组值则返回 null。数组的元素存储类别只有转译期知道（f64/text 都是位模式），
+ * 打印/编组前必须据此选还原函数，否则文本数组会被按指针整数印出来。
+ */
+function arrayValueElemKind(expr: string, commandMap?: Map<string, ResolvedCommand>): ArrayElemKind | null {
+  const t = (expr || '').trim()
+  if (!t) return null
+  const info = currentTranspileArrayVars.get(t)
+  if (info) return arrayElemKindOf(info)
+  const lit = matchArrayLiteral(t)
+  if (lit) {
+    const elems = splitArguments(lit.inner)
+    if (elems.some(e => /^["“]/.test(e.trim()))) return 'text'
+    if (elems.some(e => /[.．]/.test(e))) return 'f64'
+    return 'int'
+  }
+  const call = commandMap ? parseCommandCall(t) : null
+  const resolved = call ? commandMap?.get(call.name) : undefined
+  if (resolved && isYcmdNativeCommand(resolved)) return YCMD_ARRAY_RETURN_TYPES[(resolved.returnType || '').trim()] || null
+  return null
+}
+
+/**
+ * 试把表达式当「数组值」译出：目前只认「返回数组的原生命令」（如 分割文本(…)）。
+ * 不是数组值则返回 null，由调用处照旧友好报错——绝不能兜底乱译，否则 (void*)& 一个非数组
+ * 会把任意值当 vector* 解引用。
+ */
+function tryTranslateArrayValueExpr(expr: string, commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string | null {
+  const t = (expr || '').trim()
+  if (!t || !commandMap) return null
+  const call = parseCommandCall(t)
+  const resolved = call ? commandMap.get(call.name) : undefined
+  if (!call || !resolved || !isYcmdNativeCommand(resolved)) return null
+  if (!YCMD_ARRAY_RETURN_TYPES[(resolved.returnType || '').trim()]) return null
+  return generateYcmdNativeCommandExpr(resolved, call.args || [], commandMap, directCallables)
+}
+
+function mapYcmdArrayParamKind(kind: 'arrayptr' | 'binref' | 'int' | 'int64', cmdName: string): ReturnType<typeof mapYcmdNativeParamType> {
+  // 「参考」形态的字节集实参：命令要就地改写它，故必须绑到用户变量本身——通用字节集编组交的是
+  // yc_bin_tmp 轮转槽里的临时副本，写进去就丢。yc_bin_ref 借重载解析当类型闸：
+  // 实参不是 YC_BIN 左值就编译失败，而不是 (void*)& 出一个错类型指针后在运行时踩内存。
+  if (kind === 'binref') {
     return {
       cType: 'void*',
       expr: (arg) => {
         const t = (arg || '').trim()
-        if (!t || !currentTranspileArrayVars.has(t)) {
-          throw new Error(`命令“${cmdName}”需要数组变量作为参数，但收到：${t || '(空)'}`)
+        if (!/^[^\s(),]+$/.test(t)) {
+          throw new Error(`命令“${cmdName}”需要字节集变量作为参数（它会就地改写该变量），但收到：${t || '(空)'}`)
         }
-        return `(void*)&${t}`
+        return `(void*)&yc_bin_ref(${t})`
+      },
+    }
+  }
+  if (kind === 'arrayptr') {
+    return {
+      cType: 'void*',
+      expr: (arg, commandMap, directCallables) => {
+        const t = (arg || '').trim()
+        if (t && currentTranspileArrayVars.has(t)) return `(void*)&${t}`
+        // 数组命令收 (void*)&数组变量，但帮助文件里数组返回的规范用法正是
+        // 「复制数组(目标数组, 分割文本(…))」——右边是临时量、取不了址，先落进轮转槽再取址。
+        const arrayValue = tryTranslateArrayValueExpr(t, commandMap, directCallables)
+        if (arrayValue) return `(void*)&yc_ary_tmp(${arrayValue})`
+        throw new Error(`命令“${cmdName}”需要数组变量作为参数，但收到：${t || '(空)'}`)
       },
     }
   }
@@ -4263,14 +4677,19 @@ function mapYcmdArrayParamKind(kind: 'arrayptr' | 'int' | 'int64', cmdName: stri
   }
 }
 
-/** int64 元素值参的存储形态变体：f64=double 位模式、text=堆拷贝文本指针（加入成员/插入成员） */
+/** int64 元素值参的存储形态变体：f64=double 位模式、text/bin=堆拷贝后存指针（加入成员/插入成员） */
 function mapYcmdArrayElemValueParam(kind: ArrayElemKind): ReturnType<typeof mapYcmdNativeParamType> {
   return {
     cType: 'long long',
     expr: (arg, commandMap, directCallables) => {
       const src = arg ? formatArgForC(arg, commandMap, directCallables) : "0"
       if (kind === 'f64') return `yc_f64_bits((double)(${src}))`
-      if (kind === 'text') return `(long long)(intptr_t)yc_value_to_text(${src})`
+      // 【此前编不过】原为 `(long long)(intptr_t)yc_value_to_text(...)`：C 风格转换不肯把 YC_TEXT
+      // 连着经 operator const wchar_t*() 再转 intptr_t（no matching conversion），故「加入成员到
+      // 文本数组」一直是死路。须先显式转 const wchar_t*（同 yc_ary_lit_text 的写法），
+      // 再 yc_wcsdup_text 堆拷贝——直接存 YC_TEXT 临时量的内部指针会在整表达式结束时悬垂。
+      if (kind === 'text') return `(long long)(intptr_t)yc_wcsdup_text((const wchar_t*)yc_value_to_text(${src}))`
+      if (kind === 'bin') return `(long long)(intptr_t)yc_bin_dup(${src})`
       return `(long long)(${src})`
     },
   }
@@ -4288,22 +4707,147 @@ function ycmdArrayCallElemKind(cmd: ResolvedCommand, args: string[]): ArrayElemK
   return kind
 }
 
-function buildYcmdNativeSignature(cmd: ResolvedCommand, elemKind: ArrayElemKind = 'int'): { symbol: string; returnType: ReturnType<typeof mapYcmdNativeReturnType>; params: ReturnType<typeof mapYcmdNativeParamType>[] } {
-  const symbol = getYcmdNativeSymbol(cmd)
-  const arrayKinds = YCMD_ARRAY_PARAM_KINDS[symbol]
+// 【签名对齐】清单标「通用型」但 impl 实收数值的命令：通用映射会把实参转成**文本指针**传给收
+// double/long long 的实现——C 链接不跨 TU 校验签名，故能编能链，只在调用时把指针当数值算（运行时静默出错）。
+// 与 YCMD_ARRAY_PARAM_KINDS 同思路：按符号显式给定形参/返回类型，让声明与 impl 对齐。
+// 注：这只是对齐 ABI；这些命令在易语言里本是「通用型」(数值或文本)，此处按 impl 的数值语义收敛，
+// 文本形态（如 相加("a","b") 文本连接）仍不支持——要支持须把 impl 改成 const char* 泛型实现。
+const YCMD_NATIVE_PARAM_TYPE_OVERRIDES: Record<string, string[]> = {
+  krnln_equal: ['双精度小数型', '双精度小数型'],            // impl: int(double, double)
+  krnln_notEqual: ['双精度小数型', '双精度小数型'],
+  krnln_less: ['双精度小数型', '双精度小数型'],
+  krnln_greater: ['双精度小数型', '双精度小数型'],
+  krnln_lessOrEqual: ['双精度小数型', '双精度小数型'],
+  krnln_greaterOrEqual: ['双精度小数型', '双精度小数型'],
+  krnln_add: ['长整数型', '长整数型'],                      // impl: long long(long long, long long)
+}
+const YCMD_NATIVE_RETURN_TYPE_OVERRIDES: Record<string, string> = {
+  // 取字节集数据：清单标〈通用型〉，通用映射掉默认 int 而 impl 返回 long long（长整数/双精度都塞在里头）
+  krnln_GetBinElement: '长整数型',
+  krnln_add: '长整数型',                                    // 清单标「通用型」→ 会被映射成 int，与 impl 的 long long 不符
+}
+
+// 【数组返回】impl 已按数组 ABI（返回 void* = 堆上新建的 std::vector<long long>*）落地的命令白名单。
+// **必须按符号显式登记，不能只看清单的「X数组」返回类型**：krnln 512 条命令里 379 条是自动桩，
+// 桩体形如 `return keepUtf8("[]")`（const char*）。若让桩也吃数组 ABI，yc_ary_take 会把字符串
+// 字面量当 vector* 解引用并 delete —— 比现在「静默返回垃圾」更糟（直接崩）。与 YCMD_ARRAY_PARAM_KINDS 同思路。
+const YCMD_ARRAY_RETURN_SYMBOLS = new Set<string>([
+  'krnln_split',               // 分割文本    〈文本型数组〉
+  'krnln_GetSectionNames',     // 取配置节名  〈文本型数组〉
+  'krnln_OpenManyFileDialog',  // 多文件对话框〈文本型数组〉
+  'krnln_GetAllPY',            // 取所有发音  〈文本型数组〉（国标汉字拼音表见 impl/pinyin-table.inc）
+  'krnln_SplitBin',            // 分割字节集  〈字节集数组〉
+])
+
+/**
+ * 「对象.xxx」是**对象成员命令**，帮助里的「对象．」是占位符（=任意对象），不是能直接写的命令名。
+ * 但 ycmd 的 displayName 字面就是「对象.移动」，于是它们进了命令表、补全补得出来、写出来还能编过——
+ * 而 impl 收的是「前导对象句柄 + 清单里那几个参数」，清单不含句柄 → 生成的调用**少一个参数**，
+ * 运行时按错位的栈/寄存器取值。堵在转译期，并指路正确写法。
+ *
+ * 只堵「当自由命令调用」这一条路：提示面板走的是 findControlMethodEntry（剥「对象.」前缀去匹配
+ * `编辑框1.加入文本`），那条路不经过这里，不受影响。
+ */
+function assertNotBareObjectMemberCommand(cmd: ResolvedCommand): void {
+  const name = (cmd.name || '').trim()
+  if (!/^对象[.．]/.test(name)) return
+  const member = name.replace(/^对象[.．]/, '')
+  throw new Error(`“${name}”是对象成员命令，不能这样直接调用；请写成「控件名.${member}(…)」的形式`)
+}
+
+/**
+ * 清单标了数组返回、但 impl 还没按数组 ABI 落地 → 转译期友好报错。
+ * 好过静默返回垃圾：这些命令此前 mapTypeToCType 认不得「X数组」而掉默认 int，
+ * 声明 int 收 impl 的 const char*，调用处拿到的是被截断的指针值（且从不报错）。
+ */
+function assertYcmdArrayReturnSupported(cmd: ResolvedCommand, symbol: string): void {
+  const rt = (cmd.returnType || '').trim()
+  if (!/数组$/.test(rt) || YCMD_ARRAY_RETURN_SYMBOLS.has(symbol)) return
+  if (!YCMD_ARRAY_RETURN_TYPES[rt]) {
+    throw new Error(`命令“${cmd.name || symbol}”返回「${rt}」，编译器暂不支持该数组元素类型`)
+  }
+  throw new Error(`命令“${cmd.name || symbol}”在核心支持库中尚未实现（占位桩），暂不能调用`)
+}
+
+// 【省略 ≠ 零值】通用映射把「实参省略」一律译成零值（0 / "" / nullptr），但帮助里不少可省参数的
+// 默认值并不是零值，且「省略」与「显式给了零值」语义不同——转译期本来就分得清（实参没写 vs 写了）。
+// 按 符号→形参序号→省略时发的 C 表达式 显式给定。
+const YCMD_OMITTED_PARAM_EXPRS: Record<string, Record<number, string>> = {
+  // 分割文本 的「用作分割的文本」：省略→默认半角逗号；显式空文本→整段不分割。impl 靠 nullptr 区分。
+  krnln_split: { 1: '(const char*)nullptr' },
+  // 取统一文本 的「转换到宽文本」「添加结束零字符」：帮助明说省略时**默认均为真**（通用映射会给 0=假）
+  krnln_GetUTextBin: { 1: '1', 2: '1' },
+  // 取统一文本长度 的「转换到宽文本」：同上，省略默认真
+  krnln_GetUTextLength: { 1: '1' },
+}
+
+/** 省略时改发指定 C 表达式的形参包装；实参给了则照原映射译 */
+function withOmittedDefault(p: ReturnType<typeof mapYcmdNativeParamType>, omittedExpr: string): ReturnType<typeof mapYcmdNativeParamType> {
   return {
-    symbol,
-    returnType: mapYcmdNativeReturnType(cmd.returnType || ''),
-    params: arrayKinds
-      ? arrayKinds.map(kind => (kind === 'int64' && elemKind !== 'int'
-        ? mapYcmdArrayElemValueParam(elemKind)
-        : mapYcmdArrayParamKind(kind, cmd.name || symbol)))
-      : (cmd.params || []).map(p => mapYcmdNativeParamType(p.type || '')),
+    cType: p.cType,
+    expr: (arg, commandMap, directCallables) => ((arg || '').trim() ? p.expr(arg, commandMap, directCallables) : omittedExpr),
   }
 }
 
+function buildYcmdNativeSignature(cmd: ResolvedCommand, elemKind: ArrayElemKind = 'int'): { symbol: string; returnType: ReturnType<typeof mapYcmdNativeReturnType>; params: ReturnType<typeof mapYcmdNativeParamType>[] } {
+  const symbol = getYcmdNativeSymbol(cmd)
+  const arrayKinds = YCMD_ARRAY_PARAM_KINDS[symbol]
+  const paramOverride = YCMD_NATIVE_PARAM_TYPE_OVERRIDES[symbol]
+  const params = arrayKinds
+    ? arrayKinds.map(kind => (kind === 'int64' && elemKind !== 'int'
+      ? mapYcmdArrayElemValueParam(elemKind)
+      : mapYcmdArrayParamKind(kind, cmd.name || symbol)))
+    : (paramOverride || (cmd.params || []).map(p => p.type || '')).map(t => mapYcmdNativeParamType(t))
+  const omitted = YCMD_OMITTED_PARAM_EXPRS[symbol]
+  return {
+    symbol,
+    returnType: mapYcmdNativeReturnType(YCMD_NATIVE_RETURN_TYPE_OVERRIDES[symbol] || cmd.returnType || ''),
+    params: omitted ? params.map((p, i) => (omitted[i] !== undefined ? withOmittedDefault(p, omitted[i]) : p)) : params,
+  }
+}
+
+// 「尾参可重复」的原生命令（帮助文件：命令参数表中最后一个参数可以被重复添加）：impl 一次只收一个值，
+// 多值按易语言「依次执行」语义展开成逐次调用（前 k-1 实参固定复用、末参逐值各发一次）。
+// **只收录 ycmd 元数据与原生签名一致、且语义确为「逐值重复执行」的命令**——
+// 光凭「尾参可重复」标记不能进这里：相加(通用型→const char* vs impl long long 签名不符)、
+// 写出数据(ycmd 少了文件号)、读入数据(const char* vs void*) 都是坏的；多项选择 语义是「选一个」不是重复写。
+const YCMD_REPEAT_TAIL_SYMBOLS = new Set<string>([
+  'krnln_AddElement',                                  // 加入成员(数组, 值…)
+  'krnln_WriteText', 'krnln_WriteLine',                // 写出文本 / 写文本行
+  'krnln_InsText', 'krnln_InsLine',                    // 插入文本 / 插入文本行
+  'krnln_WriteBin', 'krnln_InsBin',                    // 写出字节集 / 插入字节集
+  'krnln_fputs', 'krnln_OutputDebugText',              // 标准输出 / 输出调试文本
+  'krnln_write',                                       // 写出数据（ycmd 曾漏「文件号」参数+返回值标错，已对齐帮助与 impl）
+])
+
+/** 尾参可重复的多值展开：返回逐次调用的 C 片段（前 k-1 实参复用），空值跳过（展开参数行回车会留尾部空实参）。 */
+function buildYcmdRepeatTailCalls(
+  sig: ReturnType<typeof buildYcmdNativeSignature>,
+  args: string[],
+  commandMap?: Map<string, ResolvedCommand>,
+  directCallables?: DirectCallableNames,
+): string[] | null {
+  if (!YCMD_REPEAT_TAIL_SYMBOLS.has(sig.symbol)) return null
+  if (sig.params.length === 0 || args.length <= sig.params.length) return null
+  const leadCount = sig.params.length - 1
+  const lead = sig.params.slice(0, leadCount).map((p, i) => p.expr(args[i] || '', commandMap, directCallables))
+  const tailP = sig.params[leadCount]
+  const tailArgs = args.slice(leadCount).filter(a => (a ?? '').trim() !== '')
+  if (tailArgs.length === 0) return null
+  return tailArgs.map(v => `${sig.symbol}(${[...lead, tailP.expr(v, commandMap, directCallables)].join(', ')})`)
+}
+
 function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
+  assertNotBareObjectMemberCommand(cmd)
+  assertYcmdArrayReturnSupported(cmd, getYcmdNativeSymbol(cmd))
   const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemKind(cmd, args))
+  // 尾参可重复的多值：逐次调用用逗号表达式串起（值=最后一次调用的结果，与易语言一致）
+  const repeatCalls = buildYcmdRepeatTailCalls(sig, args, commandMap, directCallables)
+  if (repeatCalls) {
+    const chained = repeatCalls.length === 1 ? repeatCalls[0] : `(${repeatCalls.join(', ')})`
+    if (sig.returnType.isVoid) return `([&]() -> int { ${chained}; return 0; })()`
+    return `([&]() -> ${mapTypeToCType(cmd.returnType || '整数型')} { return ${sig.returnType.expr(chained)}; })()`
+  }
   const argCount = Math.max(args.length, sig.params.length)
   const callArgs = Array.from({ length: argCount }, (_unused, index) => {
     const param = sig.params[index] || sig.params[sig.params.length - 1] || mapYcmdNativeParamType('')
@@ -4317,7 +4861,79 @@ function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], com
   return `([&]() -> ${mapTypeToCType(cmd.returnType || '整数型')} { return ${sig.returnType.expr(callExpr)}; })()`
 }
 
+/**
+ * 内建要求实参是变量本身（裸标识符）——「参考」语义下传字面量/表达式没有意义。
+ * 必须用标识符正则（与本文件其它处一致），不能只判「没有空格括号」：那样 `交换变量(1, 2)`
+ * 里的 1/2 会被当成变量名放行，最后炸在 C++ 的 no matching function for call to 'swap'。
+ */
+const YC_IDENT_RE = /^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/
+
+function requireVarArg(arg: string, cmdName: string): string {
+  const t = (arg || '').trim()
+  if (!YC_IDENT_RE.test(t)) {
+    throw new Error(`命令“${cmdName}”需要变量作为参数（它按引用操作该变量），但收到：${t || '(空)'}`)
+  }
+  return t
+}
+
+/**
+ * 【变量操作族的调用生成】「赋值/连续赋值/交换变量/强制交换变量/数组清零」在帮助里的参数是
+ * 「**通用型变量/变量数组**」（vs 值参的「通用型数组/非数组」）——是**按引用**语义。
+ * 通用编组把实参译成「值的文本形态」，连变量地址都不是，故这几条必须专门生成调用。
+ *
+ * **实现仍在支持库**（krnln_set/store/XchgVar/ForceXchgVar/ZeroAry）：这里只负责把
+ * 「变量地址 + 类型标签」交过去。标签经生成侧的 yc_vt_of(变量) 由 C++ 重载解析得出——
+ * 转译期不必再查一次变量类型表，且遇到不支持的类型直接编译失败，不会静默按错类型写内存。
+ * 值参用 decltype(目标) 落到临时量上，类型转换交给 C++ 完成后再取址交给 krnln。
+ */
+const YCMD_VARREF_CALLS: Record<string, (args: string[], tx: (e: string) => string, name: string) => string> = {
+  // 赋值(被赋值的变量, 值)
+  krnln_set: (args, tx, name) => {
+    const t = requireVarArg(args[0], name)
+    return `{ decltype(${t}) __yc_v = (${tx(args[1] || '')}); krnln_set((void*)&${t}, (const void*)&__yc_v, yc_vt_of(${t})); }`
+  },
+  // 连续赋值(值, 变量1, 变量2…)——注意参数顺序与 赋值 相反（帮助如此），尾参可重复
+  krnln_store: (args, tx, name) => {
+    const value = tx(args[0] || '')
+    const targets = args.slice(1).filter(a => (a || '').trim()).map(a => requireVarArg(a, name))
+    if (targets.length === 0) throw new Error(`命令“${name}”至少需要一个被赋值的变量`)
+    // 每个目标各按自己的类型转换一次（多个目标类型可以不同）
+    return `{ ${targets.map((t, i) => `{ decltype(${t}) __yc_v${i} = (${value}); krnln_store((const void*)&__yc_v${i}, (void*)&${t}, yc_vt_of(${t})); }`).join(' ')} }`
+  },
+  // 交换变量：帮助要求类型一致 → static_assert 挡在编译期
+  krnln_XchgVar: (args, _tx, name) => {
+    const a = requireVarArg(args[0], name)
+    const b = requireVarArg(args[1], name)
+    return `{ static_assert(std::is_same<decltype(${a}), decltype(${b})>::value, "\\u4ea4\\u6362\\u53d8\\u91cf: two variables must have the same type"); krnln_XchgVar((void*)&${a}, (void*)&${b}, yc_vt_of(${a})); }`
+  },
+  // 强制交换变量：帮助说它「不对数据类型进行检查，仅要求数据尺寸一致，文本/字节集只交换指针值」。
+  // 我们这里仍要求类型一致——按字节交换 std::wstring/vector 会踩 SSO 的自指指针（libstdc++ 的
+  // 短串优化里 _M_p 指向对象内部缓冲），换完两个变量都是坏的。而且我们的实现本就是 O(1) 指针交换，
+  // 原命令那点性能优势在这里不存在，放开类型检查只剩风险。
+  krnln_ForceXchgVar: (args, _tx, name) => {
+    const a = requireVarArg(args[0], name)
+    const b = requireVarArg(args[1], name)
+    return `{ static_assert(std::is_same<decltype(${a}), decltype(${b})>::value, "\\u5f3a\\u5236\\u4ea4\\u6362\\u53d8\\u91cf: two variables must have the same type"); krnln_ForceXchgVar((void*)&${a}, (void*)&${b}, yc_vt_of(${a})); }`
+  },
+  // 数组清零(数值数组变量)——帮助：全部成员置零，不影响维定义。
+  // 元素类别是转译期才知道的信息，故「只收数值数组」这个诊断留在这边；清零本身仍在 krnln。
+  krnln_ZeroAry: (args, _tx, name) => {
+    const t = requireVarArg(args[0], name)
+    const info = currentTranspileArrayVars.get(t)
+    if (!info) throw new Error(`命令“${name}”需要数组变量作为参数，但收到：${t}`)
+    const kind = arrayElemKindOf(info)
+    if (kind === 'text' || kind === 'bin') {
+      throw new Error(`命令“${name}”只支持数值数组（帮助：数值数组变量），但“${t}”是 ${info.elemType} 数组`)
+    }
+    return `{ krnln_ZeroAry((void*)&${t}); }`
+  },
+}
+
 function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
+  const varrefCall = YCMD_VARREF_CALLS[getYcmdNativeSymbol(cmd)]
+  if (varrefCall) return varrefCall(args, (e) => formatArgForC(e, commandMap, directCallables), cmd.name || getYcmdNativeSymbol(cmd))
+  assertNotBareObjectMemberCommand(cmd)
+  assertYcmdArrayReturnSupported(cmd, getYcmdNativeSymbol(cmd))
   const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemKind(cmd, args))
   // 调试输出：impl 单参（const char*）。所有值经 yc_dbg_fmt 格式化（照易语言——文本带
   // 全角引号、数值裸、数组/字节集带类型头），多值拼成一行（值间双空格）单次输出。
@@ -4325,16 +4941,12 @@ function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], com
   if (sig.symbol === 'spec_Trace' && args.length >= 1) {
     const fmtOne = (a: string): string => {
       const t = (a || '').trim()
-      const info = currentTranspileArrayVars.get(t)
-      const lit = matchArrayLiteral(t)
-      const litElems = lit ? splitArguments(lit.inner) : []
-      const kind: ArrayElemKind = info ? arrayElemKindOf(info)
-        : lit && litElems.some(e => /^["“]/.test(e.trim())) ? 'text'
-        : lit && litElems.some(e => /[.．]/.test(e)) ? 'f64'
-        : 'int'
-      if ((info || lit) && kind === 'f64') return `yc_ary_to_text_f64(${formatArgForC(t, commandMap, directCallables)})`
-      if ((info || lit) && kind === 'text') return `yc_ary_to_text_str(${formatArgForC(t, commandMap, directCallables)})`
-      return `yc_dbg_fmt(${formatArgForC(t, commandMap, directCallables)})`
+      const kind = arrayValueElemKind(t, commandMap)
+      const arg = formatArgForC(t, commandMap, directCallables)
+      if (kind === 'f64') return `yc_ary_to_text_f64(${arg})`
+      if (kind === 'text') return `yc_ary_to_text_str(${arg})`
+      if (kind === 'bin') return `yc_ary_to_text_bin(${arg})`
+      return `yc_dbg_fmt(${arg})`
     }
     const wideParts = args.map(fmtOne)
     let joined = wideParts[0]
@@ -4343,11 +4955,11 @@ function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], com
     }
     return `{ (void)spec_Trace(yc_wide_to_utf8(${joined})); }`
   }
-  // 加入成员 (数组, 值1, 值2, …)：impl 一次收一个值，多值展开为逐次调用
-  if (sig.symbol === 'krnln_AddElement' && args.length > 2) {
-    const arrExpr = sig.params[0].expr(args[0] || '', commandMap, directCallables)
-    const calls = args.slice(1).map(v => `krnln_AddElement(${arrExpr}, ${sig.params[1].expr(v, commandMap, directCallables)});`)
-    return `{ ${calls.join(' ')} }`
+  // 尾参可重复（加入成员(数组,值…) / 写出文本(文件号,文本…) / 输出调试文本(值…) 等）：
+  // impl 一次只收一个值，多值展开为逐次调用（前 k-1 实参复用）。
+  const repeatCalls = buildYcmdRepeatTailCalls(sig, args, commandMap, directCallables)
+  if (repeatCalls) {
+    return `{ ${repeatCalls.map(c => `(void)${c};`).join(' ')} }`
   }
   const argCount = Math.max(args.length, sig.params.length)
   const callArgs = Array.from({ length: argCount }, (_unused, index) => {
@@ -4363,6 +4975,9 @@ function generateYcmdNativeDeclarations(targetPlatform: TargetPlatform): string 
   const seen = new Set<string>()
   for (const cmd of buildCommandMap(targetPlatform).values()) {
     if (!isYcmdNativeCommand(cmd)) continue
+    // 变量操作族的声明是手写的（「地址+类型标签」通用映射译不出，见 prelude 里的 extern 块）→ 这里跳过，
+    // 否则会按清单的「通用型」再发一份 const char* 的错声明。
+    if (YCMD_VARREF_CALLS[getYcmdNativeSymbol(cmd)]) continue
     const sig = buildYcmdNativeSignature(cmd)
     if (seen.has(sig.symbol)) continue
     seen.add(sig.symbol)
@@ -4400,10 +5015,48 @@ function formatArgForC(arg: string, commandMap?: Map<string, ResolvedCommand>, d
   return translateExpressionToC(arg, commandMap, directCallables)
 }
 
+/**
+ * 判断表达式整体是否正好被一层括号包住——即第 0 个 ( 的配对括号就是末字符。
+ *
+ * 「首字符是 ( 且尾字符是 )」证明不了这件事：这俩括号未必互相配对。命令表达式的通用生成
+ * 形态是 IIFE `([&]() -> int { … })()`，首尾都是括号，但开头的 ( 配的是 `})(` 里那个 )，
+ * 末尾的 ) 属于调用括号。误判成「已包住」就会生成 `if ([&]() -> int { … })() {`，
+ * 条件在 lambda 处提前闭合，clang 报 lambda is not contextually convertible to 'bool'。
+ *
+ * 判不准时一律返回 false（宁可多包一层，只多余不出错）。反过来无脑全包不行：
+ * `if ((a == b))` 会触发 clang 的 -Wparentheses-equality 警告刷屏。
+ */
+function isSingleParenGroup(expr: string): boolean {
+  if (!expr.startsWith('(') || !expr.endsWith(')')) return false
+  let depth = 0
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]
+    // 字符串/字符字面量里的括号不参与配对，如 yc_text_compare(x, L"(") 里的那个
+    if (ch === '"' || ch === '\'') {
+      const quote = ch
+      i++
+      while (i < expr.length && expr[i] !== quote) {
+        if (expr[i] === '\\') i++
+        i++
+      }
+      if (i >= expr.length) return false
+      continue
+    }
+    if (ch === '(') {
+      depth++
+    } else if (ch === ')') {
+      depth--
+      if (depth === 0) return i === expr.length - 1
+      if (depth < 0) return false
+    }
+  }
+  return false
+}
+
 function wrapConditionForC(expr: string): string {
   const trimmed = (expr || '').trim()
   if (!trimmed) return '(0)'
-  if (trimmed.startsWith('(') && trimmed.endsWith(')')) return trimmed
+  if (isSingleParenGroup(trimmed)) return trimmed
   return `(${trimmed})`
 }
 
@@ -4441,7 +5094,7 @@ function formatArgForYcCommand(arg: string, field: string): string {
     }
     // \u6587\u672c\u578b\u53d8\u91cf/\u8868\u8fbe\u5f0f\u5728\u8fd0\u884c\u65f6\u662f wchar_t*(UTF-16)\uff0c\u901a\u7528 fne \u5206\u53d1\u63a5\u53e3\u8981 UTF-8 char*\uff0c
     // \u5fc5\u987b\u7ecf yc_wide_to_utf8 \u8f6c\u6362\uff1b\u6b64\u524d\u76f4\u63a5 (char*) \u91cd\u89e3\u91ca\u4f1a\u628a UTF-16 \u5b57\u8282\u5f53\u7a84\u4e32\u4f20\u51fa\uff08\u4e71\u7801/\u622a\u65ad\uff09\u3002
-    return `(char*)yc_wide_to_utf8(${replaceConstantRefs(convertFullWidthOps(trimmed))})`
+    return `(char*)yc_wide_to_utf8(${inlineRealDiv(replaceConstantRefs(convertFullWidthOps(trimmed)))})`
   }
 
   if (field === 'm_bool') {
@@ -4450,7 +5103,8 @@ function formatArgForYcCommand(arg: string, field: string): string {
     return `(${translateExpressionToC(trimmed, buildCommandMap())} ? 1 : 0)`
   }
 
-  return replaceConstantRefs(convertFullWidthOps(trimmed))
+  // 这条旧路径不走 translateExpressionToC（故也没有乘除拆分）→ ÷ 哨兵在此就地落地
+  return inlineRealDiv(replaceConstantRefs(convertFullWidthOps(trimmed)))
 }
 
 function mapReturnTypeToYcField(typeName: string): { field: string; expr: string } {
@@ -4763,10 +5417,13 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
 
   const lines = eycContent.split('\n')
   let result = `/* 由 ycIDE 自动从 ${fileName} 生成 */\n`
-  result += '#include <windows.h>\n#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <direct.h>\n#include <wchar.h>\n#include <wctype.h>\n#include <string.h>\n#include <filesystem>\n#include <vector>\n#include <string>\n#include <algorithm>\n#include <fstream>\n\n'
+  result += '#include <windows.h>\n#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <direct.h>\n#include <wchar.h>\n#include <wctype.h>\n#include <string.h>\n#include <filesystem>\n#include <vector>\n#include <string>\n#include <algorithm>\n#include <type_traits>\n#include <fstream>\n\n'
   result += generateYcmdNativeDeclarations(targetPlatform)
   result += 'namespace ycfs = std::filesystem;\n\n'
   result += 'typedef std::vector<unsigned char> YC_BIN;\n'
+  // 字节集连接：易语言里 字节集 ＋ 字节集 是基本操作，但 YC_BIN 是 std::vector 别名、没有 operator+
+  //（`到字节集(…) ＋ 到字节集(…)` 此前直接编译失败：invalid operands to binary expression）。
+  result += 'static inline YC_BIN operator+(const YC_BIN& a, const YC_BIN& b) { YC_BIN r; r.reserve(a.size() + b.size()); r.insert(r.end(), a.begin(), a.end()); r.insert(r.end(), b.begin(), b.end()); return r; }\n'
   // 文本型：包裹 std::wstring 的值类型（RAII、拷贝即值语义、出作用域自动释放，无泄漏）；
   // operator const wchar_t*() 让它无缝落进所有既有 const wchar_t* 调用点与原生 ABI。
   result += 'struct YC_TEXT {\n'
@@ -4794,6 +5451,63 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   // 文本数组字面量：元素堆拷贝后存指针位模式（需要前向声明 yc_wcsdup_text，其定义在后段）
   result += 'static wchar_t* yc_wcsdup_text(const wchar_t* s);\n'
   result += 'static std::vector<long long> yc_ary_lit_text(std::initializer_list<const wchar_t*> v) { std::vector<long long> r; r.reserve(v.size()); for (const wchar_t* s : v) r.push_back((long long)(intptr_t)yc_wcsdup_text(s ? s : L"")); return r; }\n\n'
+  // 字节集数组：元素存堆上 YC_BIN 的指针位模式（YC_BIN 是值类型、装不进 long long）。
+  // 与 yc_wcsdup_text 同策——全程序生命期，不回收（数组元素没有析构时机）。
+  result += 'static YC_BIN* yc_bin_dup(const YC_BIN& b) { return new YC_BIN(b); }\n'
+  result += 'static std::vector<long long> yc_ary_lit_bin(std::initializer_list<YC_BIN> v) { std::vector<long long> r; r.reserve(v.size()); for (const YC_BIN& b : v) r.push_back((long long)(intptr_t)yc_bin_dup(b)); return r; }\n\n'
+  // 【数组返回 ABI】接管 krnln impl 交回的堆 vector：移走内容后 delete，所有权到此为止归调用处。
+  // impl 只负责 new + 填充（文本元素用 _wcsdup 出的宽串指针存位模式，与 yc_ary_lit_text 同款、同样不回收）。
+  result += 'static std::vector<long long> yc_ary_take(void* p) {\n'
+  result += '    std::vector<long long>* v = reinterpret_cast<std::vector<long long>*>(p);\n'
+  result += '    if (!v) return std::vector<long long>();\n'
+  result += '    std::vector<long long> r = std::move(*v);\n'
+  result += '    delete v;\n'
+  result += '    return r;\n'
+  result += '}\n'
+  // 数组「值」表达式（如 分割文本(…) 的返回、数组字面量）要当数组命令实参时的落地槽：
+  // 数组命令收 (void*)&数组变量，而临时量取不了址——先落进轮转池再取址（同 yc_c_str_slot 的路子）。
+  result += 'static std::vector<long long> yc_ary_tmp_slots[8];\n'
+  result += 'static int yc_ary_tmp_pos = 0;\n'
+  result += 'static std::vector<long long>& yc_ary_tmp(std::vector<long long> v) {\n'
+  result += '    std::vector<long long>& s = yc_ary_tmp_slots[yc_ary_tmp_pos];\n'
+  result += '    yc_ary_tmp_pos = (yc_ary_tmp_pos + 1) % 8;\n'
+  result += '    s = std::move(v);\n'
+  result += '    return s;\n'
+  result += '}\n'
+  // 字节集要按 YC_BIN* 交给 krnln 时的落地槽（同上：临时量取不了址）。见 mapYcmdArrayParamKind 的 binptr。
+  result += 'static YC_BIN yc_bin_tmp_slots[8];\n'
+  result += 'static int yc_bin_tmp_pos = 0;\n'
+  result += 'static YC_BIN& yc_bin_tmp(YC_BIN v) {\n'
+  result += '    YC_BIN& s = yc_bin_tmp_slots[yc_bin_tmp_pos];\n'
+  result += '    yc_bin_tmp_pos = (yc_bin_tmp_pos + 1) % 8;\n'
+  result += '    s = std::move(v);\n'
+  result += '    return s;\n'
+  result += '}\n\n'
+  // ========== 「按引用操作变量」族的类型标签（赋值/连续赋值/交换变量/强制交换变量）==========
+  // 这族是「通用型变量」语义：krnln 收到变量地址后，得知道该按什么类型去赋值/交换——裸 void*
+  // 没有类型信息。转译期本来就知道类型，故把标签一起交过去，**实现仍留在支持库**。
+  // 独立编号、不复用 YC_SDT_*：那套是易语言的数据类型 ID（YC_MDATA_INF 在用），
+  // 字节集/数组的真实 ID 我们没有确证，不在这里瞎认领。
+  result += '#define YC_VT_INT 1\n#define YC_VT_INT64 2\n#define YC_VT_SHORT 3\n#define YC_VT_BYTE 4\n'
+  result += '#define YC_VT_FLOAT 5\n#define YC_VT_DOUBLE 6\n#define YC_VT_TEXT 7\n#define YC_VT_BIN 8\n#define YC_VT_ARY 9\n'
+  // 标签由 C++ 重载解析得出，转译期不必再查一次变量类型表；不支持的类型直接编译失败（诚实），
+  // 不会静默按错类型写内存。逻辑型/整数型同为 int，赋值与交换的行为本就一致，不必区分。
+  result += 'static inline int yc_vt_of(int) { return YC_VT_INT; }\n'
+  result += 'static inline int yc_vt_of(long long) { return YC_VT_INT64; }\n'
+  result += 'static inline int yc_vt_of(short) { return YC_VT_SHORT; }\n'
+  result += 'static inline int yc_vt_of(unsigned char) { return YC_VT_BYTE; }\n'
+  result += 'static inline int yc_vt_of(float) { return YC_VT_FLOAT; }\n'
+  result += 'static inline int yc_vt_of(double) { return YC_VT_DOUBLE; }\n'
+  result += 'static inline int yc_vt_of(const YC_TEXT&) { return YC_VT_TEXT; }\n'
+  result += 'static inline int yc_vt_of(const YC_BIN&) { return YC_VT_BIN; }\n'
+  result += 'static inline int yc_vt_of(const std::vector<long long>&) { return YC_VT_ARY; }\n\n'
+  // 变量操作族的原生签名（清单里这几条的参数是「通用型变量/变量数组」，通用映射译不出「地址+标签」，
+  // 故手写声明、并在 generateYcmdNativeDeclarations 里跳过它们）。
+  result += 'extern "C" void krnln_set(void* target, const void* value, int dataType);\n'
+  result += 'extern "C" void krnln_store(const void* value, void* target, int dataType);\n'
+  result += 'extern "C" void krnln_XchgVar(void* a, void* b, int dataType);\n'
+  result += 'extern "C" void krnln_ForceXchgVar(void* a, void* b, int dataType);\n'
+  result += 'extern "C" void krnln_ZeroAry(void* arrayVar);\n\n'
   result += 'struct YC_BIG {\n'
   result += '    bool neg;\n'
   result += '    std::string digits;\n'
@@ -5095,13 +5809,14 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'extern void yc_timer_set_period(const wchar_t* n, int v);\n'
   // 编辑框/组合框「被选择文本」（库返 owned wchar_t*，main.cpp 包 YC_TEXT）
   result += 'extern YC_TEXT yc_ctrl_get_seltext(HWND h);\n'
-  result += 'extern "C" void krnln_ctrl_set_seltext(HWND h, const wchar_t* t);\n\n'
+  result += 'extern "C" void krnln_ctrl_set_seltext(HWND h, const wchar_t* t);\n'
+  result += 'extern "C" void krnln_ctrl_append_text(HWND h, const wchar_t* t);\n\n'  // 编辑框「加入文本」（多值由 callEach 逐值发一次调用）
   result += 'static wchar_t* yc_wcsdup_text(const wchar_t* s);\n'
   result += 'static wchar_t* yc_empty_text(void);\n'
   result += 'static YC_TEXT yc_utf8_to_wide(const char* s);\n'
   result += 'static const char* yc_wide_to_utf8(const wchar_t* s);\n'
-  result += 'static const char* yc_bin_to_cstr(const YC_BIN& value);\n'
-  result += 'static YC_BIN yc_cstr_to_bin(const char* value);\n'
+  result += 'static YC_BIN yc_bin_take(void* p);\n'
+  result += 'static YC_BIN& yc_bin_ref(YC_BIN& b);\n'
   result += 'static YC_TEXT yc_format_win32_error(DWORD errorCode);\n'
   result += 'static void yc_runtime_note_begin(void);\n'
   result += 'static void yc_runtime_note_part(const wchar_t* s);\n'
@@ -5283,19 +5998,17 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    return out.c_str();\n'
   result += '}\n\n'
 
-  result += 'static const char* yc_bin_to_cstr(const YC_BIN& value) {\n'
-  result += '    std::string& out = yc_c_str_slot();\n'
-  result += '    out.assign((const char*)value.data(), value.size());\n'
-  result += '    return out.c_str();\n'
+  // 【字节集 ABI v2】接管 krnln impl 交回的堆 YC_BIN（移走内容后 delete）。与 yc_ary_take 同款。
+  result += 'static YC_BIN yc_bin_take(void* p) {\n'
+  result += '    YC_BIN* v = reinterpret_cast<YC_BIN*>(p);\n'
+  result += '    if (!v) return YC_BIN();\n'
+  result += '    YC_BIN r = std::move(*v);\n'
+  result += '    delete v;\n'
+  result += '    return r;\n'
   result += '}\n\n'
-
-  result += 'static YC_BIN yc_cstr_to_bin(const char* value) {\n'
-  result += '    YC_BIN out;\n'
-  result += '    if (!value) return out;\n'
-  result += '    const size_t n = strlen(value);\n'
-  result += '    out.assign((const unsigned char*)value, (const unsigned char*)value + n);\n'
-  result += '    return out;\n'
-  result += '}\n\n'
+  // 「参考」形态的字节集实参（置字节集内整数 要就地改写）：必须绑到用户变量本身、不能是临时副本。
+  // 借 C++ 重载解析当类型闸——实参不是 YC_BIN 左值就编译失败，而非 (void*)& 出一个错类型指针。
+  result += 'static YC_BIN& yc_bin_ref(YC_BIN& b) { return b; }\n\n'
   result += 'static wchar_t* yc_get_local_hostname(void) {\n'
   result += '    static wchar_t host[256];\n'
   result += '    DWORD n = (DWORD)(sizeof(host) / sizeof(host[0]));\n'
@@ -5426,6 +6139,13 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'static YC_TEXT yc_value_to_text(const YC_BIN& b) {\n'
   result += '    std::wstring out = L"字节集:" + std::to_wstring(b.size()) + L"{";\n'
   result += '    for (size_t i = 0; i < b.size(); i++) { if (i) out += L","; out += std::to_wstring((int)b[i]); }\n'
+  result += '    out += L"}";\n'
+  result += '    return YC_TEXT(std::move(out));\n'
+  result += '}\n\n'
+  // 字节集数组转文本（元素为堆拷贝的 YC_BIN* 指针位模式）——套用上面的 字节集:N{…} 逐元素打印
+  result += 'static YC_TEXT yc_ary_to_text_bin(const std::vector<long long>& a) {\n'
+  result += '    std::wstring out = L"数组:" + std::to_wstring(a.size()) + L"{";\n'
+  result += '    for (size_t i = 0; i < a.size(); i++) { if (i) out += L","; const YC_BIN* p = (const YC_BIN*)(intptr_t)a[i]; out += p ? yc_value_to_text(*p).s : std::wstring(L"字节集:0{}"); }\n'
   result += '    out += L"}";\n'
   result += '    return YC_TEXT(std::move(out));\n'
   result += '}\n\n'
@@ -5815,7 +6535,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   if (projectConstants.length > 0) {
     result += '/* 项目常量定义 */\n'
     for (const c of projectConstants) {
-      const cValue = replaceConstantRefs(convertFullWidthOps((c.value || '0').trim() || '0'))
+      // 常量值直接铺进 #define（不走 translateExpressionToC，故也没有乘除拆分）→ ÷ 哨兵在此就地落地
+      const cValue = inlineRealDiv(replaceConstantRefs(convertFullWidthOps((c.value || '0').trim() || '0')))
       if (libraryConstants.some(lc => lc.name === c.name)) {
         result += `#undef ${c.name}\n`
       }
@@ -5945,6 +6666,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   let loopTempIndex = 0
   let pendingBreakpointLine: number | null = null
   let visibleDebugVars: Array<{ name: string; type: string }> = []
+  // 正在转译的 .eyc 行号：随生成的每行 C++ 打成 /*@行号*/ 前缀，供编译报错回溯到易语言源码（见 loadEycOrigin）
+  let currentEycLine = 0
 
   const buildSubSignature = (_name: string, params: Array<{ name: string; type: string; isArray?: boolean }>): string => {
     if (params.length === 0) return 'void'
@@ -5966,7 +6689,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   }
 
   const appendSubLine = (code: string) => {
-    subBody += `${'    '.repeat(Math.max(1, blockIndent))}${code}\n`
+    const origin = currentEycLine > 0 ? `/*@${currentEycLine}*/` : ''
+    subBody += `${origin}${'    '.repeat(Math.max(1, blockIndent))}${code}\n`
   }
 
   const pushVisibleDebugVar = (name: string, type: string) => {
@@ -6028,6 +6752,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     try {
     const rawLine = lines[lineIndex]
+    currentEycLine = lineIndex + 1
     pendingBreakpointLine = inSub && breakpointLines.has(lineIndex + 1) ? (lineIndex + 1) : null
     // 剥离流程标记零宽字符（\u200C/\u200D/\u2060/\u200B）与行尾单引号注释
     const line = stripTrailingEycComment(rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim())
@@ -6041,8 +6766,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       const dims = parseArrayDimsField(parts[3])
       if (dims.isArray && !isClassModuleSource) {
         if (dims.invalid) throwSourceError(lineIndex + 1, dims.invalid)
-        if (!ARRAY_ELEM_INTEGER_TYPES.has(varType) && !ARRAY_ELEM_FLOAT_TYPES.has(varType) && varType !== '文本型') {
-          throwSourceError(lineIndex + 1, `暂不支持 ${varType} 数组（当前支持整数族/小数族/文本型元素）`)
+        if (!isSupportedArrayElemType(varType)) {
+          throwSourceError(lineIndex + 1, `暂不支持 ${varType} 数组（${SUPPORTED_ARRAY_ELEM_HINT}）`)
         }
         const dimTotal = dims.dims.reduce((acc, n) => acc * n, 1)
         result += `static std::vector<long long> ${varName}${dims.dims.length > 0 ? `(${dimTotal}, 0)` : ''};\n`
@@ -6093,8 +6818,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       const paramType = (parts[1] || '整数型').trim()
       if (paramName) {
         const isArrayParam = parts.slice(2).includes('数组')
-        if (isArrayParam && !ARRAY_ELEM_INTEGER_TYPES.has(paramType) && !ARRAY_ELEM_FLOAT_TYPES.has(paramType) && paramType !== '文本型') {
-          throwSourceError(lineIndex + 1, `暂不支持 ${paramType} 数组参数（当前支持整数族/小数族/文本型元素）`)
+        if (isArrayParam && !isSupportedArrayElemType(paramType)) {
+          throwSourceError(lineIndex + 1, `暂不支持 ${paramType} 数组参数（${SUPPORTED_ARRAY_ELEM_HINT}）`)
         }
         subParams.push({ name: paramName, type: paramType, isArray: isArrayParam })
         if (isArrayParam) {
@@ -6115,8 +6840,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       const dims = parseArrayDimsField(parts[3])
       if (dims.isArray) {
         if (dims.invalid) throwSourceError(lineIndex + 1, dims.invalid)
-        if (!ARRAY_ELEM_INTEGER_TYPES.has(varType) && !ARRAY_ELEM_FLOAT_TYPES.has(varType) && varType !== '文本型') {
-          throwSourceError(lineIndex + 1, `暂不支持 ${varType} 数组（当前支持整数族/小数族/文本型元素）`)
+        if (!isSupportedArrayElemType(varType)) {
+          throwSourceError(lineIndex + 1, `暂不支持 ${varType} 数组（${SUPPORTED_ARRAY_ELEM_HINT}）`)
         }
         const dimTotal = dims.dims.reduce((acc, n) => acc * n, 1)
         emitSubLine(`std::vector<long long> ${varName}${dims.dims.length > 0 ? `(${dimTotal}, 0)` : ''};`)
@@ -6304,8 +7029,12 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
           const linear = buildAryLinearIndexExpr(idxParts, info.dims)
           const rhsC = translateExpressionToC(idxAssignTarget.rhs, commandMap, directCallables, resolveVisibleVarType)
           const kind = arrayElemKindOf(info)
+          // text/bin 与 mapYcmdArrayElemValueParam 同策：先显式转到指针类型再堆拷贝存指针位模式。
+          // （原文本分支 `(intptr_t)yc_value_to_text(...)` 编不过——C 风格转换不肯把 YC_TEXT
+          //  连着经 operator const wchar_t*() 再转 intptr_t，故「文本数组[i] ＝ 值」一直是死路。）
           const valueExpr = kind === 'f64' ? `yc_f64_bits((double)(${rhsC}))`
-            : kind === 'text' ? `(long long)(intptr_t)yc_value_to_text(${rhsC})`
+            : kind === 'text' ? `(long long)(intptr_t)yc_wcsdup_text((const wchar_t*)yc_value_to_text(${rhsC}))`
+            : kind === 'bin' ? `(long long)(intptr_t)yc_bin_dup(${rhsC})`
             : `(long long)(${rhsC})`
           emitSubLine(`yc_ary_at(${idxAssignTarget.name}, ${linear}) = ${valueExpr};`)
           continue
@@ -6573,6 +7302,9 @@ function generateMainC(
   ): void => {
     const cFileName = fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
     const cFilePath = join(tempDir, cFileName)
+    // 编译报错要回显易语言源码行。这里存的是**实际参与转译的** content（含编辑器里未保存的改动），
+    // 且在转译缓存命中的分支之前——缓存命中不重跑转译，但报错回显仍然需要源码。
+    activeEycSourceLines.set(fileName, content.split('\n'))
     const fingerprint = createHash('sha1').update([
       String(TRANSPILE_CACHE_VERSION),
       fileName,
@@ -7496,6 +8228,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       } else if (picBoxCodegen) {
         // 标准 STATIC·图片框（忽略 WM_APP+1）：图片经 GDI+ 解码为 HBITMAP 后 STM_SETIMAGE
         if (picBoxImageBytes) {
+          const picDrawMode = readIntProp(ctrl.extraProps['显示方式'], 0)  // 0居左上 1缩放 2居中
           mainCode += '    {\n'
           mainCode += `      HGLOBAL hPicMem = GlobalAlloc(GMEM_MOVEABLE, g_ctrlImgSize_${ctrlIndex});\n`
           mainCode += '      if (hPicMem) {\n'
@@ -7507,7 +8240,20 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
           mainCode += '          if (pPicBmp) {\n'
           mainCode += '            if (pPicBmp->GetLastStatus() == Gdiplus::Ok) {\n'
           mainCode += '              HBITMAP hPicBitmap = NULL;\n'
-          mainCode += '              pPicBmp->GetHBITMAP(Gdiplus::Color(255, 255, 255), &hPicBitmap);\n'
+          if (picDrawMode === 1) {
+            // 缩放：位图拉伸到控件客户区，配合 SS_REALSIZECONTROL 铺满且保持控件尺寸（此前无实现，图片按原尺寸撑大控件）
+            mainCode += '              RECT _rcPic; GetClientRect(hCtrl, &_rcPic);\n'
+            mainCode += '              int _pcw = _rcPic.right - _rcPic.left, _pch = _rcPic.bottom - _rcPic.top;\n'
+            mainCode += '              if (_pcw < 1) _pcw = 1;\n'
+            mainCode += '              if (_pch < 1) _pch = 1;\n'
+            mainCode += '              Gdiplus::Bitmap _scaledPic(_pcw, _pch, PixelFormat32bppARGB);\n'
+            mainCode += '              Gdiplus::Graphics _gPic(&_scaledPic);\n'
+            mainCode += '              _gPic.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);\n'
+            mainCode += '              _gPic.DrawImage(pPicBmp, 0, 0, _pcw, _pch);\n'
+            mainCode += '              _scaledPic.GetHBITMAP(Gdiplus::Color(255, 255, 255), &hPicBitmap);\n'
+          } else {
+            mainCode += '              pPicBmp->GetHBITMAP(Gdiplus::Color(255, 255, 255), &hPicBitmap);\n'
+          }
           mainCode += '              if (hPicBitmap) SendMessageW(hCtrl, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)hPicBitmap);\n'
           mainCode += '            }\n'
           mainCode += '            delete pPicBmp;\n'
@@ -8455,6 +9201,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
   const startTime = Date.now()
   activeProjectCustomTypeNames = new Set()
   activeProjectClassNames = new Set()
+  resetCompileDiagnosticContext()
 
   try {
     // 查找 .epp 文件
@@ -8697,9 +9444,10 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       sendMessage({ type: 'info', text: '项目类型: 控制台程序' })
     }
 
-    // 平台系统库（advapi32=注册表、ole32=COM 初始化，webview2 等支持库需要）
+    // 平台系统库（advapi32=注册表、ole32=COM 初始化，webview2 等支持库需要；
+    // comdlg32=通用对话框 GetOpenFileNameW，多文件对话框 用）
     if (targetPlatform === 'windows') {
-      args.push('-lkernel32', '-luser32', '-lgdi32', '-lcomctl32', '-loleaut32', '-ladvapi32', '-lole32', '-lgdiplus')
+      args.push('-lkernel32', '-luser32', '-lgdi32', '-lcomctl32', '-loleaut32', '-ladvapi32', '-lole32', '-lgdiplus', '-lcomdlg32')
     }
 
     // ========== 支持库链接 ==========
@@ -8762,10 +9510,14 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       const zigArgs = ['c++', ...args]
       const proc = execFile(zigPath, zigArgs, { cwd: zigDir, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
         if (stderr) {
-          const lines = stderr.split('\n').filter(l => l.trim())
+          // 必须剥掉行尾 \r（zig 的 stderr 是 CRLF）：JS 正则里 \r 是行终止符、. 不匹配它，
+          // 留着它下面所有以 $ 收尾的诊断正则会全部失配，友好化静默退化成透传英文原文。
+          const lines = stderr.split('\n').map(l => l.trimEnd()).filter(Boolean)
           for (const line of lines) {
+            // C++ 原文无删减进诊断日志：面板里被改写/折叠掉的细节，排查 ycIDE 自身问题时还得翻得到
+            compileLogRaw(line)
+
             const lower = line.toLowerCase()
-            const localized = localizeCompilerMessage(line)
 
             const unresolvedMatch = line.match(/g_cmdInfo_([A-Za-z0-9_]+)_global_var_fun/i)
             if (unresolvedMatch) {
@@ -8788,14 +9540,24 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
               }
             }
 
+            // 诊断后跟的源码回显行与插入符行秀的是 temp/*.cpp 里的 C++——用户从没写过那些代码，
+            // 面板里纯属噪音（原文已进日志）。clang 的 note: 同理，全是 C++ 实现细节。
+            if (CLANG_ECHO_RE.test(line)) continue
+            const noteMatch = line.match(CLANG_DIAGNOSTIC_RE)
+            if (noteMatch && noteMatch[4].toLowerCase() === 'note') continue
+
             if (lower.includes('error')) {
-              sendMessage({ type: 'error', text: localized })
+              if (!reportFriendlyCppDiagnostic(line, 'error')) {
+                sendMessage({ type: 'error', text: localizeCompilerMessage(line) })
+              }
               result.errorCount++
             } else if (lower.includes('warning')) {
-              sendMessage({ type: 'warning', text: localized })
+              if (!reportFriendlyCppDiagnostic(line, 'warning')) {
+                sendMessage({ type: 'warning', text: localizeCompilerMessage(line) })
+              }
               result.warningCount++
             } else {
-              sendMessage({ type: 'info', text: localized })
+              sendMessage({ type: 'info', text: localizeCompilerMessage(line) })
             }
           }
         }

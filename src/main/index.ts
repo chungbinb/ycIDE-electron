@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, dialog, ipcMain, shell, screen, safeStorage, 
 import { join, dirname, basename, extname } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync, unlinkSync, rmSync } from 'fs'
 import { readFile as readFileAsync, writeFile as writeFileAsync, readdir as readdirAsync, stat as statAsync } from 'fs/promises'
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { spawn as spawnPty, type IPty } from 'node-pty'
 import iconv from 'iconv-lite'
 import { libraryManager } from './libraryManager'
 import { runExecutable, stopExecutable, isRunning, continueDebugExecutable, setCompilerHost } from './compiler'
@@ -68,10 +68,14 @@ const BUILTIN_THEME_IDS: ThemeId[] = [BUILTIN_DARK_THEME_ID, BUILTIN_LIGHT_THEME
 const BUILTIN_THEME_COMPARE_KEYS = THEME_TOKEN_GROUPS.flatMap(group => group.items.map(item => item.tokenKey))
 let previousBuiltInThemeId: ThemeId = BUILTIN_DARK_THEME_ID
 const closeBypassWindowIds = new Set<number>()
-let terminalProcess: ChildProcessWithoutNullStreams | null = null
-let terminalRestartRequested = false
+let terminalProcess: IPty | null = null
+// 前端 xterm 拟合后回传的终端尺寸；重建终端进程时沿用（默认 80x24）
+let terminalCols = 80
+let terminalRows = 24
 const terminalOutputBuffer: string[] = []
 const terminalCommandHistory: string[] = []
+// 输出块单调递增序号：前端 xterm 回放快照后，用它丢弃"快照与实时订阅重叠"的重复块（详见 OutputPanel）。
+let terminalOutputSeq = 0
 const TERMINAL_OUTPUT_LIMIT = 2000
 const TERMINAL_COMMAND_LIMIT = 500
 
@@ -146,12 +150,14 @@ function resolveWindowIconPath(): string | undefined {
 
 function pushTerminalOutput(text: string): void {
   if (!text) return
+  terminalOutputSeq++
   terminalOutputBuffer.push(text)
   if (terminalOutputBuffer.length > TERMINAL_OUTPUT_LIMIT) {
     terminalOutputBuffer.splice(0, terminalOutputBuffer.length - TERMINAL_OUTPUT_LIMIT)
   }
+  const seq = terminalOutputSeq
   for (const w of BrowserWindow.getAllWindows()) {
-    w.webContents.send('terminal:output', text)
+    w.webContents.send('terminal:output', text, seq)
   }
 }
 
@@ -160,42 +166,6 @@ function pushTerminalOutputUnique(text: string): void {
   const last = terminalOutputBuffer.length > 0 ? terminalOutputBuffer[terminalOutputBuffer.length - 1] : ''
   if (last === text) return
   pushTerminalOutput(text)
-}
-
-// 跨 chunk 保留结尾不完整的 UTF-8 多字节序列，避免边界截断产生假 � 触发错误的 GBK 回退。
-let terminalDecodeLeftover = Buffer.alloc(0)
-
-// 返回 buf 结尾处"不完整 UTF-8 多字节序列"的字节数（0 表示结尾完整）。
-function incompleteUtf8TailLen(buf: Buffer): number {
-  let i = buf.length - 1
-  let cont = 0
-  while (i >= 0 && (buf[i] & 0xc0) === 0x80) { cont++; i-- } // 跳过 continuation 字节
-  if (i < 0) return cont > 0 ? cont : 0
-  const lead = buf[i]
-  let need = 0
-  if ((lead & 0x80) === 0) need = 0
-  else if ((lead & 0xe0) === 0xc0) need = 1
-  else if ((lead & 0xf0) === 0xe0) need = 2
-  else if ((lead & 0xf8) === 0xf0) need = 3
-  else return 0
-  return cont < need ? 1 + cont : 0 // 尾部字符不完整则保留 lead + 已到的 continuation
-}
-
-function decodeTerminalChunk(chunk: Buffer): string {
-  const buf = terminalDecodeLeftover.length > 0 ? Buffer.concat([terminalDecodeLeftover, chunk]) : chunk
-  const tail = incompleteUtf8TailLen(buf)
-  const decodable = tail > 0 ? buf.subarray(0, buf.length - tail) : buf
-  terminalDecodeLeftover = tail > 0 ? Buffer.from(buf.subarray(buf.length - tail)) : Buffer.alloc(0)
-  const utf8 = decodable.toString('utf-8')
-  // 已剔除不完整尾部后仍含 �，才是真乱码：cmd.exe 在中文 Windows 常为 GBK/CP936，回退 GBK。
-  if (utf8.includes('�')) {
-    try {
-      return iconv.decode(Buffer.from(decodable), 'gbk')
-    } catch {
-      return utf8
-    }
-  }
-  return utf8
 }
 
 function pushTerminalCommand(command: string): void {
@@ -215,44 +185,41 @@ function createTerminalProcess(): void {
   const shell = process.platform === 'win32'
     ? (process.env.ComSpec || 'cmd.exe')
     : (process.env.SHELL || '/bin/bash')
-  terminalProcess = spawn(shell, [], {
-    cwd: process.cwd(),
-    env: process.env,
-    stdio: 'pipe',
-    windowsHide: true,
-  })
-
-  pushTerminalOutputUnique(`[terminal] 已启动: ${shell}\n`)
-  pushTerminalOutputUnique(`[terminal] 当前目录: ${process.cwd()}\n`)
-
-  terminalProcess.stdout.on('data', (chunk: Buffer) => {
-    pushTerminalOutput(decodeTerminalChunk(chunk))
-  })
-  terminalProcess.stderr.on('data', (chunk: Buffer) => {
-    pushTerminalOutput(decodeTerminalChunk(chunk))
-  })
-  terminalProcess.on('close', (code, signal) => {
-    terminalDecodeLeftover = Buffer.alloc(0)
-    pushTerminalOutput(`[terminal] 已退出 (code=${code ?? 'null'}, signal=${signal ?? 'null'})\n`)
+  try {
+    // 真伪终端（Windows 走 ConPTY）：交互式程序（copilot/vim/进度条动画）能正常渲染，
+    // 颜色/光标/重绘由前端 xterm.js 解释。ConPTY 已做编码转换，onData 即正确 UTF-8 字符串。
+    terminalProcess = spawnPty(shell, [], {
+      name: 'xterm-256color',
+      cols: terminalCols,
+      rows: terminalRows,
+      cwd: process.cwd(),
+      env: { ...process.env, FORCE_COLOR: '1', CLICOLOR_FORCE: '1', COLORTERM: 'truecolor' } as Record<string, string>,
+    })
+  } catch (error) {
+    pushTerminalOutput(`[terminal] 启动失败: ${(error as Error).message}\r\n`)
     terminalProcess = null
-    if (terminalRestartRequested) {
-      terminalRestartRequested = false
-      createTerminalProcess()
-      return
-    }
+    return
+  }
+
+  // 注意：写入 xterm 的换行须用 \r\n（\n 只下移不回车），故所有注入文本都用 \r\n。
+  pushTerminalOutputUnique(`[terminal] 已启动: ${shell}\r\n`)
+  pushTerminalOutputUnique(`[terminal] 当前目录: ${process.cwd()}\r\n`)
+
+  terminalProcess.onData((data: string) => {
+    pushTerminalOutput(data)
+  })
+  terminalProcess.onExit(({ exitCode, signal }) => {
+    pushTerminalOutput(`\r\n[terminal] 已退出 (code=${exitCode}, signal=${signal ?? 'null'})\r\n`)
+    terminalProcess = null
     for (const w of BrowserWindow.getAllWindows()) {
-      w.webContents.send('terminal:exit', { code, signal })
+      w.webContents.send('terminal:exit', { code: exitCode, signal })
     }
-  })
-  terminalProcess.on('error', (error) => {
-    pushTerminalOutput(`[terminal] 启动失败: ${error.message}\n`)
-    terminalProcess = null
   })
 }
 
-function ensureTerminalProcess(): ChildProcessWithoutNullStreams {
+function ensureTerminalProcess(): IPty {
   if (!terminalProcess) createTerminalProcess()
-  return terminalProcess as ChildProcessWithoutNullStreams
+  return terminalProcess as IPty
 }
 
 function stopTerminalProcess(): void {
@@ -266,51 +233,15 @@ function stopTerminalProcess(): void {
 }
 
 function interruptTerminalProcess(): { ok: boolean; error?: string } {
-  if (!terminalProcess || terminalProcess.killed) {
+  if (!terminalProcess) {
     return { ok: false, error: '终端未启动。' }
   }
-
-  const proc = terminalProcess
-  terminalRestartRequested = true
-  pushTerminalOutput('^C\n')
-  pushTerminalOutput('[terminal] 已发送中断信号，正在重置终端会话...\n')
-
-  if (process.platform === 'win32') {
-    try {
-      const killer = spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F'], {
-        windowsHide: true,
-        stdio: 'ignore',
-      })
-      killer.on('error', () => {
-        try {
-          proc.kill()
-        } catch {
-          // ignore
-        }
-      })
-      return { ok: true }
-    } catch {
-      try {
-        proc.kill()
-      } catch {
-        terminalRestartRequested = false
-        return { ok: false, error: '发送中断失败。' }
-      }
-      return { ok: true }
-    }
-  }
-
+  // 真终端下中断=向 PTY 写入 ETX(Ctrl+C)，由 ConPTY 投递给前台程序，只中断当前命令而不杀 shell。
   try {
-    proc.kill('SIGINT')
+    terminalProcess.write('\x03')
     return { ok: true }
-  } catch {
-    try {
-      proc.kill()
-      return { ok: true }
-    } catch {
-      terminalRestartRequested = false
-      return { ok: false, error: '发送中断失败。' }
-    }
+  } catch (error) {
+    return { ok: false, error: (error as Error).message || '发送中断失败。' }
   }
 }
 
@@ -1711,20 +1642,42 @@ app.whenReady().then(() => {
       output: terminalOutputBuffer,
       commands: terminalCommandHistory,
       lastCommand: terminalCommandHistory.length > 0 ? terminalCommandHistory[terminalCommandHistory.length - 1] : '',
+      seq: terminalOutputSeq,
     }
   })
 
+  // 程序化整行执行（如"在终端运行"入口）。PTY 会自行回显输入，这里不再手动 push `> cmd`。
   ipcMain.handle('terminal:send', (_event, command: string) => {
-    const normalized = typeof command === 'string' ? command : ''
+    const toSend = typeof command === 'string' ? command : ''
     const proc = ensureTerminalProcess()
-    if (!proc || !proc.stdin || proc.killed) {
+    if (!proc) {
       return { ok: false, error: '终端未启动。' }
     }
-    const toSend = normalized.length > 0 ? normalized : ''
     pushTerminalCommand(toSend)
-    pushTerminalOutput(`> ${toSend}\n`)
-    proc.stdin.write(`${toSend}\n`)
+    proc.write(`${toSend}\r`)
     return { ok: true }
+  })
+
+  // 交互式原始输入：xterm 每次按键/粘贴直接透传给 PTY（高频，用 send/on 免 invoke 开销）。
+  ipcMain.on('terminal:input', (_event, data: string) => {
+    if (terminalProcess && typeof data === 'string') {
+      terminalProcess.write(data)
+    }
+  })
+
+  // xterm FitAddon 拟合后回传行列，PTY 同步尺寸（否则全屏程序按 80x24 排版会错位）。
+  ipcMain.on('terminal:resize', (_event, cols: number, rows: number) => {
+    if (typeof cols === 'number' && typeof rows === 'number' && cols > 0 && rows > 0) {
+      terminalCols = Math.floor(cols)
+      terminalRows = Math.floor(rows)
+      if (terminalProcess) {
+        try {
+          terminalProcess.resize(terminalCols, terminalRows)
+        } catch {
+          // 尺寸非法/进程刚退出，忽略
+        }
+      }
+    }
   })
 
   ipcMain.handle('terminal:getSnapshot', () => {
@@ -1733,6 +1686,7 @@ app.whenReady().then(() => {
       output: terminalOutputBuffer,
       commands: terminalCommandHistory,
       lastCommand: terminalCommandHistory.length > 0 ? terminalCommandHistory[terminalCommandHistory.length - 1] : '',
+      seq: terminalOutputSeq,
     }
   })
 

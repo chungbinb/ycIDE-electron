@@ -973,7 +973,8 @@
           "name": "准备输出的调试文本信息",
           "type": "通用型",
           "optional": false,
-          "description": "。"
+          "description": "。",
+          "repeatable": true
         }
       ],
       "returnType": "无返回值",
@@ -2496,23 +2497,23 @@
     {
       "commandId": "krnln.set",
       "displayName": "赋值",
-      "summary": "设置本对象的内容，成功返回真，失败返回假。本命令为初级对象成员命令。",
+      "summary": "将指定的值或资源赋于指定的变量或变量数组。本命令为初级命令。",
       "params": [
         {
-          "name": "欲写入数据",
+          "name": "被赋值的变量或变量数组",
           "type": "通用型",
-          "optional": true,
-          "description": "，可以被省略，提供参数数据时可以同时提供数组或非数组数据。参数值可以为文本、数值、逻辑值、日期时间值、COM对象型数据类型或者这些数据类型及“变体型”数据类型本身的数组形式。如果本参数被省略，则将对象清空。"
+          "optional": false,
+          "description": "。提供参数数据时只能提供变量及变量数组。"
         },
         {
-          "name": "成员索引",
-          "type": "整数型",
-          "optional": true,
-          "description": "，可以被省略。如果当前对象内为数组型数据，且欲对数组内的某个成员进行操作，则可以在此参数中指定其引用索引值，该索引值从 1 开始。除开上述情况外，请省略本参数。"
+          "name": "用作赋于的值或资源",
+          "type": "通用型",
+          "optional": false,
+          "description": "。提供参数数据时可以同时提供数组或非数组数据。"
         }
       ],
-      "returnType": "逻辑型",
-      "category": "控制台操作",
+      "returnType": "无返回值",
+      "category": "变量操作",
       "supportedPlatforms": [
         "windows"
       ]
@@ -2532,7 +2533,8 @@
           "name": "被赋值的变量或变量数组",
           "type": "通用型",
           "optional": false,
-          "description": "，提供参数数据时只能提供变量及变量数组。"
+          "description": "，提供参数数据时只能提供变量及变量数组。",
+          "repeatable": true
         }
       ],
       "returnType": "无返回值",
@@ -3681,23 +3683,29 @@
     {
       "commandId": "krnln.split",
       "displayName": "分割文本",
-      "summary": "分解数据源中指定的已经组合的单元格，行列参数指向被组合单元格内的任何一个单元格即可。注意如果数据源所使用的数据提供者不支持此特性，本命令将被忽略。本命令为初级对象成员命令。",
+      "summary": "将指定文本进行分割，返回分割后的一维文本数组。本命令为初级命令。",
       "params": [
         {
-          "name": "行号",
-          "type": "整数型",
+          "name": "待分割文本",
+          "type": "文本型",
           "optional": false,
-          "description": "。行号从1开始。"
+          "description": "。如果参数值是一个长度为零的文本，则返回一个空数组，即没有任何成员的数组。"
         },
         {
-          "name": "列号",
+          "name": "用作分割的文本",
+          "type": "文本型",
+          "optional": true,
+          "description": "，可以被省略。参数值用于标识子文本边界。如果被省略，则默认使用半角逗号字符作为分隔符。如果是一个长度为零的文本，则返回的数组仅包含一个成员，即完整的“待分割文本”。"
+        },
+        {
+          "name": "要返回的子文本数目",
           "type": "整数型",
-          "optional": false,
-          "description": "。列号从1开始。"
+          "optional": true,
+          "description": "，可以被省略。如果被省略，则默认返回所有的子文本。"
         }
       ],
-      "returnType": "无返回值",
-      "category": "控制台操作",
+      "returnType": "文本型数组",
+      "category": "文本操作",
       "supportedPlatforms": [
         "windows"
       ]
@@ -4575,29 +4583,29 @@
     {
       "commandId": "krnln.open",
       "displayName": "打开文件",
-      "summary": "打开指定的ODBC数据源以供以后操作。成功返回真，失败返回假。本命令为初级对象成员命令。",
+      "summary": "打开一个普通文件，以对文件进行输入或输出。成功返回被打开文件的文件号，失败返回 0。本命令为初级命令。",
       "params": [
         {
-          "name": "ODBC数据源连接文本",
+          "name": "欲打开的文件名称",
           "type": "文本型",
-          "optional": true,
-          "description": "，可以被省略。指定指向ODBC数据源的连接文本，如果为空，则激活ODBC数据源选择对话框。如果参数被省略，默认值为空。"
+          "optional": false,
+          "description": "。"
         },
         {
-          "name": "是否只读",
-          "type": "逻辑型",
+          "name": "打开方式",
+          "type": "整数型",
           "optional": true,
-          "description": "，可以被省略。指定是否以只读方式打开。如果参数被省略，默认值为假。"
+          "description": "，可以被省略。说明对文件的操作方式，省略时默认为「#读写」。可为：#读入(不存在则失败)、#写出(不存在则失败)、#读写(不存在则失败)、#重写(不存在则建、存在则清空)、#改写(不存在则建、存在则直接打开)、#改读(读写，不存在则建、存在则直接打开)。"
         },
         {
-          "name": "不显示ODBC连接对话框",
-          "type": "逻辑型",
+          "name": "共享方式",
+          "type": "整数型",
           "optional": true,
-          "description": "，可以被省略。指定当数据源连接失败的时候，是否自动显示ODBC的数据源连接对话框。如果参数被省略，默认值为假。"
+          "description": "，可以被省略。限制其它进程操作此文件的方式，省略时默认为「#无限制」。可为：#无限制、#禁止读、#禁止写、#禁止读写。"
         }
       ],
-      "returnType": "逻辑型",
-      "category": "控制台操作",
+      "returnType": "整数型",
+      "category": "文件读写",
       "supportedPlatforms": [
         "windows"
       ]
@@ -4816,7 +4824,8 @@
           "name": "欲写出的字节集数据",
           "type": "字节集",
           "optional": false,
-          "description": "。"
+          "description": "。",
+          "repeatable": true
         }
       ],
       "returnType": "逻辑型",
@@ -4866,7 +4875,8 @@
           "name": "欲写出的文本",
           "type": "通用型",
           "optional": false,
-          "description": "。参数值如果不为文本类型数据，将自动进行转换，如果无法转换（即数据类型为字节集、子程序指针、库或用户自定义数据类型），则不写出此数据。"
+          "description": "。参数值如果不为文本类型数据，将自动进行转换，如果无法转换（即数据类型为字节集、子程序指针、库或用户自定义数据类型），则不写出此数据。",
+          "repeatable": true
         }
       ],
       "returnType": "逻辑型",
@@ -4910,7 +4920,8 @@
           "name": "欲写出的文本",
           "type": "通用型",
           "optional": false,
-          "description": "。参数值如果不为文本类型数据，将自动进行转换，如果无法转换（即数据类型为字节集、子程序指针、库或用户自定义数据类型），则不写出此数据。"
+          "description": "。参数值如果不为文本类型数据，将自动进行转换，如果无法转换（即数据类型为字节集、子程序指针、库或用户自定义数据类型），则不写出此数据。",
+          "repeatable": true
         }
       ],
       "returnType": "逻辑型",
@@ -4951,13 +4962,20 @@
       "summary": "在当前写出位置处写出指定的文本、数值、逻辑值或日期时间。自动调整现行写出位置到所写出数据的末位置。本命令为初级对象成员命令。命令参数表中最后一个参数可以被重复添加。",
       "params": [
         {
-          "name": "欲写出数据",
+          "name": "欲写出数据的文件号",
+          "type": "整数型",
+          "optional": false,
+          "description": "。"
+        },
+        {
+          "name": "欲写出的数据",
           "type": "通用型",
-          "optional": true,
-          "description": "，可以被省略。参数值只能为文本、数值、逻辑值或日期时间。如果本参数被省略，则写出一个空行。"
+          "optional": false,
+          "repeatable": true,
+          "description": "。本命令应与「读入数据」配合使用，用作写出一系列变量或数组变量的格式数据到文件中当前读写位置处。"
         }
       ],
-      "returnType": "无返回值",
+      "returnType": "逻辑型",
       "category": "控制台操作",
       "supportedPlatforms": [
         "windows"
@@ -5041,7 +5059,8 @@
           "name": "欲写出的字节集数据",
           "type": "字节集",
           "optional": false,
-          "description": "。"
+          "description": "。",
+          "repeatable": true
         }
       ],
       "returnType": "逻辑型",
@@ -5066,7 +5085,8 @@
           "name": "欲写出的文本",
           "type": "通用型",
           "optional": false,
-          "description": "。参数值如果不为文本类型数据，将自动进行转换，如果无法转换（即数据类型为字节集、子程序指针、库或用户自定义数据类型），则不写出此数据。"
+          "description": "。参数值如果不为文本类型数据，将自动进行转换，如果无法转换（即数据类型为字节集、子程序指针、库或用户自定义数据类型），则不写出此数据。",
+          "repeatable": true
         }
       ],
       "returnType": "逻辑型",
@@ -5091,7 +5111,8 @@
           "name": "欲写出的文本",
           "type": "通用型",
           "optional": false,
-          "description": "。参数值如果不为文本类型数据，将自动进行转换，如果无法转换（即数据类型为字节集、子程序指针、库或用户自定义数据类型），则不写出此数据。"
+          "description": "。参数值如果不为文本类型数据，将自动进行转换，如果无法转换（即数据类型为字节集、子程序指针、库或用户自定义数据类型），则不写出此数据。",
+          "repeatable": true
         }
       ],
       "returnType": "逻辑型",
@@ -6272,7 +6293,8 @@
           "name": "欲输出内容",
           "type": "通用型",
           "optional": false,
-          "description": "。本参数只能为文本、数值、逻辑值或日期时间。如果内容为文本且包含多行，可在各行之间用回车符 (即“字符 (13)”)、换行符 (即“字符 (10)”) 或回车换行符的组合 (即：“字符 (13) + 字符 (10)”) 来分隔。"
+          "description": "。本参数只能为文本、数值、逻辑值或日期时间。如果内容为文本且包含多行，可在各行之间用回车符 (即“字符 (13)”)、换行符 (即“字符 (10)”) 或回车换行符的组合 (即：“字符 (13) + 字符 (10)”) 来分隔。",
+          "repeatable": true
         }
       ],
       "returnType": "无返回值",
@@ -9723,10 +9745,23 @@
     {
       "commandId": "krnln.GetPic",
       "displayName": "取图片",
-      "summary": "如果本对象为 COM 图片对象，则取回其具体图片数据。成功返回图片数据字节集，失败返回空字节集。本命令为初级对象成员命令。",
-      "params": [],
+      "summary": "取得画板中的图片数据。本命令为初级对象成员命令。",
+      "params": [
+        {
+          "name": "输出宽度",
+          "type": "整数型",
+          "optional": true,
+          "description": "，可以被省略。小于0=相对原宽的百分比(最小10%)；等于0=按原宽输出；大于0=绝对宽度。省略默认0。"
+        },
+        {
+          "name": "输出高度",
+          "type": "整数型",
+          "optional": true,
+          "description": "，可以被省略。小于0=相对原高的百分比(最小10%)；等于0=按原高输出；大于0=绝对高度。省略默认0。"
+        }
+      ],
       "returnType": "字节集",
-      "category": "控制台操作",
+      "category": "画板",
       "supportedPlatforms": [
         "windows"
       ]
@@ -9903,11 +9938,11 @@
     },
     {
       "commandId": "krnln.GetSelItems",
-      "displayName": "取选中项",
+      "displayName": "取所有被选择项目",
       "summary": "返回一个整数数组，內含所有当前被选择项目的位置索引。如果当前没有被选择项目，返回空数组。本命令为初级对象成员命令。",
       "params": [],
       "returnType": "整数型数组",
-      "category": "控制台操作",
+      "category": "列表框",
       "supportedPlatforms": [
         "windows"
       ]
@@ -10909,17 +10944,23 @@
     {
       "commandId": "krnln.SelItem",
       "displayName": "选中项目",
-      "summary": "在所有项目中寻找首部包含指定文本的项目，如找到，则选中它，并返回该项目的位置索引，否则返回 -1。本命令为初级对象成员命令。",
+      "summary": "选择或取消选择选择列表框中的指定项目。本命令为初级对象成员命令。",
       "params": [
         {
-          "name": "欲选择的项目文本",
-          "type": "文本型",
+          "name": "欲选择或取消选择的项目索引",
+          "type": "整数型",
           "optional": false,
-          "description": "。"
+          "description": "。0 为项目一，1 为项目二，如此类推。"
+        },
+        {
+          "name": "欲置入的项目选择状态",
+          "type": "逻辑型",
+          "optional": true,
+          "description": "，可以被省略。省略或为真则选择该项目，否则取消选择。"
         }
       ],
-      "returnType": "整数型",
-      "category": "控制台操作",
+      "returnType": "逻辑型",
+      "category": "选择列表框",
       "supportedPlatforms": [
         "windows"
       ]
@@ -11155,15 +11196,53 @@
     {
       "commandId": "krnln.SetCustomPaperType",
       "displayName": "置自定义纸张类型",
-      "summary": "取当前默认打印机所支持的所有纸张类型（包括系统定义纸张类型和自定义纸张类型），返回一维文本数组，其中存放了的各纸张类型的名称。本方法仅在Windows NT/2000/XP下有效。本命令为高级对象成员命令。",
+      "summary": "设置自定义纸张类型。本命令为初级对象成员命令。",
       "params": [
         {
-          "name": "纸张定义",
-          "type": "通用型"
+          "name": "自定义纸张类型名称",
+          "type": "文本型",
+          "optional": false,
+          "description": "。"
+        },
+        {
+          "name": "纸张宽度",
+          "type": "整数型",
+          "optional": false,
+          "description": "。单位为 0.1 毫米。"
+        },
+        {
+          "name": "纸张高度",
+          "type": "整数型",
+          "optional": false,
+          "description": "。单位为 0.1 毫米。"
+        },
+        {
+          "name": "上边距",
+          "type": "整数型",
+          "optional": true,
+          "description": "，可以被省略。单位为 0.1 毫米。省略默认0。"
+        },
+        {
+          "name": "下边距",
+          "type": "整数型",
+          "optional": true,
+          "description": "，可以被省略。单位为 0.1 毫米。省略默认0。"
+        },
+        {
+          "name": "左边距",
+          "type": "整数型",
+          "optional": true,
+          "description": "，可以被省略。单位为 0.1 毫米。省略默认0。"
+        },
+        {
+          "name": "右边距",
+          "type": "整数型",
+          "optional": true,
+          "description": "，可以被省略。单位为 0.1 毫米。省略默认0。"
         }
       ],
-      "returnType": "文本型数组",
-      "category": "控制台操作",
+      "returnType": "逻辑型",
+      "category": "打印机",
       "supportedPlatforms": [
         "windows"
       ]

@@ -283,7 +283,8 @@
     {"unit": "选择夹", "member": "取子夹数目", "call": "yc_tab_count({n})"},
     {"unit": "选择夹", "member": "取子夹名称", "call": "yc_tab_get_name({n}, {0})"},
     {"unit": "选择夹", "member": "置子夹名称", "call": "yc_tab_set_name({n}, {0}, {1})"},
-    {"unit": "超级链接框", "member": "跳转", "call": "yc_hyperlink_jump({n})"}
+    {"unit": "超级链接框", "member": "跳转", "call": "yc_hyperlink_jump({n})"},
+    {"unit": "编辑框", "member": "加入文本", "memberEnglishName": "AppendText", "callEach": "krnln_ctrl_append_text({h}, {arg})"}
   ],
   "controlMemberBindings": [
     {"unit": "*", "member": "标题", "memberEnglishName": "caption", "get": "yc_ctrl_get_text({h})", "set": "krnln_ctrl_set_text({h}, {vtext})"},
@@ -1045,12 +1046,12 @@
         {
           "name": "背景颜色",
           "englishName": "BackColor",
-          "description": "标签背景颜色；效果为透明时不起作用；未设置颜色（默认）时融入窗口底色。",
+          "description": "标签背景颜色；效果为透明时不起作用；默认白色（要透明请在「效果」属性里设为透明）。",
           "type": 0,
           "typeName": "颜色",
           "isReadOnly": false,
           "pickOptions": [],
-          "defaultValue": -1
+          "defaultValue": 16777215
         },
         {
           "name": "底图",
@@ -1594,12 +1595,12 @@
         {
           "name": "背景颜色",
           "englishName": "BackColor",
-          "description": "选择框背景颜色；未设置颜色（默认）时融入窗口底色。",
+          "description": "选择框背景颜色；默认白色（要透明请在「效果」属性里设为透明）。",
           "type": 0,
           "typeName": "颜色",
           "isReadOnly": false,
           "pickOptions": [],
-          "defaultValue": -1
+          "defaultValue": 16777215
         },
         {
           "name": "字体",
@@ -1755,12 +1756,12 @@
         {
           "name": "背景颜色",
           "englishName": "BackColor",
-          "description": "单选框背景颜色；未设置颜色（默认）时融入窗口底色。",
+          "description": "单选框背景颜色；默认白色（要透明请在「效果」属性里设为透明）。",
           "type": 0,
           "typeName": "颜色",
           "isReadOnly": false,
           "pickOptions": [],
-          "defaultValue": -1
+          "defaultValue": 16777215
         },
         {
           "name": "字体",
@@ -2656,12 +2657,12 @@
         {
           "name": "背景颜色",
           "englishName": "BackColor",
-          "description": "分组框背景颜色；未设置颜色（默认）时融入窗口底色。",
+          "description": "分组框背景颜色；默认白色（要透明请在「效果」属性里设为透明）。",
           "type": 0,
           "typeName": "颜色",
           "isReadOnly": false,
           "pickOptions": [],
-          "defaultValue": -1
+          "defaultValue": 16777215
         },
         {
           "name": "字体",

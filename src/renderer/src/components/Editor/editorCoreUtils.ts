@@ -73,7 +73,8 @@ export const WINDOW_OBJECT_METHODS: Array<{ name: string; returnType: string; de
 // 各控件类型专属方法（对象通用方法之外的），敲「控件名.」时按类型追加为方法成员。
 export const CONTROL_TYPE_METHODS: Record<string, Array<{ name: string; returnType: string; description: string; params: CompletionParam[] }>> = {
   '编辑框': [
-    { name: '加入文本', returnType: '无返回值', description: '在编辑框内容末尾追加文本。', params: [{ name: '欲加入文本', type: '文本型', description: '', optional: false }] },
+    // 尾参可重复（帮助文件：「命令参数表中最后一个参数可以被重复添加」）→ 展开参数行回车可追加下一个值行
+    { name: '加入文本', returnType: '无返回值', description: '将指定文本加入到编辑框内容的尾部。可一次加入多个文本（在展开的参数行上回车追加）。', params: [{ name: '欲加入文本', type: '文本型', description: '', optional: false, repeatable: true }] },
   ],
   '标签': [
     { name: '调用反馈事件', returnType: '整数型', description: '产生标签的“反馈事件”，调用其用户事件处理子程序（可用于多线程将控制权转移到主线程）。返回事件子程序的返回值。', params: [{ name: '参数一', type: '整数型', description: '，可省略，默认 0。', optional: true }, { name: '参数二', type: '整数型', description: '，可省略，默认 0。', optional: true }, { name: '事件传递方式', type: '逻辑型', description: '，可省略。真=发送（等待处理完），假=投递（不等待）。默认真。', optional: true }] },
@@ -168,6 +169,68 @@ export const CONTROL_TYPE_METHODS: Record<string, Array<{ name: string; returnTy
     { name: '取图片', returnType: '字节集', description: '英文名 GetPic。返回画板上所有现有显示内容的图片数据（PNG 字节集），失败返回空字节集。', params: [{ name: '输出宽度', type: '整数型', description: '<0 为相对百分比(最小10%)、0 原宽度、>0 绝对宽度，省略默认 0。', optional: true }, { name: '输出高度', type: '整数型', description: '<0 为相对百分比(最小10%)、0 原高度、>0 绝对高度，省略默认 0。', optional: true }] },
     { name: '单位转换', returnType: '整数型', description: '英文名 UnitCnv。在像素单位与当前绘画单位之间转换坐标值。', params: [{ name: '欲转换的座标值', type: '整数型', description: '欲转换的横向或纵向坐标值。', optional: false }, { name: '欲转换座标值的类型', type: '整数型', description: '1 横向绘画单位/2 纵向绘画单位/3 横向像素单位/4 纵向像素单位（据此作相反方向的换算）。', optional: false }] },
   ],
+}
+
+// 控件方法命令详情（结构与 OutputPanel.CommandDetail 一致，供点击提示面板用）。
+export interface ControlMethodDetail {
+  name: string
+  englishName: string
+  description: string
+  returnType: string
+  category: string
+  libraryName: string
+  params: Array<{ name: string; type: string; description: string; optional: boolean; repeatable?: boolean; isVariable: boolean; isArray: boolean }>
+}
+
+// 跨控件类型按方法名找一条控件方法定义。入参可带对象前缀（`编辑框1.加入文本` → `加入文本`）。
+// 现有数据里方法名要么唯一（加入文本）、要么同名同签名（list 族 加入项目/取项目文本 各类型雷同），故按名查即可。
+function findControlMethodEntry(rawName: string): { ctrlType: string; method: { name: string; returnType: string; description: string; params: CompletionParam[] } } | null {
+  const name = (rawName || '').trim().replace(/^.*[.。．]/, '')
+  if (!name) return null
+  for (const [ctrlType, methods] of Object.entries(CONTROL_TYPE_METHODS)) {
+    const method = methods.find(x => x.name === name)
+    if (method) return { ctrlType, method }
+  }
+  return null
+}
+
+// 控件方法（编辑框.加入文本 等）在库命令目录里没有——其签名真源就是上面的 CONTROL_TYPE_METHODS。
+// 点击提示时按方法名查一份构造详情，否则会落到"未在已加载的支持库中找到此命令"（空参数）。
+export function resolveControlMethodDetail(rawName: string): ControlMethodDetail | null {
+  const hit = findControlMethodEntry(rawName)
+  if (!hit) return null
+  const { ctrlType, method: m } = hit
+  return {
+    name: m.name,
+    englishName: '',
+    description: m.description,
+    returnType: m.returnType,
+    category: '控件方法',
+    libraryName: `系统核心支持库->${ctrlType}`,
+    params: m.params.map(p => ({
+      name: p.name, type: p.type, description: p.description || '',
+      optional: !!p.optional, repeatable: p.repeatable, isVariable: !!p.isVariable, isArray: !!p.isArray,
+    })),
+  }
+}
+
+// 控件方法的「补全项」形态：供表格编辑器判定「这行有参数、可展开」并渲染参数行
+// （库命令/DLL/项目类方法之外的第四路来源，缺它则 编辑框1.加入文本(a) 行左边不出 +/- 展开按钮）。
+export function findControlMethodCompletion(rawName: string): CompletionItem | null {
+  const hit = findControlMethodEntry(rawName)
+  if (!hit) return null
+  const { ctrlType, method: m } = hit
+  return {
+    name: m.name,
+    englishName: '',
+    description: m.description,
+    returnType: m.returnType,
+    category: '控件方法',
+    libraryName: '系统核心支持库',
+    isMember: true,
+    ownerTypeName: ctrlType,
+    params: m.params,
+  }
 }
 
 const NUMERIC_TYPE_COMMON_NOTE = '字节型、短整数型、整数型、长整数型、小数型、双精度小数型统称为数值型，彼此可转换；编程时需注意溢出与精度丢失（例如 257 转字节型后为 1）。'

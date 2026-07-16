@@ -1,4 +1,8 @@
 ﻿import { useCallback, useEffect, useRef, useState, memo } from 'react'
+import { Terminal, type ITheme } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
+import '@xterm/xterm/css/xterm.css'
 import './OutputPanel.css'
 
 export interface OutputMessage {
@@ -71,9 +75,9 @@ interface OutputPanelProps {
   onDebugContinue?: () => void
   forceTab?: OutputTab | null
   onProblemClick?: (problem: FileProblem) => void
-  terminalOutput?: string[]
   terminalRunning?: boolean
   terminalLastCommand?: string
+  /** 程序化整行执行（当前 UI 已改为 xterm 直连；保留供"在终端运行"等入口调用） */
   onTerminalSend?: (command: string) => Promise<{ ok: boolean; error?: string }>
   onTerminalInterrupt?: () => Promise<{ ok: boolean; error?: string }>
   onTerminalActivate?: () => Promise<void> | void
@@ -86,7 +90,31 @@ function setCssVars(element: HTMLElement | null, vars: Record<string, string>): 
   }
 }
 
-function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, highlightParamIndex, problems = [], debugPause = null, debugDisplayLine = null, isDebugPaused = false, onDebugContinue, forceTab, onProblemClick, terminalOutput = [], terminalRunning = false, terminalLastCommand = '', onTerminalSend, onTerminalInterrupt, onTerminalActivate }: OutputPanelProps): React.JSX.Element {
+function readCssVar(name: string, fallback: string): string {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+    return v || fallback
+  } catch {
+    return fallback
+  }
+}
+
+// xterm 主题：背景/前景取自 IDE 主题变量，ANSI 16 色用 VS Code Dark+ 近似值（暗底可读）。
+function getXtermTheme(): ITheme {
+  return {
+    background: readCssVar('--terminal-bg', readCssVar('--bg-primary', '#1e1e1e')),
+    foreground: readCssVar('--terminal-fg', readCssVar('--text-primary', '#d4d4d4')),
+    cursor: readCssVar('--text-primary', '#d4d4d4'),
+    cursorAccent: readCssVar('--bg-primary', '#1e1e1e'),
+    selectionBackground: 'rgba(120,150,200,0.35)',
+    black: '#000000', red: '#cd3131', green: '#0dbc79', yellow: '#e5e510',
+    blue: '#2472c8', magenta: '#bc3fbc', cyan: '#11a8cd', white: '#e5e5e5',
+    brightBlack: '#767676', brightRed: '#f14c4c', brightGreen: '#23d18b', brightYellow: '#f5f543',
+    brightBlue: '#3b8eea', brightMagenta: '#d670d6', brightCyan: '#29b8db', brightWhite: '#f5f5f5',
+  }
+}
+
+function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, highlightParamIndex, problems = [], debugPause = null, debugDisplayLine = null, isDebugPaused = false, onDebugContinue, forceTab, onProblemClick, terminalRunning = false, terminalLastCommand = '', onTerminalInterrupt, onTerminalActivate }: OutputPanelProps): React.JSX.Element {
   const OUTPUT_MIN_HEIGHT = 100
   const OUTPUT_MAX_HEIGHT = 500
   const OUTPUT_RESIZE_STEP = 16
@@ -106,11 +134,12 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
     }
   })
   const [tabsContextMenu, setTabsContextMenu] = useState<{ x: number; y: number } | null>(null)
-  const [terminalInput, setTerminalInput] = useState('')
-  const [terminalBusy, setTerminalBusy] = useState(false)
   const [terminalStatus, setTerminalStatus] = useState<string | null>(null)
-  const [terminalFocused, setTerminalFocused] = useState(false)
-  const terminalRef = useRef<HTMLDivElement>(null)
+  const [termMenu, setTermMenu] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null)
+  // xterm.js：真终端模拟器。PTY 吐出的光标/重绘/颜色控制序列由它解释（<pre> 做不到）。
+  const xtermContainerRef = useRef<HTMLDivElement>(null)
+  const xtermRef = useRef<Terminal | null>(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
 
   // 外部强制切换标签（编译/运行时自动切到编译输出）
   useEffect(() => {
@@ -153,18 +182,12 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
   }, [messages, activeTab])
 
   useEffect(() => {
-    if (activeTab === 'terminal' && terminalRef.current) {
-      terminalRef.current.scrollTop = terminalRef.current.scrollHeight
-    }
-  }, [terminalOutput, activeTab, terminalInput])
-
-  useEffect(() => {
     if (activeTab !== 'terminal') return
     const frame = window.requestAnimationFrame(() => {
       // 焦点仍在标签栏内说明用户在用方向键导航标签，此时抢占焦点会让键盘无法越过“终端”标签
       const focused = document.activeElement
       if (focused instanceof HTMLElement && focused.closest('.output-tabs')) return
-      terminalRef.current?.focus()
+      xtermRef.current?.focus()
     })
     return () => window.cancelAnimationFrame(frame)
   }, [activeTab])
@@ -173,6 +196,90 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
     if (activeTab !== 'terminal') return
     void onTerminalActivate?.()
   }, [activeTab, onTerminalActivate])
+
+  // xterm 生命周期：终端标签激活且容器就位时创建；离开标签销毁（重进时按主进程缓冲回放）。
+  useEffect(() => {
+    if (activeTab !== 'terminal') return
+    const container = xtermContainerRef.current
+    if (!container || xtermRef.current) return
+
+    const term = new Terminal({
+      fontFamily: 'Consolas, "Cascadia Mono", "Courier New", monospace',
+      fontSize: 13,
+      cursorBlink: true,
+      scrollback: 5000,
+      theme: getXtermTheme(),
+      allowProposedApi: true,
+    })
+    const fit = new FitAddon()
+    term.loadAddon(fit)
+    term.loadAddon(new WebLinksAddon())
+    term.open(container)
+    try { fit.fit() } catch { /* 容器尺寸未就绪，ResizeObserver 会稍后再拟合 */ }
+    xtermRef.current = term
+    fitAddonRef.current = fit
+    term.focus()
+
+    // 先订阅实时输出并暂存（带 seq），回放快照后只写 seq 大于快照末尾的块——
+    // 主进程 push 时递增 seq，故"快照与实时订阅重叠"的块会被精确丢弃，既不丢也不重。
+    let baseSeq = -1
+    const pending: Array<{ text: string; seq: number }> = []
+    const onOutput = (text: unknown, seq: unknown): void => {
+      if (typeof text !== 'string') return
+      const s = typeof seq === 'number' ? seq : 0
+      if (baseSeq < 0) pending.push({ text, seq: s })
+      else if (s > baseSeq) term.write(text)
+    }
+    const disposeOutput = window.api?.on?.('terminal:output', onOutput)
+
+    let disposed = false
+    void (async () => {
+      let snap: { output?: string[]; seq?: number } | undefined
+      try { snap = await window.api?.terminal?.start() } catch { /* ignore */ }
+      if (disposed) return
+      if (snap?.output?.length) term.write(snap.output.join(''))
+      baseSeq = typeof snap?.seq === 'number' ? snap.seq : 0
+      for (const p of pending) if (p.seq > baseSeq) term.write(p.text)
+      pending.length = 0
+      // 回放后把真实行列同步给 PTY，全屏程序才能按窗口尺寸排版
+      try { window.api?.terminal?.resize(term.cols, term.rows) } catch { /* ignore */ }
+    })()
+
+    // 用户按键 → PTY 原始输入
+    const dataSub = term.onData((data) => { window.api?.terminal?.input(data) })
+
+    // Ctrl+C：有选区=复制、无选区=透传中断给前台程序；Ctrl+V=粘贴
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown') return true
+      const mod = (e.ctrlKey || e.metaKey) && !e.altKey
+      if (mod && (e.key === 'c' || e.key === 'C')) {
+        const sel = term.getSelection()
+        if (sel) { void navigator.clipboard?.writeText(sel).catch(() => {}); return false }
+        return true
+      }
+      if (mod && (e.key === 'v' || e.key === 'V')) {
+        void navigator.clipboard?.readText().then(t => { if (t) window.api?.terminal?.input(t) }).catch(() => {})
+        return false
+      }
+      return true
+    })
+
+    // 容器尺寸变化（面板拉伸/窗口缩放）→ 重新拟合并同步 PTY
+    const ro = new ResizeObserver(() => {
+      try { fit.fit(); window.api?.terminal?.resize(term.cols, term.rows) } catch { /* ignore */ }
+    })
+    ro.observe(container)
+
+    return () => {
+      disposed = true
+      ro.disconnect()
+      dataSub.dispose()
+      if (typeof disposeOutput === 'function') disposeOutput()
+      term.dispose()
+      xtermRef.current = null
+      fitAddonRef.current = null
+    }
+  }, [activeTab])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -360,31 +467,12 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
     }
   }
 
-  const handleTerminalRun = useCallback(async () => {
-    const command = terminalInput
-    if (!command.trim() || terminalBusy || !onTerminalSend) return
-    setTerminalBusy(true)
-    setTerminalStatus(null)
-    const result = await onTerminalSend(command)
-    if (!result.ok) {
-      setTerminalStatus(result.error || '命令执行失败。')
-    } else {
-      setTerminalInput('')
-    }
-    setTerminalBusy(false)
-  }, [onTerminalSend, terminalBusy, terminalInput])
-
   const handleTerminalInterrupt = useCallback(async () => {
-    if (terminalBusy || !onTerminalInterrupt) return
-    setTerminalBusy(true)
-    setTerminalStatus(null)
+    if (!onTerminalInterrupt) return
     const result = await onTerminalInterrupt()
-    if (!result.ok) {
-      setTerminalStatus(result.error || '发送中断失败。')
-    }
-    setTerminalInput('')
-    setTerminalBusy(false)
-  }, [onTerminalInterrupt, terminalBusy])
+    setTerminalStatus(result.ok ? null : (result.error || '发送中断失败。'))
+    xtermRef.current?.focus()
+  }, [onTerminalInterrupt])
 
   const selectElementText = useCallback((element: HTMLElement | null): void => {
     if (!element) return
@@ -404,50 +492,49 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
     selectElementText(event.currentTarget)
   }, [selectElementText])
 
-  const handleTerminalKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a') {
-      event.preventDefault()
-      event.stopPropagation()
-      selectElementText(terminalRef.current)
-      return
-    }
-
-    if (event.ctrlKey && !event.altKey && !event.metaKey && (event.key === 'c' || event.key === 'C')) {
-      event.preventDefault()
-      void handleTerminalInterrupt()
-      return
-    }
-
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      void handleTerminalRun()
-      return
-    }
-
-    if (event.key === 'Backspace') {
-      event.preventDefault()
-      setTerminalInput(prev => prev.slice(0, -1))
-      return
-    }
-
-    if (event.key === 'Tab') {
-      event.preventDefault()
-      setTerminalInput(prev => prev + '\t')
-      return
-    }
-
-    if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
-      event.preventDefault()
-      setTerminalInput(prev => prev + event.key)
-    }
-  }, [handleTerminalInterrupt, handleTerminalRun, selectElementText])
-
-  const handleTerminalPaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
-    const text = event.clipboardData.getData('text')
-    if (!text) return
+  const handleTerminalContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault()
-    setTerminalInput(prev => prev + text.replace(/\r\n/g, '\n'))
+    setTermMenu({ x: event.clientX, y: event.clientY, hasSelection: !!xtermRef.current?.hasSelection() })
   }, [])
+
+  const handleTermCopy = useCallback(() => {
+    const text = xtermRef.current?.getSelection() || ''
+    if (text) void navigator.clipboard?.writeText(text).catch(() => {})
+    setTermMenu(null)
+  }, [])
+
+  const handleTermPaste = useCallback(async () => {
+    setTermMenu(null)
+    try {
+      const text = await navigator.clipboard.readText()
+      if (text) window.api?.terminal?.input(text)  // 直接透传给 PTY（保留 \r\n，shell 自行处理）
+    } catch { /* 剪贴板不可读（权限/空）忽略 */ }
+    xtermRef.current?.focus()
+  }, [])
+
+  const handleTermSelectAll = useCallback(() => {
+    xtermRef.current?.selectAll()
+    setTermMenu(null)
+  }, [])
+
+  const handleTermClear = useCallback(() => {
+    xtermRef.current?.clear()
+    setTermMenu(null)
+    xtermRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    if (!termMenu) return
+    const close = (): void => setTermMenu(null)
+    window.addEventListener('mousedown', close)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [termMenu])
 
   const toolbarNode = (
     <div className={`output-toolbar ${tabsPlacement === 'bottom' ? 'output-toolbar-bottom' : 'output-toolbar-top'}`} onContextMenu={handleTabsContextMenu}>
@@ -506,43 +593,24 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
         </div>
       )}
 
-      {/* 终端内容（预留） */}
+      {/* 终端内容：xterm.js 真终端（后端 node-pty/ConPTY，支持交互式程序） */}
       {activeTab === 'terminal' && (
-        <div id="output-panel-terminal" className="output-content output-terminal-content" role="tabpanel" aria-labelledby="output-tab-terminal" tabIndex={0} onKeyDown={handlePanelSelectAllKeyDown}>
+        <div id="output-panel-terminal" className="output-content output-terminal-content" role="tabpanel" aria-labelledby="output-tab-terminal">
           <div className="output-terminal-meta" role="status" aria-live="polite">
             {terminalRunning && <span>状态：运行中</span>}
             {terminalLastCommand && <span>最近命令：{terminalLastCommand}</span>}
+            <button
+              type="button"
+              className="output-terminal-interrupt"
+              onClick={() => void handleTerminalInterrupt()}
+              title="发送 Ctrl+C 中断当前命令"
+            >中断</button>
           </div>
-          <div className="output-terminal-shell">
-            <div
-              className="output-terminal-log"
-              ref={terminalRef}
-              role="textbox"
-              aria-label="终端控制台"
-              aria-multiline="true"
-              tabIndex={0}
-              onKeyDown={handleTerminalKeyDown}
-              onPaste={handleTerminalPaste}
-              onFocus={() => setTerminalFocused(true)}
-              onBlur={() => setTerminalFocused(false)}
-              onMouseDown={(event) => {
-                event.preventDefault()
-                terminalRef.current?.focus()
-              }}
-            >
-              {terminalOutput.length === 0
-                ? <div className="output-terminal-empty">暂无终端输出</div>
-                : terminalOutput.map((line, i) => <pre key={`term-${i}`} className="output-terminal-line">{line}</pre>)}
-              <div className="output-terminal-commandline output-terminal-commandline-inline">
-                <span className="output-terminal-prompt" aria-hidden="true">&gt;</span>
-                <span className="output-terminal-inline-input">{terminalInput}</span>
-                <span
-                  className={`output-terminal-cursor ${terminalFocused ? 'active' : ''}`}
-                  aria-hidden="true"
-                />
-              </div>
-            </div>
-          </div>
+          <div
+            className="output-terminal-xterm"
+            ref={xtermContainerRef}
+            onContextMenu={handleTerminalContextMenu}
+          />
           {terminalStatus && <div className="output-terminal-status" role="alert">{terminalStatus}</div>}
         </div>
       )}
@@ -766,6 +834,23 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
           >
             {tabsPlacement === 'top' ? '将“输出/终端/提示/问题/调试”按钮移到底部' : '将“输出/终端/提示/问题/调试”按钮移到顶部'}
           </button>
+        </div>
+      )}
+      {termMenu && (
+        <div
+          className="output-terminal-context-menu"
+          ref={(element) => setCssVars(element, {
+            '--output-terminal-menu-x': `${termMenu.x}px`,
+            '--output-terminal-menu-y': `${termMenu.y}px`,
+          })}
+          role="menu"
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button type="button" role="menuitem" className="output-terminal-context-menu-item" onClick={handleTermCopy} disabled={!termMenu.hasSelection}>复制</button>
+          <button type="button" role="menuitem" className="output-terminal-context-menu-item" onClick={() => void handleTermPaste()}>粘贴</button>
+          <button type="button" role="menuitem" className="output-terminal-context-menu-item" onClick={handleTermSelectAll}>全选</button>
+          <button type="button" role="menuitem" className="output-terminal-context-menu-item" onClick={handleTermClear}>清屏</button>
         </div>
       )}
     </div>
