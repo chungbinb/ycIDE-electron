@@ -2420,6 +2420,15 @@ const YCMD_ARRAY_RETURN_TYPES: Record<string, ArrayElemKind> = {
   '字节集数组': 'bin',
 }
 
+/**
+ * 【原生 ABI 侧】的类型映射：krnln / DLL 的参数与返回值声明用它。逻辑型 在这里恒是 int——
+ * krnln 的实现签名就是 int（`krnln_and(int, int)`），换成 bool（1 字节 vs 4 字节）会直接错位。
+ *
+ * 用户代码侧（变量/参数/返回值/命令表达式）请用 mapTypeToVarCType——那边 逻辑型 是 bool。
+ * 两侧在调用点由 C++ 的 bool↔int 隐式转换衔接，不需要额外编组。
+ * 默认留在 ABI 语义这边是有意的：漏改一处 var 侧只是 到文本 印成「1」（看得见），
+ * 漏改一处 ABI 侧却是静默的内存错位。
+ */
 function mapTypeToCType(type: string): string {
   const trimmed = (type || '').trim()
   if (activeProjectClassNames.has(trimmed)) return trimmed
@@ -2439,16 +2448,31 @@ function mapTypeToCType(type: string): string {
   return map[trimmed] || 'int'
 }
 
+/**
+ * 【用户代码侧】的类型映射：局部/全局/静态/成员变量、子程序参数与返回值、命令表达式的 IIFE 返回类型。
+ * 与 mapTypeToCType（原生 ABI 侧）的**唯一**区别：逻辑型 → C++ bool。
+ *
+ * Why：易语言里 到文本(逻辑型) 印「真」/「假」，到文本(整数型) 印「1」。两者在 C++ 里同为 int 时
+ * 重载根本分不开，yc_value_to_text 只能一律印数字。给 逻辑型 一个独立的 C++ 类型后，变量／子程序
+ * 返回／命令返回／比较表达式（C++ 的 == 本就产出 bool）全部自动落到 yc_value_to_text(bool) 那个
+ * 重载上，不必在转译期逐个写特判——这正是「让类型系统去做分诊」而非「在每个用到的地方打补丁」。
+ */
+function mapTypeToVarCType(type: string): string {
+  if ((type || '').trim() === '逻辑型') return 'bool'
+  return mapTypeToCType(type)
+}
+
 function getTypeDefaultInitializer(type: string): string {
   const trimmed = (type || '').trim()
   if (activeProjectClassNames.has(trimmed)) return '{}'
   if (activeProjectCustomTypeNames.has(trimmed)) return '{}'
-  const cType = mapTypeToCType(trimmed)
+  const cType = mapTypeToVarCType(trimmed)
   if (cType === 'YC_TEXT') return 'YC_TEXT()'
   if (cType === 'YC_BIN') return 'YC_BIN()'
   if (cType === 'YC_BIG') return 'YC_BIG()'
   if (cType === 'float') return '0.0f'
   if (cType === 'double') return '0.0'
+  if (cType === 'bool') return 'false'   // 逻辑型：`bool x = 0` 虽合法，但生成的代码要给人看
   return '0'
 }
 
@@ -3410,6 +3434,17 @@ function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Ma
 const REAL_DIV_MARK = '\uE000'
 
 /**
+ * 【近似等于 ≈】帮助：「〈逻辑型〉近似等于（文本型 被比较文本，文本型 比较文本）——当比较文本在
+ * 被比较文本的首部被包容时返回真，运算符号为『?=』或『≈』」。即 `A ≈ B` = 「B 是 A 的前缀」
+ * （大小写敏感、不做全角半角归一，与 krnln_like 实现一致）。
+ *
+ * 它不是 C 运算符——最终落成 近似等于 的命令调用，故同 ÷ 一样得原样带过 convertFullWidthOps，
+ * 由 findTopLevelComparison 认出、translateExpressionToC 的比较分支接住。`?=` 是同义写法，
+ * 在 convertFullWidthOpsInCode 里先归一成 ≈（否则它里面的 `=` 会被比较拆分器切成 `a ?` = `b`）。
+ */
+const APPROX_EQ_OP = '≈'
+
+/**
  * 没走乘除拆分时的 ÷ 就地形态：`a ÷ b` → `a /(double) b`。
  * 是合法 C 且语义正确——右操作数转 double 后整个除法即走浮点，且 (double) 的结合力高于 /、*，
  * 故 `a ÷ b × c` → `a /(double) b * c` 仍是 (a / (double)b) * c。
@@ -3423,6 +3458,9 @@ function inlineRealDiv(expr: string): string {
 function convertFullWidthOpsInCode(segment: string): string {
   return segment
     .replace(/<>/g, '!=')
+    // ?= 是 ≈ 的同义写法（帮助如此）。必须先归一：留着的话它里面的 = 会被比较拆分器
+    // 切成 `a ?` = `b`。≈ 本身不转——它落成命令调用，见 APPROX_EQ_OP
+    .replace(/\?=/g, APPROX_EQ_OP)
     .replace(/≠/g, '!=')
     .replace(/≤/g, '<=')
     .replace(/≥/g, '>=')
@@ -3527,6 +3565,19 @@ interface TranspileArrayInfo {
   dims: number[]
 }
 let currentTranspileArrayVars = new Map<string, TranspileArrayInfo>()
+
+/**
+ * 【文件级的变量类型兜底解析器】translateExpressionToC 的 variableTypeResolver 形参只在
+ * 「转译主循环 → 表达式」这一条路上传得下来。命令实参走的是 formatArgForC（23 个调用点）与
+ * COMMAND_EXPR_GENERATORS——它们的签名里**根本没有**这个参数，于是 isTextRawOperand 认不出
+ * 操作数是文本型：`到文本 (甲 ＝ 乙)` 会退化成裸的 `(甲 == 乙)`，即 YC_TEXT 的**指针比较**，
+ * 而同一个比较写成 `结果 ＝ 甲 ＝ 乙` 却是对的（走 yc_text_compare）——同一份代码换个书写位置结论就变。
+ *
+ * 逐个给 23 个调用点穿参数不现实，故照本文件既有的 currentTranspileArrayVars / currentProjectControls
+ * 的路子挂文件级状态：转译入口清空，拿到 resolveVisibleVarType 后挂上。该闭包读的是**实时**的
+ * visibleDebugVars，所以挂一次即可、作用域自动跟进。
+ */
+let currentVariableTypeResolver: VariableTypeResolver | undefined
 let fileScopeArrayVars = new Map<string, TranspileArrayInfo>()
 
 // 项目全体控件名→控件类型（跨所有窗口，转译开始前灌一次）。控件成员访问按类型键控派发的依据：
@@ -3905,13 +3956,15 @@ function isBigExpression(expr: string): boolean {
 type VariableTypeResolver = (name: string) => string | undefined
 
 function getExprSimpleIdentifierType(expr: string, variableTypeResolver?: VariableTypeResolver): string {
-  if (!variableTypeResolver) return ''
+  // \u5f62\u53c2\u4f18\u5148\uff1b\u7a7f\u4e0d\u4e0b\u6765\u65f6\u9000\u5230\u6587\u4ef6\u7ea7\u515c\u5e95\uff08\u547d\u4ee4\u5b9e\u53c2\u90a3\u6761\u8def\u2014\u2014\u89c1 currentVariableTypeResolver\uff09
+  const resolve = variableTypeResolver || currentVariableTypeResolver
+  if (!resolve) return ''
   const trimmed = (expr || '').trim()
   if (!trimmed) return ''
   const identMatch = trimmed.match(/^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_.]*$/)
   if (!identMatch) return ''
   const baseName = trimmed.split('.')[0] || ''
-  return (variableTypeResolver(baseName) || '').trim()
+  return (resolve(baseName) || '').trim()
 }
 
 function isTextRawOperand(expr: string, variableTypeResolver?: VariableTypeResolver): boolean {
@@ -4000,7 +4053,8 @@ function findTopLevelComparison(expr: string): { left: string; operator: string;
       }
     }
 
-    if (ch === '=' || ch === '<' || ch === '>') {
+    // ≈ 近似等于：与 =/</> 同级（都是比较），落成命令调用而非 C 运算符——见 APPROX_EQ_OP
+    if (ch === '=' || ch === '<' || ch === '>' || ch === APPROX_EQ_OP) {
       return {
         left: expr.slice(0, i).trim(),
         operator: ch,
@@ -4300,6 +4354,15 @@ function translateExpressionToC(
   }
 
   const comparison = findTopLevelComparison(translated)
+  if (comparison && comparison.left && comparison.right && comparison.operator === APPROX_EQ_OP) {
+    // ≈ 落成 近似等于 命令调用：文本型→const char* 的编组（YC_TEXT 经 yc_wide_to_utf8）全在命令
+    // 机器里，这里自己拼 krnln_like 就得把那套重写一遍。实参传拆分前的原文，由它内部递归翻译。
+    const likeCmd = commandMap?.get('近似等于')
+    if (!likeCmd || !isYcmdNativeCommand(likeCmd)) {
+      throw new Error('运算符“≈”（近似等于）来自系统核心支持库，请先在项目中引用该支持库')
+    }
+    return generateYcmdNativeCommandExpr(likeCmd, [comparison.left, comparison.right], commandMap, directCallables)
+  }
   if (comparison && comparison.left && comparison.right) {
     const left = translateExpressionToC(comparison.left, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
     const right = translateExpressionToC(comparison.right, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
@@ -4307,9 +4370,13 @@ function translateExpressionToC(
     const leftIsBig = isBigExpression(left) || isBigRawOperand(comparison.left, variableTypeResolver)
     const rightIsBig = isBigExpression(right) || isBigRawOperand(comparison.right, variableTypeResolver)
 
+    // 文本型的比较**六个运算符全部**走 yc_text_compare（= lstrcmpW，返回 <0/0/>0，故
+    // `yc_text_compare(a,b) < 0` 即字典序 a<b）。此前只放行 == 与 !=，＜＞≤≥ 落到下面的
+    // `(left op right)`——YC_TEXT 有 operator const wchar_t*()，于是 C++ 拿两个**指针地址**比大小：
+    // 结果既不是字典序也不是数值，而是随栈/堆布局变的垃圾（曾出现 `“10” ≤ “10”` 为假、
+    // 同时 `“10” ≥ “10”` 为真这种自相矛盾）。易语言的文本比较是字典序。
     if (
-      (normalizedOperator === '==' || normalizedOperator === '!=')
-      && !(leftIsBig || rightIsBig)
+      !(leftIsBig || rightIsBig)
       && (
         isTextExpression(left)
         || isTextExpression(right)
@@ -4846,7 +4913,7 @@ function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], com
   if (repeatCalls) {
     const chained = repeatCalls.length === 1 ? repeatCalls[0] : `(${repeatCalls.join(', ')})`
     if (sig.returnType.isVoid) return `([&]() -> int { ${chained}; return 0; })()`
-    return `([&]() -> ${mapTypeToCType(cmd.returnType || '整数型')} { return ${sig.returnType.expr(chained)}; })()`
+    return `([&]() -> ${mapTypeToVarCType(cmd.returnType || '整数型')} { return ${sig.returnType.expr(chained)}; })()`
   }
   const argCount = Math.max(args.length, sig.params.length)
   const callArgs = Array.from({ length: argCount }, (_unused, index) => {
@@ -4858,7 +4925,7 @@ function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], com
   if (sig.returnType.isVoid) {
     return `([&]() -> int { ${callExpr}; return 0; })()`
   }
-  return `([&]() -> ${mapTypeToCType(cmd.returnType || '整数型')} { return ${sig.returnType.expr(callExpr)}; })()`
+  return `([&]() -> ${mapTypeToVarCType(cmd.returnType || '整数型')} { return ${sig.returnType.expr(callExpr)}; })()`
 }
 
 /**
@@ -4990,7 +5057,7 @@ function generateYcmdNativeDeclarations(targetPlatform: TargetPlatform): string 
 function generateYcGenericCommandExpr(cmd: ResolvedCommand, args: string[]): string {
   const n = args.length
   const lines: string[] = []
-  lines.push(`([&]() -> ${mapTypeToCType(cmd.returnType || '整数型')} {`)
+  lines.push(`([&]() -> ${mapTypeToVarCType(cmd.returnType || '整数型')} {`)
   lines.push('YC_MDATA_INF __yc_ret = {};')
   if (n > 0) {
     lines.push(`YC_MDATA_INF __yc_args[${n}] = {};`)
@@ -5296,7 +5363,7 @@ function generateProjectDataTypeStructCode(projectDataTypes: ProjectDataTypeDef[
       result += '    int _reserved;\n'
     } else {
       for (const field of dataType.fields) {
-        result += `    ${mapTypeToCType(field.type)} ${field.name};\n`
+        result += `    ${mapTypeToVarCType(field.type)} ${field.name};\n`
       }
     }
     result += '};\n\n'
@@ -5413,6 +5480,9 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   for (const dllCmd of projectDllCommands) directCallables.add(dllCmd.name)
 
   currentTranspileArrayVars = new Map()
+  // 上一个文件的解析器绝不能漏到这个文件（同名变量会被认成别的类型）；下面拿到
+  // resolveVisibleVarType 后再挂上，非转译路径（如窗口 main.cpp 生成）则始终是 undefined
+  currentVariableTypeResolver = undefined
   fileScopeArrayVars = new Map()
 
   const lines = eycContent.split('\n')
@@ -6099,6 +6169,12 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'static YC_TEXT yc_value_to_text(int value) {\n'
   result += '    return yc_value_to_text((long long)value);\n'
   result += '}\n\n'
+  // 逻辑型 → 「真」/「假」（易语言如此，不是 1/0）。逻辑型 在用户代码侧被 mapTypeToVarCType 映射成
+  // C++ bool，故变量／子程序返回／命令返回／比较表达式全都由重载解析自动落到这条上；
+  // 整数型 仍是 int，走上面那条印数字。两者靠类型分开，转译期不必逐处特判。
+  result += 'static YC_TEXT yc_value_to_text(bool value) {\n'
+  result += '    return YC_TEXT(value ? L"真" : L"假");\n'
+  result += '}\n\n'
   result += 'static YC_TEXT yc_value_to_text(double value) {\n'
   result += '    wchar_t buf[128];\n'
   result += '    swprintf(buf, 128, L"%.15g", value);\n'
@@ -6519,7 +6595,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   if (projectGlobals.length > 0) {
     result += '/* 项目全局变量声明 */\n'
     for (const gv of projectGlobals) {
-      result += `extern ${mapTypeToCType(gv.type)} ${gv.name};\n`
+      result += `extern ${mapTypeToVarCType(gv.type)} ${gv.name};\n`
     }
     result += '\n'
   }
@@ -6577,15 +6653,15 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   }
   const buildMethodSignature = (params: Array<{ name: string; type: string; isArray?: boolean }>): string => {
     if (params.length === 0) return 'void'
-    return params.map(p => (p.isArray ? `std::vector<long long>& ${p.name}` : `${mapTypeToCType(p.type)} ${p.name}`)).join(', ')
+    return params.map(p => (p.isArray ? `std::vector<long long>& ${p.name}` : `${mapTypeToVarCType(p.type)} ${p.name}`)).join(', ')
   }
-  const methodReturnC = (returnType: string): string => (returnType ? mapTypeToCType(returnType) : 'void')
+  const methodReturnC = (returnType: string): string => (returnType ? mapTypeToVarCType(returnType) : 'void')
   if (projectClassModules.length > 0) {
     result += '/* 项目类模块声明 */\n'
     for (const cls of projectClassModules) {
       result += `struct ${cls.className} {\n`
       for (const mv of cls.memberVars) {
-        result += `    ${mapTypeToCType(mv.type)} ${mv.name} = ${getTypeDefaultInitializer(mv.type)};\n`
+        result += `    ${mapTypeToVarCType(mv.type)} ${mv.name} = ${getTypeDefaultInitializer(mv.type)};\n`
       }
       result += `    ${cls.className}();\n`
       result += `    ~${cls.className}();\n`
@@ -6603,7 +6679,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     for (const sub of externalSubprograms) {
       const params = sub.params.length === 0
         ? 'void'
-        : sub.params.map(p => (p.isArray ? `std::vector<long long>& ${p.name}` : `${mapTypeToCType(p.type)} ${p.name}`)).join(', ')
+        : sub.params.map(p => (p.isArray ? `std::vector<long long>& ${p.name}` : `${mapTypeToVarCType(p.type)} ${p.name}`)).join(', ')
       result += `extern ${methodReturnC(sub.returnType)} ${sub.name}(${params});\n`
     }
     result += '\n'
@@ -6640,7 +6716,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
           const parts = line.substring(3).split(',').map(s => s.trim())
           const fieldName = parts[0] || 'field'
           const fieldType = parts[1] || '整数型'
-          structFields += `    ${mapTypeToCType(fieldType)} ${fieldName};\n`
+          structFields += `    ${mapTypeToVarCType(fieldType)} ${fieldName};\n`
         }
         // 其他行（注释等）跳过
       }
@@ -6671,11 +6747,11 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
 
   const buildSubSignature = (_name: string, params: Array<{ name: string; type: string; isArray?: boolean }>): string => {
     if (params.length === 0) return 'void'
-    return params.map(p => (p.isArray ? `std::vector<long long>& ${p.name}` : `${mapTypeToCType(p.type)} ${p.name}`)).join(', ')
+    return params.map(p => (p.isArray ? `std::vector<long long>& ${p.name}` : `${mapTypeToVarCType(p.type)} ${p.name}`)).join(', ')
   }
 
   const flushCurrentSub = (): void => {
-    const retC = subReturnType ? mapTypeToCType(subReturnType) : 'void'
+    const retC = subReturnType ? mapTypeToVarCType(subReturnType) : 'void'
     // 有返回值的子程序补默认返回，避免控制流落出函数末尾
     const tailReturn = subReturnType ? `    return ${getTypeDefaultInitializer(subReturnType)};\n` : ''
     if (isClassModuleSource && currentClassName) {
@@ -6707,6 +6783,9 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
     }
     return undefined
   }
+  // 挂成文件级兜底：让穿不到 variableTypeResolver 的路径（命令实参编组等）也能认出变量类型。
+  // 闭包读的是实时的 visibleDebugVars，故这里挂一次就够，作用域进出自动跟进。见 currentVariableTypeResolver
+  currentVariableTypeResolver = resolveVisibleVarType
 
   const emitDebugVarSnapshot = (displayName: string, typeName: string, expr: string, depth = 0) => {
     const trimmedType = (typeName || '').trim()
@@ -6776,7 +6855,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       }
       assemblyVars.push({ name: varName, type: varType })
       if (!isClassModuleSource) {
-        result += `static ${mapTypeToCType(varType)} ${varName};\n`
+        result += `static ${mapTypeToVarCType(varType)} ${varName};\n`
       }
       continue
     }
@@ -6848,7 +6927,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         currentTranspileArrayVars.set(varName, { elemType: varType, dims: dims.dims })
         continue
       }
-      emitSubLine(`${mapTypeToCType(varType)} ${varName} = ${getTypeDefaultInitializer(varType)};`)
+      emitSubLine(`${mapTypeToVarCType(varType)} ${varName} = ${getTypeDefaultInitializer(varType)};`)
       pushVisibleDebugVar(varName, varType)
       continue
     }
@@ -6857,7 +6936,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       const parts = splitDeclParts(line.substring(5))
       const varName = parts[0] || 'g'
       const varType = parts[1] || '整数型'
-      result += `${mapTypeToCType(varType)} ${varName};\n`
+      result += `${mapTypeToVarCType(varType)} ${varName};\n`
       continue
     }
 
@@ -7413,6 +7492,23 @@ function generateMainC(
   mainCode += '    fn(pRetData, argCount, pArgs);\n'
   mainCode += '}\n\n'
 
+  // 文本比较（= 字典序，lstrcmpW）与前缀判定：纯文本函数，与窗口无关，故必须在 isWindowsApp
+  // 之外定义——转译产物的前导里这两条声明是**无条件**发的（见 extern int yc_text_compare），
+  // 定义却曾被关在窗口分支里：控制台工程只要写了 `甲 ＝ 乙`（文本比较）就链接失败
+  // 「未定义符号: yc_text_compare」。
+  mainCode += 'int yc_text_compare(const wchar_t* left, const wchar_t* right) {\n'
+  mainCode += '    const wchar_t* lhs = left ? left : L"";\n'
+  mainCode += '    const wchar_t* rhs = right ? right : L"";\n'
+  mainCode += '    return lstrcmpW(lhs, rhs);\n'
+  mainCode += '}\n\n'
+
+  mainCode += 'int yc_text_starts_with(const wchar_t* text, const wchar_t* prefix) {\n'
+  mainCode += '    const wchar_t* src = text ? text : L"";\n'
+  mainCode += '    const wchar_t* pre = prefix ? prefix : L"";\n'
+  mainCode += '    size_t preLen = wcslen(pre);\n'
+  mainCode += '    return wcsncmp(src, pre, preLen) == 0 ? 1 : 0;\n'
+  mainCode += '}\n\n'
+
   if (isWindowsApp) {
     // 查找启动窗口文件（预览时优先用指定的当前窗体作为启动窗口）
     let efwFile = previewWindow
@@ -7548,19 +7644,6 @@ function generateMainC(
     mainCode += 'YC_TEXT yc_ctrl_get_date(HWND h, const wchar_t* prop) { wchar_t* p = krnln_ctrl_get_date(h, prop); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n'
     mainCode += 'extern "C" wchar_t* krnln_ctrl_get_seltext(HWND h);\n'
     mainCode += 'YC_TEXT yc_ctrl_get_seltext(HWND h) { wchar_t* p = krnln_ctrl_get_seltext(h); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n\n'
-
-    mainCode += 'int yc_text_compare(const wchar_t* left, const wchar_t* right) {\n'
-    mainCode += '    const wchar_t* lhs = left ? left : L"";\n'
-    mainCode += '    const wchar_t* rhs = right ? right : L"";\n'
-    mainCode += '    return lstrcmpW(lhs, rhs);\n'
-    mainCode += '}\n\n'
-
-    mainCode += 'int yc_text_starts_with(const wchar_t* text, const wchar_t* prefix) {\n'
-    mainCode += '    const wchar_t* src = text ? text : L"";\n'
-    mainCode += '    const wchar_t* pre = prefix ? prefix : L"";\n'
-    mainCode += '    size_t preLen = wcslen(pre);\n'
-    mainCode += '    return wcsncmp(src, pre, preLen) == 0 ? 1 : 0;\n'
-    mainCode += '}\n\n'
 
     // 日期框/月历日期属性：解析 "年/月/日 [时:分:秒]"（分隔符 / 或 -）为 SYSTEMTIME。
     mainCode += 'static int yc_parse_systemtime(const wchar_t* s, SYSTEMTIME* st) {\n'
@@ -7707,14 +7790,19 @@ function generateMainC(
       mainCode += '}\n\n'
     }
     {
-      // 颜色表始终生成（空占位 id=0 永不匹配）：WM_CTLCOLOR* case 恒存在，未配色控件的兜底路径对所有项目一致
+      // 颜色表始终生成：WM_CTLCOLOR* case 恒存在，未配色控件的兜底路径对所有项目一致。
+      // 占位项的 id 必须是 -1 而**不能是 0**：GetDlgCtrlID 对「没有控件ID的窗口」（顶层窗体就是）
+      // 返回 0，查表处的 colorParentId 因此常态为 0——id=0 的占位项会被它撞上（曾让全默认配色的
+      // 项目里所有编辑框/列表框/标签拿到占位项的 backColor=0，整片黑底）。真实项按 IDC_<名> 宏
+      // 编号，从 1001 起，永不为 0 或负。
       mainCode += '/* 编辑框自定义颜色表 */\n'
       mainCode += 'typedef struct { int id; COLORREF textColor; COLORREF backColor; HBRUSH brush; int transparent; } YcEditColorEntry;\n'
       mainCode += 'static YcEditColorEntry g_ycEditColors[] = {\n'
       for (const entry of editColorEntries) {
         mainCode += `    { ${entry.idMacro}, (COLORREF)${entry.textColor}, (COLORREF)${entry.backColor}, NULL, ${entry.transparent} },\n`
       }
-      if (editColorEntries.length === 0) mainCode += '    { 0, (COLORREF)0, (COLORREF)0, NULL, 0 },\n'
+      // C 不允许空的数组初始化式，故空表时填一个永不匹配的占位项
+      if (editColorEntries.length === 0) mainCode += '    { -1, (COLORREF)0, (COLORREF)0, NULL, 0 },\n'
       mainCode += '};\n\n'
     }
 
@@ -8673,6 +8761,9 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       mainCode += '        std::map<HWND,COLORREF>::iterator _ovIt = g_ycTextColorOverride.find((HWND)lParam);\n'
       mainCode += '        bool _hasOv = (_ovIt != g_ycTextColorOverride.end());\n'
       mainCode += '        for (size_t ci = 0; ci < sizeof(g_ycEditColors) / sizeof(g_ycEditColors[0]); ci++) {\n'
+      // 0 不是任何真实控件的 ID——GetDlgCtrlID 对无 ID 的窗口（顶层窗体）就返回 0，故 colorParentId
+      // 常态为 0。表里 id<=0 的项绝不能参与匹配，否则占位项撞上 colorParentId 让未配色控件全变黑底。
+      mainCode += '            if (g_ycEditColors[ci].id <= 0) continue;\n'
       mainCode += '            if (g_ycEditColors[ci].id != colorCtrlId && g_ycEditColors[ci].id != colorParentId) continue;\n'
       mainCode += '            SetTextColor((HDC)wParam, _hasOv ? _ovIt->second : g_ycEditColors[ci].textColor);\n'
       mainCode += '            if (g_ycEditColors[ci].transparent) { SetBkMode((HDC)wParam, TRANSPARENT); return (LRESULT)GetStockObject(NULL_BRUSH); }\n'

@@ -300,6 +300,9 @@ export function formatOps(val: string): string {
   s = s.replace(/(<>|!=)/g, ' ≠ ')
   s = s.replace(/<=/g, ' ≤ ')
   s = s.replace(/>=/g, ' ≥ ')
+  // 近似等于：?= 是它的同义写法（帮助如此）→ 归一成 ≈，顺带把空格规范成同其它运算符。
+  // 必须先于下面的 = 规则，否则 ?= 里的 = 会先被换成 ＝，剩下个孤零零的 ?
+  s = s.replace(/\?=|≈/g, ' ≈ ')
   s = s.replace(/＝/g, ' ＝ ')
   s = s.replace(/(?<!=)=(?!=)/g, ' ＝ ')
   s = s.replace(/</g, ' ＜ ')
@@ -426,7 +429,7 @@ function colorExpr(expr: string): Span[] {
       continue
     }
 
-    const op = r.match(/^(<>|!=|<=|>=|≠|≥|≤|=|＝|<|>|＜|＞|\+|＋|-|－|\*|×|\/|÷|,|，)/)
+    const op = r.match(/^(<>|!=|<=|>=|≠|≥|≤|≈|=|＝|<|>|＜|＞|\+|＋|-|－|\*|×|\/|÷|,|，)/)
     if (op) {
       out.push({ text: op[0], cls: 'eyc-punct' })
       r = r.slice(op[0].length)
@@ -504,7 +507,8 @@ function colorExpr(expr: string): Span[] {
       continue
     }
 
-    const pm = r.match(/^[^""\u201c#()（）,，=＝<>＜＞≠≥≤+＋\-－*×\/÷\[\]{}\s]+/)
+    // 排除集必须含 ≈：否则没加空格的 `甲≈乙` 会被整段吞成一个普通 token，运算符切不出来
+    const pm = r.match(/^[^""\u201c#()（）,，=＝<>＜＞≠≥≤≈+＋\-－*×\/÷\[\]{}\s]+/)
     if (pm) {
       out.push({ text: pm[0], cls: '' })
       r = r.slice(pm[0].length)
