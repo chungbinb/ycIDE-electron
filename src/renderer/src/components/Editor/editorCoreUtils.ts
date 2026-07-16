@@ -82,6 +82,9 @@ export const CONTROL_TYPE_METHODS: Record<string, Array<{ name: string; returnTy
   '超级链接框': [
     { name: '跳转', returnType: '无返回值', description: '跳转到指定的电子信箱或 Internet 地址（依“类型”属性决定打开哪个）。初级对象成员命令。', params: [] },
   ],
+  '通用对话框': [
+    { name: '打开', returnType: '逻辑型', description: '打开当前「类型」属性对应的对话框（打开文件/保存文件/字体选择/打开帮助）。打开文件、保存文件、字体选择：返回真表示用户已输入有效数据，返回假表示用户取消；打开帮助：打开成功返回真（英文名 open）。初级对象成员命令。', params: [] },
+  ],
   '组合框': [
     { name: '加入项目', returnType: '整数型', description: '加入指定项目到组合框列表部分的尾部，成功返回加入后该项目所处的位置，失败返回 -1（英文名 AddString）。', params: [{ name: '欲加入项目的文本', type: '文本型', description: '要加入到列表尾部的项目文本。', optional: false }, { name: '与欲加入项目相关的数值', type: '整数型', description: '与该项目相关联的数值，可省略，省略时默认为 0。', optional: true }] },
     { name: '插入项目', returnType: '整数型', description: '插入指定项目到组合框列表部分的指定位置处，成功返回插入后该项目所处的位置，失败返回 -1（英文名 InsertString）。', params: [{ name: '欲插入的位置', type: '整数型', description: '插入位置，0 为项目位置一，1 为项目位置二，如此类推。', optional: false }, { name: '欲插入项目的文本', type: '文本型', description: '要插入的项目文本。', optional: false }, { name: '与欲插入项目相关的数值', type: '整数型', description: '与该项目相关联的数值，可省略，省略时默认为 0。', optional: true }] },

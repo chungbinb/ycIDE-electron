@@ -199,11 +199,11 @@ const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
   'impl/linux.cpp': '088edd74d09dac6c9e70da4feed932e3e0d4aceba36b6aab5d9fb152077aef34',
   'impl/macos.mm': '798149470018bf45a3e996d82db1db41f473f6a6aca2fd3badf7b8ad1538b4ac',
   'impl/pinyin-table.inc': 'dd70222f361e247007abaa4a5c441d9be2f5d54bfa89a777624ef2a52c93f504',
-  'impl/windows.cpp': 'a4bc998fcf641c207ee4035f53f6ab8a6f81b345d876e1e34dc8d1d808ed72b3',
+  'impl/windows.cpp': '111796c8840084e5a9d35acda3e956e4a83a8d8afc260b53961b45a59248d1f6',
   'krnln.commands.ycmd.json': '633bb962da9cde56e9978a0053dd8108a5ebe1a16e637d978a6aa5b2cc8efc2c',
   'krnln.constants.json': '02e83c81be209c290b335be9daec43df9fa23f5035e204b19280232b7fc894c3',
   'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
-  'window-units.json': '1d3fb75e37413e1fa86042b8e1c00f418af1e75bd94317fec2a5b9c2a6931458',
+  'window-units.json': '8c8f83da4139fb80255bb3368a0a93cdcb4512cb78d482160e5170b001ab770a',
 }
 
 const DEFAULT_PROTOCOL_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [

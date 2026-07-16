@@ -53,7 +53,6 @@ interface UseEditorInteractionHandlersParams {
   extractAssemblyVarLinesFromPasted: (clipText: string, currentText: string) => string[]
   extractRoutedDeclarationLinesFromPasted: (clipText: string, currentText: string) => Array<{ language: 'ell' | 'egv' | 'ecs' | 'edt'; lines: string[] }>
   onRouteDeclarationPaste?: (routes: Array<{ language: 'ell' | 'egv' | 'ecs' | 'edt'; lines: string[] }>) => void
-  shouldUseNativeInputPaste: (editCell: EditCellLike | null) => boolean
   suppressInlineBlurCommit: (durationMs?: number) => void
   commitActiveEditor: () => void
   focusWrapper: () => void
@@ -97,7 +96,6 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     extractAssemblyVarLinesFromPasted,
     extractRoutedDeclarationLinesFromPasted,
     onRouteDeclarationPaste,
-    shouldUseNativeInputPaste,
     suppressInlineBlurCommit,
     commitActiveEditor,
     focusWrapper,
@@ -233,11 +231,12 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     if (!clipText) return
     const target = e.target as HTMLElement
     const state = editCellRef.current
-    const isCodeLineInput = !!state && state.cellIndex === -1 && state.paramIdx === undefined
     const isMultiLinePaste = /[\r\n]/.test(clipText)
     if (target.closest('input')) {
-      if (shouldUseNativeInputPaste(state)) return
-      if (!isCodeLineInput || !isMultiLinePaste) return
+      // 单行剪贴板：原生粘贴进当前输入框；多行剪贴板：任何编辑态（代码行/表格单元格/参数）
+      // 都改走文档级整行粘贴——这些输入框的值都只住在单一源码行里，装不下多行内容
+      // （旧行为：单元格无条件原生粘贴，整段代码被压成一行挤进单元格）。
+      if (!state || !isMultiLinePaste) return
     }
     e.preventDefault()
     const cursorLine = editCellRef.current?.lineIndex ?? lastFocusedLineRef.current
@@ -269,8 +268,9 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     for (let i = 0; i < pasteResult.pastedLineCount; i++) newSel.add(pasteResult.insertAt + i)
     setSelectedLines(newSel)
     lastFocusedLineRef.current = pasteResult.insertAt + pasteResult.pastedLineCount - 1
-    if (isCodeLineInput) {
-      // 多行粘贴后原输入框中的 editVal 已不再对应文档内容，立即退出编辑态避免 blur 回写旧值。
+    if (state) {
+      // 多行粘贴后原输入框中的 editVal/lineIndex 已不再对应文档内容（行号可能位移），
+      // 立即退出编辑态并压掉 blur 回写，避免旧值写回错行。
       suppressInlineBlurCommit(2000)
       setAcVisible(false)
       setEditCell(null)
@@ -288,7 +288,6 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     setSelectedLines,
     setAcVisible,
     setEditCell,
-    shouldUseNativeInputPaste,
     suppressInlineBlurCommit,
   ])
 

@@ -124,7 +124,7 @@ interface VisualDesignerProps {
 const DEFAULT_SIZES: Record<string, [number, number]> = {
   '按钮': [75, 28], '编辑框': [120, 24], '标签': [80, 20], '图片框': [100, 80],
   '列表框': [120, 100], '组合框': [120, 24], '选择框': [80, 20], '单选框': [80, 20],
-  '分组框': [160, 120], '进度条': [150, 20], '时钟': [32, 32], '图片组': [32, 32],
+  '分组框': [160, 120], '进度条': [150, 20], '时钟': [32, 32], '图片组': [32, 32], '通用对话框': [32, 32],
   '选择夹': [220, 150], '月历': [200, 160], '滑块条': [150, 30], '画板': [200, 150],
 }
 const DEFAULT_SIZE: [number, number] = [100, 30]
@@ -2068,6 +2068,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       }
       case '时钟':
       case '图片组':
+      case '通用对话框':
         return (
           <div className="vd-preview vd-preview-compact">
             <Icon name={resolveUnitIconName(ctrl.type, unitInfo?.iconFileName, unitInfo?.libraryName)} size={12} />

@@ -167,10 +167,13 @@ interface EycTableEditorProps {
 }
 
 export interface FileProblem {
+  /** 文本模式（源码）行号，1 基 */
   line: number
   column: number
   message: string
   severity: 'error' | 'warning'
+  /** 表格模式行号（编辑器行号槽显示的编号），隐藏行/文本模式诊断无此值 */
+  displayLine?: number
 }
 
 /** 可勾切换格（公开/静态/传址/参考/可空/数组）的 cellIndex 集合——与 tryToggleTableBooleanCell 的判定一一对应 */
@@ -305,7 +308,13 @@ function ensureMinimalFlowBodies(lines: string[]): string[] {
   return out
 }
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = [], windowControlNames = [], windowControlTypes = [], projectWindows = [], windowUnits = [], projectConstants = [], projectDllCommands = [], projectDataTypes = [], projectClassNames = [], onClassNameRename, onChange, onGlobalUndo, onGlobalRedo, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = [], debugSourceLine, debugVariables = [], diffHighlightLines, diffAddedLines = new Set<number>(), diffEditedLines = new Set<number>(), diffDeletedAfterLines = new Set<number>(), diffDeletedTextAfterLines, showVarSummaryPanel = true }, ref) {
+// 解构默认值必须是模块级常量：内联 `= []` / `= new Set()` 每次渲染都生成新引用，
+// 会打穿下游 useMemo/useEffect 依赖链——诊断 worker 曾因此陷入
+// 「回包 setProblems → 重渲染 → 新 [] → 重发请求」的无限循环（挂载方省略这些 props 时触发）。
+const EMPTY_ARRAY: never[] = []
+const EMPTY_LINE_SET: Set<number> = new Set()
+
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = EMPTY_ARRAY, windowControlNames = EMPTY_ARRAY, windowControlTypes = EMPTY_ARRAY, projectWindows = EMPTY_ARRAY, windowUnits = EMPTY_ARRAY, projectConstants = EMPTY_ARRAY, projectDllCommands = EMPTY_ARRAY, projectDataTypes = EMPTY_ARRAY, projectClassNames = EMPTY_ARRAY, onClassNameRename, onChange, onGlobalUndo, onGlobalRedo, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = EMPTY_ARRAY, debugSourceLine, debugVariables = EMPTY_ARRAY, diffHighlightLines, diffAddedLines = EMPTY_LINE_SET, diffEditedLines = EMPTY_LINE_SET, diffDeletedAfterLines = EMPTY_LINE_SET, diffDeletedTextAfterLines, showVarSummaryPanel = true }, ref) {
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
@@ -2277,7 +2286,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const normalizeCodeLineInput = useCallback((raw: string): string => {
     if (!raw) return raw
 
+    // 行首空白一律剥除：表格模式缩进由编辑器按流程结构管理，手敲的前导空格会被
+    // formatCommandLine 当成结构缩进落盘，造成流程线与文本错位（空格只在文本字面量内有意义，
+    // 而字面量不可能出现在行首空白里）。
     let next = raw
+      .replace(/^\s+/, '')
       .replace(/，/g, ',')
       .replace(/。/g, '.')
       .replace(/；/g, ';')
@@ -4389,8 +4402,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })
 
     if (!onProblemsChange) return
-    onProblemsChange(diagnosticsProblems as FileProblem[])
-  }, [onProblemsChange, diagnosticsProblems])
+    // 问题面板要同时显示表格模式行号与文本(源码)行号：附上行号槽同源的表格编号映射。
+    onProblemsChange(diagnosticsProblems.map(p => ({
+      ...p,
+      displayLine: lineNumMaps.sourceLineNumMap.get(p.line - 1),
+    })) as FileProblem[])
+  }, [onProblemsChange, diagnosticsProblems, lineNumMaps])
 
   const commit = useCallback((overrideVal?: string) => {
     if (!editCell || commitGuardRef.current) return
@@ -7618,7 +7635,6 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     extractAssemblyVarLinesFromPasted,
     extractRoutedDeclarationLinesFromPasted,
     onRouteDeclarationPaste,
-    shouldUseNativeInputPaste,
     suppressInlineBlurCommit,
     commitActiveEditor: () => commitRef.current(),
     focusWrapper,
@@ -7938,7 +7954,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                       className={`eyc-cell-input${isInvalidVarNameCell ? ' eyc-input-invalid' : ''}`}
                                       aria-label="编辑表格单元格"
                                       value={editVal}
-                                      onPaste={(e) => e.stopPropagation()}
+                                      onPaste={(e) => {
+                                        // 单行剪贴板原生粘贴进单元格；多行（整段代码）冒泡走文档级整行粘贴——
+                                        // 单元格值只住在单一源码行里，装不下多行内容。
+                                        const clipText = e.clipboardData.getData('text/plain')
+                                        if (!/[\r\n]/.test(clipText)) e.stopPropagation()
+                                      }}
                                       onMouseDown={(e) => {
                                         if (e.button !== 0) return
                                         // 单元格输入框内拖选仅限单元格，不切换到行拖选
@@ -8204,16 +8225,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 <span className="eyc-code-spans">
                   {(() => {
                     const flow = renderFlowSegs(blk.lineIndex, isExpanded)
-                    let treeSkipped = 0
+                    // 有流程线的行：文本一律紧跟流程线格起排（与编辑态输入框位置一致），
+                    // 前导缩进（树线格/余数空格/注释行缩进）整体由流程线格替代、不再叠加渲染。
+                    // 否则「缩进 > 4×流程深度」的行（如结构体内注释缩进=深度+1层）失焦显示会比编辑态右漂。
+                    let leadingIndentDone = flow.skipTreeLines === 0
                             const lineHasMissingRhs = missingRhsLineSet.has(blk.lineIndex)
                     return (
                       <>
                         {flow.node}
                         {spans.map((s, si) => {
-                          // 跳过被流程线替代的树线缩进
-                          if (s.cls === 'eTreeLine' && treeSkipped < flow.skipTreeLines) {
-                            treeSkipped++
-                            return null
+                          if (!leadingIndentDone) {
+                            if (s.cls === 'eTreeLine' || (s.cls === '' && !s.text.trim())) return null
+                            leadingIndentDone = true
                           }
                           const isFunc = s.cls === 'funccolor'
                           const isObjMethod = s.cls === 'cometwolr'

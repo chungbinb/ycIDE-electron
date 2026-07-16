@@ -234,6 +234,7 @@
     }
   ],
   "controlMethodBindings": [
+    {"unit": "通用对话框", "member": "打开", "memberEnglishName": "open", "call": "krnln_commdlg_open({n})"},
     {"unit": "组合框", "member": "加入项目", "call": "krnln_ll_add_item({h}, {0}, {1|0})"},
     {"unit": "组合框", "member": "插入项目", "call": "krnln_ll_insert_item({h}, {0}, {1}, {2|0})"},
     {"unit": "组合框", "member": "删除项目", "call": "krnln_ll_delete_item({h}, {0})"},
@@ -3877,10 +3878,253 @@
     {
       "name": "通用对话框",
       "englishName": "CommonDlg",
-      "description": "通用对话框控件。",
+      "description": "通用对话框组件（功能窗口组件，非可视）。调用「打开」方法弹出当前「类型」的系统对话框。",
       "className": "",
       "style": "",
-      "properties": [],
+      "properties": [
+        {
+          "name": "类型",
+          "englishName": "style",
+          "description": "对话框类型：0.打开文件 1.保存文件 2.字体选择 3.打开帮助。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": ["打开文件", "保存文件", "字体选择", "打开帮助"],
+          "defaultValue": 0,
+          "access": { "get": "krnln_commdlg_get_int({n}, 0)", "set": "krnln_commdlg_set_int({n}, 0, {v})" }
+        },
+        {
+          "name": "标题",
+          "englishName": "caption",
+          "description": "对话框标题，仅适用于打开文件和保存文件对话框。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": "",
+          "access": { "get": "yc_commdlg_get_text({n}, 1)", "set": "krnln_commdlg_set_text({n}, 1, {vtext})" }
+        },
+        {
+          "name": "文件名",
+          "englishName": "FileName",
+          "description": "读取时为含驱动器符和全路径的文件名；同时用作对话框中文件名编辑框的初始内容。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": "",
+          "access": { "get": "yc_commdlg_get_text({n}, 2)", "set": "krnln_commdlg_set_text({n}, 2, {vtext})" }
+        },
+        {
+          "name": "过滤器",
+          "englishName": "filter",
+          "description": "成对的「显示文本|匹配符」列表，各文本串之间用“|”号隔开，如：文本文件（*.txt）|*.txt|所有文件（*.*）|*.*。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": "",
+          "access": { "get": "yc_commdlg_get_text({n}, 3)", "set": "krnln_commdlg_set_text({n}, 3, {vtext})" }
+        },
+        {
+          "name": "初始过滤器",
+          "englishName": "FilterIndex",
+          "description": "指定初始的过滤器，0 为第一个过滤器。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0,
+          "access": { "get": "krnln_commdlg_get_int({n}, 4)", "set": "krnln_commdlg_set_int({n}, 4, {v})" }
+        },
+        {
+          "name": "初始目录",
+          "englishName": "InitialDir",
+          "description": "指定打开对话框时自动跳转到的目录。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": "",
+          "access": { "get": "yc_commdlg_get_text({n}, 5)", "set": "krnln_commdlg_set_text({n}, 5, {vtext})" }
+        },
+        {
+          "name": "默认文件后缀",
+          "englishName": "DefExt",
+          "description": "用户没有输入文件后缀名称时自动使用的文件后缀名称（不含点号）。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": "",
+          "access": { "get": "yc_commdlg_get_text({n}, 6)", "set": "krnln_commdlg_set_text({n}, 6, {vtext})" }
+        },
+        {
+          "name": "创建时提示",
+          "englishName": "CreatePrompt",
+          "description": "打开文件对话框中用户指定了不存在的文件名时，是否提示用户即将创建它。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false,
+          "access": { "get": "krnln_commdlg_get_int({n}, 7)", "set": "krnln_commdlg_set_int({n}, 7, {v})" }
+        },
+        {
+          "name": "文件必须存在",
+          "englishName": "FileMustExist",
+          "description": "打开文件对话框中是否禁止用户指定一个不存在的文件。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false,
+          "access": { "get": "krnln_commdlg_get_int({n}, 8)", "set": "krnln_commdlg_set_int({n}, 8, {v})" }
+        },
+        {
+          "name": "文件覆盖提示",
+          "englishName": "OverWritePrompt",
+          "description": "保存文件对话框中用户指定了已存在的文件时，是否询问用户确定覆盖此文件。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": true,
+          "access": { "get": "krnln_commdlg_get_int({n}, 9)", "set": "krnln_commdlg_set_int({n}, 9, {v})" }
+        },
+        {
+          "name": "目录必须存在",
+          "englishName": "PathMustExist",
+          "description": "是否禁止用户指定一个不存在的目录。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": true,
+          "access": { "get": "krnln_commdlg_get_int({n}, 10)", "set": "krnln_commdlg_set_int({n}, 10, {v})" }
+        },
+        {
+          "name": "不改变目录",
+          "englishName": "NoChangeDir",
+          "description": "对话框关闭后是否自动返回到进入对话框时的文件目录。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false,
+          "access": { "get": "krnln_commdlg_get_int({n}, 11)", "set": "krnln_commdlg_set_int({n}, 11, {v})" }
+        },
+        {
+          "name": "字体颜色",
+          "englishName": "FontColor",
+          "description": "字体选择对话框的初始/结果字体颜色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0,
+          "access": { "get": "krnln_commdlg_get_int({n}, 12)", "set": "krnln_commdlg_set_int({n}, 12, {v})" }
+        },
+        {
+          "name": "加粗",
+          "englishName": "FontBold",
+          "description": "字体选择对话框的初始/结果加粗状态。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false,
+          "access": { "get": "krnln_commdlg_get_int({n}, 13)", "set": "krnln_commdlg_set_int({n}, 13, {v})" }
+        },
+        {
+          "name": "倾斜",
+          "englishName": "FontItalic",
+          "description": "字体选择对话框的初始/结果倾斜状态。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false,
+          "access": { "get": "krnln_commdlg_get_int({n}, 14)", "set": "krnln_commdlg_set_int({n}, 14, {v})" }
+        },
+        {
+          "name": "删除线",
+          "englishName": "StrikeOut",
+          "description": "字体选择对话框的初始/结果删除线状态。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false,
+          "access": { "get": "krnln_commdlg_get_int({n}, 15)", "set": "krnln_commdlg_set_int({n}, 15, {v})" }
+        },
+        {
+          "name": "下划线",
+          "englishName": "UnderLine",
+          "description": "字体选择对话框的初始/结果下划线状态。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false,
+          "access": { "get": "krnln_commdlg_get_int({n}, 16)", "set": "krnln_commdlg_set_int({n}, 16, {v})" }
+        },
+        {
+          "name": "字体名称",
+          "englishName": "FontName",
+          "description": "字体选择对话框的初始/结果字体名称。不指定名称和大小时使用标准 Windows 图形字体；指定了大小没指定名称时自动使用宋体。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": "",
+          "access": { "get": "yc_commdlg_get_text({n}, 17)", "set": "krnln_commdlg_set_text({n}, 17, {vtext})" }
+        },
+        {
+          "name": "字体大小",
+          "englishName": "FontSize",
+          "description": "字体选择对话框的初始/结果字体大小，单位为 1/72 英寸（磅）。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0,
+          "access": { "get": "krnln_commdlg_get_int({n}, 18)", "set": "krnln_commdlg_set_int({n}, 18, {v})" }
+        },
+        {
+          "name": "帮助文件名",
+          "englishName": "HelpFileName",
+          "description": "欲打开帮助文件的名称；未指定时使用本程序文件名（不含后缀）＋“.hlp”。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": "",
+          "access": { "get": "yc_commdlg_get_text({n}, 19)", "set": "krnln_commdlg_set_text({n}, 19, {vtext})" }
+        },
+        {
+          "name": "帮助命令",
+          "englishName": "HelpCommand",
+          "description": "打开帮助对话框的命令：0.显示帮助主题 1.显示指定标志信息 2.弹出指定标志信息 3.确定帮助已显示 4.显示帮助软件使用方法 5.退出帮助。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": ["显示帮助主题", "显示指定标志信息", "弹出指定标志信息", "确定帮助已显示", "显示帮助软件使用方法", "退出帮助"],
+          "defaultValue": 0,
+          "access": { "get": "krnln_commdlg_get_int({n}, 20)", "set": "krnln_commdlg_set_int({n}, 20, {v})" }
+        },
+        {
+          "name": "帮助标志值",
+          "englishName": "HelpContext",
+          "description": "帮助命令为「显示指定标志信息」「弹出指定标志信息」时的帮助标志数值。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0,
+          "access": { "get": "krnln_commdlg_get_int({n}, 21)", "set": "krnln_commdlg_set_int({n}, 21, {v})" }
+        }
+      ],
       "events": [],
       "icon": "icon/BlueIcons/OpenfileDialog_16x.png"
     },

@@ -36,12 +36,15 @@ export interface CommandDetail {
 
 /** 文件问题项 */
 export interface FileProblem {
+  /** 文本模式（源码）行号，1 基 */
   line: number
   column: number
   message: string
   severity: 'error' | 'warning'
   /** 来源文件名（如 _启动窗口.efw），设计时诊断时使用 */
   file?: string
+  /** 表格模式行号（编辑器行号槽显示的编号），有值时面板双行号显示 */
+  displayLine?: number
 }
 
 export interface DebugVariable {
@@ -340,7 +343,9 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
     const severityText = problem.severity === 'error' ? '错误' : '警告'
     const fileText = problem.file ? `，文件 ${problem.file}` : ''
     const locationText = (problem.line > 0 || problem.column > 0)
-      ? `，第 ${problem.line} 行，第 ${problem.column} 列`
+      ? (problem.displayLine != null && problem.displayLine > 0
+          ? `，第 ${problem.displayLine} 行，第 ${problem.column} 列，文本模式第 ${problem.line} 行`
+          : `，第 ${problem.line} 行，第 ${problem.column} 列`)
       : '，设计时问题'
     return `${severityText}${fileText}${locationText}，${problem.message}`
   }
@@ -746,7 +751,9 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
                   {p.file && <span className="output-problem-file">{p.file}</span>}
                   <span className="output-problem-msg">{p.message}</span>
                   {(p.line > 0 || p.column > 0)
-                    ? <span className="output-problem-loc">第 {p.line} 行, 第 {p.column} 列</span>
+                    ? (p.displayLine != null && p.displayLine > 0
+                        ? <span className="output-problem-loc">第 {p.displayLine} 行, 第 {p.column} 列<span className="output-problem-loc-source">（文本 第 {p.line} 行）</span></span>
+                        : <span className="output-problem-loc">第 {p.line} 行, 第 {p.column} 列</span>)
                     : <span className="output-problem-loc output-problem-design">设计时</span>}
                 </div>
               ))}

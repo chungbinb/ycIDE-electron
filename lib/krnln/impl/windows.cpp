@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <commctrl.h>
+#include <commdlg.h>  // 通用对话框（GetOpenFileNameW/GetSaveFileNameW/ChooseFontW）
 
 #include <algorithm>
 #include <cmath>
@@ -1797,6 +1798,206 @@ extern "C" wchar_t* krnln_ctrl_get_tag(HWND h) {
   return b;
 }
 
+// ===== 通用对话框（CommonDlg，功能窗口组件/非可视，无 HWND）=====
+// 状态按实例名存在库内（编译器在窗口创建期用 krnln_commdlg_set_* 灌入设计期属性）。
+// propId 枚举与编译器侧绑定模板（window-units.json access 模板里的字面量）一一对应，勿改序号：
+//   0类型(0打开文件/1保存文件/2字体选择/3打开帮助) 1标题 2文件名 3过滤器 4初始过滤器(0基)
+//   5初始目录 6默认文件后缀 7创建时提示 8文件必须存在 9文件覆盖提示 10目录必须存在 11不改变目录
+//   12字体颜色 13加粗 14倾斜 15删除线 16下划线 17字体名称 18字体大小(磅)
+//   19帮助文件名 20帮助命令 21帮助标志值
+struct YcCommDlgState {
+  int style = 0;
+  std::wstring caption, fileName, filter, initialDir, defExt;
+  int filterIndex = 0;
+  // 默认值与 window-units.json 声明的 defaultValue 保持一致（设计器未改动时不发 set 调用）
+  int createPrompt = 0, fileMustExist = 0, overwritePrompt = 1, pathMustExist = 1, noChangeDir = 0;
+  int fontColor = 0, fontBold = 0, fontItalic = 0, strikeOut = 0, underline = 0;
+  std::wstring fontName; int fontSize = 0;
+  std::wstring helpFile; int helpCommand = 0, helpContext = 0;
+};
+static std::unordered_map<std::wstring, YcCommDlgState> g_ycCommDlgs;
+static YcCommDlgState& yc_commdlg_state(const wchar_t* name) { return g_ycCommDlgs[name ? name : L""]; }
+
+extern "C" long long krnln_commdlg_get_int(const wchar_t* name, int propId) {
+  YcCommDlgState& s = yc_commdlg_state(name);
+  switch (propId) {
+    case 0: return s.style;
+    case 4: return s.filterIndex;
+    case 7: return s.createPrompt;
+    case 8: return s.fileMustExist;
+    case 9: return s.overwritePrompt;
+    case 10: return s.pathMustExist;
+    case 11: return s.noChangeDir;
+    case 12: return s.fontColor;
+    case 13: return s.fontBold;
+    case 14: return s.fontItalic;
+    case 15: return s.strikeOut;
+    case 16: return s.underline;
+    case 18: return s.fontSize;
+    case 20: return s.helpCommand;
+    case 21: return s.helpContext;
+  }
+  return 0;
+}
+
+extern "C" void krnln_commdlg_set_int(const wchar_t* name, int propId, long long v) {
+  YcCommDlgState& s = yc_commdlg_state(name);
+  int iv = (int)v;
+  switch (propId) {
+    case 0: s.style = iv; break;
+    case 4: s.filterIndex = iv; break;
+    case 7: s.createPrompt = iv ? 1 : 0; break;
+    case 8: s.fileMustExist = iv ? 1 : 0; break;
+    case 9: s.overwritePrompt = iv ? 1 : 0; break;
+    case 10: s.pathMustExist = iv ? 1 : 0; break;
+    case 11: s.noChangeDir = iv ? 1 : 0; break;
+    case 12: s.fontColor = iv; break;
+    case 13: s.fontBold = iv ? 1 : 0; break;
+    case 14: s.fontItalic = iv ? 1 : 0; break;
+    case 15: s.strikeOut = iv ? 1 : 0; break;
+    case 16: s.underline = iv ? 1 : 0; break;
+    case 18: s.fontSize = iv; break;
+    case 20: s.helpCommand = iv; break;
+    case 21: s.helpContext = iv; break;
+  }
+}
+
+static std::wstring* yc_commdlg_text_slot(YcCommDlgState& s, int propId) {
+  switch (propId) {
+    case 1: return &s.caption;
+    case 2: return &s.fileName;
+    case 3: return &s.filter;
+    case 5: return &s.initialDir;
+    case 6: return &s.defExt;
+    case 17: return &s.fontName;
+    case 19: return &s.helpFile;
+  }
+  return nullptr;
+}
+
+extern "C" void krnln_commdlg_set_text(const wchar_t* name, int propId, const wchar_t* v) {
+  std::wstring* slot = yc_commdlg_text_slot(yc_commdlg_state(name), propId);
+  if (slot) *slot = (v ? v : L"");
+}
+
+// 返回 malloc 独占拷贝，调用方（编译器生成的包装）用 krnln_ctrl_free_text 释放（同 krnln_ctrl_get_text 约定）。
+extern "C" wchar_t* krnln_commdlg_get_text(const wchar_t* name, int propId) {
+  std::wstring* slot = yc_commdlg_text_slot(yc_commdlg_state(name), propId);
+  const wchar_t* src = slot ? slot->c_str() : L"";
+  size_t n = wcslen(src);
+  wchar_t* b = (wchar_t*)malloc((n + 1) * sizeof(wchar_t));
+  if (!b) return nullptr;
+  wcscpy(b, src);
+  return b;
+}
+
+// 打开当前类型的对话框（易语言〈逻辑型〉对象．打开()）。打开/保存/字体选择：确定返回 1、取消返回 0；
+// 打开帮助：打开成功返回 1。确定后把用户输入回写状态（文件名/初始过滤器/字体各属性）。
+extern "C" int krnln_commdlg_open(const wchar_t* name) {
+  YcCommDlgState& s = yc_commdlg_state(name);
+  HWND owner = GetActiveWindow();
+
+  if (s.style == 0 || s.style == 1) {
+    // 过滤器：易语言用「显示文本|匹配符|显示文本|匹配符」竖线分隔，Win32 要求 NUL 分隔、双 NUL 结尾
+    std::wstring filterBuf;
+    if (!s.filter.empty()) {
+      filterBuf = s.filter;
+      for (auto& ch : filterBuf) { if (ch == L'|') ch = L'\0'; }
+      filterBuf.push_back(L'\0');  // 末对之后再补一个 NUL（basic_string 自身携带一个隐式结尾）
+    }
+    wchar_t fileBuf[2048];
+    size_t initLen = s.fileName.size();
+    if (initLen >= 2048) initLen = 2047;
+    wmemcpy(fileBuf, s.fileName.c_str(), initLen);
+    fileBuf[initLen] = L'\0';
+
+    OPENFILENAMEW ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = filterBuf.empty() ? nullptr : filterBuf.c_str();
+    ofn.nFilterIndex = (DWORD)(s.filterIndex + 1);  // 易语言 0 基 → Win32 1 基
+    ofn.lpstrFile = fileBuf;
+    ofn.nMaxFile = 2048;
+    ofn.lpstrInitialDir = s.initialDir.empty() ? nullptr : s.initialDir.c_str();
+    ofn.lpstrTitle = s.caption.empty() ? nullptr : s.caption.c_str();
+    ofn.lpstrDefExt = s.defExt.empty() ? nullptr : s.defExt.c_str();
+    ofn.Flags = OFN_EXPLORER | OFN_HIDEREADONLY
+      | (s.pathMustExist ? OFN_PATHMUSTEXIST : 0)
+      | (s.noChangeDir ? OFN_NOCHANGEDIR : 0);
+    BOOL ok;
+    if (s.style == 0) {
+      ofn.Flags |= (s.fileMustExist ? OFN_FILEMUSTEXIST : 0) | (s.createPrompt ? OFN_CREATEPROMPT : 0);
+      ok = GetOpenFileNameW(&ofn);
+    } else {
+      ofn.Flags |= (s.overwritePrompt ? OFN_OVERWRITEPROMPT : 0);
+      ok = GetSaveFileNameW(&ofn);
+    }
+    if (!ok) return 0;
+    s.fileName = fileBuf;
+    s.filterIndex = (int)ofn.nFilterIndex - 1;
+    return 1;
+  }
+
+  if (s.style == 2) {
+    LOGFONTW lf = {};
+    // 帮助语义：未指定名称与大小 → 系统标准图形字体；指定了大小没指定名称 → 宋体
+    const wchar_t* face = !s.fontName.empty() ? s.fontName.c_str() : (s.fontSize > 0 ? L"宋体" : L"");
+    wcsncpy(lf.lfFaceName, face, LF_FACESIZE - 1);
+    HDC dc = GetDC(nullptr);
+    int logPixY = dc ? GetDeviceCaps(dc, LOGPIXELSY) : 96;
+    if (dc) ReleaseDC(nullptr, dc);
+    if (s.fontSize > 0) lf.lfHeight = -MulDiv(s.fontSize, logPixY, 72);
+    lf.lfWeight = s.fontBold ? FW_BOLD : FW_NORMAL;
+    lf.lfItalic = (BYTE)(s.fontItalic ? 1 : 0);
+    lf.lfStrikeOut = (BYTE)(s.strikeOut ? 1 : 0);
+    lf.lfUnderline = (BYTE)(s.underline ? 1 : 0);
+    lf.lfCharSet = DEFAULT_CHARSET;
+
+    CHOOSEFONTW cf = {};
+    cf.lStructSize = sizeof(cf);
+    cf.hwndOwner = owner;
+    cf.lpLogFont = &lf;
+    cf.rgbColors = (COLORREF)s.fontColor;
+    cf.Flags = CF_SCREENFONTS | CF_EFFECTS | ((face[0] || s.fontSize > 0) ? CF_INITTOLOGFONTSTRUCT : 0);
+    if (!ChooseFontW(&cf)) return 0;
+    s.fontName = lf.lfFaceName;
+    s.fontSize = cf.iPointSize / 10;  // iPointSize 单位 1/10 磅
+    s.fontBold = lf.lfWeight >= FW_BOLD ? 1 : 0;
+    s.fontItalic = lf.lfItalic ? 1 : 0;
+    s.strikeOut = lf.lfStrikeOut ? 1 : 0;
+    s.underline = lf.lfUnderline ? 1 : 0;
+    s.fontColor = (int)cf.rgbColors;
+    return 1;
+  }
+
+  if (s.style == 3) {
+    // 未指定帮助文件 → 本程序文件名（去后缀）＋ .hlp（帮助原文语义）
+    std::wstring helpPath = s.helpFile;
+    if (helpPath.empty()) {
+      wchar_t mod[MAX_PATH] = {};
+      GetModuleFileNameW(nullptr, mod, MAX_PATH);
+      helpPath = mod;
+      size_t dot = helpPath.find_last_of(L'.');
+      size_t sep = helpPath.find_last_of(L"\\/");
+      if (dot != std::wstring::npos && (sep == std::wstring::npos || dot > sep)) helpPath.resize(dot);
+      helpPath += L".hlp";
+    }
+    UINT cmd = HELP_FINDER;
+    ULONG_PTR data = 0;
+    switch (s.helpCommand) {
+      case 0: cmd = HELP_FINDER; break;
+      case 1: cmd = HELP_CONTEXT; data = (ULONG_PTR)s.helpContext; break;
+      case 2: cmd = HELP_CONTEXTPOPUP; data = (ULONG_PTR)s.helpContext; break;
+      case 3: cmd = HELP_FORCEFILE; break;
+      case 4: cmd = HELP_HELPONHELP; break;
+      case 5: cmd = HELP_QUIT; break;
+    }
+    return WinHelpW(owner, helpPath.c_str(), cmd, data) ? 1 : 0;
+  }
+
+  return 0;
+}
+
 // 日期框(SysDateTimePick32)/月历(SysMonthCal32) 日期属性运行时读写：文本「年/月/日 [时:分:秒]」<->SYSTEMTIME。
 static int krnln_parse_date(const wchar_t* s, SYSTEMTIME* st) {
   if (!s || !st || !s[0]) return 0; ZeroMemory(st, sizeof(SYSTEMTIME));
@@ -2187,7 +2388,8 @@ extern "C" void krnln_SetIntInsideBin(void* binData, int offset, int value, int 
 extern "C" void* krnln_ReadFile(const char* fileName) {
   if (!fileName || !*fileName) return ycBinRet(YcBin());
 
-  std::ifstream in(fileName, std::ios::binary);
+  // 路径是 UTF-8：经宽字符 path 打开，否则中文路径按 ANSI 解释打不开（与 打开文件 同族坑）
+  std::ifstream in(std::filesystem::path(utf8ToWide(fileName)), std::ios::binary);
   if (!in) return ycBinRet(YcBin());
 
   // 二进制原样读入（旧法经 const char* 交回，遇文件里第一个 0x00 就整条截断——
@@ -2199,7 +2401,8 @@ extern "C" void* krnln_ReadFile(const char* fileName) {
 extern "C" int krnln_WriteFile(const char* fileName, const void* binData) {
   if (!fileName || !*fileName) return 0;
 
-  std::ofstream out(fileName, std::ios::binary | std::ios::trunc);
+  // 路径是 UTF-8：经宽字符 path 打开（同 krnln_ReadFile）
+  std::ofstream out(std::filesystem::path(utf8ToWide(fileName)), std::ios::binary | std::ios::trunc);
   if (!out) return 0;
 
   // 原样写出（旧法按 strlen 取长度 → 写二进制时在第一个 0x00 处就截断了）
@@ -2820,16 +3023,16 @@ extern "C" double krnln_FileDateTime(const char* fileName) {
 extern "C" int krnln_open(const char* fileName, int openMode, int shareMode) {
   if (!fileName || !*fileName) return 0;
 
-  const char* mode;
+  const wchar_t* mode;
   bool createIfMissing = false;
   switch (openMode) {
-    case 1: mode = "rb";  break;                          // #读入
-    case 2: mode = "r+b"; break;                          // #写出（不存在即失败，故用 r+ 而非 w）
-    case 4: mode = "wb";  break;                          // #重写（建/清空）
-    case 5: mode = "r+b"; createIfMissing = true; break;  // #改写
-    case 6: mode = "r+b"; createIfMissing = true; break;  // #改读
+    case 1: mode = L"rb";  break;                          // #读入
+    case 2: mode = L"r+b"; break;                          // #写出（不存在即失败，故用 r+ 而非 w）
+    case 4: mode = L"wb";  break;                          // #重写（建/清空）
+    case 5: mode = L"r+b"; createIfMissing = true; break;  // #改写
+    case 6: mode = L"r+b"; createIfMissing = true; break;  // #改读
     case 3:
-    default: mode = "r+b"; break;                         // #读写（含省略默认）
+    default: mode = L"r+b"; break;                         // #读写（含省略默认）
   }
 
   int shFlag = _SH_DENYNO;
@@ -2840,8 +3043,12 @@ extern "C" int krnln_open(const char* fileName, int openMode, int shareMode) {
     default: shFlag = _SH_DENYNO; break;  // #无限制（含省略默认）
   }
 
-  FILE* fp = _fsopen(fileName, mode, shFlag);
-  if (!fp && createIfMissing) fp = _fsopen(fileName, "w+b", shFlag);
+  // 编组交来的路径是 UTF-8，必须转宽字符走 _wfsopen——窄版 _fsopen 按 ANSI 代码页
+  // 解释字节，中文路径/文件名（如通用对话框选回来的）会直接打不开（用户实测 文件号=0）。
+  std::wstring widePath = utf8ToWide(fileName);
+  if (widePath.empty()) return 0;
+  FILE* fp = _wfsopen(widePath.c_str(), mode, shFlag);
+  if (!fp && createIfMissing) fp = _wfsopen(widePath.c_str(), L"w+b", shFlag);
   if (!fp) return 0;
   return registerFileHandle(fp, false);
 }
@@ -2916,6 +3123,36 @@ extern "C" int krnln_WriteBin(int fileNo, const void* binData) {
   return n == b.size() ? 1 : 0;
 }
 
+// 文件文本字节 → UTF-8：运行时内部文本一律 UTF-8，但用户从磁盘读的 txt 常见三种编码
+// （记事本旧默认「ANSI」=系统代码页 GBK、带 BOM 的 UTF-8、带 BOM 的 UTF-16）。
+// 合法 UTF-8 原样交回（顺带剥 BOM）；UTF-16 按 BOM 解码；其余按 ANSI 代码页解码，
+// 否则 GBK 内容会整段变乱码。
+static std::string ycFileTextToUtf8(std::string raw) {
+  if (raw.empty()) return raw;
+  // UTF-16 LE/BE BOM
+  if (raw.size() >= 2 && (unsigned char)raw[0] == 0xFF && (unsigned char)raw[1] == 0xFE) {
+    std::wstring w;
+    for (size_t i = 2; i + 1 < raw.size(); i += 2) w.push_back((wchar_t)(((unsigned char)raw[i + 1] << 8) | (unsigned char)raw[i]));
+    return wideToUtf8(w.c_str());
+  }
+  if (raw.size() >= 2 && (unsigned char)raw[0] == 0xFE && (unsigned char)raw[1] == 0xFF) {
+    std::wstring w;
+    for (size_t i = 2; i + 1 < raw.size(); i += 2) w.push_back((wchar_t)(((unsigned char)raw[i] << 8) | (unsigned char)raw[i + 1]));
+    return wideToUtf8(w.c_str());
+  }
+  // UTF-8 BOM 剥掉
+  if (raw.size() >= 3 && (unsigned char)raw[0] == 0xEF && (unsigned char)raw[1] == 0xBB && (unsigned char)raw[2] == 0xBF) {
+    raw.erase(0, 3);
+    if (raw.empty()) return raw;
+  }
+  if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, raw.data(), (int)raw.size(), nullptr, 0) > 0) return raw;
+  int wlen = MultiByteToWideChar(CP_ACP, 0, raw.data(), (int)raw.size(), nullptr, 0);
+  if (wlen <= 0) return raw;
+  std::wstring w((size_t)wlen, L'\0');
+  MultiByteToWideChar(CP_ACP, 0, raw.data(), (int)raw.size(), w.data(), wlen);
+  return wideToUtf8(w.c_str());
+}
+
 extern "C" const char* krnln_ReadText(int fileNo, int readLen) {
   FILE* fp = getFileById(fileNo);
   if (!fp) return keepUtf8("");
@@ -2935,7 +3172,7 @@ extern "C" const char* krnln_ReadText(int fileNo, int readLen) {
   out.resize(static_cast<size_t>(readLen));
   size_t n = std::fread(out.data(), 1, out.size(), fp);
   out.resize(n);
-  return keepUtf8(out);
+  return keepUtf8(ycFileTextToUtf8(std::move(out)));
 }
 
 extern "C" int krnln_WriteText(int fileNo, const char* text) {
@@ -2960,7 +3197,7 @@ extern "C" const char* krnln_ReadLine(int fileNo) {
   }
 
   if (line.empty() && ch == EOF) return keepUtf8("");
-  return keepUtf8(line);
+  return keepUtf8(ycFileTextToUtf8(std::move(line)));
 }
 
 extern "C" int krnln_WriteLine(int fileNo, const char* text) {

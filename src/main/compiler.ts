@@ -381,7 +381,7 @@ interface TranspileCacheFile {
 
 // 29: 条件表达式括号配对修复 + 生成代码每行加 /*@eyc行号*/ 来源标记（旧缓存产物没有标记，报错回溯不到）
 // 30: ÷ 相除改生成双精度除法（旧产物里是截断的整数除法）+ 整体括号表达式改为递归翻译
-const TRANSPILE_CACHE_VERSION = 30
+const TRANSPILE_CACHE_VERSION = 32
 
 interface BuildArtifactCacheFile {
   version: number
@@ -3942,6 +3942,7 @@ function isTextExpression(expr: string): boolean {
     || /^yc_fs_dir\(/.test(trimmed)
     || /^yc_ll_get_text\(/.test(trimmed)
     || /^yc_tab_get_name\(/.test(trimmed)
+    || /^yc_commdlg_get_text\(/.test(trimmed)
 }
 
 function isTextLiteralExpression(expr: string): boolean {
@@ -5461,6 +5462,20 @@ function generateProjectDllWrapperCode(projectDllCommands: ProjectDllCommandDef[
   return result
 }
 
+// 语句级流程命令：易语言文本代码里不带点（`返回 ()`、`结束 ()`），表格编辑器落盘时统一补点
+// （eycFormat.ts eycToYiFormat）。两种形态必须同义——krnln 命令表里有同名空桩
+// （krnln_return/krnln_end 等），无点形态若走普通命令派发会静默无操作、程序不退出。
+const STATEMENT_FLOW_KEYWORDS = new Set(['返回', '结束', '跳出循环', '到循环尾'])
+
+// 块结构流程关键字：只有带点形态是合法源码（易语言文本代码里它们本就带点）。
+// 无点时报错而不是放行——放行同样会命中 krnln 空桩，块结构整个静默失效。
+const BLOCK_FLOW_KEYWORDS = new Set([
+  '如果', '如果真', '否则', '如果结束', '如果真结束',
+  '判断开始', '判断', '默认', '判断结束',
+  '判断循环首', '判断循环尾', '循环判断首', '循环判断尾',
+  '计次循环首', '计次循环尾', '变量循环首', '变量循环尾',
+])
+
 // .eyc 转 C 代码转译器
 // 将易语言源代码中的子程序转译成 C 函数
 // 命令识别基于已加载的支持库，支持第三方支持库扩展
@@ -5812,6 +5827,12 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'extern "C" long long krnln_ctrl_get_number(HWND h, const wchar_t* prop);\n'
   result += 'extern "C" void krnln_ctrl_set_number(HWND h, const wchar_t* prop, long long value);\n'
   result += 'extern "C" void krnln_ctrl_set_text(HWND h, const wchar_t* text);\n'
+  // 通用对话框（非可视组件，状态按实例名存 krnln 库内；文本读取走 main.cpp 薄封装返回 YC_TEXT）
+  result += 'extern "C" long long krnln_commdlg_get_int(const wchar_t* name, int propId);\n'
+  result += 'extern "C" void krnln_commdlg_set_int(const wchar_t* name, int propId, long long v);\n'
+  result += 'extern "C" void krnln_commdlg_set_text(const wchar_t* name, int propId, const wchar_t* v);\n'
+  result += 'extern YC_TEXT yc_commdlg_get_text(const wchar_t* name, int propId);\n'
+  result += 'extern "C" int krnln_commdlg_open(const wchar_t* name);\n'
   result += 'extern int yc_text_compare(const wchar_t* left, const wchar_t* right);\n'
   result += 'extern int yc_text_starts_with(const wchar_t* text, const wchar_t* prefix);\n'
   // 组合框/列表框 项目成员方法：纯 Win32 版已搬入 krnln 库（HWND 版）；文本读取/取所有被选择项目 留 main.cpp（返回编译器内部 C++ 类型）。
@@ -6946,10 +6967,15 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         continue
       }
 
-      // 流程控制语句
-      if (line.startsWith('.')) {
-        const flowCall = parseCommandCall(line.substring(1).trim())
-        const flowName = flowCall?.name || ''
+      // 流程控制语句。语句级流程命令（返回/结束/跳出循环/到循环尾）允许无点形态，
+      // 必须先于支持库命令派发拦截；块结构关键字无点直接报错（见常量定义处说明）。
+      const dottedFlow = line.startsWith('.')
+      const flowCall = parseCommandCall(dottedFlow ? line.substring(1).trim() : line)
+      const flowName = flowCall?.name || ''
+      if (!dottedFlow && BLOCK_FLOW_KEYWORDS.has(flowName)) {
+        throwSourceError(lineIndex + 1, `流程语句「${flowName}」须以带点形态书写（.${flowName}）`)
+      }
+      if (dottedFlow || STATEMENT_FLOW_KEYWORDS.has(flowName)) {
 
         // "判断开始" 块内的 ".判断 (条件)" 是新分支（else if），与表格编辑器落盘结构一致：
         // .判断开始 (c1) / 正文 / .判断 (c2) / 正文 / .默认 / 正文 / .判断结束
@@ -7643,7 +7669,13 @@ function generateMainC(
     mainCode += 'YC_TEXT yc_ctrl_get_tag(HWND h) { wchar_t* p = krnln_ctrl_get_tag(h); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n'
     mainCode += 'YC_TEXT yc_ctrl_get_date(HWND h, const wchar_t* prop) { wchar_t* p = krnln_ctrl_get_date(h, prop); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n'
     mainCode += 'extern "C" wchar_t* krnln_ctrl_get_seltext(HWND h);\n'
-    mainCode += 'YC_TEXT yc_ctrl_get_seltext(HWND h) { wchar_t* p = krnln_ctrl_get_seltext(h); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n\n'
+    mainCode += 'YC_TEXT yc_ctrl_get_seltext(HWND h) { wchar_t* p = krnln_ctrl_get_seltext(h); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n'
+    // 通用对话框文本属性读取：同款薄封装（库按实例名/propId 返 owned wchar_t* → YC_TEXT）；
+    // set/int 两个 extern 供窗口创建期灌入设计期属性用。
+    mainCode += 'extern "C" wchar_t* krnln_commdlg_get_text(const wchar_t* name, int propId);\n'
+    mainCode += 'extern "C" void krnln_commdlg_set_int(const wchar_t* name, int propId, long long v);\n'
+    mainCode += 'extern "C" void krnln_commdlg_set_text(const wchar_t* name, int propId, const wchar_t* v);\n'
+    mainCode += 'YC_TEXT yc_commdlg_get_text(const wchar_t* name, int propId) { wchar_t* p = krnln_commdlg_get_text(name, propId); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n\n'
 
     // 日期框/月历日期属性：解析 "年/月/日 [时:分:秒]"（分隔符 / 或 -）为 SYSTEMTIME。
     mainCode += 'static int yc_parse_systemtime(const wchar_t* s, SYSTEMTIME* st) {\n'
@@ -8156,6 +8188,41 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       if (ctrl.type === '时钟' || ctrl.type === 'Timer') {
         const elapse = readIntProp(ctrl.extraProps?.['时钟周期'], 0)
         if (elapse > 0) mainCode += `    SetTimer(hWndParent, ${ctrlId}, (UINT)${elapse}, NULL);\n`
+        ctrlId++
+        continue
+      }
+      // 通用对话框（CommonDlg）：非可视组件，不创建窗口——把设计期属性灌入 krnln 库的按名状态表。
+      // 缺省值在库结构体里（与 window-units.json defaultValue 一致），只对「设计器里改过默认值」的属性发调用。
+      // propId 序号与 lib/krnln/impl/windows.cpp 的 YcCommDlgState 注释一一对应。
+      if (ctrl.type === '通用对话框' || ctrl.type === 'CommonDlg') {
+        const dlgName = `L"${escapeCString(ctrl.name)}"`
+        const dlgIntProps: Array<[string, number, number]> = [
+          ['类型', 0, 0], ['初始过滤器', 4, 0], ['字体颜色', 12, 0], ['字体大小', 18, 0], ['帮助命令', 20, 0], ['帮助标志值', 21, 0],
+        ]
+        const dlgBoolProps: Array<[string, number, boolean]> = [
+          ['创建时提示', 7, false], ['文件必须存在', 8, false], ['文件覆盖提示', 9, true], ['目录必须存在', 10, true],
+          ['不改变目录', 11, false], ['加粗', 13, false], ['倾斜', 14, false], ['删除线', 15, false], ['下划线', 16, false],
+        ]
+        const dlgTextProps: Array<[string, number]> = [
+          ['标题', 1], ['文件名', 2], ['过滤器', 3], ['初始目录', 5], ['默认文件后缀', 6], ['字体名称', 17], ['帮助文件名', 19],
+        ]
+        for (const [prop, propId, def] of dlgIntProps) {
+          const raw = ctrl.extraProps?.[prop]
+          if (raw === undefined || raw === null) continue
+          const v = readIntProp(raw, def)
+          if (v !== def) mainCode += `    krnln_commdlg_set_int(${dlgName}, ${propId}, ${v});\n`
+        }
+        for (const [prop, propId, def] of dlgBoolProps) {
+          const raw = ctrl.extraProps?.[prop]
+          if (raw === undefined || raw === null) continue
+          const v = readBoolProp(raw, def)
+          if (v !== def) mainCode += `    krnln_commdlg_set_int(${dlgName}, ${propId}, ${v ? 1 : 0});\n`
+        }
+        for (const [prop, propId] of dlgTextProps) {
+          const raw = ctrl.extraProps?.[prop]
+          if (typeof raw !== 'string' || raw === '') continue
+          mainCode += `    krnln_commdlg_set_text(${dlgName}, ${propId}, L"${escapeCString(raw)}");\n`
+        }
         ctrlId++
         continue
       }
