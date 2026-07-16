@@ -379,7 +379,9 @@ interface TranspileCacheFile {
   entries: Record<string, TranspileCacheEntry>
 }
 
-const TRANSPILE_CACHE_VERSION = 28
+// 29: 条件表达式括号配对修复 + 生成代码每行加 /*@eyc行号*/ 来源标记（旧缓存产物没有标记，报错回溯不到）
+// 30: ÷ 相除改生成双精度除法（旧产物里是截断的整数除法）+ 整体括号表达式改为递归翻译
+const TRANSPILE_CACHE_VERSION = 30
 
 interface BuildArtifactCacheFile {
   version: number
@@ -479,6 +481,11 @@ function localizeCompilerMessage(line: string): string {
     return `>>> 引用位置: ${referencedBy[1]}`
   }
 
+  const generatedSummary = text.match(/^(\d+)\s+(error|warning)s?\s+generated\.$/i)
+  if (generatedSummary) {
+    return `共 ${generatedSummary[1]} 个${generatedSummary[2].toLowerCase() === 'error' ? '错误' : '警告'}。`
+  }
+
   text = text.replace(/^lld-link:\s*error:\s*/i, '链接器错误: ')
   text = text.replace(/^lld-link:\s*warning:\s*/i, '链接器警告: ')
   text = text.replace(/^clang:\s*error:\s*/i, '编译器错误: ')
@@ -486,6 +493,170 @@ function localizeCompilerMessage(line: string): string {
   text = text.replace(/^zig:\s*error:\s*/i, '编译器错误: ')
   text = text.replace(/^zig:\s*warning:\s*/i, '编译器警告: ')
   return text
+}
+
+/* ============ C++ 编译诊断 → 易语言源码位置 + 中文说明 ============
+ *
+ * 易语言用户读不懂 clang 的英文诊断，且它指的是 temp/*.cpp（用户从没写过的中间产物）的行号。
+ * 这一层把 `_启动窗口.cpp:2164:9: error: …` 还原成「_启动窗口.eyc 第 152 行」+ 回显那行易语言
+ * 源码 + 中文说明；C++ 原文全量留给编译诊断日志。
+ *
+ * 行号映射靠生成代码每行开头的 /*@<eyc行号>*\/ 标记（appendSubLine 打上）。标记**留在 .cpp 文件
+ * 里**而不是转译完就剥掉，为的是：① 转译缓存命中时压根不重跑转译，映射必须能从产物自身恢复；
+ * ② 人工翻 temp/*.cpp 排查时能直接看出每行来自 .eyc 哪一行。
+ */
+
+const EYC_ORIGIN_MARK_RE = /^\/\*@(\d+)\*\//
+const EYC_GEN_HEADER_RE = /^\/\* 由 ycIDE 自动从 (.+?) 生成 \*\//
+// clang 诊断首行：<路径>:<行>:<列>: error|warning|note: <正文>
+const CLANG_DIAGNOSTIC_RE = /^(.*?):(\d+):(\d+):\s*(error|warning|note):\s*(.+)$/i
+// 诊断后跟的源码回显行（` 2164 |     if (…`）与插入符行（`      | ^~~~`）——展示的是用户没写过的 C++
+const CLANG_ECHO_RE = /^\s*(?:\d+\s*)?\|/
+
+type EycOrigin = { eycFileName: string; lineOf: Map<number, number> }
+
+// 每次编译重建：源码会变，缓存跨编译不能留
+const eycOriginCache = new Map<string, EycOrigin | null>()
+const activeEycSourceLines = new Map<string, string[]>()
+
+function resetCompileDiagnosticContext(): void {
+  eycOriginCache.clear()
+  activeEycSourceLines.clear()
+}
+
+// 从生成的 .cpp 里恢复「.cpp 行号 → .eyc 行号」映射
+function loadEycOrigin(cppPath: string): EycOrigin | null {
+  const cached = eycOriginCache.get(cppPath)
+  if (cached !== undefined) return cached
+
+  let origin: EycOrigin | null = null
+  try {
+    const lines = readFileSync(cppPath, 'utf-8').split('\n')
+    const header = lines[0]?.match(EYC_GEN_HEADER_RE)
+    if (header) {
+      const lineOf = new Map<number, number>()
+      let current = 0
+      for (let i = 0; i < lines.length; i++) {
+        const mark = lines[i].match(EYC_ORIGIN_MARK_RE)
+        if (mark) {
+          // 一条易语言语句可能摊成多行 C++，故标记之后的行继续归属它
+          current = Number(mark[1])
+        } else if (lines[i].startsWith('}')) {
+          // 顶格的 } 是子程序收尾：出了函数体就不再归属上一条语句
+          current = 0
+        }
+        if (current > 0) lineOf.set(i + 1, current)
+      }
+      origin = { eycFileName: header[1], lineOf }
+    }
+  } catch {
+    origin = null
+  }
+  eycOriginCache.set(cppPath, origin)
+  return origin
+}
+
+/**
+ * clang 诊断正文 → 中文说明 + 归咎方。
+ * 只覆盖实测见过/可预期的形态；命不中就返回 null 让调用方保留英文原文——瞎猜一句中文比留原文更糟。
+ *
+ * blame 的判据是「用户改自己的易语言代码能不能解决」：
+ *  - user   : 能。名字拼错、变量没声明。
+ *  - codegen: 不能。生成的 C++ 语法就不合法（用户再怎么写也写不出 lambda 转 bool 失败），必是 ycIDE 的锅。
+ *  - mixed  : 说不准。类型对不上通常是用户自己类型用错了（只是 ycIDE 没在转译期拦住），
+ *             但也可能是 ycIDE 编组错了。**不能**咬定「不是你的代码写错了」——那句话在这里多半是假的。
+ */
+type DiagnosticBlame = 'user' | 'codegen' | 'mixed'
+type TranslatedDiagnostic = { text: string; blame: DiagnosticBlame }
+
+function translateCppDiagnosticBody(body: string): TranslatedDiagnostic | null {
+  const undeclared = body.match(/use of undeclared identifier '(.+?)'/)
+  if (undeclared) {
+    const name = undeclared[1]
+    // 中日韩名字 = 用户自己写的标识符（变量/命令/流程语句名）；
+    // 纯 ASCII（krnln_Xxx 等）是 ycIDE 或支持库生成的符号，用户改不动
+    const byUser = /[㐀-䶿一-鿿가-힣぀-ヿ]/.test(name)
+    return byUser
+      ? { text: `找不到「${name}」这个变量或命令。请检查拼写、是否已经声明，以及流程语句名是否写对。`, blame: 'user' }
+      : { text: `生成的代码里用到了未声明的符号「${name}」。`, blame: 'codegen' }
+  }
+
+  if (/is not contextually convertible to 'bool'/.test(body)) {
+    return { text: '这一行的条件没能生成成合法的判断表达式。', blame: 'codegen' }
+  }
+  if (/^expected /.test(body)) {
+    return { text: `生成的 C++ 代码语法不完整（${body}）。`, blame: 'codegen' }
+  }
+
+  const noMember = body.match(/no member named '(.+?)' in '(.+?)'/)
+  if (noMember) {
+    return { text: `生成的代码在类型「${noMember[2]}」上取了不存在的成员「${noMember[1]}」。`, blame: 'codegen' }
+  }
+
+  // 以下都是「类型对不上」族：多半是用户自己类型用错了（转译期没拦住），少数是 ycIDE 编组错了。
+  // cType 是 C++ 类型名（int/wchar_t*/YC_TEXT…），对易语言用户没意义，故只报现象不报类型名。
+  const noMatch = body.match(/no matching function for call to '(.+?)'/)
+  if (noMatch) {
+    return { text: `调用「${noMatch[1]}」时，参数的个数或类型对不上。`, blame: 'mixed' }
+  }
+
+  if (/cannot initialize a parameter of type/.test(body)) {
+    return { text: '这一行传给命令的参数类型不对（比如该给数值的地方给了文本）。', blame: 'mixed' }
+  }
+
+  // clang 这条有好几种前缀形态，实测至少两种：
+  //   assigning to 'int' from incompatible type 'YC_TEXT'
+  //   incompatible pointer to integer conversion assigning to 'int' from 'const wchar_t *'
+  // 故只认中间的 assigning to … from，不锚定前缀。
+  if (/assigning to '.+?' from /.test(body)) {
+    return { text: '这一行赋值两边的类型不兼容（比如把文本赋给整数型变量）。', blame: 'mixed' }
+  }
+
+  if (/invalid operands to binary expression/.test(body)) {
+    return { text: '这一行运算符两边的类型不能这样运算（比如拿文本去做减法）。', blame: 'mixed' }
+  }
+
+  return null
+}
+
+function blameHint(blame: DiagnosticBlame | null): string {
+  if (blame === 'user') return '↳ 这一行需要你修改易语言代码。'
+  if (blame === 'codegen') return '↳ 这是 ycIDE 生成代码的问题，不是你的代码写错了，请反馈。'
+  if (blame === 'mixed') return '↳ 请先检查这一行的类型用得对不对；确认没问题的话就是 ycIDE 的问题，请反馈。'
+  // 没命中翻译规则 = 不知道谁的锅，就别装作知道。上面留的是 C++ 英文原文。
+  return '↳ ycIDE 还没认识这条错误。请先检查这一行的写法；确认没问题的话，把编译诊断日志一起反馈。'
+}
+
+/**
+ * 处理一行 zig/clang 输出：能定位回 .eyc 的就换成友好形态并返回 true（调用方不再发原文）。
+ * 定位不到（报错落在生成代码的公共前导部分、链接期错误等）返回 false，走原有的 localizeCompilerMessage。
+ */
+function reportFriendlyCppDiagnostic(line: string, kind: 'error' | 'warning'): boolean {
+  const matched = line.match(CLANG_DIAGNOSTIC_RE)
+  if (!matched) return false
+
+  const [, rawPath, cppLineText, , severity, body] = matched
+  if (severity.toLowerCase() !== kind) return false
+  if (!/\.cpp$/i.test(rawPath.trim())) return false
+
+  const origin = loadEycOrigin(rawPath.trim())
+  if (!origin) return false
+  const eycLine = origin.lineOf.get(Number(cppLineText))
+  if (!eycLine) return false
+
+  const label = kind === 'error' ? '错误' : '警告'
+  const type: CompileMessage['type'] = kind === 'error' ? 'error' : 'warning'
+  sendMessage({ type, text: `${label}: ${origin.eycFileName} 第 ${eycLine} 行` })
+
+  const sourceLine = activeEycSourceLines.get(origin.eycFileName)?.[eycLine - 1]
+  if (sourceLine !== undefined) {
+    sendMessage({ type, text: `  ${String(eycLine).padStart(4)} |  ${sourceLine.trim()}` })
+  }
+
+  const translated = translateCppDiagnosticBody(body)
+  sendMessage({ type, text: `  ${translated ? `↳ ${translated.text}` : `↳ ${body}`}` })
+  sendMessage({ type, text: `  ${blameHint(translated?.blame ?? null)}` })
+  return true
 }
 
 // 获取应用目录（开发模式下是项目根目录）
@@ -3224,9 +3395,33 @@ function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Ma
   return errors
 }
 
-// 将全角运算符转换为C运算符
-function convertFullWidthOps(expr: string): string {
-  return expr
+/**
+ * 【相除 ÷ 的哨兵】÷(相除) 与 ＼(整除) 都长得像 C 的 /，语义却不同：÷ **恒返回双精度小数**
+ * （易语言 20 ÷ 7 ＝ 2.857142857143），＼ 才是截断整数商（20 ＼ 7 ＝ 2）。C 的 / 在两个整数
+ * 操作数下就是截断除法，所以 ÷ 直接映射成 / 会把小数部分丢掉。
+ *
+ * 转换阶段先把 ÷ 记成这个哨兵带过表达式拆分，由 translateExpressionToC 的乘除分支按操作数
+ * 类型分诊生成（大数仍走整数商——大数没有小数表示）。哨兵取自 Unicode 私用区（类别 Co，
+ * 不被 \p{L} 与本文件的标识符区间命中），源码与生成的 C 都不可能出现。
+ *
+ * 哨兵不是合法 C：凡是没走到乘除分支的路径（旧的库命令实参编组、项目常量、拆分兜底）
+ * 都必须经 inlineRealDiv 落地。
+ */
+const REAL_DIV_MARK = '\uE000'
+
+/**
+ * 没走乘除拆分时的 ÷ 就地形态：`a ÷ b` → `a /(double) b`。
+ * 是合法 C 且语义正确——右操作数转 double 后整个除法即走浮点，且 (double) 的结合力高于 /、*，
+ * 故 `a ÷ b × c` → `a /(double) b * c` 仍是 (a / (double)b) * c。
+ * 只是拿不到拆分器那份大数/文本分诊，故仅作兜底，正路走 translateExpressionToC 的乘除分支。
+ */
+function inlineRealDiv(expr: string): string {
+  return expr.split(REAL_DIV_MARK).join('/(double)')
+}
+
+// 将全角运算符转换为C运算符（仅用于字符串字面量**之外**的片段，见 convertFullWidthOps）
+function convertFullWidthOpsInCode(segment: string): string {
+  return segment
     .replace(/<>/g, '!=')
     .replace(/≠/g, '!=')
     .replace(/≤/g, '<=')
@@ -3237,10 +3432,40 @@ function convertFullWidthOps(expr: string): string {
     .replace(/＋/g, '+')
     .replace(/－/g, '-')
     .replace(/×/g, '*')
-    .replace(/÷/g, '/')
+    // ÷ 相除：恒双精度，不能直接给 /（会截断）——见 REAL_DIV_MARK
+    .replace(/÷/g, REAL_DIV_MARK)
     .replace(/％/g, '%')
     // ＼ 整除：整数操作数下 C 的 / 即截断除法
     .replace(/＼/g, '/')
+}
+
+/**
+ * 将全角运算符转换为 C 运算符。**字符串字面量内一律不改写**——引号里的 ＋÷＝ 是要原样打印给
+ * 用户的文本，不是运算符。此前整串无脑 replace：`“20 ＋ 7 ＝ 27”` 会被打成 `20 + 7 == 27`，
+ * `“ ÷ ”` 更会变成 REAL_DIV_MARK 那个私用区字符（打印出来是个看不见的方块）。
+ *
+ * 引号约定同 findTopLevel* 系列与本文件的字面量正则：“…” 与 "…"，都不支持转义。
+ */
+function convertFullWidthOps(expr: string): string {
+  let out = ''
+  let i = 0
+  while (i < expr.length) {
+    const ch = expr[i]
+    if (ch === '"' || ch === '“') {
+      const close = ch === '“' ? '”' : '"'
+      const end = expr.indexOf(close, i + 1)
+      // 引号未闭合 → 剩下整段按字面量原样带走，不当运算式改写（真有语法错另有报错管）
+      if (end < 0) { out += expr.slice(i); break }
+      out += expr.slice(i, end + 1)
+      i = end + 1
+      continue
+    }
+    let j = i
+    while (j < expr.length && expr[j] !== '"' && expr[j] !== '“') j++
+    out += convertFullWidthOpsInCode(expr.slice(i, j))
+    i = j
+  }
+  return out
 }
 
 function replaceConstantRefs(expr: string): string {
@@ -3817,7 +4042,9 @@ function findTopLevelAdditive(expr: string): { left: string; operator: string; r
     let j = i - 1
     while (j >= 0 && /\s/.test(expr[j])) j--
     const prev = j >= 0 ? expr[j] : ''
-    if (!prev || /[+\-*/%(<>=!&|,]/.test(prev)) continue
+    // 前一个非空白是运算符 → 这个 -/+ 是一元符号不是二元运算，不在此处切分。
+    // ÷ 的哨兵也算运算符：漏了它 `a ÷ －b` 会被切成 `(a ÷) - b`，左半成了半截表达式。
+    if (!prev || prev === REAL_DIV_MARK || /[+\-*/%(<>=!&|,]/.test(prev)) continue
 
     return {
       left: expr.slice(0, i).trim(),
@@ -3854,7 +4081,8 @@ function findTopLevelMultiplicative(expr: string): { left: string; operator: str
       continue
     }
     if (depth !== 0) continue
-    if (ch !== '*' && ch !== '/' && ch !== '%') continue
+    // REAL_DIV_MARK = 相除 ÷（恒双精度）；'/' 此时只可能来自整除 ＼（截断）
+    if (ch !== '*' && ch !== '/' && ch !== '%' && ch !== REAL_DIV_MARK) continue
 
     return {
       left: expr.slice(0, i).trim(),
@@ -3863,6 +4091,39 @@ function findTopLevelMultiplicative(expr: string): { left: string; operator: str
     }
   }
 
+  return null
+}
+
+/**
+ * 表达式整体是否正好是「一层括号包住的一整块」，是则返回括号内的内容，否则 null。
+ *
+ * 「首字符是 ( 且尾字符是 )」证明不了这件事——`(a) ＋ (b)` 的首尾括号并不互相配对，
+ * 首个 ( 的配对括号必须正好是末字符（同 isSingleParenGroup 的判据，但这里认全角括号与
+ * 全角引号，因为吃的是易语言源码而非生成的 C）。判不准一律返回 null（不剥只多余，不出错）。
+ */
+function matchEnclosingParens(expr: string): string | null {
+  const first = expr[0]
+  if (first !== '(' && first !== '（') return null
+  const last = expr[expr.length - 1]
+  if (last !== ')' && last !== '）') return null
+
+  let depth = 0
+  let inString = false
+  let stringChar = ''
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]
+    if (inString) {
+      if ((stringChar === '"' && ch === '"') || (stringChar === '“' && ch === '”')) inString = false
+      continue
+    }
+    if (ch === '"' || ch === '“') { inString = true; stringChar = ch; continue }
+    if (ch === '(' || ch === '（') { depth++; continue }
+    if (ch === ')' || ch === '）') {
+      depth--
+      if (depth === 0) return i === expr.length - 1 ? expr.slice(1, -1) : null
+      if (depth < 0) return null
+    }
+  }
   return null
 }
 
@@ -3883,6 +4144,17 @@ function translateExpressionToC(
   // \u6570\u7ec4\u4e0b\u6807\u5f15\u7528\u5148\u6539\u5199\u4e3a yc_ary_at(\u540d\u79f0, \u4e0b\u6807) \u5f62\u5f0f\uff08\u62ec\u53f7\u5f62\u5f0f\u4e0e\u540e\u7eed\u6309\u62ec\u53f7\u611f\u77e5\u7684
   // \u8868\u8fbe\u5f0f\u5207\u5206\u517c\u5bb9\uff1b\u65b9\u62ec\u53f7\u5207\u5206\u4e0d\u611f\u77e5\uff0c\u5982 \u6570\u7ec4[j \uff0b 1] \u4f1a\u88ab\u52a0\u6cd5\u5207\u5206\u6495\u88c2\uff09
   trimmed = rewriteArrayIndexRefs(trimmed, commandMap, directCallables, variableTypeResolver)
+
+  // \u6574\u4f53\u88ab\u4e00\u5c42\u62ec\u53f7\u5305\u4f4f \u2192 \u5265\u6389\u9012\u5f52\u7ffb\u8bd1\uff0c\u518d\u539f\u6837\u5305\u56de\u3002
+  // \u4e0d\u5265\u7684\u8bdd\u4e0b\u9762\u7684\u62c6\u5206\u5668\u5168\u5728 depth>0 \u4e0a\u7a7a\u8f6c\uff0c\u8fd9\u4e00\u6574\u5757\u4f1a**\u539f\u6837**\u843d\u8fdb C++\uff1a
+  // `(\u201c\u7532\u201d \uff0b \u201c\u4e59\u201d)` \u6f0f\u5168\u89d2\u5f15\u53f7\u7f16\u4e0d\u8fc7\u3001`(20 \uff0b 7)` \u7684\u5b57\u9762\u91cf\u62ff\u4e0d\u5230 LL \u540e\u7f00\u3001\u00f7 \u7684\u54e8\u5175\u4e5f\u4f1a\u6f0f\u51fa\u53bb\u3002
+  // \u62ec\u53f7\u5fc5\u987b\u5305\u56de\u53bb\u2014\u2014\u8c03\u7528\u65b9\uff08\u5982\u4e58\u9664\u62c6\u5206\u7684\u5de6\u534a\uff09\u9760\u5b83\u7ef4\u6301\u4f18\u5148\u7ea7\uff1a`(a \uff0b b) \u00d7 c` \u5265\u6ca1\u4e86\u5c31\u6210\u4e86 a + b * c\u3002
+  const enclosed = matchEnclosingParens(trimmed)
+  if (enclosed !== null) {
+    const inner = enclosed.trim()
+    if (!inner) return '0'
+    return `(${translateExpressionToC(inner, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)})`
+  }
 
   // \u6574\u4f53\u5b57\u9762\u91cf\u5224\u5b9a\u5fc5\u987b\u8981\u6c42\u5185\u90e8\u4e0d\u518d\u51fa\u73b0\u540c\u7c7b\u5f15\u53f7\uff1a
   // \u5426\u5219 \u201c\u5171\u201d \uff0b \u5230\u6587\u672c(n) \uff0b \u201c\u4e2a\u201d \u4f1a\u88ab\u8d2a\u5a6a\u5339\u914d\u6574\u4f53\u541e\u6210\u4e00\u4e2a\u5b57\u9762\u91cf\uff0c
@@ -4086,7 +4358,14 @@ function translateExpressionToC(
       if (multiplicative.operator === '%') {
         return `yc_big_mod(yc_value_to_big(${left}), yc_value_to_big(${right}))`
       }
-      return `(yc_value_to_big(${left}) ${multiplicative.operator} yc_value_to_big(${right}))`
+      // 大数没有小数表示：÷ 与 ＼ 在大数上同为整数商（除零由 YC_BIG 自己报「除数不能为0」）
+      const bigOp = multiplicative.operator === REAL_DIV_MARK ? '/' : multiplicative.operator
+      return `(yc_value_to_big(${left}) ${bigOp} yc_value_to_big(${right}))`
+    }
+    // ÷ 相除恒返回双精度小数：两边都转 double，否则 20 ÷ 7 会走 C 的整数截断除法得 2 而非 2.857…
+    // （整除 ＼ 走下面的 '/'，截断正是它要的语义）
+    if (multiplicative.operator === REAL_DIV_MARK) {
+      return `((double)(${left}) / (double)(${right}))`
     }
     return `(${left} ${multiplicative.operator} ${right})`
   }
@@ -4109,7 +4388,9 @@ function translateExpressionToC(
     throw new Error(`未定义的变量或标识符“${translated}”（若这是一段文本，请用引号括起来，例如 "${translated}"）`)
   }
 
-  return translated
+  // 兜底：走到这里还带着 ÷ 哨兵，说明它没被上面的乘除分支接住（如藏在未识别命令的实参里）。
+  // 哨兵不是合法 C，必须就地落地成 /(double) —— 语义仍对，只是没经过类型分诊。
+  return inlineRealDiv(translated)
 }
 
 function buildComparisonExpression(leftArg: string, rightArg: string, operator: '==' | '!=' | '<' | '>' | '<=' | '>=', commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
@@ -4734,10 +5015,48 @@ function formatArgForC(arg: string, commandMap?: Map<string, ResolvedCommand>, d
   return translateExpressionToC(arg, commandMap, directCallables)
 }
 
+/**
+ * 判断表达式整体是否正好被一层括号包住——即第 0 个 ( 的配对括号就是末字符。
+ *
+ * 「首字符是 ( 且尾字符是 )」证明不了这件事：这俩括号未必互相配对。命令表达式的通用生成
+ * 形态是 IIFE `([&]() -> int { … })()`，首尾都是括号，但开头的 ( 配的是 `})(` 里那个 )，
+ * 末尾的 ) 属于调用括号。误判成「已包住」就会生成 `if ([&]() -> int { … })() {`，
+ * 条件在 lambda 处提前闭合，clang 报 lambda is not contextually convertible to 'bool'。
+ *
+ * 判不准时一律返回 false（宁可多包一层，只多余不出错）。反过来无脑全包不行：
+ * `if ((a == b))` 会触发 clang 的 -Wparentheses-equality 警告刷屏。
+ */
+function isSingleParenGroup(expr: string): boolean {
+  if (!expr.startsWith('(') || !expr.endsWith(')')) return false
+  let depth = 0
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]
+    // 字符串/字符字面量里的括号不参与配对，如 yc_text_compare(x, L"(") 里的那个
+    if (ch === '"' || ch === '\'') {
+      const quote = ch
+      i++
+      while (i < expr.length && expr[i] !== quote) {
+        if (expr[i] === '\\') i++
+        i++
+      }
+      if (i >= expr.length) return false
+      continue
+    }
+    if (ch === '(') {
+      depth++
+    } else if (ch === ')') {
+      depth--
+      if (depth === 0) return i === expr.length - 1
+      if (depth < 0) return false
+    }
+  }
+  return false
+}
+
 function wrapConditionForC(expr: string): string {
   const trimmed = (expr || '').trim()
   if (!trimmed) return '(0)'
-  if (trimmed.startsWith('(') && trimmed.endsWith(')')) return trimmed
+  if (isSingleParenGroup(trimmed)) return trimmed
   return `(${trimmed})`
 }
 
@@ -4775,7 +5094,7 @@ function formatArgForYcCommand(arg: string, field: string): string {
     }
     // \u6587\u672c\u578b\u53d8\u91cf/\u8868\u8fbe\u5f0f\u5728\u8fd0\u884c\u65f6\u662f wchar_t*(UTF-16)\uff0c\u901a\u7528 fne \u5206\u53d1\u63a5\u53e3\u8981 UTF-8 char*\uff0c
     // \u5fc5\u987b\u7ecf yc_wide_to_utf8 \u8f6c\u6362\uff1b\u6b64\u524d\u76f4\u63a5 (char*) \u91cd\u89e3\u91ca\u4f1a\u628a UTF-16 \u5b57\u8282\u5f53\u7a84\u4e32\u4f20\u51fa\uff08\u4e71\u7801/\u622a\u65ad\uff09\u3002
-    return `(char*)yc_wide_to_utf8(${replaceConstantRefs(convertFullWidthOps(trimmed))})`
+    return `(char*)yc_wide_to_utf8(${inlineRealDiv(replaceConstantRefs(convertFullWidthOps(trimmed)))})`
   }
 
   if (field === 'm_bool') {
@@ -4784,7 +5103,8 @@ function formatArgForYcCommand(arg: string, field: string): string {
     return `(${translateExpressionToC(trimmed, buildCommandMap())} ? 1 : 0)`
   }
 
-  return replaceConstantRefs(convertFullWidthOps(trimmed))
+  // 这条旧路径不走 translateExpressionToC（故也没有乘除拆分）→ ÷ 哨兵在此就地落地
+  return inlineRealDiv(replaceConstantRefs(convertFullWidthOps(trimmed)))
 }
 
 function mapReturnTypeToYcField(typeName: string): { field: string; expr: string } {
@@ -6215,7 +6535,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   if (projectConstants.length > 0) {
     result += '/* 项目常量定义 */\n'
     for (const c of projectConstants) {
-      const cValue = replaceConstantRefs(convertFullWidthOps((c.value || '0').trim() || '0'))
+      // 常量值直接铺进 #define（不走 translateExpressionToC，故也没有乘除拆分）→ ÷ 哨兵在此就地落地
+      const cValue = inlineRealDiv(replaceConstantRefs(convertFullWidthOps((c.value || '0').trim() || '0')))
       if (libraryConstants.some(lc => lc.name === c.name)) {
         result += `#undef ${c.name}\n`
       }
@@ -6345,6 +6666,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   let loopTempIndex = 0
   let pendingBreakpointLine: number | null = null
   let visibleDebugVars: Array<{ name: string; type: string }> = []
+  // 正在转译的 .eyc 行号：随生成的每行 C++ 打成 /*@行号*/ 前缀，供编译报错回溯到易语言源码（见 loadEycOrigin）
+  let currentEycLine = 0
 
   const buildSubSignature = (_name: string, params: Array<{ name: string; type: string; isArray?: boolean }>): string => {
     if (params.length === 0) return 'void'
@@ -6366,7 +6689,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   }
 
   const appendSubLine = (code: string) => {
-    subBody += `${'    '.repeat(Math.max(1, blockIndent))}${code}\n`
+    const origin = currentEycLine > 0 ? `/*@${currentEycLine}*/` : ''
+    subBody += `${origin}${'    '.repeat(Math.max(1, blockIndent))}${code}\n`
   }
 
   const pushVisibleDebugVar = (name: string, type: string) => {
@@ -6428,6 +6752,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     try {
     const rawLine = lines[lineIndex]
+    currentEycLine = lineIndex + 1
     pendingBreakpointLine = inSub && breakpointLines.has(lineIndex + 1) ? (lineIndex + 1) : null
     // 剥离流程标记零宽字符（\u200C/\u200D/\u2060/\u200B）与行尾单引号注释
     const line = stripTrailingEycComment(rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim())
@@ -6977,6 +7302,9 @@ function generateMainC(
   ): void => {
     const cFileName = fileName.replace(/\.(eyc|ecc|egv|ecs|edt|ell)$/i, '.cpp')
     const cFilePath = join(tempDir, cFileName)
+    // 编译报错要回显易语言源码行。这里存的是**实际参与转译的** content（含编辑器里未保存的改动），
+    // 且在转译缓存命中的分支之前——缓存命中不重跑转译，但报错回显仍然需要源码。
+    activeEycSourceLines.set(fileName, content.split('\n'))
     const fingerprint = createHash('sha1').update([
       String(TRANSPILE_CACHE_VERSION),
       fileName,
@@ -8873,6 +9201,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
   const startTime = Date.now()
   activeProjectCustomTypeNames = new Set()
   activeProjectClassNames = new Set()
+  resetCompileDiagnosticContext()
 
   try {
     // 查找 .epp 文件
@@ -9181,10 +9510,14 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       const zigArgs = ['c++', ...args]
       const proc = execFile(zigPath, zigArgs, { cwd: zigDir, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
         if (stderr) {
-          const lines = stderr.split('\n').filter(l => l.trim())
+          // 必须剥掉行尾 \r（zig 的 stderr 是 CRLF）：JS 正则里 \r 是行终止符、. 不匹配它，
+          // 留着它下面所有以 $ 收尾的诊断正则会全部失配，友好化静默退化成透传英文原文。
+          const lines = stderr.split('\n').map(l => l.trimEnd()).filter(Boolean)
           for (const line of lines) {
+            // C++ 原文无删减进诊断日志：面板里被改写/折叠掉的细节，排查 ycIDE 自身问题时还得翻得到
+            compileLogRaw(line)
+
             const lower = line.toLowerCase()
-            const localized = localizeCompilerMessage(line)
 
             const unresolvedMatch = line.match(/g_cmdInfo_([A-Za-z0-9_]+)_global_var_fun/i)
             if (unresolvedMatch) {
@@ -9207,14 +9540,24 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
               }
             }
 
+            // 诊断后跟的源码回显行与插入符行秀的是 temp/*.cpp 里的 C++——用户从没写过那些代码，
+            // 面板里纯属噪音（原文已进日志）。clang 的 note: 同理，全是 C++ 实现细节。
+            if (CLANG_ECHO_RE.test(line)) continue
+            const noteMatch = line.match(CLANG_DIAGNOSTIC_RE)
+            if (noteMatch && noteMatch[4].toLowerCase() === 'note') continue
+
             if (lower.includes('error')) {
-              sendMessage({ type: 'error', text: localized })
+              if (!reportFriendlyCppDiagnostic(line, 'error')) {
+                sendMessage({ type: 'error', text: localizeCompilerMessage(line) })
+              }
               result.errorCount++
             } else if (lower.includes('warning')) {
-              sendMessage({ type: 'warning', text: localized })
+              if (!reportFriendlyCppDiagnostic(line, 'warning')) {
+                sendMessage({ type: 'warning', text: localizeCompilerMessage(line) })
+              }
               result.warningCount++
             } else {
-              sendMessage({ type: 'info', text: localized })
+              sendMessage({ type: 'info', text: localizeCompilerMessage(line) })
             }
           }
         }

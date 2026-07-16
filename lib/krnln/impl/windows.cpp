@@ -1167,8 +1167,22 @@ extern "C" double krnln_abs(double value) {
   return clampFinite(std::fabs(value));
 }
 
-extern "C" double krnln_round(double value, ...) {
-  return clampFinite(std::round(value));
+// 四舍五入(欲被四舍五入的数值, [被舍入的位置])
+// 第二参数此前被声明成 ... 变参并**整个忽略**，于是 四舍五入(3.14159, 2) 恒返回 3 而不是 3.14。
+// 帮助语义：>0 表示小数点右边应保留的位数；=0 舍入到整数；<0 表示小数点左边舍入到的位置
+//（四舍五入(1056.65, -1) → 1060）。省略该参数时转译侧已按帮助的默认值填 0。
+// 签名也随之从 (double, ...) 改成 (double, int)——转译侧生成的声明一直就是 (double, int)。
+extern "C" double krnln_round(double value, int digits) {
+  if (!std::isfinite(value)) return 0.0;
+  if (digits == 0) return clampFinite(std::round(value));
+  // 10^digits 超出 double 表示范围时缩放必然溢出：正向保留位数远超有效精度，原值即结果；
+  // 负向舍入位置远高于数量级，结果必为 0。不挡住会得到 inf/inf = nan。
+  if (digits > 308) return clampFinite(value);
+  if (digits < -308) return 0.0;
+  const double scale = std::pow(10.0, static_cast<double>(digits));
+  const double scaled = value * scale;
+  if (!std::isfinite(scaled)) return clampFinite(value);
+  return clampFinite(std::round(scaled) / scale);
 }
 
 extern "C" double krnln_pow(double value, double exp) {
