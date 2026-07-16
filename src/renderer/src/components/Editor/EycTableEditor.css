@@ -1395,6 +1395,12 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 .eyc-data-row:hover {
   background: var(--table-row-hover-bg-gradient, var(--table-row-hover-bg, var(--bg-hover, rgba(255, 255, 255, 0.04))));
 }
+/* Rowheight 在 td 上定义了不透明默认背景，会盖住 tr 的 hover 色——此前只有着色类
+   背景透明的列（类型/备注）能看到 hover。行 hover 时放开 td 背景让 tr 色透出，
+   整行（含渐变主题）连续一致；选中/编辑态在下方以同特异性(0,3,1)后置规则覆盖。 */
+.eyc-data-row:hover > td.Rowheight {
+  background: transparent;
+}
 .eyc-data-row.eyc-line-selected {
   background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
 }
@@ -2080,13 +2086,13 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
   cursor: not-allowed;
 }
 
-/* 问题定位高亮闪烁 — 用 box-shadow 实现，不受 diff 背景 !important 影响 */
+/* 问题定位高亮闪烁 — 用 box-shadow 实现，不受 diff 背景 !important 影响。
+   只在叶子层（代码行/表格单元格）闪，行容器自身不闪：容器若同时闪一层，
+   背景透明的格（类型/备注）会透出容器层叠成双层更深、不透明格只有单层更浅，
+   同一行深浅不一（半透明 box-shadow 叠加）。 */
 @keyframes problem-flash {
   0%, 100% { box-shadow: inset 0 0 0 0 transparent; }
   50% { box-shadow: inset 0 0 0 2000px color-mix(in srgb, var(--warning, #cca700) 30%, transparent); }
-}
-.highlight-flash {
-  animation: problem-flash 0.5s ease 3 !important;
 }
 .highlight-flash .eyc-code-line,
 .highlight-flash > td {

@@ -404,6 +404,12 @@
   flex-shrink: 0;
 }
 
+/* 双行号显示时的文本模式行号（次要信息，弱化） */
+.output-problem-loc-source {
+  opacity: 0.65;
+  margin-left: 4px;
+}
+
 .output-problem-design {
   font-style: italic;
 }
