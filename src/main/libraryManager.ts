@@ -87,6 +87,8 @@ export interface LibraryWindowUnitEventArg {
 export interface LibraryWindowUnitEvent {
   name: string
   description: string
+  /** 事件处理子程序的返回类型（如「逻辑型」，空=无返回值）；驱动生成 .子程序 存根的返回类型字段 */
+  returnType: string
   args: LibraryWindowUnitEventArg[]
 }
 
@@ -203,7 +205,7 @@ const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
   'krnln.commands.ycmd.json': '633bb962da9cde56e9978a0053dd8108a5ebe1a16e637d978a6aa5b2cc8efc2c',
   'krnln.constants.json': '02e83c81be209c290b335be9daec43df9fa23f5035e204b19280232b7fc894c3',
   'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
-  'window-units.json': '8c8f83da4139fb80255bb3368a0a93cdcb4512cb78d482160e5170b001ab770a',
+  'window-units.json': '13e5686b5c6adcd3395d66b4b236cbf9c455cef21c5472f44417d64d69049f75',
 }
 
 const DEFAULT_PROTOCOL_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [
@@ -687,6 +689,7 @@ class LibraryManager {
       .map(item => ({
         name: typeof item.name === 'string' ? item.name.trim() : '',
         description: typeof item.description === 'string' ? item.description.trim() : '',
+        returnType: typeof item.returnType === 'string' ? item.returnType.trim() : '',
         args: Array.isArray(item.args)
           ? item.args
               .filter((arg): arg is Record<string, unknown> => !!arg && typeof arg === 'object')
@@ -761,6 +764,7 @@ class LibraryManager {
         existing.push({
           name: eventBinding.event,
           description: `${eventBinding.unit}的${eventBinding.event}事件。`,
+          returnType: '',
           args: [],
         })
       }

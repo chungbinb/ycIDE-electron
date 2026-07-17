@@ -2159,6 +2159,11 @@ function buildStdPicBoxCodegen(extraProps: Record<string, unknown>, hasImage: bo
   }
 }
 
+// 图片框鼠标事件（易语言对齐）：不走 WM_COMMAND/NOTIFY/SCROLL 通道，由 YcPicBoxMouseProc 子类带参直接派发。
+// 前 6 个带 横向位置/纵向位置/功能键状态 三参，滚轮被滚动 带 滚动距离/功能键状态 两参；均 bool 返回（真=拦截缺省处理）。
+const PICBOX_MOUSE_XY_EVENTS = ['鼠标左键被按下', '鼠标左键被放开', '被双击', '鼠标右键被按下', '鼠标右键被放开', '鼠标位置被移动'] as const
+const PICBOX_MOUSE_EVENT_SET = new Set<string>([...PICBOX_MOUSE_XY_EVENTS, '滚轮被滚动'])
+
 // 控件「边框」6 路映射到 exStyle（0无/1凹入CLIENTEDGE/2凸出WINDOWEDGE/3浅凹STATICEDGE/4镜框DLGMODALFRAME；5单线走 style 的 WS_BORDER）。
 function ctrlBorderExStyle(border: number): string {
   return border === 1 ? 'WS_EX_CLIENTEDGE'
@@ -8296,6 +8301,39 @@ int yc_dp_get_prop(const wchar_t* n, int prop){ YC_DP_R(n,0); switch(prop){ case
 void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop){ case 0:st.penStyle=v;break; case 1:st.penWidth=v;break; case 2:st.rop2=v;break; case 3:st.brushStyle=v;break; case 4:st.unit=v;break; case 5:st.autoRedraw=v?1:0;break; case 6:st.penColor=(COLORREF)v;break; case 7:st.brushColor=(COLORREF)v;break; case 8:st.backColor=(COLORREF)v;break; case 9:st.textColor=(COLORREF)v;break; case 10:st.textBkColor=(COLORREF)v;break; } if(prop==5||prop==8) InvalidateRect(_h,NULL,FALSE); }
 `
 
+    // ===== 图片框鼠标事件运行时：SetWindowSubclass 按控件派发（带 横向位置/纵向位置/功能键状态 参数，bool 返回=拦截缺省处理）=====
+    // 事件签名与 .eyc 转译严格一致（逻辑型→bool、整数型→int），用户子程序参数不符时弱空实现兜底（事件静默不触发）。
+    const picBoxMouseCtrls = winInfo.controls.filter(c => c.type === '图片框' || c.type === 'PicBox')
+    if (picBoxMouseCtrls.length > 0) {
+      // 处理函数原型：普通声明即可取址（弱定义在事件区、用户 .eyc 强符号覆盖，同画板 paintHandler 定式）
+      for (const pb of picBoxMouseCtrls) {
+        const base = `_${pb.name.replace(/^_+/, '')}`
+        for (const evName of PICBOX_MOUSE_XY_EVENTS) {
+          mainCode += `bool ${base}_${evName}(int, int, int);\n`
+        }
+        mainCode += `bool ${base}_滚轮被滚动(int, int);\n`
+      }
+      mainCode += '/* 图片框鼠标事件表 + 子类过程：功能键状态按易语言常量（Ctrl=1/Shift=2/Alt=4）编组 */\n'
+      mainCode += 'struct YcPicBoxMouseEntry { int id; bool (*ldown)(int,int,int); bool (*lup)(int,int,int); bool (*dbl)(int,int,int); bool (*rdown)(int,int,int); bool (*rup)(int,int,int); bool (*move)(int,int,int); bool (*wheel)(int,int); };\n'
+      mainCode += 'static YcPicBoxMouseEntry g_ycPicBoxMouse[] = {\n'
+      for (const pb of picBoxMouseCtrls) {
+        const base = `_${pb.name.replace(/^_+/, '')}`
+        mainCode += `    { IDC_${pb.name.toUpperCase()}, ${base}_鼠标左键被按下, ${base}_鼠标左键被放开, ${base}_被双击, ${base}_鼠标右键被按下, ${base}_鼠标右键被放开, ${base}_鼠标位置被移动, ${base}_滚轮被滚动 },\n`
+      }
+      mainCode += '};\n'
+      mainCode += 'static int yc_pb_fkeys(WPARAM w){ int fk=0; if(w & MK_CONTROL) fk|=1; if(w & MK_SHIFT) fk|=2; if(GetKeyState(VK_MENU)&0x8000) fk|=4; return fk; }\n'
+      mainCode += 'static LRESULT CALLBACK YcPicBoxMouseProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR ref){\n'
+      mainCode += '    YcPicBoxMouseEntry* pb = (YcPicBoxMouseEntry*)ref;\n'
+      mainCode += '    if (pb) {\n'
+      mainCode += '        bool (*fn)(int,int,int) = NULL;\n'
+      mainCode += '        switch (m) { case WM_LBUTTONDOWN: fn=pb->ldown; break; case WM_LBUTTONUP: fn=pb->lup; break; case WM_LBUTTONDBLCLK: fn=pb->dbl; break; case WM_RBUTTONDOWN: fn=pb->rdown; break; case WM_RBUTTONUP: fn=pb->rup; break; case WM_MOUSEMOVE: fn=pb->move; break; }\n'
+      mainCode += '        if (fn && fn((int)(short)LOWORD(l), (int)(short)HIWORD(l), yc_pb_fkeys(w))) return 0;\n'
+      mainCode += '    }\n'
+      mainCode += '    if (m == WM_NCDESTROY) RemoveWindowSubclass(h, YcPicBoxMouseProc, 1);\n'
+      mainCode += '    return DefSubclassProc(h, m, w, l);\n'
+      mainCode += '}\n\n'
+    }
+
     // 创建控件函数
     mainCode += '/* 创建所有控件 */\n'
     mainCode += 'void CreateControls(HWND hWndParent) {\n'
@@ -8511,7 +8549,11 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
           mainCode += '    SendMessage(hCtrl, BM_SETCHECK, BST_CHECKED, 0);\n'
         }
       } else if (picBoxCodegen) {
-        // 标准 STATIC·图片框（忽略 WM_APP+1）：图片经 GDI+ 解码为 HBITMAP 后 STM_SETIMAGE
+        // 标准 STATIC·图片框（忽略 WM_APP+1）：先挂鼠标事件子类（表项按 picBoxMouseCtrls 序对齐），图片经 GDI+ 解码为 HBITMAP 后 STM_SETIMAGE
+        const pbMouseIdx = picBoxMouseCtrls.indexOf(ctrl)
+        if (pbMouseIdx >= 0) {
+          mainCode += `    SetWindowSubclass(hCtrl, YcPicBoxMouseProc, 1, (DWORD_PTR)&g_ycPicBoxMouse[${pbMouseIdx}]);\n`
+        }
         if (picBoxImageBytes) {
           const picDrawMode = readIntProp(ctrl.extraProps['显示方式'], 0)  // 0居左上 1缩放 2居中
           mainCode += '    {\n'
@@ -8653,6 +8695,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         if ((ctrl.type === '画板' || ctrl.type === 'DrawPanel') && ev.name === '绘画') continue
         // 时钟「周期事件」不走 WM_COMMAND/NOTIFY/SCROLL 通道，由主窗 WM_TIMER 按定时器 id 直接派发。
         if ((ctrl.type === '时钟' || ctrl.type === 'Timer') && ev.name === '周期事件') continue
+        // 图片框鼠标事件不走上述通道（且 被双击 会被 STN_DBLCLK 兜底误绑成无参 void 处理），由 YcPicBoxMouseProc 子类带参直接派发。
+        if ((ctrl.type === '图片框' || ctrl.type === 'PicBox') && PICBOX_MOUSE_EVENT_SET.has(ev.name)) continue
         const handlerName = `_${ctrl.name.replace(/^_+/, '')}_${ev.name}`
         const proto = resolveEventByProtocol(
           protocolBindings,
@@ -8777,6 +8821,14 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     // 画板「绘画」事件默认弱实现（带 4 个 int 参：需重画区 左/上/右/下）；用户 .eyc 强符号覆盖。
     for (const dp of drawPanelCtrls) {
       mainCode += `WEAK_FUNC void _${dp.name.replace(/^_+/, '')}_绘画(int 左, int 上, int 右, int 下) { }\n`
+    }
+    // 图片框鼠标事件默认弱实现（bool 返回：真=拦截缺省处理）；用户 .eyc 强符号覆盖（须为 逻辑型 返回 + 对应整数型参数）。
+    for (const pb of picBoxMouseCtrls) {
+      const base = `_${pb.name.replace(/^_+/, '')}`
+      for (const evName of PICBOX_MOUSE_XY_EVENTS) {
+        mainCode += `WEAK_FUNC bool ${base}_${evName}(int 横向位置, int 纵向位置, int 功能键状态) { return false; }\n`
+      }
+      mainCode += `WEAK_FUNC bool ${base}_滚轮被滚动(int 滚动距离, int 功能键状态) { return false; }\n`
     }
 
     // ===== 窗口菜单（菜单编辑器的 menu 字段）：生成 CreateMenus + 菜单项被选择的弱空实现 + 命令表 =====
@@ -9137,6 +9189,23 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '    case WM_SYSKEYUP:\n'
     mainCode += `        ${windowEventPrefix}_某键被放开((int)wParam, (int)lParam);\n`
     mainCode += '        break;\n'
+    if (picBoxMouseCtrls.length > 0) {
+      // 滚轮消息只发给焦点窗口而 STATIC 图片框永不聚焦：主窗按光标命中转派。必须直调处理函数，
+      // 绝不能 SendMessage 回子窗——子窗 DefWindowProc 会把 WM_MOUSEWHEEL 弹回父窗形成死循环。
+      mainCode += '    case WM_MOUSEWHEEL: {\n'
+      mainCode += '        POINT wpt; wpt.x = (int)(short)LOWORD(lParam); wpt.y = (int)(short)HIWORD(lParam);\n'
+      mainCode += '        HWND hUnder = WindowFromPoint(wpt);\n'
+      mainCode += '        if (hUnder && IsWindowEnabled(hUnder)) {\n'
+      mainCode += '            int wid = GetDlgCtrlID(hUnder);\n'
+      mainCode += '            for (size_t pi = 0; pi < sizeof(g_ycPicBoxMouse)/sizeof(g_ycPicBoxMouse[0]); pi++) {\n'
+      mainCode += '                if (g_ycPicBoxMouse[pi].id != wid) continue;\n'
+      mainCode += '                if (g_ycPicBoxMouse[pi].wheel && g_ycPicBoxMouse[pi].wheel((int)(short)HIWORD(wParam), yc_pb_fkeys((WPARAM)LOWORD(wParam)))) return 0;\n'
+      mainCode += '                break;\n'
+      mainCode += '            }\n'
+      mainCode += '        }\n'
+      mainCode += '        return DefWindowProcW(hWnd, message, wParam, lParam);\n'
+      mainCode += '    }\n'
+    }
     mainCode += '    case WM_SIZE:\n'
     mainCode += `        ${windowEventPrefix}_窗口尺寸被改变((int)LOWORD(lParam), (int)HIWORD(lParam));\n`
     mainCode += '        break;\n'

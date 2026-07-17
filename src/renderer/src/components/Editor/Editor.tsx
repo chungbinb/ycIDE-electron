@@ -340,7 +340,7 @@ export interface EditorHandle {
   navigateToSubprogram: (subName: string, fallbackLine?: number) => void
   getVisibleLineForSourceLine: (line: number) => number
   updateFormProperty: (targetKind: 'form' | 'control', controlId: string | null, propName: string, value: string | number | boolean) => void
-  navigateToEventSub: (sel: SelectionTarget, eventName: string, eventArgs: Array<{ name: string; description: string; dataType: string; isByRef: boolean }>) => void
+  navigateToEventSub: (sel: SelectionTarget, eventName: string, eventArgs: Array<{ name: string; description: string; dataType: string; isByRef: boolean }>, eventReturnType?: string) => void
 }
 
 function joinPathByBaseDir(baseDir: string, fileName: string): string {
@@ -420,7 +420,7 @@ const ROUTED_DECL_DEFAULTS: Record<RoutedDeclLanguage, { label: string; language
 type TabBarPosition = 'top' | 'bottom'
 type EycEditorMode = 'table' | 'text'
 type PendingSubNavigation =
-  | { kind: 'create-or-open'; subName: string; params: Array<{ name: string; dataType: string; isByRef: boolean }> }
+  | { kind: 'create-or-open'; subName: string; params: Array<{ name: string; dataType: string; isByRef: boolean }>; returnType?: string }
   | { kind: 'navigate'; subName: string; fallbackLine?: number }
 const EDITOR_TAB_BAR_POS_KEY = 'ycide.editor.tabbar.position'
 
@@ -1299,7 +1299,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const navigateToEventSub = useCallback(async (
     sel: SelectionTarget,
     eventName: string,
-    eventArgs: Array<{ name: string; description: string; dataType: string; isByRef: boolean }>
+    eventArgs: Array<{ name: string; description: string; dataType: string; isByRef: boolean }>,
+    eventReturnType?: string
   ) => {
     if (!sel) return
     const form = sel.form
@@ -1323,9 +1324,9 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     const existingTab = tabs.find(t => t.filePath === eycPath)
     if (existingTab) {
       if (existingTab.id === activeTabId) {
-        eycEditorRef.current?.navigateOrCreateSub(subName, params)
+        eycEditorRef.current?.navigateOrCreateSub(subName, params, eventReturnType)
       } else {
-        pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
+        pendingNavigateRef.current = { kind: 'create-or-open', subName, params, returnType: eventReturnType }
         setActiveTabId(existingTab.id)
       }
     } else {
@@ -1340,7 +1341,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         onOpenTabsChange?.(merged)
         return merged
       })
-      pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
+      pendingNavigateRef.current = { kind: 'create-or-open', subName, params, returnType: eventReturnType }
       setActiveTabId(eycPath)
     }
   }, [tabs, activeTabId, buildEventSubName, onOpenTabsChange])
@@ -2398,6 +2399,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       : activeT.filePath.replace(/\.efw$/i, '.eyc')
     const eventName = defaultEvent?.name || '被单击'
     const subName = buildEventSubName(ctrl.name, eventName)
+    const eventReturnType = defaultEvent?.returnType || ''
     const params = (defaultEvent?.args || []).map(arg => ({
       name: arg.name || 'param',
       dataType: arg.dataType || '整数型',
@@ -2408,11 +2410,11 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     if (existingTab) {
       if (existingTab.id === activeTabId) {
         // 已在该标签页上，直接导航
-        eycEditorRef.current?.navigateOrCreateSub(subName, params)
+        eycEditorRef.current?.navigateOrCreateSub(subName, params, eventReturnType)
         syncProjectTreeAfterEventSubChange()
       } else {
         onSidebarTab?.('project')
-        pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
+        pendingNavigateRef.current = { kind: 'create-or-open', subName, params, returnType: eventReturnType }
         setActiveTabId(existingTab.id)
       }
     } else {
@@ -2429,7 +2431,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         return merged
       })
       onSidebarTab?.('project')
-      pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
+      pendingNavigateRef.current = { kind: 'create-or-open', subName, params, returnType: eventReturnType }
       setActiveTabId(eycPath)
     }
   }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, onSidebarTab, syncProjectTreeAfterEventSubChange, pushNavLocation])
@@ -2447,6 +2449,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       : activeT.filePath.replace(/\.efw$/i, '.eyc')
     const eventName = defaultEvent?.name || '被创建完毕'
     const subName = `_${formData.name}_${eventName}`
+    const eventReturnType = defaultEvent?.returnType || ''
     const params = (defaultEvent?.args || []).map(arg => ({
       name: arg.name || 'param',
       dataType: arg.dataType || '整数型',
@@ -2456,10 +2459,10 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     const existingTab = tabs.find(t => t.filePath === eycPath)
     if (existingTab) {
       if (existingTab.id === activeTabId) {
-        eycEditorRef.current?.navigateOrCreateSub(subName, params)
+        eycEditorRef.current?.navigateOrCreateSub(subName, params, eventReturnType)
         syncProjectTreeAfterEventSubChange()
       } else {
-        pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
+        pendingNavigateRef.current = { kind: 'create-or-open', subName, params, returnType: eventReturnType }
         setActiveTabId(existingTab.id)
       }
     } else {
@@ -2474,7 +2477,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         onOpenTabsChange?.(merged)
         return merged
       })
-      pendingNavigateRef.current = { kind: 'create-or-open', subName, params }
+      pendingNavigateRef.current = { kind: 'create-or-open', subName, params, returnType: eventReturnType }
       setActiveTabId(eycPath)
     }
   }, [tabs, activeTabId, onOpenTabsChange, buildEventSubName, syncProjectTreeAfterEventSubChange, pushNavLocation])
@@ -2571,7 +2574,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     setTimeout(() => {
       if (!eycEditorRef.current) return
       if (pending.kind === 'create-or-open') {
-        eycEditorRef.current.navigateOrCreateSub(pending.subName, pending.params)
+        eycEditorRef.current.navigateOrCreateSub(pending.subName, pending.params, pending.returnType)
         syncProjectTreeAfterEventSubChange()
         return
       }

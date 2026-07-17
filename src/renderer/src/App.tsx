@@ -4519,7 +4519,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.5-beta.14（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.5-beta.15（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -5620,7 +5620,7 @@ function App(): React.JSX.Element {
           <div className="app-workspace">
             <div className={`app-side${activityBarSide === 'right' ? ' app-side-right' : ''}`}>
               {!sidebarCollapsed && (
-                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} openTabs={openEditorTabs} onEventNavigate={(sel, eventName, eventArgs) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs)} onSaveProject={handleSaveSingleProject} onCloseProject={(projectDir) => { void handleCloseSingleProject(projectDir) }} onLibraryChange={handleLibraryChange} onLibraryHint={handleLibraryHint} onProjectNodeAction={(action, node) => { void handleProjectNodeAction(action, node) }} canPasteWindow={copiedWindowFile != null} />
+                <Sidebar width={sidebarWidth} onResize={setSidebarWidth} placement={activityBarSide} selection={selection} activeTab={sidebarTab} onTabChange={setSidebarTab} onSelectControl={setSelection} onPropertyChange={(kind, ctrlId, prop, val) => editorRef.current?.updateFormProperty(kind, ctrlId, prop, val)} projectTree={projectTree} onOpenFile={handleOpenFile} activeFileId={activeFileId ? activeFileId.replace(/^.*[\\/]/, '') : null} projectDir={currentProjectDir} openTabs={openEditorTabs} onEventNavigate={(sel, eventName, eventArgs, eventReturnType) => editorRef.current?.navigateToEventSub(sel, eventName, eventArgs, eventReturnType)} onSaveProject={handleSaveSingleProject} onCloseProject={(projectDir) => { void handleCloseSingleProject(projectDir) }} onLibraryChange={handleLibraryChange} onLibraryHint={handleLibraryHint} onProjectNodeAction={(action, node) => { void handleProjectNodeAction(action, node) }} canPasteWindow={copiedWindowFile != null} />
               )}
               <div className="app-main">
                 <Editor

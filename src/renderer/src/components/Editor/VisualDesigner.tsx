@@ -23,6 +23,8 @@ export interface LibUnitProperty {
 export interface LibUnitEvent {
   name: string
   description: string
+  /** 事件处理子程序返回类型（如「逻辑型」，空/缺省=无返回值），生成 .子程序 存根时带上 */
+  returnType?: string
   args: Array<{ name: string; description: string; dataType: string; isByRef: boolean }>
 }
 
