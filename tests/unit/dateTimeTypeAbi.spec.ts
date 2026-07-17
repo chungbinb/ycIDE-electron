@@ -45,9 +45,11 @@ describe('日期时间型 ABI（审计 C 类）', () => {
     expect(gen).toContain('extern "C" int krnln_month(double);')
     expect(gen).toContain('extern "C" double krnln_TimeChg(double, int, int);')
     expect(gen).toContain('extern "C" double krnln_TimeDiff(double, double, int);')
-    // 日期时间型 变量本身也该是 double（此前 int 连日期都装不下）
-    expect(gen).toMatch(/double\s+t\s*=/)
+    // 日期时间型 变量在用户代码侧是 YC_DATE 强类型（struct{double}，与 double 双向隐式转换，
+    // ABI 侧仍按 double 收发）——裸 double 时 到文本 分不开 日期时间型 与 双精度小数型
+    expect(gen).toMatch(/YC_DATE\s+t\s*=/)
     expect(gen).not.toMatch(/\bint\s+t\s*=/)
+    expect(gen).not.toMatch(/\bdouble\s+t\s*=/)
     rmSync(dir, { recursive: true, force: true })
   }, 120000)
 })

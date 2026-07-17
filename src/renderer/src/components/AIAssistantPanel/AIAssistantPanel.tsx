@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AIChatMessage, AICustomModelConfig, AIEditResult, AISupportedModel } from '../../../../shared/ai'
 import { resolveIDESettings } from '../../../../shared/settings'
 import type { IDESettings } from '../../../../shared/settings'
@@ -289,6 +289,8 @@ function AIAssistantPanel({
   const [editBusy, setEditBusy] = useState(false)
   const [editApplying, setEditApplying] = useState(false)
   const [agentRunning, setAgentRunning] = useState(false)
+  // Agent 当前进行中的活动（如「正在编辑 xx…」），显示在执行状态行里；由流式日志驱动
+  const [agentActivity, setAgentActivity] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -439,6 +441,26 @@ function AIAssistantPanel({
   const canSend = composerValue.trim().length > 0
 
   const composerRef = useRef<HTMLTextAreaElement>(null)
+
+  // 聊天区自动跟随最新输出：流式追加时若用户本就贴在底部（阈值 48px）则滚到底，
+  // 手动上翻阅读历史时不打扰；用户滚回底部后恢复跟随。四个模式的 .ai-chat-log
+  // 互斥挂载，共用一个 ref。切换模式（容器重挂）后重新贴底。
+  const chatLogRef = useRef<HTMLDivElement | null>(null)
+  const chatLogPinnedRef = useRef(true)
+  const handleChatLogScroll = useCallback((): void => {
+    const el = chatLogRef.current
+    if (!el) return
+    chatLogPinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+  }, [])
+  useLayoutEffect(() => {
+    chatLogPinnedRef.current = true
+  }, [mode])
+  // 无依赖数组：任何一次渲染（含流式 delta 更新最后一条消息）后都检查贴底状态并跟随；
+  // 已在底部时赋值是无操作，开销可忽略
+  useLayoutEffect(() => {
+    const el = chatLogRef.current
+    if (el && chatLogPinnedRef.current) el.scrollTop = el.scrollHeight
+  })
   const autoResizeComposer = useCallback((): void => {
     const el = composerRef.current
     if (!el) return
@@ -684,6 +706,7 @@ function AIAssistantPanel({
     if (onAgentTask) {
       setAgentInput('')
       setAgentRunning(true)
+      setAgentActivity(null)
       setBusy(true)
       setStatus(null)
       setPendingEdit(null)
@@ -698,6 +721,12 @@ function AIAssistantPanel({
         if (!line || isRunCanceled(runId)) return
         streamedLogSet.add(line)
         setAgentHistory(prev => [...prev, { role: 'assistant', content: line }])
+        // edit_file 开始时执行状态行带上目标文件（「正在编辑 xx…」），完成/失败日志到达即清除
+        if (/^工具 edit_file：正在编辑 /.test(line)) {
+          setAgentActivity(line.replace(/^工具 edit_file：/, ''))
+        } else if (/^工具 edit_file/.test(line)) {
+          setAgentActivity(null)
+        }
       }, (trace) => {
         if (!trace || isRunCanceled(runId)) return
         setAgentHistory(prev => [...prev, {
@@ -1213,7 +1242,7 @@ function AIAssistantPanel({
 
       {mode === 'chat' && (
         <div className="ai-panel-section">
-          <div className="ai-chat-log" role="log" aria-label="聊天记录">
+          <div className="ai-chat-log" role="log" aria-label="聊天记录" ref={chatLogRef} onScroll={handleChatLogScroll}>
             {chatHistory.length === 0 && <div className="ai-empty">开始提问吧，聊天模式不会修改任何文件。</div>}
             {chatHistory.map((item, idx) => renderChatEntry(item, `${item.role}-${idx}`))}
           </div>
@@ -1222,7 +1251,7 @@ function AIAssistantPanel({
 
       {mode === 'plan' && (
         <div className="ai-panel-section">
-          <div className="ai-chat-log" role="log" aria-label="计划记录">
+          <div className="ai-chat-log" role="log" aria-label="计划记录" ref={chatLogRef} onScroll={handleChatLogScroll}>
             {planHistory.length === 0 && <div className="ai-empty">描述你的目标，Plan 模式会生成结构化执行计划。</div>}
             {planHistory.map((item, idx) => renderChatEntry(item, `plan-${item.role}-${idx}`))}
           </div>
@@ -1231,11 +1260,11 @@ function AIAssistantPanel({
 
       {mode === 'agent' && (
         <div className="ai-panel-section">
-          <div className="ai-chat-log" role="log" aria-label="Agent 执行记录">
+          <div className="ai-chat-log" role="log" aria-label="Agent 执行记录" ref={chatLogRef} onScroll={handleChatLogScroll}>
             {agentHistory.length === 0 && <div className="ai-empty">输入任务目标，Agent 模式会自动拆解步骤并尽量执行修改。</div>}
             {agentHistory.map((item, idx) => renderChatEntry(item, `agent-${item.role}-${idx}`))}
             {agentRunning && (
-              <div className="ai-msg-status">Agent 执行中<span className="ai-dots-anim" /></div>
+              <div className="ai-msg-status">{agentActivity || 'Agent 执行中'}<span className="ai-dots-anim" /></div>
             )}
           </div>
         </div>
@@ -1243,10 +1272,10 @@ function AIAssistantPanel({
 
       {mode === 'edit' && (
         <div className="ai-panel-section">
-          <div className="ai-chat-log" role="log" aria-label="编辑记录">
+          <div className="ai-chat-log" role="log" aria-label="编辑记录" ref={chatLogRef} onScroll={handleChatLogScroll}>
             {editMessages.length === 0 && !editBusy && !editApplying && <div className="ai-empty">描述你要对当前文件做的修改。</div>}
             {editMessages.map((item, idx) => renderChatEntry(item, `edit-${item.role}-${idx}`))}
-            {editApplying && (
+            {(editBusy || editApplying) && (
               <div className="ai-msg-status">正在编辑 {activeFileLabel ? getFileName(activeFileLabel) : '文件'} 中<span className="ai-dots-anim" /></div>
             )}
           </div>

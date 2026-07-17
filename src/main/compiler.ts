@@ -381,7 +381,7 @@ interface TranspileCacheFile {
 
 // 29: 条件表达式括号配对修复 + 生成代码每行加 /*@eyc行号*/ 来源标记（旧缓存产物没有标记，报错回溯不到）
 // 30: ÷ 相除改生成双精度除法（旧产物里是截断的整数除法）+ 整体括号表达式改为递归翻译
-const TRANSPILE_CACHE_VERSION = 32
+const TRANSPILE_CACHE_VERSION = 35
 
 interface BuildArtifactCacheFile {
   version: number
@@ -2450,15 +2450,22 @@ function mapTypeToCType(type: string): string {
 
 /**
  * 【用户代码侧】的类型映射：局部/全局/静态/成员变量、子程序参数与返回值、命令表达式的 IIFE 返回类型。
- * 与 mapTypeToCType（原生 ABI 侧）的**唯一**区别：逻辑型 → C++ bool。
+ * 与 mapTypeToCType（原生 ABI 侧）的区别只有两条：逻辑型 → C++ bool；日期时间型 → YC_DATE。
  *
  * Why：易语言里 到文本(逻辑型) 印「真」/「假」，到文本(整数型) 印「1」。两者在 C++ 里同为 int 时
  * 重载根本分不开，yc_value_to_text 只能一律印数字。给 逻辑型 一个独立的 C++ 类型后，变量／子程序
  * 返回／命令返回／比较表达式（C++ 的 == 本就产出 bool）全部自动落到 yc_value_to_text(bool) 那个
  * 重载上，不必在转译期逐个写特判——这正是「让类型系统去做分诊」而非「在每个用到的地方打补丁」。
+ *
+ * 日期时间型 同一个病：ABI 侧是 double（OLE 自动化日期），与 双精度小数型 在 C++ 里分不开，
+ * 到文本(取文件时间(…)) 印出 46220.41… 裸数字。YC_DATE 是 struct{double}（与 double 双向隐式
+ * 转换），变量/子程序/命令表达式落到 yc_value_to_text(YC_DATE) 印「2026年7月17日9时56分37秒」；
+ * ABI 侧仍按 double 收发，调用点靠隐式转换衔接，不需要额外编组。
  */
 function mapTypeToVarCType(type: string): string {
-  if ((type || '').trim() === '逻辑型') return 'bool'
+  const trimmed = (type || '').trim()
+  if (trimmed === '逻辑型') return 'bool'
+  if (trimmed === '日期时间型') return 'YC_DATE'
   return mapTypeToCType(type)
 }
 
@@ -2470,6 +2477,7 @@ function getTypeDefaultInitializer(type: string): string {
   if (cType === 'YC_TEXT') return 'YC_TEXT()'
   if (cType === 'YC_BIN') return 'YC_BIN()'
   if (cType === 'YC_BIG') return 'YC_BIG()'
+  if (cType === 'YC_DATE') return 'YC_DATE()'
   if (cType === 'float') return '0.0f'
   if (cType === 'double') return '0.0'
   if (cType === 'bool') return 'false'   // 逻辑型：`bool x = 0` 虽合法，但生成的代码要给人看
@@ -4847,6 +4855,9 @@ const YCMD_OMITTED_PARAM_EXPRS: Record<string, Record<number, string>> = {
   krnln_GetUTextBin: { 1: '1', 2: '1' },
   // 取统一文本长度 的「转换到宽文本」：同上，省略默认真
   krnln_GetUTextLength: { 1: '1' },
+  // 寻找文件 的「欲寻找文件的属性」：省略→帮助说默认「除子目录外的所有文件」，impl 以 -1 哨兵
+  // 识别；显式 0 是另一种语义（只命中无任何特殊属性的普通文件，连存档文件都排除，易语言原版如此）。
+  krnln_dir: { 1: '-1' },
 }
 
 /** 省略时改发指定 C 表达式的形参包装；实参给了则照原映射译 */
@@ -4906,15 +4917,23 @@ function buildYcmdRepeatTailCalls(
 }
 
 function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
+  const customExpr = YCMD_CUSTOM_NATIVE_EXPRS[getYcmdNativeSymbol(cmd)]
+  if (customExpr) return customExpr(args, cmd.name || getYcmdNativeSymbol(cmd), commandMap, directCallables)
   assertNotBareObjectMemberCommand(cmd)
   assertYcmdArrayReturnSupported(cmd, getYcmdNativeSymbol(cmd))
   const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemKind(cmd, args))
+  // IIFE 的返回类型必须与声明侧同源地吃 YCMD_NATIVE_RETURN_TYPE_OVERRIDES：
+  // 此前只用 cmd.returnType（如 取字节集数据 清单标〈通用型〉→ 默认 int），声明改成 long long 了，
+  // lambda 口却按 int 收——8 字节返回值在这里被静默截成低 32 位（取字节集数据(#长整数型) 必错）。
+  const varReturnType = mapTypeToVarCType(
+    YCMD_NATIVE_RETURN_TYPE_OVERRIDES[getYcmdNativeSymbol(cmd)] || cmd.returnType || '整数型',
+  )
   // 尾参可重复的多值：逐次调用用逗号表达式串起（值=最后一次调用的结果，与易语言一致）
   const repeatCalls = buildYcmdRepeatTailCalls(sig, args, commandMap, directCallables)
   if (repeatCalls) {
     const chained = repeatCalls.length === 1 ? repeatCalls[0] : `(${repeatCalls.join(', ')})`
     if (sig.returnType.isVoid) return `([&]() -> int { ${chained}; return 0; })()`
-    return `([&]() -> ${mapTypeToVarCType(cmd.returnType || '整数型')} { return ${sig.returnType.expr(chained)}; })()`
+    return `([&]() -> ${varReturnType} { return ${sig.returnType.expr(chained)}; })()`
   }
   const argCount = Math.max(args.length, sig.params.length)
   const callArgs = Array.from({ length: argCount }, (_unused, index) => {
@@ -4926,7 +4945,7 @@ function generateYcmdNativeCommandExpr(cmd: ResolvedCommand, args: string[], com
   if (sig.returnType.isVoid) {
     return `([&]() -> int { ${callExpr}; return 0; })()`
   }
-  return `([&]() -> ${mapTypeToVarCType(cmd.returnType || '整数型')} { return ${sig.returnType.expr(callExpr)}; })()`
+  return `([&]() -> ${varReturnType} { return ${sig.returnType.expr(callExpr)}; })()`
 }
 
 /**
@@ -4997,9 +5016,48 @@ const YCMD_VARREF_CALLS: Record<string, (args: string[], tx: (e: string) => stri
   },
 }
 
+/**
+ * 【原生命令的定制表达式生成】通用编组表达不了的表达式命令按符号在此定制，
+ * 所有调用形态（赋值右值/嵌套表达式/语句位）都汇到 generateYcmdNativeCommandExpr/Call，拦一处即全覆盖。
+ * · 按引用族（取变量地址/取变量数据地址）：通用编组只会译出「值的文本形态」，连地址都不是；
+ *   改交「变量地址 + yc_vt_of 类型标签」，实现在 spec 支持库。返回 长整数型（x64 地址 32 位装不下，
+ *   与 指针到整数/指针到字节集 收 长整数型 指针的约定对齐）。
+ * · 类型分诊族（到字节集）：易语言对数值转其**二进制原始字节**（整数4/短整数2/字节1/长整数8/
+ *   小数4/双精度8），通用编组先转文本会把类型丢光；改生成 yc_to_bin(实参) 由 C++ 重载分诊
+ *   （同 到文本 靠 yc_value_to_text 的方子），文本按 UTF-8（本 IDE 约定）、字节集恒等。
+ * 声明是手写的或不需要（generateYcmdNativeDeclarations 按本表跳过）。
+ */
+const YCMD_CUSTOM_NATIVE_EXPRS: Record<string, (args: string[], name: string, commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames) => string> = {
+  // 取变量地址(变量)：变量本身的内存地址
+  spec_GetVarAddress: (args, name) => `spec_GetVarAddress((const void*)&${requireVarArg(args[0] || '', name)})`,
+  // 取变量数据地址(变量)：文本/字节集/数组给数据缓冲区地址（空则 0），其余同 取变量地址
+  spec_GetVarDataAddr: (args, name) => {
+    const t = requireVarArg(args[0] || '', name)
+    return `spec_GetVarDataAddr((const void*)&${t}, yc_vt_of(${t}))`
+  },
+  // 到字节集(通用型)：见上「类型分诊族」。数组参数帮助虽允许（数值型数组），元素语义类型只在
+  // 转译期可知且此处拿不到重载可分的表达，暂不支持——友好报错好过静默给出结构体的字节垃圾。
+  krnln_ToBin: (args, name, commandMap, directCallables) => {
+    const t = (args[0] || '').trim()
+    if (arrayValueElemKind(t, commandMap)) {
+      throw new Error(`命令“${name}”暂不支持数组参数`)
+    }
+    const src = formatArgForC(t, commandMap, directCallables)
+    // 整数字面量在生成侧带 LL 后缀（会按 8 字节转）——易语言整数字面量是整数型，包 (int) 按 4 字节
+    const isInt32Literal = /^[+-]?\d+$/.test(t) && Math.abs(Number(t)) <= 2147483647
+    return `yc_to_bin(${isInt32Literal ? `(int)(${src})` : src})`
+  },
+}
+
+// 返回内存地址的命令（显示名）：x64 地址 64 位，赋给更窄的变量会被截断成无效地址——
+// 转译期把这种赋值拦成友好编译错误（编辑器问题面板有同款诊断，两处文案保持一致）。
+const ADDRESS_RETURN_COMMAND_NAMES = new Set(['取变量地址', '取变量数据地址'])
+
 function generateYcmdNativeCommandCall(cmd: ResolvedCommand, args: string[], commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
   const varrefCall = YCMD_VARREF_CALLS[getYcmdNativeSymbol(cmd)]
   if (varrefCall) return varrefCall(args, (e) => formatArgForC(e, commandMap, directCallables), cmd.name || getYcmdNativeSymbol(cmd))
+  const customExpr = YCMD_CUSTOM_NATIVE_EXPRS[getYcmdNativeSymbol(cmd)]
+  if (customExpr) return `{ (void)${customExpr(args, cmd.name || getYcmdNativeSymbol(cmd), commandMap, directCallables)}; }`
   assertNotBareObjectMemberCommand(cmd)
   assertYcmdArrayReturnSupported(cmd, getYcmdNativeSymbol(cmd))
   const sig = buildYcmdNativeSignature(cmd, ycmdArrayCallElemKind(cmd, args))
@@ -5043,9 +5101,9 @@ function generateYcmdNativeDeclarations(targetPlatform: TargetPlatform): string 
   const seen = new Set<string>()
   for (const cmd of buildCommandMap(targetPlatform).values()) {
     if (!isYcmdNativeCommand(cmd)) continue
-    // 变量操作族的声明是手写的（「地址+类型标签」通用映射译不出，见 prelude 里的 extern 块）→ 这里跳过，
-    // 否则会按清单的「通用型」再发一份 const char* 的错声明。
-    if (YCMD_VARREF_CALLS[getYcmdNativeSymbol(cmd)]) continue
+    // 变量操作族/定制表达式族的声明是手写的或不需要（通用映射译不出它们的真实签名，
+    // 见 prelude 里的 extern 块）→ 这里跳过，否则会按清单的「通用型」再发一份 const char* 的错声明。
+    if (YCMD_VARREF_CALLS[getYcmdNativeSymbol(cmd)] || YCMD_CUSTOM_NATIVE_EXPRS[getYcmdNativeSymbol(cmd)]) continue
     const sig = buildYcmdNativeSignature(cmd)
     if (seen.has(sig.symbol)) continue
     seen.add(sig.symbol)
@@ -5521,6 +5579,15 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    const wchar_t* c_str() const { return s.c_str(); }\n'
   result += '    bool empty() const { return s.empty(); }\n'
   result += '};\n\n'
+  // 日期时间型：包裹 OLE 自动化日期 double 的强类型（与 double 双向隐式转换，ABI 侧仍按 double
+  // 收发）。存在的唯一理由是让 yc_value_to_text 的重载分得开 日期时间型 与 双精度小数型——
+  // 到文本(日期) 才能印「2026年7月17日9时56分37秒」而非裸数字（与 逻辑型→bool 同一个方子）。
+  result += 'struct YC_DATE {\n'
+  result += '    double v;\n'
+  result += '    YC_DATE() : v(0.0) {}\n'
+  result += '    YC_DATE(double d) : v(d) {}\n'
+  result += '    operator double() const { return v; }\n'
+  result += '};\n\n'
   // 易语言数组下标为一基；越界回落到哑元引用（读得 0、写被丢弃），不崩溃
   result += 'static long long yc_ary_dummy_slot = 0;\n'
   result += 'static inline long long& yc_ary_at(std::vector<long long>& a, long long idx1) {\n'
@@ -5583,6 +5650,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'static inline int yc_vt_of(unsigned char) { return YC_VT_BYTE; }\n'
   result += 'static inline int yc_vt_of(float) { return YC_VT_FLOAT; }\n'
   result += 'static inline int yc_vt_of(double) { return YC_VT_DOUBLE; }\n'
+  result += 'static inline int yc_vt_of(const YC_DATE&) { return YC_VT_DOUBLE; }\n'  // 位布局即 double，krnln 按 8 字节双精度收发
   result += 'static inline int yc_vt_of(const YC_TEXT&) { return YC_VT_TEXT; }\n'
   result += 'static inline int yc_vt_of(const YC_BIN&) { return YC_VT_BIN; }\n'
   result += 'static inline int yc_vt_of(const std::vector<long long>&) { return YC_VT_ARY; }\n\n'
@@ -5592,7 +5660,11 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'extern "C" void krnln_store(const void* value, void* target, int dataType);\n'
   result += 'extern "C" void krnln_XchgVar(void* a, void* b, int dataType);\n'
   result += 'extern "C" void krnln_ForceXchgVar(void* a, void* b, int dataType);\n'
-  result += 'extern "C" void krnln_ZeroAry(void* arrayVar);\n\n'
+  result += 'extern "C" void krnln_ZeroAry(void* arrayVar);\n'
+  // 按引用表达式族（取变量地址/取变量数据地址，实现在 spec 库）：同上手写声明，
+  // 返回 长整数型（x64 地址 32 位装不下，接收变量请用 长整数型）。
+  result += 'extern "C" long long spec_GetVarAddress(const void* var);\n'
+  result += 'extern "C" long long spec_GetVarDataAddr(const void* var, int dataType);\n\n'
   result += 'struct YC_BIG {\n'
   result += '    bool neg;\n'
   result += '    std::string digits;\n'
@@ -6201,8 +6273,35 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    swprintf(buf, 128, L"%.15g", value);\n'
   result += '    return YC_TEXT(buf);\n'
   result += '}\n\n'
+  // 小数型(float)只有 ~7 位有效数字：不能借道 double 的 %.15g（会把转换噪声位全印出来，
+  // 3.14159f 印成 3.14159011840820——易语言印 3.14159）
   result += 'static YC_TEXT yc_value_to_text(float value) {\n'
-  result += '    return yc_value_to_text((double)value);\n'
+  result += '    wchar_t buf[64];\n'
+  result += '    swprintf(buf, 64, L"%.7g", (double)value);\n'
+  result += '    return YC_TEXT(buf);\n'
+  result += '}\n\n'
+  // 日期时间型 → 「YYYY年M月D日H时M分S秒」（照易语言；时刻全零只印日期部分）。
+  // OA 日期＝1899-12-30 起的天数、小数部分为一天内时刻（负数日期按幅值取时刻，OLE 如此）；
+  // 历法换算用纯算术（Howard Hinnant civil_from_days），不依赖平台 API。
+  result += 'static YC_TEXT yc_value_to_text(const YC_DATE& d) {\n'
+  result += '    long long day = (long long)d.v;\n'
+  result += '    double frac = d.v - (double)day; if (frac < 0) frac = -frac;\n'
+  result += '    long long secs = (long long)(frac * 86400.0 + 0.5);\n'
+  result += '    if (secs >= 86400) { secs = 0; day += 1; }\n'
+  result += '    long long z = day - 25569 + 719468;\n'  // OA 纪元(1899-12-30)→civil 纪元(0000-03-01)
+  result += '    long long era = (z >= 0 ? z : z - 146096) / 146097;\n'
+  result += '    unsigned long long doe = (unsigned long long)(z - era * 146097);\n'
+  result += '    unsigned yoe = (unsigned)((doe - doe/1460 + doe/36524 - doe/146096) / 365);\n'
+  result += '    long long y = (long long)yoe + era * 400;\n'
+  result += '    unsigned doy = (unsigned)(doe - (365ULL*yoe + yoe/4 - yoe/100));\n'
+  result += '    unsigned mp = (5*doy + 2)/153;\n'
+  result += '    unsigned dd = doy - (153*mp+2)/5 + 1;\n'
+  result += '    unsigned mm = mp < 10 ? mp+3 : mp-9;\n'
+  result += '    if (mm <= 2) y++;\n'
+  result += '    wchar_t buf[96];\n'
+  result += '    if (secs > 0) swprintf(buf, 96, L"%lld年%u月%u日%d时%d分%d秒", y, mm, dd, (int)(secs/3600), (int)((secs%3600)/60), (int)(secs%60));\n'
+  result += '    else swprintf(buf, 96, L"%lld年%u月%u日", y, mm, dd);\n'
+  result += '    return YC_TEXT(buf);\n'
   result += '}\n\n'
   result += 'static YC_TEXT yc_value_to_text(const wchar_t* value) {\n'
   result += '    return YC_TEXT(value ? value : L"");\n'
@@ -6232,17 +6331,25 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    out += L"}";\n'
   result += '    return YC_TEXT(std::move(out));\n'
   result += '}\n\n'
-  // 字节集转文本：{1, 2, 3}（调试输出 字节集 用）
-  result += 'static YC_TEXT yc_value_to_text(const YC_BIN& b) {\n'
+  // 字节集的调试形态：字节集:N{1,2,3}（调试输出/数组打印 用；到文本 不走这里）
+  result += 'static YC_TEXT yc_bin_debug_text(const YC_BIN& b) {\n'
   result += '    std::wstring out = L"字节集:" + std::to_wstring(b.size()) + L"{";\n'
   result += '    for (size_t i = 0; i < b.size(); i++) { if (i) out += L","; out += std::to_wstring((int)b[i]); }\n'
   result += '    out += L"}";\n'
   result += '    return YC_TEXT(std::move(out));\n'
   result += '}\n\n'
-  // 字节集数组转文本（元素为堆拷贝的 YC_BIN* 指针位模式）——套用上面的 字节集:N{…} 逐元素打印
+  // 到文本(字节集)：按文本解码（易语言把字节当 GBK 文本解；本 IDE 全程 UTF-8，故按 UTF-8 解，
+  // 与 到字节集(文本) 互为往返）。此前落在调试形态 字节集:N{…}，读入文件→到文本 全是数字串。
+  // 内嵌 \0 截断与易语言一致（其文本本就以结束零为界）。
+  result += 'static YC_TEXT yc_value_to_text(const YC_BIN& b) {\n'
+  result += '    if (b.empty()) return YC_TEXT();\n'
+  result += '    std::string tmp((const char*)b.data(), b.size());\n'
+  result += '    return yc_utf8_to_wide(tmp.c_str());\n'
+  result += '}\n\n'
+  // 字节集数组转文本（元素为堆拷贝的 YC_BIN* 指针位模式）——逐元素按调试形态 字节集:N{…} 打印
   result += 'static YC_TEXT yc_ary_to_text_bin(const std::vector<long long>& a) {\n'
   result += '    std::wstring out = L"数组:" + std::to_wstring(a.size()) + L"{";\n'
-  result += '    for (size_t i = 0; i < a.size(); i++) { if (i) out += L","; const YC_BIN* p = (const YC_BIN*)(intptr_t)a[i]; out += p ? yc_value_to_text(*p).s : std::wstring(L"字节集:0{}"); }\n'
+  result += '    for (size_t i = 0; i < a.size(); i++) { if (i) out += L","; const YC_BIN* p = (const YC_BIN*)(intptr_t)a[i]; out += p ? yc_bin_debug_text(*p).s : std::wstring(L"字节集:0{}"); }\n'
   result += '    out += L"}";\n'
   result += '    return YC_TEXT(std::move(out));\n'
   result += '}\n\n'
@@ -6260,9 +6367,10 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'static YC_TEXT yc_dbg_fmt(short v) { return yc_value_to_text((long long)v); }\n'
   result += 'static YC_TEXT yc_dbg_fmt(unsigned char v) { return yc_value_to_text((long long)v); }\n'
   result += 'static YC_TEXT yc_dbg_fmt(double v) { return yc_value_to_text(v); }\n'
-  result += 'static YC_TEXT yc_dbg_fmt(float v) { return yc_value_to_text((double)v); }\n'
+  result += 'static YC_TEXT yc_dbg_fmt(float v) { return yc_value_to_text(v); }\n'  // 走 float 重载（%.7g），别借道 double 印出噪声位
+  result += 'static YC_TEXT yc_dbg_fmt(const YC_DATE& v) { return yc_value_to_text(v); }\n'
   result += 'static YC_TEXT yc_dbg_fmt(const std::vector<long long>& v) { return yc_value_to_text(v); }\n'
-  result += 'static YC_TEXT yc_dbg_fmt(const YC_BIN& v) { return yc_value_to_text(v); }\n'
+  result += 'static YC_TEXT yc_dbg_fmt(const YC_BIN& v) { return yc_bin_debug_text(v); }\n'
   result += 'static YC_TEXT yc_dbg_fmt(const YC_BIG& v) { return yc_value_to_text(v); }\n\n'
   result += 'static YC_BIG yc_value_to_big(const YC_BIG& value) { return value; }\n\n'
   result += 'static YC_BIG yc_value_to_big(long long value) { return YC_BIG(value); }\n\n'
@@ -6288,15 +6396,26 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'template <typename T> static YC_BIN yc_bin_from_scalar(const T& value) {\n'
   result += '    return yc_bin_from_ptr(&value, sizeof(T));\n'
   result += '}\n\n'
+  // 到字节集 的类型分诊家族：转译器对 krnln_ToBin 定制生成 yc_to_bin(实参)，C++ 重载按静态类型
+  // 分派（同 到文本 靠 yc_value_to_text 的方子）。数值 → 二进制原始字节（照易语言：整数4/短整数2/
+  // 字节1/长整数8/小数4/双精度8，走下方 scalar 模板）；文本 → UTF-8 字节（本 IDE 约定，与
+  // 到文本(字节集) 互为往返；易语言原版是 GBK）；字节集 → 恒等。
+  // 此前经 krnln_ToBin(const char*) 通用编组：数值先被转成文本再取字节（到字节集(到整数(123))
+  // 得 "123" 的 3 个 ASCII 字节而非 {123,0,0,0}），类型信息全丢。
   result += 'static YC_BIN yc_to_bin(const YC_BIN& value) {\n'
   result += '    return value;\n'
   result += '}\n\n'
   result += 'static YC_BIN yc_to_bin(const wchar_t* text) {\n'
-  result += '    if (!text) return YC_BIN();\n'
-  result += '    return yc_bin_from_ptr(text, wcslen(text) * sizeof(wchar_t));\n'
+  result += '    if (!text || !*text) return YC_BIN();\n'
+  result += '    const char* u = yc_wide_to_utf8(text);\n'
+  result += '    return YC_BIN((const unsigned char*)u, (const unsigned char*)u + strlen(u));\n'
   result += '}\n\n'
   result += 'static YC_BIN yc_to_bin(wchar_t* text) {\n'
   result += '    return yc_to_bin((const wchar_t*)text);\n'
+  result += '}\n\n'
+  // YC_TEXT 必须给显式重载——否则 scalar 模板以 T=YC_TEXT 精确匹配胜出，按字节拷贝整个结构体
+  result += 'static YC_BIN yc_to_bin(const YC_TEXT& text) {\n'
+  result += '    return yc_to_bin(text.c_str());\n'
   result += '}\n\n'
   result += 'static YC_BIN yc_to_bin(const char* text) {\n'
   result += '    if (!text) return YC_BIN();\n'
@@ -7183,6 +7302,15 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         const rhsCall = parseCommandCall(rightRaw)
         const rhsResolved = rhsCall ? commandMap.get(rhsCall.name) : undefined
         if (rhsCall && rhsResolved) {
+          // 地址类命令的返回值必须用 长整数型 接收：x64 地址 64 位，落进更窄的类型会被截断成
+          // 无效地址（运行期 指针到* 有可读性防护不至于崩，但数据必然读不回来）。提前拦成
+          // 友好编译错误；编辑器问题面板有同款诊断（editorDiagnosticsShared 的 ADDRESS_RETURN_COMMANDS）。
+          if (!propMatch && ADDRESS_RETURN_COMMAND_NAMES.has(rhsResolved.name)) {
+            const leftType = (resolveVisibleVarType(left) || '').trim()
+            if (leftType && leftType !== '长整数型') {
+              throwSourceError(lineIndex + 1, `“${rhsResolved.name}”返回 64 位地址（长整数型），变量“${left}”是 ${leftType}，赋值会被截断成无效地址——请将变量类型改为 长整数型`)
+            }
+          }
           const exprGenerator = COMMAND_EXPR_GENERATORS[rhsResolved.name]
           if (exprGenerator) {
             const expr = exprGenerator(rhsCall.args || [], commandMap, directCallables)
@@ -7358,6 +7486,8 @@ function generateMainC(
   mainCode += '#ifndef ICC_LINK_CLASSES\n#define ICC_LINK_CLASSES 0x00008000\n#endif\n\n'
   // 文本型值类型（与转译文件里的定义一致，供 yc_ctrl_get_text 跨编译单元按值返回）
   mainCode += 'struct YC_TEXT {\n    std::wstring s;\n    YC_TEXT() {}\n    YC_TEXT(const wchar_t* p) : s(p ? p : L"") {}\n    YC_TEXT(const std::wstring& w) : s(w) {}\n    YC_TEXT(std::wstring&& w) : s(std::move(w)) {}\n    operator const wchar_t*() const { return s.c_str(); }\n    const wchar_t* c_str() const { return s.c_str(); }\n    bool empty() const { return s.empty(); }\n};\n\n'
+  // 日期时间型强类型（与转译文件里的定义一致；日期时间型全局变量会声明在本 TU）
+  mainCode += 'struct YC_DATE {\n    double v;\n    YC_DATE() : v(0.0) {}\n    YC_DATE(double d) : v(d) {}\n    operator double() const { return v; }\n};\n\n'
   mainCode += generateYcmdNativeDeclarations(targetPlatform)
 
   const isWindowsApp = project.outputType === 'WindowsApp'
