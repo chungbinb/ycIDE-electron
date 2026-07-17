@@ -115,7 +115,7 @@ export interface EycTableEditorHandle {
   insertSubroutine: () => void
   insertLocalVariable: () => void
   insertConstant: () => void
-  navigateOrCreateSub: (subName: string, params: Array<{ name: string; dataType: string; isByRef: boolean }>) => void
+  navigateOrCreateSub: (subName: string, params: Array<{ name: string; dataType: string; isByRef: boolean }>, returnType?: string) => void
   navigateToLine: (line: number) => void
   navigateToSubprogram: (subName: string, fallbackLine?: number) => void
   getVisibleLineForSourceLine: (line: number) => number
@@ -7024,7 +7024,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }, 50)
     },
 
-    navigateOrCreateSub: (subName: string, params: Array<{ name: string; dataType: string; isByRef: boolean }>) => {
+    navigateOrCreateSub: (subName: string, params: Array<{ name: string; dataType: string; isByRef: boolean }>, returnType?: string) => {
       const curLines = currentText.split('\n')
       const normalizedSubName = (subName || '').trim()
 
@@ -7044,9 +7044,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         return
       }
 
-      // 不存在：在文件末尾插入新子程序
+      // 不存在：在文件末尾插入新子程序（事件带返回类型时写入第 2 字段，如 逻辑型）
       pushUndo(currentText)
-      const insertLines: string[] = ['', '.子程序 ' + subName + ', , , ']
+      const insertLines: string[] = ['', '.子程序 ' + subName + ', ' + ((returnType || '').trim()) + ', , ']
       for (const p of params) {
         insertLines.push('    .参数 ' + p.name + ', ' + (p.dataType || '整数型') + (p.isByRef ? ', 传址' : ''))
       }

@@ -2,6 +2,8 @@
 
 > 基于 Electron + React + TypeScript 重构的易承语言集成开发环境
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) — 自由使用、修改、分发（含商用），衍生作品须注明基于 ycIDE
+
 ## 技术栈
 
 - **前端**：React 19 + TypeScript + Vite
@@ -21,11 +23,8 @@
 ### 一、自定义数据类型编辑器和全局变量编辑器和常量表编辑器和资源编辑器和 DLL 命令编辑器（已完成）
 ### 二、AI 代码助手（基于 deepseek API 的智能代码补全、错误分析、代码优化建议）（已基本完成，还剩Agent和Plan模式）
 ### 三、调试器集成（基于 Windows 调试 API 的本地调试、断点管理、变量监视、调用堆栈）
-### 四、编译输出面板输出信息优化（错误信息格式化、点击跳转到代码位置、编译器版本和参数显示）
-### 五、会员系统，主要用于AI代码助手的使用权限控制和额度管理
-### 六、插件系统，允许第三方开发者为 ycIDE 开发功能插件，扩展编辑器功能、编译器功能、调试器功能等
-### 七、Accessibility 支持，确保 ycIDE 对所有用户都友好，包括使用屏幕阅读器的用户（已完成）
-### 八、设置界面（已完成），允许用户自定义编辑器主题（已完成）、字体（已完成）、快捷键、编译器选项等（已大部分完成）
+### 四、会员系统，主要用于AI代码助手的使用权限控制和额度管理
+### 五、插件系统，允许第三方开发者为 ycIDE 开发功能插件，扩展编辑器功能、编译器功能、调试器功能等
 
 
 
@@ -78,8 +77,14 @@ npm run security:av:report -- --sample "<你的exe路径>" --compiler "zig c++" 
 3. 提交你的更改（`git commit -m 'Add some feature'`）
 4. 推送到分支（`git push origin feature/your-feature-name`）
 5. 创建一个 Pull Request
-## 许可证
-本项目采用 MIT 许可证，详情请参阅 LICENSE 文件。
+## 📜 许可证
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+本项目采用 **MIT 开源许可证**，详情请参阅 [LICENSE](LICENSE) 文件。
+
+> [!IMPORTANT]
+> 你可以自由地**使用、复制、修改和分发**本项目（包括用于商业用途），但在分发副本或发布衍生作品时，**须保留原始版权声明和许可声明，并注明该作品基于 ycIDE**。
 ## 联系方式
 如果你有任何问题、建议或想要参与开发，请随时通过以下方式联系我：
 - 邮箱：[chungbin@522.plus](mailto:chungbin@522.plus)
@@ -99,4 +104,7 @@ npm run security:av:report -- --sample "<你的exe路径>" --compiler "zig c++" 
 | 接软件开发 | 86523553 | — | 捐赠和项目测试 |
 | 出现又离开 | 1069988209 | — | 捐赠 |
 | 简简单单 | 738822632 | — | 捐赠 |
+| ssxiaoqiao | 449834775 | — | 捐赠和测试 |
+| TermINatOr | 283100512 | — | 项目主要测试员 |
+| Tel: 小林子 喵~ | 452639766 | — | 项目测试员 |
 | *其它群里测试和反馈的朋友们* | — | — | 测试、反馈 |

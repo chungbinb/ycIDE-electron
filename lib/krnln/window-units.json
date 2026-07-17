@@ -2770,11 +2770,73 @@
       ],
       "events": [
         {
-          "name": "被单击",
-          "description": "图片框被单击时触发。",
-          "args": [],
-          "channel": "WM_COMMAND",
-          "code": "STN_CLICKED"
+          "name": "鼠标左键被按下",
+          "description": "本事件在鼠标左键于图片框上被按下时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "横向位置", "description": "光标在图片框内的横向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "纵向位置", "description": "光标在图片框内的纵向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        },
+        {
+          "name": "鼠标左键被放开",
+          "description": "本事件在鼠标左键于图片框上被放开时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "横向位置", "description": "光标在图片框内的横向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "纵向位置", "description": "光标在图片框内的纵向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        },
+        {
+          "name": "被双击",
+          "description": "本事件在图片框被鼠标左键双击时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "横向位置", "description": "光标在图片框内的横向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "纵向位置", "description": "光标在图片框内的纵向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        },
+        {
+          "name": "鼠标右键被按下",
+          "description": "本事件在鼠标右键于图片框上被按下时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "横向位置", "description": "光标在图片框内的横向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "纵向位置", "description": "光标在图片框内的纵向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        },
+        {
+          "name": "鼠标右键被放开",
+          "description": "本事件在鼠标右键于图片框上被放开时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "横向位置", "description": "光标在图片框内的横向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "纵向位置", "description": "光标在图片框内的纵向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        },
+        {
+          "name": "鼠标位置被移动",
+          "description": "本事件在鼠标于图片框上移动时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "横向位置", "description": "光标在图片框内的横向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "纵向位置", "description": "光标在图片框内的纵向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        },
+        {
+          "name": "滚轮被滚动",
+          "description": "本事件在鼠标滚轮于图片框上被滚动时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "滚动距离", "description": "滚轮滚动的距离，每格 120，向前（向上）滚动为正数。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
         }
       ],
       "icon": "icon/BlueIcons/Image_16x.png"

@@ -116,7 +116,7 @@ interface SidebarProps {
   activeFileId?: string | null
   projectDir?: string
   openTabs?: Array<{ id: string; filePath?: string; language: string; value: string; savedValue?: string; formData?: DesignForm; aiModified?: boolean }>
-  onEventNavigate?: (selection: SelectionTarget, eventName: string, eventArgs: Array<{ name: string; description: string; dataType: string; isByRef: boolean }>) => void
+  onEventNavigate?: (selection: SelectionTarget, eventName: string, eventArgs: Array<{ name: string; description: string; dataType: string; isByRef: boolean }>, eventReturnType?: string) => void
   onSaveProject?: (projectDir: string) => void
   onCloseProject?: (projectDir: string) => void
   /** 支持库加载或卸载时的回调 */
@@ -2434,7 +2434,7 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
               if (e.target.value === '') return
               const ev = Number.isNaN(idx) ? undefined : selectedEvents[idx]
               if (selection && ev && onEventNavigate) {
-                onEventNavigate(selection, ev.name, ev.args ?? [])
+                onEventNavigate(selection, ev.name, ev.args ?? [], ev.returnType)
                 const subName = getEventSubName(selection, ev.name)
                 setExistingEventSubs(prev => {
                   const next = new Set(prev)
