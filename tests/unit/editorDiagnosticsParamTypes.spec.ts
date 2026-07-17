@@ -118,6 +118,45 @@ describe('命令参数数据类型检查', () => {
   })
 })
 
+describe('地址类命令必须用长整数型接收', () => {
+  // x64 地址 64 位，赋给 整数型 等更窄类型会被截断成无效地址（32 位易语言老代码的典型移植坑）。
+  // 问题面板提前拦截；compiler.ts 转译期有同款硬拦截。
+  const ADDR_HEAD = '.子程序 测试子程序\n.局部变量 指针变量, 整数型\n.局部变量 长指针, 长整数型\n.局部变量 整数变量, 整数型\n'
+  const runAddr = (text: string) =>
+    buildEditorDiagnosticsProblems({
+      text,
+      hasCommandCatalog: true,
+      validCommandNames: [...Object.keys(signatures), '取变量地址', '取变量数据地址'],
+      allKnownVarNames: ['指针变量', '长指针', '整数变量'],
+      reservedNames: ['真', '假'],
+      commandSignatures: signatures,
+    })
+
+  it('取变量地址 赋给整数型变量 → 报截断并提示改长整数型', () => {
+    const problems = runAddr(`${ADDR_HEAD}指针变量 ＝ 取变量地址 (整数变量)`)
+    const hit = problems.find(p => p.message.includes('截断'))
+    expect(hit).toBeTruthy()
+    expect(hit!.message).toContain('长整数型')
+    expect(hit!.message).toContain('指针变量')
+    expect(hit!.severity).toBe('error')
+  })
+
+  it('取变量数据地址 同规则', () => {
+    const problems = runAddr(`${ADDR_HEAD}指针变量 ＝ 取变量数据地址 (整数变量)`)
+    expect(problems.some(p => p.message.includes('截断') && p.message.includes('长整数型'))).toBe(true)
+  })
+
+  it('长整数型变量接收 → 不报', () => {
+    const problems = runAddr(`${ADDR_HEAD}长指针 ＝ 取变量地址 (整数变量)`)
+    expect(problems.filter(p => p.message.includes('截断'))).toHaveLength(0)
+  })
+
+  it('目标类型未知（如未声明变量）→ 保守不报截断（未知变量另有诊断）', () => {
+    const problems = runAddr(`${ADDR_HEAD}没声明的变量 ＝ 取变量地址 (整数变量)`)
+    expect(problems.filter(p => p.message.includes('截断'))).toHaveLength(0)
+  })
+})
+
 describe('数字开头的裸语句', () => {
   it('整行纯数字 → 无效语句（用户场景：123555 没报未知命令）', () => {
     const problems = run(`${SUB_HEAD}123555`)

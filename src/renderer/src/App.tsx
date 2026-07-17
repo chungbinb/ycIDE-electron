@@ -4519,7 +4519,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.5-beta.13（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.5-beta.14（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -5305,6 +5305,9 @@ function App(): React.JSX.Element {
           continue
         }
 
+        // 编辑是最耗时的工具调用（要再走一轮模型生成改动）——先播报目标文件，
+        // 面板据此显示「正在编辑 xx」进行中状态，而不是等完成才冒出 +N/-N。
+        reportLog(`工具 edit_file：正在编辑 ${toRelative(absolutePath)}…`)
         const editResult = await handleAIRequestEdit(instruction, absolutePath)
         if (!editResult.ok) {
           reportLog(`工具 edit_file 失败：${toRelative(absolutePath)} - ${editResult.error || '未知错误'}`)

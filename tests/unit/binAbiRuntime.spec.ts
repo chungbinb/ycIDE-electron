@@ -86,4 +86,67 @@ describe('字节集 ABI v2 · 运行时', () => {
 
     rmSync(dir, { recursive: true, force: true })
   }, 180000)
+
+  // 【到字节集(数值) + 取字节集数据 · 用户字节集测试程序暴露的三处】
+  // ① 到字节集(数值) 此前经通用编组先转文本再取字节——到字节集(到整数(123)) 给 "123" 的
+  //    3 个 ASCII 字节而非 {123,0,0,0}。现按类型给二进制原始字节（yc_to_bin 重载分诊）。
+  // ② 取字节集数据 的起始索引帮助明说从 1 开始（省略默认 1），实现此前按 0 基偏移。
+  // ③ 到文本(小数型) 借道 double 的 %.15g 印出噪声位（3.14159 → 3.14159011840820）。
+  it.skipIf(!zigAvailable)('到字节集(数值)按二进制原始字节；取字节集数据一基索引；小数型印字不带噪声位', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ycide-tobin-'))
+    const say = (label: string, expr: string[]) =>
+      `标准输出 (0, “${label}=” ${expr.map(e => `＋ ${e}`).join(' ')} ＋ #换行符)`
+    writeFileSync(join(dir, 'p.epp'), ['ProjectName=到字节集类型', 'OutputType=Console', 'Platform=x64', 'File=EYC|程序.eyc|0', ''].join('\n'), 'utf-8')
+    writeFileSync(join(dir, '程序.eyc'), [
+      '.版本 2', '.程序集 程序集1', '',
+      '.子程序 _启动子程序',
+      '.局部变量 b, 字节集',
+      '.局部变量 长整数变量, 长整数型',
+      '.局部变量 小数变量, 小数型',
+      '',
+      // —— 各类型的二进制字节数（此前全是文本 ASCII 字节数）
+      say('整数字节数', ['到文本 (取字节集长度 (到字节集 (到整数 (123))))']),
+      say('短整数字节数', ['到文本 (取字节集长度 (到字节集 (到短整数 (456))))']),
+      say('字节字节数', ['到文本 (取字节集长度 (到字节集 (到字节 (78))))']),
+      say('字面量字节数', ['到文本 (取字节集长度 (到字节集 (123)))']),          // 整数字面量按整数型 4 字节（生成侧 LL 后缀要拨回）
+      say('文本字节数', ['到文本 (取字节集长度 (到字节集 (“甲A”)))']),          // 文本仍 UTF-8：3+1
+      // —— 取字节集数据：一基索引读回拼接数据（4+2+1 字节布局）
+      'b ＝ 到字节集 (到整数 (123)) ＋ 到字节集 (到短整数 (456)) ＋ 到字节集 (到字节 (78))',
+      say('组合长度', ['到文本 (取字节集长度 (b))']),
+      say('取整数', ['到文本 (取字节集数据 (b, #整数型, 1))']),
+      say('取短整数', ['到文本 (取字节集数据 (b, #短整数型, 5))']),
+      say('取字节', ['到文本 (取字节集数据 (b, #字节型, 7))']),
+      say('省略位置', ['到文本 (取字节集数据 (b, #整数型))']),                  // 帮助：省略默认 1
+      // —— 8 字节整数经 取变量地址→指针到字节集→取字节集数据 完整往返（用户测试 14 场景）
+      '长整数变量 ＝ 9876543210',
+      say('长整数读回', ['到文本 (取字节集数据 (指针到字节集 (取变量地址 (长整数变量), 8), #长整数型, 1))']),
+      // —— 小数型印字：float 只有 ~7 位有效数字
+      '小数变量 ＝ 3.14159',
+      say('小数印字', ['到文本 (小数变量)']),
+      '',
+    ].join('\n'), 'utf-8')
+
+    const before = messages.length
+    const r = await compileProject({ projectDir: dir, mode: 'build' })
+    const errs = messages.slice(before).filter(m => m.type === 'error').map(m => m.text).join('\n')
+    expect(r.success, `编译失败：\n${errs}`).toBe(true)
+
+    const out = execFileSync(r.outputFile, [], { encoding: 'buffer', timeout: 30000 }).toString('utf-8')
+    const val = (label: string) => (out.split('\n').find(l => l.startsWith(`${label}=`)) || '').trim().slice(label.length + 1)
+
+    expect(val('整数字节数'), '整数型 → 4 字节（此前 "123" 文本给 3）').toBe('4')
+    expect(val('短整数字节数'), '短整数型 → 2 字节').toBe('2')
+    expect(val('字节字节数'), '字节型 → 1 字节').toBe('1')
+    expect(val('字面量字节数'), '整数字面量按整数型 4 字节').toBe('4')
+    expect(val('文本字节数'), '文本仍 UTF-8（甲=3 + A=1）').toBe('4')
+    expect(val('组合长度'), '4+2+1').toBe('7')
+    expect(val('取整数'), '一基位置 1 读 int').toBe('123')
+    expect(val('取短整数'), '一基位置 5 读 short').toBe('456')
+    expect(val('取字节'), '一基位置 7 读 byte').toBe('78')
+    expect(val('省略位置'), '省略默认位置 1').toBe('123')
+    expect(val('长整数读回'), '取变量地址→指针到字节集→取字节集数据 完整往返').toBe('9876543210')
+    expect(val('小数印字'), 'float 按 ~7 位有效数字印，不带 double 噪声位').toBe('3.14159')
+
+    rmSync(dir, { recursive: true, force: true })
+  }, 180000)
 })

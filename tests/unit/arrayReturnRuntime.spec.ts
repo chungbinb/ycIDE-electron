@@ -83,7 +83,7 @@ describe('数组返回 ABI · 运行时', () => {
       '.局部变量 b, 字节集, , "0"',
       '.局部变量 t, 文本型, , "0"',
       '',
-      // —— 字节集数组变量：加入成员 / 下标读 / 成员数（到文本(字节集) 给的是 字节集:N{…} 形态）
+      // —— 字节集数组变量：加入成员 / 下标读 / 成员数（到文本(字节集) 按 UTF-8 解码为文本，照易语言语义）
       '加入成员 (b, 到字节集 (“A”))',
       '加入成员 (b, 到字节集 (“BC”))',
       say('字节集数组', ['到文本 (取数组成员数 (b))', '“|”', '到文本 (b [1])', '“/”', '到文本 (b [2])']),
@@ -106,8 +106,8 @@ describe('数组返回 ABI · 运行时', () => {
     const out = execFileSync(r.outputFile, [], { encoding: 'buffer', timeout: 30000 }).toString('utf-8')
     const val = (label: string) => (out.split('\n').find(l => l.startsWith(`${label}=`)) || '').trim().slice(label.length + 1)
 
-    expect(val('字节集数组'), '加入成员到字节集数组 → 元素各自独立、读回原值').toBe('2|字节集:1{65}/字节集:2{66,67}')
-    expect(val('显式分隔'), '分割字节集 显式分隔符').toBe('3|字节集:1{65}/字节集:1{67}')
+    expect(val('字节集数组'), '加入成员到字节集数组 → 元素各自独立、读回原值').toBe('2|A/BC')
+    expect(val('显式分隔'), '分割字节集 显式分隔符').toBe('3|A/C')
     expect(val('文本数组'), '加入成员 + 下标赋值（此前都编不过）').toBe('2|甲/丙')
 
     rmSync(dir, { recursive: true, force: true })

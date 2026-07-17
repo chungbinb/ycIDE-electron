@@ -398,6 +398,11 @@ const NUMERIC_LITERAL_RE = /^[+-]?[0-9０-９]+(?:[.．][0-9０-９]+)?$/
 const IDENTIFIER_RE = /^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/
 const CALL_HEAD_RE = /^([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)\s*[（(]/
 
+// 返回内存地址的命令：x64 下地址是 64 位，必须用 长整数型 变量接收。
+// 32 位易语言的老代码习惯用 整数型 接地址——在这里截断后再当指针用全是垃圾地址，
+// 故在问题面板提前拦截（编译期 compiler.ts 有同款硬拦截，两处文案保持一致）。
+const ADDRESS_RETURN_COMMANDS = new Set(['取变量地址', '取变量数据地址'])
+
 /**
  * 数字开头但不是合法数值字面量的"单词型"实参（如 1.txt、3x）：
  * 易语言标识符不能以数字开头，这必然是非法表达式（最常见是文本忘加引号）。
@@ -675,6 +680,22 @@ export function buildEditorDiagnosticsProblems(
             severity: 'error',
           })
         }
+      }
+    }
+
+    // 地址类命令的返回值必须用 长整数型 接收：x64 地址 64 位，落进更窄的类型会被截断成
+    // 无效地址（运行期指针到* 有可读性防护不至于崩，但数据必然读不回来）。
+    // 目标类型已知且不是 长整数型 → 报错；与命令参数检查同策略，右值须整体恰为一次调用。
+    if (assign && targetType && targetType !== '长整数型') {
+      const rhsTrim = assign.rhs.trim()
+      const head = rhsTrim.match(CALL_HEAD_RE)
+      if (head && ADDRESS_RETURN_COMMANDS.has(head[1]) && (rhsTrim.endsWith(')') || rhsTrim.endsWith('）'))) {
+        problems.push({
+          line: i + 1,
+          column: assign.targetColumn,
+          message: `“${head[1]}”返回 64 位地址（长整数型），变量“${assign.target}”是 ${targetType}，赋值会被截断成无效地址——请将变量类型改为 长整数型`,
+          severity: 'error',
+        })
       }
     }
 

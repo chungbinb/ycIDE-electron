@@ -2156,15 +2156,47 @@ extern "C" int krnln_IsDebugVer(...) {
 #endif
 }
 
-extern "C" const char* krnln_dir(const char* fileOrDirName, int /*attributes*/) {
-  std::wstring pattern = utf8ToWide(fileOrDirName ? fileOrDirName : "");
-  if (pattern.empty()) return keepUtf8("");
+// 寻找文件：首参非空=开新一轮（FindFirstFile），首参空/省略=续查上一轮（FindNextFile），
+// 找完返回空文本并收句柄——帮助语义就是这样一轮多次调用迭代目录。
+// 属性过滤照易语言实测：文件的特殊属性（只读1/隐藏2/系统4/子目录16/存档32）必须是请求掩码的
+// 子集才算命中——显式 0 只命中「无任何特殊属性」的普通文件（连存档文件都不算，易语言原版如此）；
+// 省略属性参数（转译器发 -1 哨兵）＝除子目录外所有文件（1|2|4|32）。
+static HANDLE g_dirFindHandle = INVALID_HANDLE_VALUE;
+static int g_dirFindMask = 0;
 
+static bool dirAttrsMatch(DWORD attrs, int mask) {
+  const DWORD special = FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM |
+                        FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_ARCHIVE;
+  DWORD want = 0;
+  if (mask & 1) want |= FILE_ATTRIBUTE_READONLY;
+  if (mask & 2) want |= FILE_ATTRIBUTE_HIDDEN;
+  if (mask & 4) want |= FILE_ATTRIBUTE_SYSTEM;
+  if (mask & 16) want |= FILE_ATTRIBUTE_DIRECTORY;
+  if (mask & 32) want |= FILE_ATTRIBUTE_ARCHIVE;
+  return (attrs & special & ~want) == 0;
+}
+
+extern "C" const char* krnln_dir(const char* fileOrDirName, int attributes) {
+  std::wstring pattern = utf8ToWide(fileOrDirName ? fileOrDirName : "");
   WIN32_FIND_DATAW findData{};
-  HANDLE h = FindFirstFileW(pattern.c_str(), &findData);
-  if (h == INVALID_HANDLE_VALUE) return keepUtf8("");
-  FindClose(h);
-  return keepWideAsUtf8(findData.cFileName);
+
+  if (!pattern.empty()) {
+    if (g_dirFindHandle != INVALID_HANDLE_VALUE) { FindClose(g_dirFindHandle); g_dirFindHandle = INVALID_HANDLE_VALUE; }
+    g_dirFindMask = attributes < 0 ? (1 | 2 | 4 | 32) : attributes;
+    HANDLE h = FindFirstFileW(pattern.c_str(), &findData);
+    if (h == INVALID_HANDLE_VALUE) return keepUtf8("");
+    g_dirFindHandle = h;
+    if (dirAttrsMatch(findData.dwFileAttributes, g_dirFindMask)) return keepWideAsUtf8(findData.cFileName);
+  } else if (g_dirFindHandle == INVALID_HANDLE_VALUE) {
+    return keepUtf8("");
+  }
+
+  while (FindNextFileW(g_dirFindHandle, &findData)) {
+    if (dirAttrsMatch(findData.dwFileAttributes, g_dirFindMask)) return keepWideAsUtf8(findData.cFileName);
+  }
+  FindClose(g_dirFindHandle);
+  g_dirFindHandle = INVALID_HANDLE_VALUE;
+  return keepUtf8("");
 }
 
 // ========================= 字节集 ABI v2 =========================
@@ -2319,33 +2351,58 @@ extern "C" void* krnln_bin(int repeatCount, const void* unitBin) {
   return ycBinRet(std::move(out));
 }
 
+// 指针到* 家族的可读性防护：地址不可读时返回零值/空，而不是让整个程序崩掉。
+// 典型踩法：x64 下地址是 64 位（取变量地址 返回 长整数型），从 32 位易语言移植的代码用
+// 整数型 变量接地址 → 截断成垃圾指针。逐内存区域查 MEM_COMMIT + 可读保护位。
+static bool ycMemReadable(const void* p, size_t len) {
+  if (!p) return false;
+  const unsigned char* cur = static_cast<const unsigned char*>(p);
+  const unsigned char* end = cur + (len ? len : 1);
+  while (cur < end) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(cur, &mbi, sizeof(mbi)) == 0) return false;
+    if (mbi.State != MEM_COMMIT) return false;
+    if (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) return false;
+    const DWORD readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+                           PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    if (!(mbi.Protect & readable)) return false;
+    cur = static_cast<const unsigned char*>(mbi.BaseAddress) + mbi.RegionSize;
+  }
+  return true;
+}
+
 extern "C" void* krnln_pbin(long long dataPtr, int dataLen) {
   if (dataPtr == 0 || dataLen <= 0) return ycBinRet(YcBin());
   const unsigned char* ptr = reinterpret_cast<const unsigned char*>(static_cast<intptr_t>(dataPtr));
+  if (!ycMemReadable(ptr, static_cast<size_t>(dataLen))) return ycBinRet(YcBin());
   return ycBinRet(YcBin(ptr, ptr + static_cast<size_t>(dataLen)));   // 内存块原样收，0 字节不再截断
 }
 
 extern "C" int krnln_p2int(long long dataPtr) {
   if (dataPtr == 0) return 0;
   const int* ptr = reinterpret_cast<const int*>(static_cast<intptr_t>(dataPtr));
+  if (!ycMemReadable(ptr, sizeof(int))) return 0;
   return *ptr;
 }
 
 extern "C" long long krnln_p2int64(long long dataPtr) {
   if (dataPtr == 0) return 0;
   const long long* ptr = reinterpret_cast<const long long*>(static_cast<intptr_t>(dataPtr));
+  if (!ycMemReadable(ptr, sizeof(long long))) return 0;
   return *ptr;
 }
 
 extern "C" float krnln_p2float(long long dataPtr) {
   if (dataPtr == 0) return 0.0f;
   const float* ptr = reinterpret_cast<const float*>(static_cast<intptr_t>(dataPtr));
+  if (!ycMemReadable(ptr, sizeof(float))) return 0.0f;
   return *ptr;
 }
 
 extern "C" double krnln_p2double(long long dataPtr) {
   if (dataPtr == 0) return 0.0;
   const double* ptr = reinterpret_cast<const double*>(static_cast<intptr_t>(dataPtr));
+  if (!ycMemReadable(ptr, sizeof(double))) return 0.0;
   return *ptr;
 }
 
@@ -2668,6 +2725,7 @@ extern "C" void* krnln_split(const char* text, const char* sep, int count) {
 extern "C" const char* krnln_pstr(long long ptr) {       // 帮助：参数为「长整数型」
   if (ptr == 0) return keepUtf8("");
   const char* p = reinterpret_cast<const char*>(static_cast<intptr_t>(ptr));
+  if (!ycMemReadable(p, 1)) return keepUtf8("");   // 只验首字节：截断/野指针大多整段未映射
   return keepUtf8(p ? p : "");
 }
 
@@ -2894,8 +2952,11 @@ extern "C" long long krnln_GetBinElement(const void* binData, int dataType, int 
   const YcBin& s = ycBinArg(binData);
   if (s.empty()) return 0;
 
-  if (startIndex < 0) startIndex = 0;
-  size_t start = static_cast<size_t>(startIndex);
+  // 帮助：「起始索引位置……索引值从 1 开始。如果被省略，默认为数值 1」——一基。
+  // 此前按 0 基偏移处理：位置 1 读 8 字节字节集的 #长整数型 变成要 9 字节 → 恒返回 0。
+  // 省略时通用编组发 0，同样落到钳位后的 1。
+  if (startIndex < 1) startIndex = 1;
+  size_t start = static_cast<size_t>(startIndex - 1);
   if (start >= s.size()) return 0;
 
   const unsigned char* ptr = s.data() + start;

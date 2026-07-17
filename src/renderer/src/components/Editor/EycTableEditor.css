@@ -2488,3 +2488,15 @@ tr.eyc-diff-deleted-placeholder-row:hover > td.eyc-diff-deleted-placeholder-cell
   background-clip: text;
   -webkit-text-fill-color: var(--syntax-variable-fill, currentColor);
 }
+
+/* AI diff 行里的 数据类型/备注 列：这两列作为 <td> 挂着上面的渐变字技术，
+   background-clip: text 会把**单元格自己的所有背景**（含 diff 的绿/蓝底色）一并剪进字形，
+   整格底色于是消失（其余列正常，正好只缺这两列）。diff 行内退回纯色文字、恢复正常裁剪，
+   行底色即完整；选中行没有此问题是因为它用 background 简写整组重置了这些长属性。 */
+tr.eyc-data-row.eyc-diff-highlight > td.eTypecolor,
+tr.eyc-data-row.eyc-diff-highlight > td.Remarkscolor {
+  background-image: none !important;
+  -webkit-background-clip: border-box !important;
+  background-clip: border-box !important;
+  -webkit-text-fill-color: currentColor !important;
+}
