@@ -2566,7 +2566,8 @@
           "name": "数组对应维的上限值",
           "type": "整数型",
           "optional": false,
-          "description": "。"
+          "description": "。本参数提供数组某维的成员上限值，多维数组按维顺序重复提供本参数（如 重定义数组 (数组, 假, 3, 4) 定义 3×4 二维数组）。本参数可以被重复添加。",
+          "repeatable": true
         }
       ],
       "returnType": "无返回值",
