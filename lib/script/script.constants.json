@@ -1,0 +1,13 @@
+{
+  "version": "1.0",
+  "library": "script",
+  "constants": [
+    {
+      "name": "无超时",
+      "englishName": "NoTimeOut",
+      "description": "用于设置脚本组件的「超时」属性，使脚本引擎的执行无超时限制。",
+      "type": "number",
+      "value": "-1"
+    }
+  ]
+}

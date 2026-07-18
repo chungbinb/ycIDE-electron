@@ -1644,12 +1644,20 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
           const text = tab ? tab.value : eycToInternalFormat(await readDiskText(f.fileName))
           if (!text) continue
           const form = forms.find(fm => fm.sourceFile === f.fileName.toLowerCase())
+          // 多窗口：其它窗口的窗名/控件名也是合法标识符（载入 (选题窗口, …)、跨窗控件访问），
+          // 并入已知集；本窗控件在前（重名时类型判定以本窗为准）。
+          const ownControls = form?.controls || []
+          const seenCtrlNames = new Set(ownControls.map(c => c.name))
+          const crossControls = forms
+            .filter(fm => fm !== form)
+            .flatMap(fm => fm.controls)
+            .filter(c => c.name && !seenCtrlNames.has(c.name) && (seenCtrlNames.add(c.name), true))
           const problems = sweepFileDiagnostics({
             text,
             catalogCommands: independentItems,
             dllCommands: dllItems,
             projectGlobalVarNames: globalNames,
-            windowControls: form?.controls || [],
+            windowControls: [...ownControls, ...crossControls],
             windowUnits,
           }).filter(p => p.severity === 'error')
           if (problems.length) out.push({ file: f.fileName, problems })
@@ -2674,12 +2682,24 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       return linkedSource === sourceFileName
     })
     if (matchedFormTab?.formData) {
-      return buildFrom(matchedFormTab.formData.name, matchedFormTab.formData.controls)
+      buildFrom(matchedFormTab.formData.name, matchedFormTab.formData.controls)
+    } else {
+      // 2) .efw 未打开：从读盘的项目窗口控件表按关联源文件名解析（用户即使不开设计器也能补全窗口成员）。
+      const diskEntry = projectWindowControlsMap.get(sourceFileName)
+      if (diskEntry) buildFrom(diskEntry.name, diskEntry.controls)
     }
 
-    // 2) .efw 未打开：从读盘的项目窗口控件表按关联源文件名解析（用户即使不开设计器也能补全窗口成员）。
-    const diskEntry = projectWindowControlsMap.get(sourceFileName)
-    if (diskEntry) return buildFrom(diskEntry.name, diskEntry.controls)
+    // 3) 多窗口：项目里其它窗口的窗名/控件名也是合法标识符（载入 (选题窗口, …)、跨窗控件访问）。
+    // 本窗条目在前（add 按 seen 去重，重名时本窗类型优先）。
+    for (const t of tabs) {
+      if (t.language !== 'efw' || !t.formData) continue
+      add(t.formData.name, '窗口')
+      for (const c of t.formData.controls || []) add(c.name, c.type, c.properties)
+    }
+    for (const [, entry] of projectWindowControlsMap) {
+      add(entry.name, '窗口')
+      for (const c of entry.controls || []) add(c.name, c.type, c.properties)
+    }
 
     return items
   }, [activeTab, tabs, projectWindowControlsMap])

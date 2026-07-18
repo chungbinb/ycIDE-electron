@@ -186,6 +186,19 @@
   border-color: var(--accent);
 }
 
+/* 两级分类下拉：组标题（核心组件/第三方组件）与型选项在深色主题下显式着色 */
+.vd-toolbox-category-select optgroup {
+  color: var(--text-secondary, var(--text-primary));
+  background: var(--bg-input, var(--bg-primary));
+  font-weight: 600;
+}
+
+.vd-toolbox-category-select option {
+  color: var(--text-primary);
+  background: var(--bg-input, var(--bg-primary));
+  font-weight: 400;
+}
+
 .vd-toolbox-icon-mode .vd-toolbox-list {
   display: flex;
   flex-wrap: wrap;

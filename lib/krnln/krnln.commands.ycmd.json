@@ -7320,6 +7320,24 @@
       ]
     },
     {
+      "commandId": "krnln.DestroyWin",
+      "displayName": "销毁",
+      "summary": "销毁指定的窗口。如果省略窗口参数，销毁当前代码所在的窗口（须在窗口的代码文件中使用）；销毁启动窗口将退出程序。也可以写作 窗口名.销毁 ()。",
+      "params": [
+        {
+          "name": "欲销毁的窗口",
+          "type": "窗口",
+          "optional": true,
+          "description": "，可以被省略。参数值指定欲销毁的窗口，省略时销毁当前代码所在的窗口。"
+        }
+      ],
+      "returnType": "无返回值",
+      "category": "其他",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    },
+    {
       "commandId": "krnln.iif",
       "displayName": "选择",
       "summary": "根据所提供参数的值，返回两部分中的其中一个。本命令为初级命令。",
