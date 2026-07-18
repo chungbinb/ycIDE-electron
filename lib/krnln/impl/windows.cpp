@@ -2488,10 +2488,14 @@ extern "C" int krnln_WriteFile(const char* fileName, const void* binData) {
 #define YC_VT_TEXT   7
 #define YC_VT_BIN    8
 #define YC_VT_ARY    9
+// 逻辑型必须有独立标签：变量侧是 1 字节 bool（mapTypeToVarCType），yc_vt_of 缺 bool 重载时
+// 经整型提升落到 int 重载 → 按 4 字节读写 1 字节对象（UBSan misaligned 崩溃 + 写侧踩邻近内存）。
+#define YC_VT_BOOL   10
 
 extern "C" void krnln_set(void* target, const void* value, int dataType) {
   if (!target || !value) return;
   switch (dataType) {
+    case YC_VT_BOOL:   *reinterpret_cast<bool*>(target) = *reinterpret_cast<const bool*>(value); break;
     case YC_VT_INT:    *reinterpret_cast<int*>(target) = *reinterpret_cast<const int*>(value); break;
     case YC_VT_INT64:  *reinterpret_cast<long long*>(target) = *reinterpret_cast<const long long*>(value); break;
     case YC_VT_SHORT:  *reinterpret_cast<short*>(target) = *reinterpret_cast<const short*>(value); break;
@@ -2511,15 +2515,67 @@ extern "C" void krnln_store(const void* value, void* target, int dataType) {
   krnln_set(target, value, dataType);
 }
 
-extern "C" void krnln_ReDim(void* arrayVar, int keepOld, int upperBound) {
-  if (!arrayVar || upperBound < 0) return;
-  auto* arr = reinterpret_cast<std::vector<long long>*>(arrayVar);
-  size_t newSize = static_cast<size_t>(upperBound + 1);
-  if (keepOld) {
-    arr->resize(newSize);
-  } else {
-    arr->assign(newSize, 0);
+// ============ 多维数组维度登记表 ============
+// 键=vector 对象地址（数组变量按引用跨 TU 传递，地址在其生命周期内稳定）。局部数组析构不专门清表：
+// 每次读取先校验「维度乘积==当前成员数」，失配即弃用并清除该项——这同时挡下两类脏数据：
+// ① 地址复用继承到的旧维度（同址且乘积恰好相同的碰撞按同形状对待，读写不越界、无实害）；
+// ② 加入/插入/删除成员改变了成员数 → 乘积失配 → 数组自动退化为一维（这些命令本就按成员顺序号操作）。
+static std::unordered_map<const void*, std::vector<long long>> g_ycAryDims;
+static bool yc_ary_dims_fetch(const void* arrayVar, std::vector<long long>& out) {
+  auto it = g_ycAryDims.find(arrayVar);
+  if (it == g_ycAryDims.end()) return false;
+  auto* arr = reinterpret_cast<const std::vector<long long>*>(arrayVar);
+  long long total = 1;
+  for (long long d : it->second) total *= d;
+  if (total != static_cast<long long>(arr->size())) {
+    g_ycAryDims.erase(it);
+    return false;
   }
+  out = it->second;
+  return true;
+}
+
+// 重定义数组(数组, 保留, 维1, 维2…)：各维上限值即该维成员数（易语言语义：重定义数组(a,假,5) → 5 个成员，
+// 不是 0..5 共 6 个），多维成员总数=各维乘积、行主序扁平存储，维度进登记表供 取数组下标/链式下标折算。
+extern "C" void krnln_ReDimEx(void* arrayVar, int keepOld, const long long* dims, int dimCount) {
+  if (!arrayVar || !dims || dimCount <= 0) return;
+  long long total = 1;
+  for (int i = 0; i < dimCount; i++) {
+    if (dims[i] <= 0) { total = 0; break; }
+    total *= dims[i];
+  }
+  auto* arr = reinterpret_cast<std::vector<long long>*>(arrayVar);
+  if (keepOld) arr->resize(static_cast<size_t>(total), 0);
+  else arr->assign(static_cast<size_t>(total), 0);
+  if (dimCount > 1 && total > 0) g_ycAryDims[arrayVar] = std::vector<long long>(dims, dims + dimCount);
+  else g_ycAryDims.erase(arrayVar);
+}
+
+// 旧一维形态（兼容既有转译缓存产物；此前实现按 上限+1 多分配了一个成员，已按易语言对齐）。
+extern "C" void krnln_ReDim(void* arrayVar, int keepOld, int upperBound) {
+  if (upperBound < 0) return;
+  long long d = upperBound;
+  krnln_ReDimEx(arrayVar, keepOld, &d, 1);
+}
+
+// 静态声明多维数组（如 .局部变量 矩阵, 整数型, , "3,4"）的维度登记：转译器在声明语句后发出。
+extern "C" void krnln_AryRegDims(void* arrayVar, const long long* dims, int dimCount) {
+  if (!arrayVar || !dims || dimCount <= 1) return;
+  g_ycAryDims[arrayVar] = std::vector<long long>(dims, dims + dimCount);
+}
+
+// 多维链式下标 → 一基线性下标（行主序）。维度未知（一维/已退化）或组数与维数不符时，按首个下标当线性下标。
+extern "C" long long krnln_AryLinIdx(void* arrayVar, const long long* idx, int n) {
+  if (!arrayVar || !idx || n <= 0) return 0;
+  std::vector<long long> dims;
+  if (!yc_ary_dims_fetch(arrayVar, dims) || static_cast<int>(dims.size()) != n) return idx[0];
+  long long lin = 0;
+  for (int i = 0; i < n; i++) {
+    long long stride = 1;
+    for (size_t d = static_cast<size_t>(i) + 1; d < dims.size(); d++) stride *= dims[d];
+    lin += (i == n - 1) ? idx[i] : (idx[i] - 1) * stride;
+  }
+  return lin;
 }
 
 extern "C" int krnln_GetAryElementCount(void* arrayVar) {
@@ -2528,9 +2584,18 @@ extern "C" int krnln_GetAryElementCount(void* arrayVar) {
   return static_cast<int>(arr->size());
 }
 
-extern "C" int krnln_UBound(void* arrayVar, int /*dimension*/) {
-  int count = krnln_GetAryElementCount(arrayVar);
-  return count > 0 ? count - 1 : -1;
+// 取数组下标(数组, 维)：易语言返回该维的成员数（如 重定义数组(a,假,6) 后 取数组下标(a,1)=6）。
+// 多维查登记表；一维=成员总数（加入成员后随成员数增长）；维序号超界返回 0。
+extern "C" int krnln_UBound(void* arrayVar, int dimension) {
+  if (!arrayVar) return 0;
+  if (dimension < 1) dimension = 1;
+  std::vector<long long> dims;
+  if (yc_ary_dims_fetch(arrayVar, dims) && dims.size() >= 2) {
+    if (dimension > static_cast<int>(dims.size())) return 0;
+    return static_cast<int>(dims[static_cast<size_t>(dimension) - 1]);
+  }
+  if (dimension > 1) return 0;
+  return krnln_GetAryElementCount(arrayVar);
 }
 
 extern "C" void krnln_CopyAry(void* dstArrayVar, void* srcArrayVar) {
@@ -2538,6 +2603,10 @@ extern "C" void krnln_CopyAry(void* dstArrayVar, void* srcArrayVar) {
   auto* dst = reinterpret_cast<std::vector<long long>*>(dstArrayVar);
   auto* src = reinterpret_cast<std::vector<long long>*>(srcArrayVar);
   *dst = *src;
+  // 维度随数据一起复制（源无多维登记则目标也清除，保持一致）
+  std::vector<long long> dims;
+  if (yc_ary_dims_fetch(srcArrayVar, dims) && dims.size() >= 2) g_ycAryDims[dstArrayVar] = dims;
+  else g_ycAryDims.erase(dstArrayVar);
 }
 
 extern "C" void krnln_AddElement(void* arrayVar, long long value) {
@@ -2546,21 +2615,26 @@ extern "C" void krnln_AddElement(void* arrayVar, long long value) {
   arr->push_back(value);
 }
 
+// 插入成员(数组, 位置, 值)：「欲插入的位置」为一基（易语言：插入成员(a,3,x) 把 x 插成第 3 个成员）。
+// 此前按 0 基处理，插到了后一位。位置越界钳位到首/尾。
 extern "C" void krnln_InsElement(void* arrayVar, int index, long long value) {
   if (!arrayVar) return;
   auto* arr = reinterpret_cast<std::vector<long long>*>(arrayVar);
-  if (index < 0) index = 0;
-  if (static_cast<size_t>(index) > arr->size()) index = static_cast<int>(arr->size());
-  arr->insert(arr->begin() + index, value);
+  int pos0 = index - 1;
+  if (pos0 < 0) pos0 = 0;
+  if (static_cast<size_t>(pos0) > arr->size()) pos0 = static_cast<int>(arr->size());
+  arr->insert(arr->begin() + pos0, value);
 }
 
+// 删除成员(数组, 位置, 数目)：「欲删除的位置」为一基（易语言：删除成员(a,3,1) 删第 3 个成员）。
 extern "C" int krnln_RemoveElement(void* arrayVar, int index, int removeCount) {
   if (!arrayVar) return 0;
   auto* arr = reinterpret_cast<std::vector<long long>*>(arrayVar);
-  if (index < 0 || static_cast<size_t>(index) >= arr->size()) return 0;
+  int pos0 = index - 1;
+  if (pos0 < 0 || static_cast<size_t>(pos0) >= arr->size()) return 0;
   if (removeCount <= 0) removeCount = 1;
 
-  size_t begin = static_cast<size_t>(index);
+  size_t begin = static_cast<size_t>(pos0);
   size_t end = std::min(arr->size(), begin + static_cast<size_t>(removeCount));
   arr->erase(arr->begin() + begin, arr->begin() + end);
   return 1;
@@ -3365,6 +3439,7 @@ extern "C" int krnln_InputBox(const char* prompt,
 extern "C" void krnln_XchgVar(void* a, void* b, int dataType) {
   if (!a || !b) return;
   switch (dataType) {
+    case YC_VT_BOOL:   std::swap(*reinterpret_cast<bool*>(a), *reinterpret_cast<bool*>(b)); break;
     case YC_VT_INT:    std::swap(*reinterpret_cast<int*>(a), *reinterpret_cast<int*>(b)); break;
     case YC_VT_INT64:  std::swap(*reinterpret_cast<long long*>(a), *reinterpret_cast<long long*>(b)); break;
     case YC_VT_SHORT:  std::swap(*reinterpret_cast<short*>(a), *reinterpret_cast<short*>(b)); break;

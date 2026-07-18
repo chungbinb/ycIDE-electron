@@ -2454,6 +2454,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       let depth = -1
       for (const seg of map.get(lineIndex) || []) if (seg.flowKind === 'judge' && seg.depth > depth) depth = seg.depth
       if (depth < 0) return null
+      // 行被比该判断更深的其他结构包裹（如 默认区里刚展开的 如果真 的 body）时，最内层包裹不是判断——
+      // 此处键入「判断」应在深层结构体内新建嵌套判断结构，绝不能当外层判断的 case 上提
+      //（上提会把 判断 插到 默认 之前、把深层结构挤下移，嵌套整体重排破坏；用户实测报障场景）。
+      const maxDepth = Math.max(...(map.get(lineIndex) || []).map(seg => seg.depth))
+      if (maxDepth > depth) return null
       let startLine = -1
       for (let i = lineIndex - 1; i >= 0; i--) {
         if ((map.get(i) || []).some(seg => seg.depth === depth && seg.type === 'start' && seg.flowKind === 'judge')) { startLine = i; break }
@@ -5444,7 +5449,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           // 子程序仅剩保底空行时，不允许再删掉它。
           return
         }
-        deleteIndex = nextOrdinary
+        // 「保留锚点行、改删下一普通行」只在两行等价（下一普通行也是空行）时成立；
+        // 下一普通行有内容（流程头/正文）时重定向会把内容行误删——如果真头被删、结束行成孤儿显露。
+        // 此时删空锚点行自身：下一普通行上移成为新锚点，子程序仍保有普通行，保底不破。
+        if ((latestLines[nextOrdinary] || '').trim() === '') {
+          deleteIndex = nextOrdinary
+        }
         focusLineAfter = lineIndex
       }
       suppressInlineBlurCommit()
@@ -5963,6 +5973,53 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   ])
 
   const applyEmptyDeleteKey = useCallback((key: 'Backspace' | 'Delete'): { handled: boolean; preventDefault: boolean } => {
+    // 非空代码行行首退格：上一源行是纯空白行时删除该空白行、当前行整体上移一行（此前行首退格无任何处理、毫无反应）。
+    // 只吃真空白行——带零宽流程标记的行 trim 后非空不会误删；声明/表格行非空白同理天然排除。
+    if (key === 'Backspace' && editCell && editCell.cellIndex < 0 && editCell.paramIdx === undefined
+      && !editCell.isVirtual && editVal.trim() !== '') {
+      const inp = inputRef.current
+      if (!inp || inp.selectionStart !== 0 || inp.selectionEnd !== 0) return { handled: false, preventDefault: false }
+      const curLi = editCell.lineIndex
+      const latestLines = prevRef.current.split('\n')
+      if (curLi <= 0 || (latestLines[curLi - 1] ?? '').trim() !== '') return { handled: false, preventDefault: false }
+      // 最小结构体占位保护（与下方空行路径的保护同判据）：上一空白行是结构体内唯一的最小 body 占位
+      //（上紧邻头/分支标记、下紧邻本结构的分支/结束标记，当前行即那个标记行）时不删，保持结构可编辑。
+      {
+        const { map } = computeFlowLines(
+          latestLines.map((codeLine, i) => ({ kind: 'codeline', rows: [], codeLine, lineIndex: i } as RenderBlock)),
+        )
+        const prevSegs = map.get(curLi - 1) || []
+        if (prevSegs.length > 0 && !prevSegs.some(seg => seg.type === 'start')) {
+          const curSegs = map.get(curLi) || []
+          const aboveSegs = map.get(curLi - 2) || []
+          const curIsMarker = curSegs.some(seg => seg.type === 'branch' || seg.type === 'end')
+          const aboveIsMarker = aboveSegs.some(seg => seg.type === 'start' || seg.type === 'branch' || seg.type === 'end')
+          if (curIsMarker && aboveIsMarker) return { handled: true, preventDefault: true }
+        }
+      }
+      suppressInlineBlurCommit()
+      setAcVisible(false)
+      pushUndo(prevRef.current)
+      // 编辑中的行按 live 语义写回（防 24ms 节流未刷的按键丢失），再删上一空白行
+      latestLines[curLi] = flowIndentRef.current + flowMarkRef.current + restoreJudgeStartAlias(editVal)
+      latestLines.splice(curLi - 1, 1)
+      const nt = latestLines.join('\n')
+      flowMarkRef.current = ''
+      flushSync(() => {
+        applyTextChange(nt)
+        flowIndentRef.current = ''
+        startEditLine(curLi - 1, undefined, undefined, undefined, true)
+      })
+      const freshInput = inputRef.current
+      if (freshInput) {
+        try { freshInput.focus({ preventScroll: true }) } catch { freshInput.focus() }
+        freshInput.setSelectionRange(0, 0)
+      } else {
+        focusInlineInputAt(0)
+      }
+      return { handled: true, preventDefault: true }
+    }
+
     if (!(editCell && editCell.cellIndex < 0 && editVal.trim() === '' && lines.length > 1)) {
       return { handled: false, preventDefault: false }
     }
@@ -6006,7 +6063,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     applyEmptyCodeLineDelete({ action: deleteAction, lineIndex: li, isVirtual: editCell.isVirtual })
     return { handled: true, preventDefault: true }
-  }, [applyCodeLineNavigation, applyEmptyCodeLineDelete, editCell, editVal, getEmptyCodeLineDeleteAction, lines])
+  }, [applyCodeLineNavigation, applyEmptyCodeLineDelete, applyTextChange, editCell, editVal, focusInlineInputAt, getEmptyCodeLineDeleteAction, lines, pushUndo, restoreJudgeStartAlias, startEditLine])
 
   // 可编辑行序列（文档序）：非虚拟代码行 + 表格非表头行（含该行可编辑单元格清单），
   // 供方向键在 代码行↔表格单元格 之间穿行导航使用。

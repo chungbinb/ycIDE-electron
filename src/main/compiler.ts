@@ -381,7 +381,10 @@ interface TranspileCacheFile {
 
 // 29: 条件表达式括号配对修复 + 生成代码每行加 /*@eyc行号*/ 来源标记（旧缓存产物没有标记，报错回溯不到）
 // 30: ÷ 相除改生成双精度除法（旧产物里是截断的整数除法）+ 整体括号表达式改为递归翻译
-const TRANSPILE_CACHE_VERSION = 35
+// 36: yc_vt_of 补 bool 重载（YC_VT_BOOL）——旧产物里逻辑型走 int 标签，krnln_set 族按 4 字节读写 1 字节 bool 会崩
+// 37: 多维数组（重定义数组可重复维参/取数组下标按维/链式下标运行时折算）——prelude 新增 krnln_ReDimEx 等声明与 yc_ary_lin
+// 38: 真/假/且/或 裸词替换改为引号感知——旧产物字符串字面量里的 真/假 被改写成 1/0
+const TRANSPILE_CACHE_VERSION = 38
 
 interface BuildArtifactCacheFile {
   version: number
@@ -3730,7 +3733,10 @@ function rewriteArrayIndexOnce(
     // \u6d88\u8d39\u5230\u6700\u540e\u4e00\u4e2a\u4f7f\u7528\u7684\u62ec\u53f7\u7ec4\u672b\u5c3e\uff08\u591a\u4f59\u7684\u76f8\u90bb\u7ec4\u4e0d\u541e\u2014\u2014\u4e0a\u9762\u5df2\u6821\u9a8c\u7ec4\u6570\u4e00\u81f4\uff09
     const consumedEnd = lastEnd
     const idxParts = groups.map(g => translateExpressionToC(g, commandMap, directCallables, variableTypeResolver))
-    const linear = buildAryLinearIndexExpr(idxParts, info.dims)
+    // \u7ef4\u5ea6\u5c3a\u5bf8\u7f16\u8bd1\u671f\u672a\u77e5\uff08\u91cd\u5b9a\u4e49\u6570\u7ec4 \u7684\u591a\u7ef4\u5f62\u6001 [0\u00d7N]\uff09\u2192 \u8fd0\u884c\u65f6\u6309\u767b\u8bb0\u8868\u6298\u7b97\u7ebf\u6027\u4e0b\u6807
+    const linear = info.dims.length > 1 && info.dims.some(d => !(d > 0))
+      ? `yc_ary_lin(${name}, { ${idxParts.map(p => `(long long)(${p})`).join(', ')} })`
+      : buildAryLinearIndexExpr(idxParts, info.dims)
     const ref = `yc_ary_at(${name}, ${linear})`
     const kind = arrayElemKindOf(info)
     const wrapped = kind === 'f64' ? `yc_f64_from_bits(${ref})`
@@ -3832,18 +3838,45 @@ function rewriteArrayIndexRefs(
   return cur
 }
 
+/** 只对字符串字面量【之外】的片段应用替换（引号感知：直引号 "…" 与全角 “…” 两族）。
+ * 真/假、且/或 这类裸词替换若吃进字面量会把用户文本改掉——用户实测：显示文本
+ * “重定义数组 (a, 假, 5)” 被印成 “(a, 0, 5)”、真 被印成 1。 */
+function applyOutsideStringLiterals(expr: string, fn: (segment: string) => string): string {
+  let out = ''
+  let seg = ''
+  let inQuote = false
+  let quoteClose = ''
+  for (const ch of expr) {
+    if (inQuote) {
+      out += ch
+      if (ch === quoteClose) inQuote = false
+      continue
+    }
+    if (ch === '"' || ch === '“') {
+      out += fn(seg)
+      seg = ''
+      out += ch
+      inQuote = true
+      quoteClose = ch === '"' ? '"' : '”'
+      continue
+    }
+    seg += ch
+  }
+  return out + fn(seg)
+}
+
 function replaceBooleanLiterals(expr: string): string {
-  return expr
-    .replace(/(^|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])真(?=$|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])/g, '$11')
-    .replace(/(^|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])假(?=$|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])/g, '$10')
+  return applyOutsideStringLiterals(expr, segment => segment
+    .replace(/(^|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])真(?=$|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])/g, '$11')
+    .replace(/(^|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])假(?=$|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])/g, '$10'))
 }
 
 function replaceLogicalOperatorAliases(expr: string): string {
-  return expr
-    .replace(/(^|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])且(?=$|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])/g, '$1&&')
-    .replace(/(^|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])或(?=$|[^\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_])/g, '$1||')
+  return applyOutsideStringLiterals(expr, segment => segment
+    .replace(/(^|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])且(?=$|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])/g, '$1&&')
+    .replace(/(^|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])或(?=$|[^一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])/g, '$1||')
     .replace(/\bAnd\b/gi, '&&')
-    .replace(/\bOr\b/gi, '||')
+    .replace(/\bOr\b/gi, '||'))
 }
 
 // 控件属性【读取】：`控件名.属性` → 声明式 get 模板（按控件类型键控派发）。
@@ -4677,8 +4710,7 @@ const YCMD_ARRAY_PARAM_KINDS: Record<string, Array<'arrayptr' | 'binref' | 'int'
   krnln_RemoveElement: ['arrayptr', 'int', 'int'],
   krnln_RemoveAll: ['arrayptr'],
   krnln_GetAryElementCount: ['arrayptr'],
-  krnln_UBound: ['arrayptr', 'int'],
-  krnln_ReDim: ['arrayptr', 'int', 'int'],
+  // 重定义数组/取数组下标 已改走 YCMD_CUSTOM_NATIVE_EXPRS（可重复维参/运行时维度），不在此表。
   krnln_CopyAry: ['arrayptr', 'arrayptr'],
   krnln_SortAry: ['arrayptr', 'int'],
 }
@@ -5039,6 +5071,36 @@ const YCMD_CUSTOM_NATIVE_EXPRS: Record<string, (args: string[], name: string, co
   spec_GetVarDataAddr: (args, name) => {
     const t = requireVarArg(args[0] || '', name)
     return `spec_GetVarDataAddr((const void*)&${t}, yc_vt_of(${t}))`
+  },
+  // 重定义数组(数组变量, 是否保留, 维1, 维2…)：易语言「数组对应维的上限值」可重复（多维），
+  // 成员总数=各维乘积、行主序扁平。通用编组是定长三参表达不了；定制成 krnln_ReDimEx(数组, 保留, 维数组, 维数)，
+  // 运行时把维度进登记表。转译期同步更新该数组的维度形态：多维置为 [0×N]（尺寸交运行时，
+  // 后续 数组[i][j] 链式下标按登记表折算——重定义可在分支里发生，编译期折算不可靠）；一维回 []（动态）。
+  krnln_ReDim: (args, name, commandMap, directCallables) => {
+    const t = (args[0] || '').trim()
+    const info = currentTranspileArrayVars.get(t)
+    if (!info) {
+      throw new Error(`命令“${name}”需要数组变量作为第一个参数，但收到：${t || '(空)'}`)
+    }
+    const keep = (args[1] || '').trim() ? formatArgForC(args[1], commandMap, directCallables) : '0'
+    const dimArgs = args.slice(2).map(a => (a ?? '').trim()).filter(a => a !== '')
+    if (dimArgs.length === 0) {
+      throw new Error(`命令“${name}”缺少「数组对应维的上限值」参数`)
+    }
+    const dimExprs = dimArgs.map(a => `(long long)(${formatArgForC(a, commandMap, directCallables)})`)
+    currentTranspileArrayVars.set(t, { elemType: info.elemType, dims: dimArgs.length > 1 ? dimArgs.map(() => 0) : [] })
+    return `([&]() -> int { long long __yc_redims[] = { ${dimExprs.join(', ')} }; krnln_ReDimEx((void*)&${t}, (int)(${keep}), __yc_redims, ${dimArgs.length}); return 0; })()`
+  },
+  // 取数组下标(数组, 维)：易语言返回该维的成员数（重定义数组(a,假,6) 后 取数组下标(a,1)=6）。
+  // 恒走运行时（登记表/一维成员总数）：加入成员等会让成员数漂移，编译期常量折算会说谎。
+  krnln_UBound: (args, name, commandMap, directCallables) => {
+    const t = (args[0] || '').trim()
+    if (!currentTranspileArrayVars.has(t)) {
+      throw new Error(`命令“${name}”需要数组变量作为第一个参数，但收到：${t || '(空)'}`)
+    }
+    const dimRaw = (args[1] || '').trim()
+    const dimExpr = dimRaw === '' ? '1' : `(int)(${formatArgForC(dimRaw, commandMap, directCallables)})`
+    return `krnln_UBound((void*)&${t}, ${dimExpr})`
   },
   // 到字节集(通用型)：见上「类型分诊族」。数组参数帮助虽允许（数值型数组），元素语义类型只在
   // 转译期可知且此处拿不到重载可分的表达，暂不支持——友好报错好过静默给出结构体的字节垃圾。
@@ -5599,6 +5661,12 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '    if (idx1 < 1 || (size_t)idx1 > a.size()) { yc_ary_dummy_slot = 0; return yc_ary_dummy_slot; }\n'
   result += '    return a[(size_t)(idx1 - 1)];\n'
   result += '}\n\n'
+  // 多维数组运行时支持（重定义数组 可重复维参 / 取数组下标 按维 / 链式下标运行时折算，维度登记表在 krnln）
+  result += 'extern "C" void krnln_ReDimEx(void* arrayVar, int keepOld, const long long* dims, int dimCount);\n'
+  result += 'extern "C" void krnln_AryRegDims(void* arrayVar, const long long* dims, int dimCount);\n'
+  result += 'extern "C" long long krnln_AryLinIdx(void* arrayVar, const long long* idx, int n);\n'
+  result += 'extern "C" int krnln_UBound(void* arrayVar, int dimension);\n'
+  result += 'static inline long long yc_ary_lin(std::vector<long long>& a, std::initializer_list<long long> idx) { return krnln_AryLinIdx((void*)&a, idx.begin(), (int)idx.size()); }\n\n'
   // 浮点族数组元素按 double 位模式存进 vector<long long>，读写经位转换
   result += 'static inline long long yc_f64_bits(double v) { long long r; memcpy(&r, &v, 8); return r; }\n'
   result += 'static inline double yc_f64_from_bits(long long b) { double r; memcpy(&r, &b, 8); return r; }\n\n'
@@ -5647,8 +5715,13 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   // 字节集/数组的真实 ID 我们没有确证，不在这里瞎认领。
   result += '#define YC_VT_INT 1\n#define YC_VT_INT64 2\n#define YC_VT_SHORT 3\n#define YC_VT_BYTE 4\n'
   result += '#define YC_VT_FLOAT 5\n#define YC_VT_DOUBLE 6\n#define YC_VT_TEXT 7\n#define YC_VT_BIN 8\n#define YC_VT_ARY 9\n'
+  result += '#define YC_VT_BOOL 10\n'
   // 标签由 C++ 重载解析得出，转译期不必再查一次变量类型表；不支持的类型直接编译失败（诚实），
-  // 不会静默按错类型写内存。逻辑型/整数型同为 int，赋值与交换的行为本就一致，不必区分。
+  // 不会静默按错类型写内存。
+  // 逻辑型必须有独立 bool 重载：变量侧是 1 字节 bool（mapTypeToVarCType），缺此重载时 bool 经
+  // 整型提升落到 int 重载 → krnln_set 族按 4 字节读写 1 字节对象（UBSan misaligned 崩溃+踩邻近内存；
+  // 用户实测 连续赋值(真, 逻辑1, 逻辑2) 即崩）。
+  result += 'static inline int yc_vt_of(bool) { return YC_VT_BOOL; }\n'
   result += 'static inline int yc_vt_of(int) { return YC_VT_INT; }\n'
   result += 'static inline int yc_vt_of(long long) { return YC_VT_INT64; }\n'
   result += 'static inline int yc_vt_of(short) { return YC_VT_SHORT; }\n'
@@ -7069,6 +7142,11 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         }
         const dimTotal = dims.dims.reduce((acc, n) => acc * n, 1)
         emitSubLine(`std::vector<long long> ${varName}${dims.dims.length > 0 ? `(${dimTotal}, 0)` : ''};`)
+        // 静态多维声明进运行时维度登记表：数组作参数传给子程序后（转译期维度信息丢失），
+        // 取数组下标/链式下标 仍能按登记表拿到各维尺寸。
+        if (dims.dims.length > 1) {
+          emitSubLine(`{ static const long long __yc_decl_dims[] = { ${dims.dims.map(n => `${n}LL`).join(', ')} }; krnln_AryRegDims((void*)&${varName}, __yc_decl_dims, ${dims.dims.length}); }`)
+        }
         currentTranspileArrayVars.set(varName, { elemType: varType, dims: dims.dims })
         continue
       }
@@ -7255,7 +7333,10 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
             throwSourceError(lineIndex + 1, `数组“${idxAssignTarget.name}”是 ${expectDims} 维，但下标给了 ${idxAssignTarget.indexExprs.length} 组`)
           }
           const idxParts = idxAssignTarget.indexExprs.map(g => translateExpressionToC(g, commandMap, directCallables, resolveVisibleVarType))
-          const linear = buildAryLinearIndexExpr(idxParts, info.dims)
+          // 维度尺寸编译期未知（重定义数组 的多维形态 [0×N]）→ 运行时按登记表折算线性下标
+          const linear = info.dims.length > 1 && info.dims.some(d => !(d > 0))
+            ? `yc_ary_lin(${idxAssignTarget.name}, { ${idxParts.map(p => `(long long)(${p})`).join(', ')} })`
+            : buildAryLinearIndexExpr(idxParts, info.dims)
           const rhsC = translateExpressionToC(idxAssignTarget.rhs, commandMap, directCallables, resolveVisibleVarType)
           const kind = arrayElemKindOf(info)
           // text/bin 与 mapYcmdArrayElemValueParam 同策：先显式转到指针类型再堆拷贝存指针位模式。
