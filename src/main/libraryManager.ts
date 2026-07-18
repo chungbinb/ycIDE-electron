@@ -102,11 +102,50 @@ export interface LibraryWindowUnit {
   properties: LibraryWindowUnitProperty[]
   events: LibraryWindowUnitEvent[]
   libraryName: string
-  /** 组件箱分类（设计器工具箱分组显示），缺省归"通用Win32" */
+  /** 是否来自核心支持库（krnln）；工具箱第一层「核心组件 / 第三方组件」的判定依据 */
+  isCore: boolean
+  /** 组件箱分类·第二层「型」（Win32控件 / GDI控件 / WebView2控件 / 功能组件…），设计器工具箱分组显示 */
   toolboxCategory: string
 }
 
-export const DEFAULT_TOOLBOX_CATEGORY = '通用Win32'
+/** 工具箱第二层「型」缺省值：有窗口类名的可视控件默认归 Win32控件 */
+export const DEFAULT_TOOLBOX_CATEGORY = 'Win32控件'
+/** GDI 自绘控件分类 */
+const TOOLBOX_CATEGORY_GDI = 'GDI控件'
+/** 非可视功能组件分类（无窗口类名，如时钟 / 通用对话框 / 菜单 / 字体等） */
+const TOOLBOX_CATEGORY_FUNCTIONAL = '功能组件'
+/** 核心库中按 GDI 自绘的组件（英文名）——画板 DrawPanel、外形框 ShapeBox */
+const CORE_GDI_UNIT_ENGLISH_NAMES = new Set(['DrawPanel', 'ShapeBox'])
+/** 旧分类值 → 新「型」名的归一化映射（兼容早期 manifest 声明） */
+const TOOLBOX_CATEGORY_ALIASES: Record<string, string> = {
+  '通用Win32': 'Win32控件',
+  'WebView2': 'WebView2控件',
+}
+
+/** 归一化工具箱「型」名：去空白 + 旧值别名映射；空串表示未声明 */
+function normalizeToolboxCategory(value: unknown): string {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (!text) return ''
+  return TOOLBOX_CATEGORY_ALIASES[text] || text
+}
+
+/**
+ * 定稿窗口组件的工具箱「型」（第二层分类）。
+ * 优先级：单元显式声明 > 无窗口类名判「功能组件」 > 核心库 GDI 名单判「GDI控件」 > 缺省「Win32控件」。
+ * 第三方支持库通过在 windowUnits[].toolboxCategory 显式声明自己的型（如「WebView2控件」）即可自动归入对应子分类。
+ */
+function resolveToolboxCategory(params: {
+  explicit: unknown
+  className: string
+  englishName: string
+  isCore: boolean
+}): string {
+  const explicit = normalizeToolboxCategory(params.explicit)
+  if (explicit) return explicit
+  if (!params.className.trim()) return TOOLBOX_CATEGORY_FUNCTIONAL
+  if (params.isCore && CORE_GDI_UNIT_ENGLISH_NAMES.has(params.englishName)) return TOOLBOX_CATEGORY_GDI
+  return DEFAULT_TOOLBOX_CATEGORY
+}
 
 export interface LibraryInfo {
   name: string
@@ -202,10 +241,10 @@ const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
   'impl/macos.mm': '798149470018bf45a3e996d82db1db41f473f6a6aca2fd3badf7b8ad1538b4ac',
   'impl/pinyin-table.inc': 'dd70222f361e247007abaa4a5c441d9be2f5d54bfa89a777624ef2a52c93f504',
   'impl/windows.cpp': 'fab16359cada73317ecc581d5b6d8a99a14dc6595973ca19dab14f9b1fcc5f69',
-  'krnln.commands.ycmd.json': 'ccc29b5c87a093d070a4560fc5cf33bef2969ccce14aaf513118fc835defd73f',
+  'krnln.commands.ycmd.json': '016b0c3c46ca466dd82da455691508e8eccc52a1dad825909773ae125b5182d0',
   'krnln.constants.json': '02e83c81be209c290b335be9daec43df9fa23f5035e204b19280232b7fc894c3',
   'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
-  'window-units.json': '13e5686b5c6adcd3395d66b4b236cbf9c455cef21c5472f44417d64d69049f75',
+  'window-units.json': '2eee57260482dbb38d3ed065a142888350e3d5029354eadac9a90ce254e79e26',
 }
 
 const DEFAULT_PROTOCOL_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [
@@ -707,24 +746,28 @@ class LibraryManager {
 
   private parseWindowUnits(value: unknown, libraryName: string): LibraryWindowUnit[] {
     if (!Array.isArray(value)) return []
+    const isCore = this.isCore(libraryName)
     return value
       .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
-      .map(item => ({
-        name: typeof item.name === 'string' ? item.name.trim() : '',
-        englishName: typeof item.englishName === 'string' ? item.englishName.trim() : '',
-        description: typeof item.description === 'string' ? item.description.trim() : '',
-        className: typeof item.className === 'string' ? item.className.trim() : '',
-        style: typeof item.style === 'string' ? item.style.trim() : '',
-        iconFileName: typeof item.iconFileName === 'string'
-          ? item.iconFileName.trim()
-          : (typeof item.icon === 'string' ? item.icon.trim() : ''),
-        properties: mergeWithFixedCommonProperties(this.parseWindowUnitProperties(item.properties)),
-        events: this.parseWindowUnitEvents(item.events),
-        libraryName,
-        toolboxCategory: typeof item.toolboxCategory === 'string' && item.toolboxCategory.trim()
-          ? item.toolboxCategory.trim()
-          : DEFAULT_TOOLBOX_CATEGORY,
-      }))
+      .map(item => {
+        const englishName = typeof item.englishName === 'string' ? item.englishName.trim() : ''
+        const className = typeof item.className === 'string' ? item.className.trim() : ''
+        return {
+          name: typeof item.name === 'string' ? item.name.trim() : '',
+          englishName,
+          description: typeof item.description === 'string' ? item.description.trim() : '',
+          className,
+          style: typeof item.style === 'string' ? item.style.trim() : '',
+          iconFileName: typeof item.iconFileName === 'string'
+            ? item.iconFileName.trim()
+            : (typeof item.icon === 'string' ? item.icon.trim() : ''),
+          properties: mergeWithFixedCommonProperties(this.parseWindowUnitProperties(item.properties)),
+          events: this.parseWindowUnitEvents(item.events),
+          libraryName,
+          isCore,
+          toolboxCategory: resolveToolboxCategory({ explicit: item.toolboxCategory, className, englishName, isCore }),
+        }
+      })
       .filter(item => item.name.length > 0)
   }
 
@@ -771,6 +814,7 @@ class LibraryManager {
       eventMap.set(eventBinding.unit, existing)
     }
 
+    const isCore = this.isCore(libraryName)
     return controls.map(control => ({
       name: control.unit,
       englishName: control.unitEnglishName,
@@ -780,7 +824,13 @@ class LibraryManager {
       iconFileName: '',
       properties: mergeWithFixedCommonProperties(DEFAULT_PROTOCOL_UNIT_PROPERTIES),
       events: eventMap.get(control.unit) ?? [],
-      toolboxCategory: control.toolboxCategory || DEFAULT_TOOLBOX_CATEGORY,
+      isCore,
+      toolboxCategory: resolveToolboxCategory({
+        explicit: control.toolboxCategory,
+        className: control.className,
+        englishName: control.unitEnglishName,
+        isCore,
+      }),
       libraryName,
     }))
   }

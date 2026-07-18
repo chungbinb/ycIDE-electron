@@ -358,6 +358,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   // 参数行的嵌套表达式子树展开状态（手动 +/- 控制），键为 `${lineIndex}:${paramIdx}`
   const [expandedParamExprKeys, setExpandedParamExprKeys] = useState<Set<string>>(new Set())
   const isResourceTableDoc = docLanguage === 'erc'
+  // 当前文档自身是声明路由目标（常量表/全局变量/DLL命令/数据类型）时，粘贴的同类声明留在本地、不外送
+  const localRouteLanguage = (docLanguage === 'ell' || docLanguage === 'egv' || docLanguage === 'ecs' || docLanguage === 'edt') ? docLanguage : ''
   const shouldAliasJudgeStartInTableMode = docLanguage === 'eyc' && !isClassModule
   const shouldFreezeTableHeader = freezeSubTableHeader
     && docLanguage === 'eyc'
@@ -1632,6 +1634,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             sanitizePastedText: sanitizePastedTextForCurrent,
             extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
             extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+            localRouteLanguage,
             replaceLineIndices: selectedLinesRef.current.size > 0 ? Array.from(selectedLinesRef.current) : undefined,
           })
           if (!pasteResult) return
@@ -1731,7 +1734,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo])
+  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo, localRouteLanguage])
 
   // ===== 自动补全状态 =====
   const [acItems, setAcItems] = useState<AcDisplayItem[]>([])
@@ -5859,6 +5862,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         sanitizePastedText: sanitizePastedTextForCurrent,
         extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
         extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+            localRouteLanguage,
         replaceLineIndices: selectedLinesRef.current.size > 0 ? Array.from(selectedLinesRef.current) : undefined,
       })
       if (!pasteResult) return
@@ -5880,7 +5884,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })
 
     return true
-  }, [applyTextChange, currentText, debugFlowPaste, editCell, pushUndo, shouldUseNativeInputPaste])
+  }, [applyTextChange, currentText, debugFlowPaste, editCell, pushUndo, shouldUseNativeInputPaste, localRouteLanguage])
 
   const applyTypeCellSpaceGuard = useCallback((): boolean => {
     return handleTypeCellSpaceGuard({
@@ -6524,6 +6528,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         sanitizePastedText: sanitizePastedTextForCurrent,
         extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
         extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+            localRouteLanguage,
         replaceLineIndices: selectedLinesRef.current.size > 0 ? Array.from(selectedLinesRef.current) : undefined,
       })
       if (!pasteResult) return
@@ -6540,7 +6545,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       setSelectedLines(newSel)
       lastFocusedLine.current = pasteResult.insertAt + pasteResult.pastedLineCount - 1
     })
-  }, [editorContextMenu?.lineIndex, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted, onChange, onRouteDeclarationPaste, pushUndo, sanitizePastedTextForCurrent, shouldUseNativeInputPaste])
+  }, [editorContextMenu?.lineIndex, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted, onChange, onRouteDeclarationPaste, pushUndo, sanitizePastedTextForCurrent, shouldUseNativeInputPaste, localRouteLanguage])
 
   const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
     if (action === 'newSubprogram') {
@@ -7691,6 +7696,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     sanitizePastedTextForCurrent,
     extractAssemblyVarLinesFromPasted,
     extractRoutedDeclarationLinesFromPasted,
+    localRouteLanguage,
     onRouteDeclarationPaste,
     suppressInlineBlurCommit,
     commitActiveEditor: () => commitRef.current(),

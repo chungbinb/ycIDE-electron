@@ -85,6 +85,12 @@ export const CONTROL_TYPE_METHODS: Record<string, Array<{ name: string; returnTy
   '通用对话框': [
     { name: '打开', returnType: '逻辑型', description: '打开当前「类型」属性对应的对话框（打开文件/保存文件/字体选择/打开帮助）。打开文件、保存文件、字体选择：返回真表示用户已输入有效数据，返回假表示用户取消；打开帮助：打开成功返回真（英文名 open）。初级对象成员命令。', params: [] },
   ],
+  '脚本组件': [
+    { name: '执行', returnType: '逻辑型', description: '执行指定的脚本代码文本（基于系统 IActiveScript 引擎运行当前「语言」）。返回真为执行正常、返回假为出错，错误信息可从「错误信息」属性取得（英文名 Execute）。若代码中包含函数或过程，执行后可用「运行」单独调用它们。', params: [{ name: '脚本代码', type: '文本型', description: '要执行的脚本代码；可省略，省略时默认执行上次的脚本代码。', optional: true }] },
+    { name: '计算表达式', returnType: '文本型', description: '计算脚本表达式并返回其结果文本（英文名 CalculateExp）。', params: [{ name: '表达式', type: '文本型', description: '要计算的脚本表达式，如 1+2*3。', optional: false }] },
+    { name: '清除', returnType: '无返回值', description: '清除上次执行的代码（含已定义的过程/变量），重置脚本引擎（英文名 Reset）。', params: [] },
+    { name: '运行', returnType: '文本型', description: '运行指定的过程或函数（须先用「执行」定义），有返回值则返回其文本、否则返回空文本（英文名 Run）。可在末尾追加多个参数传递给该过程/函数（均以文本形式传入脚本）。', params: [{ name: '过程或函数名', type: '文本型', description: '所要运行的过程或函数名。', optional: false }, { name: '参数', type: '通用型', description: '要传递给过程或函数的参数，可省略；可重复添加多个（在展开的参数行上回车追加）。', optional: true, repeatable: true }] },
+  ],
   '组合框': [
     { name: '加入项目', returnType: '整数型', description: '加入指定项目到组合框列表部分的尾部，成功返回加入后该项目所处的位置，失败返回 -1（英文名 AddString）。', params: [{ name: '欲加入项目的文本', type: '文本型', description: '要加入到列表尾部的项目文本。', optional: false }, { name: '与欲加入项目相关的数值', type: '整数型', description: '与该项目相关联的数值，可省略，省略时默认为 0。', optional: true }] },
     { name: '插入项目', returnType: '整数型', description: '插入指定项目到组合框列表部分的指定位置处，成功返回插入后该项目所处的位置，失败返回 -1（英文名 InsertString）。', params: [{ name: '欲插入的位置', type: '整数型', description: '插入位置，0 为项目位置一，1 为项目位置二，如此类推。', optional: false }, { name: '欲插入项目的文本', type: '文本型', description: '要插入的项目文本。', optional: false }, { name: '与欲插入项目相关的数值', type: '整数型', description: '与该项目相关联的数值，可省略，省略时默认为 0。', optional: true }] },

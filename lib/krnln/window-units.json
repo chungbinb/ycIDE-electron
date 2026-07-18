@@ -234,6 +234,8 @@
     }
   ],
   "controlMethodBindings": [
+    {"unit": "窗口", "member": "销毁", "memberEnglishName": "destroy", "call": "yc_win_destroy({n})"},
+    {"unit": "窗口", "member": "载入", "memberEnglishName": "load", "call": "yc_win_load({n}, L\"\", 0)"},
     {"unit": "通用对话框", "member": "打开", "memberEnglishName": "open", "call": "krnln_commdlg_open({n})"},
     {"unit": "组合框", "member": "加入项目", "call": "krnln_ll_add_item({h}, {0}, {1|0})"},
     {"unit": "组合框", "member": "插入项目", "call": "krnln_ll_insert_item({h}, {0}, {1}, {2|0})"},
@@ -288,6 +290,7 @@
     {"unit": "编辑框", "member": "加入文本", "memberEnglishName": "AppendText", "callEach": "krnln_ctrl_append_text({h}, {arg})"}
   ],
   "controlMemberBindings": [
+    {"unit": "图形按钮", "member": "选中", "memberEnglishName": "Checked", "get": "yc_picbtn_get_checked({h})", "set": "yc_picbtn_set_checked({h}, {v})"},
     {"unit": "*", "member": "标题", "memberEnglishName": "caption", "get": "yc_ctrl_get_text({h})", "set": "krnln_ctrl_set_text({h}, {vtext})"},
     {"unit": "*", "member": "内容", "memberEnglishName": "content", "get": "yc_ctrl_get_text({h})", "set": "krnln_ctrl_set_text({h}, {vtext})"},
     {"unit": "*", "member": "文本", "memberEnglishName": "text", "get": "yc_ctrl_get_text({h})", "set": "krnln_ctrl_set_text({h}, {vtext})"},
@@ -2842,6 +2845,167 @@
       "icon": "icon/BlueIcons/Image_16x.png"
     },
     {
+      "name": "图形按钮",
+      "englishName": "PicBtn",
+      "description": "图形按钮控件：以图片表现的按钮，支持正常/点燃/按下/禁止四态图片与透明颜色；类型可为按钮或选择框（保持选中状态）。",
+      "className": "BUTTON",
+      "style": "WS_CHILD | BS_OWNERDRAW",
+      "properties": [
+        {
+          "name": "类型",
+          "englishName": "type",
+          "description": "图形按钮的表现类型：按钮=单击触发；选择框=单击切换选中状态（按下图片表现选中态）。",
+          "type": 0,
+          "typeName": "选择整数",
+          "isReadOnly": false,
+          "pickOptions": [
+            "按钮",
+            "选择框"
+          ],
+          "defaultValue": 0
+        },
+        {
+          "name": "选中",
+          "englishName": "Checked",
+          "description": "当类型为选择框时，本属性为当前选中状态。",
+          "type": 0,
+          "typeName": "逻辑型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": false
+        },
+        {
+          "name": "正常图片",
+          "englishName": "npic",
+          "description": "正常情况下所显示的图片（不支持 ICO/CUR）。",
+          "type": 0,
+          "typeName": "图片",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "点燃图片",
+          "englishName": "apic",
+          "description": "当类型为按钮时，鼠标移动到按钮上时所显示的图片（不支持 ICO/CUR）。",
+          "type": 0,
+          "typeName": "图片",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "按下图片",
+          "englishName": "ppic",
+          "description": "选择框被选中或按钮被按下后所显示的图片（不支持 ICO/CUR）。",
+          "type": 0,
+          "typeName": "图片",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "禁止图片",
+          "englishName": "dpic",
+          "description": "按钮被禁止后所显示的图片（不支持 ICO/CUR）。",
+          "type": 0,
+          "typeName": "图片",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": ""
+        },
+        {
+          "name": "透明颜色",
+          "englishName": "tclr",
+          "description": "所有图片中透明部分的颜色；默认（-1）表示无透明色。",
+          "type": 0,
+          "typeName": "颜色",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": -1
+        }
+      ],
+      "events": [
+        {
+          "name": "被单击",
+          "description": "当单击图形按钮后即产生此事件（类型为选择框时单击会先切换选中状态）。",
+          "args": [],
+          "channel": "WM_COMMAND",
+          "code": "BN_CLICKED"
+        },
+        {
+          "name": "鼠标左键被按下",
+          "description": "本事件在鼠标左键于图形按钮上被按下时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "横向位置", "description": "光标在图形按钮内的横向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "纵向位置", "description": "光标在图形按钮内的纵向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        },
+        {
+          "name": "鼠标左键被放开",
+          "description": "本事件在鼠标左键于图形按钮上被放开时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "横向位置", "description": "光标在图形按钮内的横向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "纵向位置", "description": "光标在图形按钮内的纵向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        },
+        {
+          "name": "被双击",
+          "description": "本事件在图形按钮被鼠标左键双击时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "横向位置", "description": "光标在图形按钮内的横向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "纵向位置", "description": "光标在图形按钮内的纵向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        },
+        {
+          "name": "鼠标右键被按下",
+          "description": "本事件在鼠标右键于图形按钮上被按下时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "横向位置", "description": "光标在图形按钮内的横向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "纵向位置", "description": "光标在图形按钮内的纵向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        },
+        {
+          "name": "鼠标右键被放开",
+          "description": "本事件在鼠标右键于图形按钮上被放开时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "横向位置", "description": "光标在图形按钮内的横向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "纵向位置", "description": "光标在图形按钮内的纵向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        },
+        {
+          "name": "鼠标位置被移动",
+          "description": "本事件在鼠标于图形按钮上移动时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "横向位置", "description": "光标在图形按钮内的横向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "纵向位置", "description": "光标在图形按钮内的纵向位置（像素）。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        },
+        {
+          "name": "滚轮被滚动",
+          "description": "本事件在鼠标滚轮于图形按钮上被滚动时触发。返回真将拦截系统对此消息的缺省处理。",
+          "returnType": "逻辑型",
+          "args": [
+            { "name": "滚动距离", "description": "滚轮滚动的距离，每格 120，向前（向上）滚动为正数。", "dataType": "整数型", "isByRef": false },
+            { "name": "功能键状态", "description": "功能键状态：Ctrl 键为 1，Shift 键为 2，Alt 键为 4，可为其组合值。", "dataType": "整数型", "isByRef": false }
+          ]
+        }
+      ],
+      "icon": "icon/BlueIcons/Button_16x.png"
+    },
+    {
       "name": "纵向滚动条",
       "englishName": "VScrollBar",
       "description": "纵向滚动条控件。",
@@ -4314,16 +4478,6 @@
       "properties": [],
       "events": [],
       "icon": "icon/BlueIcons/Relationship_16x.png"
-    },
-    {
-      "name": "图形按钮",
-      "englishName": "PicBtn",
-      "description": "图形按钮控件。",
-      "className": "",
-      "style": "",
-      "properties": [],
-      "events": [],
-      "icon": "icon/BlueIcons/ImageButton_16x.png"
     },
     {
       "name": "外部数据库",

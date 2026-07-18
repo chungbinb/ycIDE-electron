@@ -1,0 +1,26 @@
+{
+  "contractVersion": "1.0",
+  "library": "script",
+  "libraryDisplayName": "脚本语言支持组件",
+  "libraryVersion": "2.0",
+  "implementations": {
+    "windows": {
+      "entry": "impl/windows.cpp",
+      "language": "cpp"
+    }
+  },
+  "commands": [
+    {
+      "commandId": "script.Eval",
+      "displayName": "执行脚本表达式",
+      "summary": "使用指定脚本语言即时计算一个表达式并返回文本结果，无需在窗口上放置脚本组件。基于系统 IActiveScript 引擎，语言可为 JScript（默认）或 VBScript。",
+      "params": [
+        {"name": "表达式", "type": "文本型", "optional": false, "description": "要计算的脚本表达式，如 1+2*3 或 Math.max(4,5)。"},
+        {"name": "语言", "type": "文本型", "optional": true, "description": "脚本语言名，JScript 或 VBScript，本参数可以省略，缺省为 JScript。"}
+      ],
+      "returnType": "文本型",
+      "category": "脚本",
+      "supportedPlatforms": ["windows"]
+    }
+  ]
+}

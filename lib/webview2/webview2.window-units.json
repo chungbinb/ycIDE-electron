@@ -12,7 +12,7 @@
       "description": "基于 Microsoft Edge WebView2 运行时的网页浏览框，设计期与运行期渲染一致。",
       "className": "YcWebView2Host",
       "style": "WS_CHILD | WS_TABSTOP",
-      "toolboxCategory": "WebView2",
+      "toolboxCategory": "WebView2控件",
       "properties": [
         {
           "name": "地址",
@@ -33,7 +33,7 @@
       "description": "WebView2 渲染的现代风格按钮，设计期与运行期外观一致。",
       "className": "YcWebButton",
       "style": "WS_CHILD | WS_TABSTOP",
-      "toolboxCategory": "WebView2",
+      "toolboxCategory": "WebView2控件",
       "properties": [
         {
           "name": "标题",
@@ -61,7 +61,7 @@
       "description": "WebView2 渲染的现代风格编辑框，设计期与运行期外观一致。",
       "className": "YcWebEdit",
       "style": "WS_CHILD | WS_TABSTOP",
-      "toolboxCategory": "WebView2",
+      "toolboxCategory": "WebView2控件",
       "properties": [
         {
           "name": "内容",

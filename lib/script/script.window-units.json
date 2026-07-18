@@ -1,0 +1,56 @@
+{
+  "version": "1.0",
+  "description": "脚本语言支持组件窗口组件定义（脚本组件：非可视功能组件，基于系统 IActiveScript 引擎运行 JScript / VBScript）。",
+  "author": "ycIDE",
+  "controlMethodBindings": [
+    {"unit": "脚本组件", "unitEnglishName": "Script", "member": "执行", "memberEnglishName": "Execute", "call": "script_execute({n}, {0|L\"\"})"},
+    {"unit": "脚本组件", "unitEnglishName": "Script", "member": "计算表达式", "memberEnglishName": "CalculateExp", "call": "yc_utf8_to_wide(script_calc_exp({n}, {0|L\"\"}))"},
+    {"unit": "脚本组件", "unitEnglishName": "Script", "member": "清除", "memberEnglishName": "Reset", "call": "script_reset({n})"},
+    {"unit": "脚本组件", "unitEnglishName": "Script", "member": "运行", "memberEnglishName": "Run", "call": "yc_utf8_to_wide(script_run({n}, {0|L\"\"}, { {argst} }))"}
+  ],
+  "windowUnits": [
+    {
+      "name": "脚本组件",
+      "englishName": "Script",
+      "description": "脚本语言支持组件（功能窗口组件，非可视）：基于系统 IActiveScript 引擎运行 JScript / VBScript 脚本。放置到窗口后不可见，运行期通过「执行 / 计算表达式 / 运行 / 清除」方法驱动。",
+      "className": "",
+      "style": "",
+      "properties": [
+        {
+          "name": "语言",
+          "englishName": "Language",
+          "description": "设置或返回正在使用的脚本语言名称，可为 JScript 或 VBScript。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": false,
+          "pickOptions": ["JScript", "VBScript"],
+          "defaultValue": "JScript",
+          "access": { "get": "yc_utf8_to_wide(script_get_text({n}, 0))", "set": "script_set_text({n}, 0, {vtext})" }
+        },
+        {
+          "name": "错误信息",
+          "englishName": "ErrorInfo",
+          "description": "如果脚本执行出错，返回出错说明（含出错行列与描述）；只读。",
+          "type": 0,
+          "typeName": "文本型",
+          "isReadOnly": true,
+          "pickOptions": [],
+          "defaultValue": "",
+          "access": { "get": "yc_utf8_to_wide(script_get_text({n}, 1))" }
+        },
+        {
+          "name": "超时",
+          "englishName": "TimeOut",
+          "description": "设置或返回时间（毫秒），脚本执行超过此时间后可选择中止；0 或常量「无超时」(-1) 表示不限制。",
+          "type": 0,
+          "typeName": "整数型",
+          "isReadOnly": false,
+          "pickOptions": [],
+          "defaultValue": 0,
+          "access": { "get": "script_get_int({n}, 2)", "set": "script_set_int({n}, 2, {v})" }
+        }
+      ],
+      "events": []
+    }
+  ]
+}

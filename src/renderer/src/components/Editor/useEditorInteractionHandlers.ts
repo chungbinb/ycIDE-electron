@@ -53,6 +53,8 @@ interface UseEditorInteractionHandlersParams {
   extractAssemblyVarLinesFromPasted: (clipText: string, currentText: string) => string[]
   extractRoutedDeclarationLinesFromPasted: (clipText: string, currentText: string) => Array<{ language: 'ell' | 'egv' | 'ecs' | 'edt'; lines: string[] }>
   onRouteDeclarationPaste?: (routes: Array<{ language: 'ell' | 'egv' | 'ecs' | 'edt'; lines: string[] }>) => void
+  /** 当前文档自身是路由目标类型（ecs/egv/ell/edt）时传其语言：该类声明留在本地粘贴、不外送 */
+  localRouteLanguage?: string
   suppressInlineBlurCommit: (durationMs?: number) => void
   commitActiveEditor: () => void
   focusWrapper: () => void
@@ -95,6 +97,7 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     sanitizePastedTextForCurrent,
     extractAssemblyVarLinesFromPasted,
     extractRoutedDeclarationLinesFromPasted,
+    localRouteLanguage,
     onRouteDeclarationPaste,
     suppressInlineBlurCommit,
     commitActiveEditor,
@@ -252,6 +255,7 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
       sanitizePastedText: sanitizePastedTextForCurrent,
       extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
       extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+      localRouteLanguage,
     })
     if (!pasteResult) return
     if (pasteResult.routedDeclarations.length > 0) {
@@ -281,6 +285,7 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     editCellRef,
     extractAssemblyVarLinesFromPasted,
     extractRoutedDeclarationLinesFromPasted,
+    localRouteLanguage,
     lastFocusedLineRef,
     onRouteDeclarationPaste,
     pushUndo,

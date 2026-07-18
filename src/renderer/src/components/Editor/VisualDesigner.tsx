@@ -37,7 +37,9 @@ export interface LibWindowUnit {
   iconFileName?: string
   properties: LibUnitProperty[]
   events: LibUnitEvent[]
-  /** 组件箱分类（工具箱分组显示），缺省"通用Win32" */
+  /** 是否来自核心支持库；工具箱第一层「核心组件 / 第三方组件」判定（主进程注入，缺省按 libraryName 兜底） */
+  isCore?: boolean
+  /** 组件箱分类·第二层「型」（Win32控件 / GDI控件 / WebView2控件 / 功能组件…），缺省 Win32控件 */
   toolboxCategory?: string
 }
 
@@ -126,7 +128,7 @@ interface VisualDesignerProps {
 const DEFAULT_SIZES: Record<string, [number, number]> = {
   '按钮': [75, 28], '编辑框': [120, 24], '标签': [80, 20], '图片框': [100, 80],
   '列表框': [120, 100], '组合框': [120, 24], '选择框': [80, 20], '单选框': [80, 20],
-  '分组框': [160, 120], '进度条': [150, 20], '时钟': [32, 32], '图片组': [32, 32], '通用对话框': [32, 32],
+  '分组框': [160, 120], '进度条': [150, 20], '时钟': [32, 32], '图片组': [32, 32], '通用对话框': [32, 32], '脚本组件': [32, 32],
   '选择夹': [220, 150], '月历': [200, 160], '滑块条': [150, 30], '画板': [200, 150],
 }
 const DEFAULT_SIZE: [number, number] = [100, 30]
@@ -166,7 +168,21 @@ const TOOLBOX_DOCK_MAX_WIDTH = 420
 const TOOLBOX_FLOAT_LIST_MIN_WIDTH = 130
 const TOOLBOX_FLOAT_MIN_HEIGHT = 220
 const TOOLBOX_STATE_STORAGE_KEY = 'ycide.visual-designer.toolbox-state.v1'
-const TOOLBOX_DEFAULT_CATEGORY = '通用Win32'
+// 工具箱两级分类：第一层「核心组件 / 第三方组件」，第二层「型」（Win32控件 / GDI控件 / WebView2控件 / 功能组件…）
+const TOOLBOX_TOP_CORE = '核心组件'
+const TOOLBOX_TOP_THIRD = '第三方组件'
+const TOOLBOX_TYPE_DEFAULT = 'Win32控件'
+// 复合分类 key（第一层 + 第二层），用不可见分隔符避免与型名冲突
+const TOOLBOX_CATEGORY_SEP = '\u0001'
+const makeToolboxCategoryKey = (top: string, type: string): string => `${top}${TOOLBOX_CATEGORY_SEP}${type}`
+const TOOLBOX_DEFAULT_CATEGORY = makeToolboxCategoryKey(TOOLBOX_TOP_CORE, TOOLBOX_TYPE_DEFAULT)
+// 旧分类值 → 新「型」名归一化（兼容早期 manifest / 旧持久化）
+const TOOLBOX_TYPE_ALIASES: Record<string, string> = { '通用Win32': 'Win32控件', 'WebView2': 'WebView2控件' }
+const normalizeToolboxType = (value?: string): string => {
+  const text = (value || '').trim()
+  if (!text) return ''
+  return TOOLBOX_TYPE_ALIASES[text] || text
+}
 
 function snap(v: number): number {
   return Math.round(v / GRID) * GRID
@@ -1915,6 +1931,20 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           >{ctrl.text}</div>
         )
       }
+      case '图形按钮': {
+        // 图形按钮：设计器显示正常图片（选中态显示按下图片），拉伸铺满；无图时按钮面占位
+        const props = ctrl.properties || {}
+        const checked = props['选中'] === true || props['选中'] === '真'
+        const picKey = checked && typeof props['按下图片'] === 'string' && (props['按下图片'] as string).startsWith('data:image') ? '按下图片' : '正常图片'
+        const pic = typeof props[picKey] === 'string' && (props[picKey] as string).startsWith('data:image') ? (props[picKey] as string) : ''
+        return (
+          <div className="vd-preview vd-preview-image" ref={(element) => setCssVars(element, { '--vd-preview-bg': pic ? 'transparent' : '#e1e1e1' })}>
+            {pic
+              ? <img src={pic} alt="" style={{ width: '100%', height: '100%', objectFit: 'fill' }} />
+              : <span className="vd-preview-image-label">{ctrl.type}</span>}
+          </div>
+        )
+      }
       case '图片框':
       case '影像框': {
         const props = ctrl.properties || {}
@@ -2071,6 +2101,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       case '时钟':
       case '图片组':
       case '通用对话框':
+      case '脚本组件':
         return (
           <div className="vd-preview vd-preview-compact">
             <Icon name={resolveUnitIconName(ctrl.type, unitInfo?.iconFileName, unitInfo?.libraryName)} size={12} />
@@ -2256,18 +2287,39 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const toolboxItems = windowUnits.length > 0
     ? windowUnits.filter(u => u.name !== '窗口') // 窗口自身不在工具箱中
     : [] // 如果没有加载支持库则为空
-  const resolveUnitCategory = (unit: LibWindowUnit): string => (unit.toolboxCategory || '').trim() || TOOLBOX_DEFAULT_CATEGORY
-  // 分类列表："通用Win32"固定最前，其余按出现顺序
-  const toolboxCategories = (() => {
-    const categories = [TOOLBOX_DEFAULT_CATEGORY]
-    for (const unit of toolboxItems) {
-      const category = resolveUnitCategory(unit)
-      if (!categories.includes(category)) categories.push(category)
+  // 第一层「核心组件 / 第三方组件」：优先主进程注入的 isCore，缺省按 libraryName 兜底
+  const resolveUnitTop = (unit: LibWindowUnit): string =>
+    (unit.isCore ?? (unit.libraryName === 'krnln' || unit.libraryName === '系统核心支持库'))
+      ? TOOLBOX_TOP_CORE
+      : TOOLBOX_TOP_THIRD
+  // 第二层「型」：归一化 toolboxCategory，缺省 Win32控件
+  const resolveUnitType = (unit: LibWindowUnit): string => normalizeToolboxType(unit.toolboxCategory) || TOOLBOX_TYPE_DEFAULT
+  const resolveUnitCategory = (unit: LibWindowUnit): string => makeToolboxCategoryKey(resolveUnitTop(unit), resolveUnitType(unit))
+  // 两级分组：第一层固定顺序（核心组件在前、第三方在后），第二层型在各自组内按出现顺序；空组不显示
+  const toolboxGroups = (() => {
+    const groups: { top: string; types: string[] }[] = [
+      { top: TOOLBOX_TOP_CORE, types: [] },
+      { top: TOOLBOX_TOP_THIRD, types: [] },
+    ]
+    const ensureGroup = (top: string): { top: string; types: string[] } => {
+      const found = groups.find(g => g.top === top)
+      if (found) return found
+      const created = { top, types: [] as string[] }
+      groups.push(created)
+      return created
     }
-    return categories
+    for (const unit of toolboxItems) {
+      const group = ensureGroup(resolveUnitTop(unit))
+      const type = resolveUnitType(unit)
+      if (!group.types.includes(type)) group.types.push(type)
+    }
+    return groups.filter(g => g.types.length > 0)
   })()
-  // 所选分类失效（如支持库被卸载）时回退默认分类
-  const activeToolboxCategory = toolboxCategories.includes(toolboxCategory) ? toolboxCategory : TOOLBOX_DEFAULT_CATEGORY
+  const toolboxCategoryKeys = toolboxGroups.flatMap(g => g.types.map(t => makeToolboxCategoryKey(g.top, t)))
+  // 所选分类失效（支持库卸载等）时回退到首个可用分类
+  const activeToolboxCategory = toolboxCategoryKeys.includes(toolboxCategory)
+    ? toolboxCategory
+    : (toolboxCategoryKeys[0] || TOOLBOX_DEFAULT_CATEGORY)
   const filteredTools = toolboxItems.filter(unit => {
     if (resolveUnitCategory(unit) !== activeToolboxCategory) return false
     if (!toolboxSearch) return true
@@ -2418,8 +2470,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           value={activeToolboxCategory}
           onChange={e => setToolboxCategory(e.target.value)}
         >
-          {toolboxCategories.map(category => (
-            <option key={category} value={category}>{category}</option>
+          {toolboxGroups.map(group => (
+            <optgroup key={group.top} label={group.top}>
+              {group.types.map(type => (
+                <option key={type} value={makeToolboxCategoryKey(group.top, type)}>{type}</option>
+              ))}
+            </optgroup>
           ))}
         </select>
       </div>

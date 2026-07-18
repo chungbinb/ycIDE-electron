@@ -384,7 +384,9 @@ interface TranspileCacheFile {
 // 36: yc_vt_of 补 bool 重载（YC_VT_BOOL）——旧产物里逻辑型走 int 标签，krnln_set 族按 4 字节读写 1 字节 bool 会崩
 // 37: 多维数组（重定义数组可重复维参/取数组下标按维/链式下标运行时折算）——prelude 新增 krnln_ReDimEx 等声明与 yc_ary_lin
 // 38: 真/假/且/或 裸词替换改为引号感知——旧产物字符串字面量里的 真/假 被改写成 1/0
-const TRANSPILE_CACHE_VERSION = 38
+// 39: 多窗口（载入/销毁）——prelude 新增 yc_win_load/yc_win_destroy 声明
+// 40: 图形按钮（PicBtn）——prelude 新增 yc_picbtn_get/set_checked 声明
+const TRANSPILE_CACHE_VERSION = 40
 
 interface BuildArtifactCacheFile {
   version: number
@@ -1706,6 +1708,9 @@ function applyMemberTemplate(template: string, handleExpr: string, valueExpr: st
     .replace(/\{n\}/g, nameExpr)
     .replace(/\{vtext\}/g, vtext)
     .replace(/\{v\}/g, valueExpr || '0')
+    // {argst}=从索引1起的尾参、每个包 (const wchar_t*)yc_value_to_text(…) 转宽串指针（脚本组件.运行 传通用型参数用；
+    // 直接过 C variadic 会因 YC_TEXT 非平凡类型编译失败，故转成 initializer_list<const wchar_t*>）。空参展开为空串。
+    .replace(/\{argst\}/g, cArgs.slice(1).map(a => isTextExpression(a) ? `(const wchar_t*)${a}` : `(const wchar_t*)yc_value_to_text(${a})`).join(', '))
     .replace(/\{args\}/g, cArgs.join(', '))
     .replace(/\{(\d+)(?:\|([^}]*))?\}/g, (_m, idxText, dflt) => {
       const idx = parseInt(idxText, 10)
@@ -3603,6 +3608,11 @@ function resolveProjectControlType(name: string): string {
   return currentProjectControls.get(name) || ''
 }
 
+// 项目全体窗口名（多窗口：载入/销毁 的窗名实参校验）与当前转译文件所属的窗口名
+//（efw.sourceFile ↔ eyc 归属；裸 销毁() 销毁「当前代码所在窗口」的判定依据，非窗口文件为空串）。
+let currentProjectWindowNames = new Set<string>()
+let currentTranspileWindowName = ''
+
 function isFloatArrayElem(info: TranspileArrayInfo | undefined): boolean {
   return !!info && ARRAY_ELEM_FLOAT_TYPES.has(info.elemType)
 }
@@ -5072,6 +5082,35 @@ const YCMD_CUSTOM_NATIVE_EXPRS: Record<string, (args: string[], name: string, co
     const t = requireVarArg(args[0] || '', name)
     return `spec_GetVarDataAddr((const void*)&${t}, yc_vt_of(${t}))`
   },
+  // 载入(窗口, 父窗口, 是否对话框方式)：多窗口。窗名转译期校验（清单参数是「窗口」型，通用编组表达不了），
+  // 运行时经窗口注册表创建/显示；对话框方式=真 时禁用属主并进模态消息循环直到该窗被销毁。
+  krnln_LoadWin: (args, name, commandMap, directCallables) => {
+    const t = (args[0] || '').trim()
+    if (!currentProjectWindowNames.has(t)) {
+      throw new Error(`命令“${name}”的「欲载入的窗口」须为本项目中的窗口名（如 选题窗口），但收到：${t || '(空)'}`)
+    }
+    const parent = (args[1] || '').trim()
+    if (parent && !currentProjectWindowNames.has(parent)) {
+      throw new Error(`命令“${name}”的「父窗口」须为本项目中的窗口名，但收到：${parent}`)
+    }
+    const dlg = (args[2] || '').trim() ? formatArgForC(args[2], commandMap, directCallables) : '1'
+    return `yc_win_load(L"${escapeCString(t)}", L"${escapeCString(parent)}", (int)(${dlg}))`
+  },
+  // 销毁(窗口?)：省略窗口=销毁当前代码所在窗口（须在窗口的代码文件中，efw.sourceFile↔eyc 归属判定）。
+  // 也可写 窗口名.销毁()（window-units.json 窗口 方法绑定，同一 yc_win_destroy）。
+  krnln_DestroyWin: (args, name) => {
+    const t = (args[0] || '').trim()
+    if (t) {
+      if (!currentProjectWindowNames.has(t)) {
+        throw new Error(`命令“${name}”的「欲销毁的窗口」须为本项目中的窗口名，但收到：${t}`)
+      }
+      return `yc_win_destroy(L"${escapeCString(t)}")`
+    }
+    if (!currentTranspileWindowName) {
+      throw new Error(`“${name}”不带参数时须写在窗口的代码文件中（销毁当前窗口）；在其它文件中请写明窗口名：窗口名.销毁 ()`)
+    }
+    return `yc_win_destroy(L"${escapeCString(currentTranspileWindowName)}")`
+  },
   // 重定义数组(数组变量, 是否保留, 维1, 维2…)：易语言「数组对应维的上限值」可重复（多维），
   // 成员总数=各维乘积、行主序扁平。通用编组是定长三参表达不了；定制成 krnln_ReDimEx(数组, 保留, 维数组, 维数)，
   // 运行时把维度进登记表。转译期同步更新该数组的维度形态：多维置为 [0×N]（尺寸交运行时，
@@ -5627,7 +5666,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
 
   const lines = eycContent.split('\n')
   let result = `/* 由 ycIDE 自动从 ${fileName} 生成 */\n`
-  result += '#include <windows.h>\n#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <direct.h>\n#include <wchar.h>\n#include <wctype.h>\n#include <string.h>\n#include <filesystem>\n#include <vector>\n#include <string>\n#include <algorithm>\n#include <type_traits>\n#include <fstream>\n\n'
+  result += '#include <windows.h>\n#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <direct.h>\n#include <wchar.h>\n#include <wctype.h>\n#include <string.h>\n#include <filesystem>\n#include <vector>\n#include <string>\n#include <algorithm>\n#include <type_traits>\n#include <fstream>\n#include <initializer_list>\n\n'
   result += generateYcmdNativeDeclarations(targetPlatform)
   result += 'namespace ycfs = std::filesystem;\n\n'
   result += 'typedef std::vector<unsigned char> YC_BIN;\n'
@@ -5667,6 +5706,12 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'extern "C" long long krnln_AryLinIdx(void* arrayVar, const long long* idx, int n);\n'
   result += 'extern "C" int krnln_UBound(void* arrayVar, int dimension);\n'
   result += 'static inline long long yc_ary_lin(std::vector<long long>& a, std::initializer_list<long long> idx) { return krnln_AryLinIdx((void*)&a, idx.begin(), (int)idx.size()); }\n\n'
+  // 多窗口运行时（实现于生成的 main.cpp）：载入/销毁 与 窗口名.销毁() 方法绑定共用
+  result += 'extern int yc_win_load(const wchar_t* name, const wchar_t* parentName, int dialogMode);\n'
+  result += 'extern void yc_win_destroy(const wchar_t* name);\n'
+  // 图形按钮「选中」属性运行时读写（window-units.json 成员绑定引用；实现于生成的 main.cpp）
+  result += 'extern int yc_picbtn_get_checked(HWND h);\n'
+  result += 'extern void yc_picbtn_set_checked(HWND h, int v);\n\n'
   // 浮点族数组元素按 double 位模式存进 vector<long long>，读写经位转换
   result += 'static inline long long yc_f64_bits(double v) { long long r; memcpy(&r, &v, 8); return r; }\n'
   result += 'static inline double yc_f64_from_bits(long long b) { double r; memcpy(&r, &b, 8); return r; }\n\n'
@@ -5983,6 +6028,16 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'extern "C" void krnln_commdlg_set_text(const wchar_t* name, int propId, const wchar_t* v);\n'
   result += 'extern YC_TEXT yc_commdlg_get_text(const wchar_t* name, int propId);\n'
   result += 'extern "C" int krnln_commdlg_open(const wchar_t* name);\n'
+  // 脚本组件（script 库，非可视，IActiveScript 引擎，状态按实例名维护于 script 库内；文本返回 UTF-8→yc_utf8_to_wide）
+  result += 'extern "C" int script_execute(const wchar_t* name, const wchar_t* code);\n'
+  result += 'extern "C" const char* script_calc_exp(const wchar_t* name, const wchar_t* expr);\n'
+  result += 'extern "C" void script_reset(const wchar_t* name);\n'
+  result += 'extern "C" long long script_get_int(const wchar_t* name, int propId);\n'
+  result += 'extern "C" void script_set_int(const wchar_t* name, int propId, long long v);\n'
+  result += 'extern "C" const char* script_get_text(const wchar_t* name, int propId);\n'
+  result += 'extern "C" void script_set_text(const wchar_t* name, int propId, const wchar_t* v);\n'
+  // 运行（可变通用型参数）走 C++ 链接：initializer_list 无法过 extern "C"，故声明与 impl 均为 C++ 符号
+  result += 'const char* script_run(const wchar_t* name, const wchar_t* proc, std::initializer_list<const wchar_t*> args);\n'
   result += 'extern int yc_text_compare(const wchar_t* left, const wchar_t* right);\n'
   result += 'extern int yc_text_starts_with(const wchar_t* text, const wchar_t* prefix);\n'
   // 组合框/列表框 项目成员方法：纯 Win32 版已搬入 krnln 库（HWND 版）；文本读取/取所有被选择项目 留 main.cpp（返回编译器内部 C++ 类型）。
@@ -7567,7 +7622,7 @@ function generateMainC(
 
   let mainCode = '/* 由 ycIDE 自动生成 */\n'
   mainCode += `/* 项目名称: ${project.projectName} */\n\n`
-  mainCode += '#include <windows.h>\n#include <commctrl.h>\n#include <shellapi.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n#include <io.h>\n#include <fcntl.h>\n#include <gdiplus.h>\n#include <string>\n#include <map>\n#include <vector>\n'
+  mainCode += '#include <windows.h>\n#include <commctrl.h>\n#include <shellapi.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n#include <io.h>\n#include <fcntl.h>\n#include <gdiplus.h>\n#include <string>\n#include <map>\n#include <vector>\n#include <initializer_list>\n'
   // 部分 mingw commctrl.h 未定义较新的通用控件常量（SysLink 注册用），补齐守卫。
   mainCode += '#ifndef ICC_LINK_CLASSES\n#define ICC_LINK_CLASSES 0x00008000\n#endif\n\n'
   // 文本型值类型（与转译文件里的定义一致，供 yc_ctrl_get_text 跨编译单元按值返回）
@@ -7805,6 +7860,59 @@ function generateMainC(
       .sort((a, b) => (readIntProp(a.c.extraProps['停留顺序'], 0) - readIntProp(b.c.extraProps['停留顺序'], 0)) || (a.i - b.i))
       .map(x => x.c)
 
+    // ===== 多窗口：解析启动窗口之外的全部辅助窗口（载入/销毁 的目标）=====
+    // v1 辅助窗口为轻量形态：支持经 buildStd* 构建器的常规控件 + 事件分发 + 颜色表并入；
+    // 暂不支持：控件图片/底图、画板、菜单、选择夹子夹页、时钟、选择列表框自绘勾选（降级普通列表框）。
+    // 控件 ID 全局唯一（接在启动窗口之后分配），运行时各表（颜色/超链接等）按 ID/HWND 查询天然共用。
+    interface SecondaryWindow { info: WindowFileInfo; ctrlIds: number[] }
+    const secondaryWindows: SecondaryWindow[] = []
+    if (!previewWindow) {
+      for (const f of project.files) {
+        if (f.type !== 'EFW' && !f.fileName.toLowerCase().endsWith('.efw')) continue
+        if (efwFile && f.fileName === efwFile.fileName) continue
+        let sw: WindowFileInfo
+        const secEditorContent = editorFiles?.get(f.fileName)
+        if (secEditorContent) {
+          sw = createDefaultWindowFileInfo(basename(f.fileName, '.efw'), project.projectName)
+          try {
+            const d = JSON.parse(secEditorContent)
+            sw.formName = (d.name || d.formName || sw.formName)
+            sw.width = d.width || 592
+            sw.height = d.height || 384
+            sw.title = d.title || d.name || sw.formName
+            applyWindowProperties(sw, d.properties || {})
+            if (Array.isArray(d.controls)) {
+              for (const c of d.controls) {
+                const props = c.properties || {}
+                sw.controls.push({
+                  type: c.type || '', name: c.name || '',
+                  x: c.x ?? c.left ?? 0, y: c.y ?? c.top ?? 0,
+                  width: c.width ?? 80, height: c.height ?? 24,
+                  text: resolveControlInitialText(c, props),
+                  visible: c.visible ?? true,
+                  disabled: c.enabled === false || props['禁止'] === true,
+                  extraProps: { ...props },
+                })
+              }
+            }
+          } catch { sw = parseWindowFile(join(project.projectDir, f.fileName)) }
+        } else {
+          sw = parseWindowFile(join(project.projectDir, f.fileName))
+        }
+        if (!sw.formName) continue
+        sw.controls = sw.controls
+          .map((c, i) => ({ c, i }))
+          .sort((a, b) => (readIntProp(a.c.extraProps['停留顺序'], 0) - readIntProp(b.c.extraProps['停留顺序'], 0)) || (a.i - b.i))
+          .map(x => x.c)
+        secondaryWindows.push({ info: sw, ctrlIds: [] })
+      }
+      // 控件 ID 接在启动窗口（1001..）之后连续分配，全局唯一
+      let nextSecCtrlId = 1001 + winInfo.controls.length
+      for (const swx of secondaryWindows) {
+        for (let i = 0; i < swx.info.controls.length; i++) swx.ctrlIds.push(nextSecCtrlId++)
+      }
+    }
+
     // 全局变量
     mainCode += `static const wchar_t* g_szClassName = L"${winInfo.wndClassName ? escapeCString(winInfo.wndClassName) : 'ycIDEWindowClass'}";\n`
     mainCode += `static const wchar_t* g_szTitle = L"${escapeCString(winInfo.title)}";\n`
@@ -7825,9 +7933,19 @@ function generateMainC(
       return (typeof img === 'string' && img.startsWith('data:image')) ? decodeImageDataUrl(img) : null
     })
     const hasAnyControlImage = controlImageBytes.some(Boolean)
-    // 画板即使无底图也用 GDI+（取图片 PNG 编码、画图片 字节集解码），故 GDI+ 门控含画板
+    // 图形按钮四态图片（正常/点燃/按下/禁止）：按控件索引对齐，每控件最多 4 张内嵌（懒解码为 GDI+ Image）
+    const PICBTN_IMG_PROPS = ['正常图片', '点燃图片', '按下图片', '禁止图片'] as const
+    const picBtnImageBytes: Array<Array<Buffer | null> | null> = winInfo.controls.map(c => {
+      if (!(c.type === '图形按钮' || c.type === 'PicBtn')) return null
+      return PICBTN_IMG_PROPS.map(p => {
+        const img = c.extraProps?.[p]
+        return (typeof img === 'string' && img.startsWith('data:image')) ? decodeImageDataUrl(img) : null
+      })
+    })
+    const hasAnyPicBtnImage = picBtnImageBytes.some(a => !!a && a.some(Boolean))
+    // 画板即使无底图也用 GDI+（取图片 PNG 编码、画图片 字节集解码），故 GDI+ 门控含画板；图形按钮画图同样要 GDI+
     const hasDrawPanel = winInfo.controls.some(c => c.type === '画板' || c.type === 'DrawPanel')
-    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel) {
+    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage) {
       mainCode += 'static ULONG_PTR g_gdiplusToken = 0;\n'
     }
     if (backImageBytes) {
@@ -7846,6 +7964,16 @@ function generateMainC(
         mainCode += `static const unsigned int g_ctrlImgSize_${idx} = ${bytes.length}u;\n`
       }
     })
+    // 图形按钮四态图片字节（g_pbImg_控件索引_态序：0正常 1点燃 2按下 3禁止）
+    picBtnImageBytes.forEach((states, idx) => {
+      if (!states) return
+      states.forEach((bytes, k) => {
+        if (bytes) {
+          mainCode += `static const unsigned char g_pbImg_${idx}_${k}[] = {\n${bytesToCArrayBody(bytes)}};\n`
+          mainCode += `static const unsigned int g_pbImgSize_${idx}_${k} = ${bytes.length}u;\n`
+        }
+      })
+    })
     mainCode += '\n'
 
     // 控件ID
@@ -7858,13 +7986,51 @@ function generateMainC(
       mainCode += '\n'
     }
 
-    mainCode += 'HWND yc_get_control_handle_by_name(const wchar_t* ctrlName) {\n'
-    mainCode += '    if (!ctrlName || !g_hMainWnd) return NULL;\n'
-    // 窗体名解析到主窗句柄——`窗口名.标题/宽度/可视` 等经通用控件属性绑定直接作用于窗口本身
-    mainCode += `    if (lstrcmpW(ctrlName, L"${escapeCString(winInfo.formName)}") == 0) return g_hMainWnd;\n`
-    for (const ctrl of winInfo.controls) {
-      mainCode += `    if (lstrcmpW(ctrlName, L"${escapeCString(ctrl.name)}") == 0) return GetDlgItem(g_hMainWnd, IDC_${ctrl.name.toUpperCase()});\n`
+    // 多窗口运行时基座：辅助窗句柄表（下标即辅助窗序号）+ 当前事件窗口（0=主窗，>=1 辅助窗序号+1）。
+    // 各窗口事件分发前设置 g_ycCurEventWin：控件跨窗重名时按名解析优先取「当前事件所在窗口」的那个。
+    const secWinCount = Math.max(1, secondaryWindows.length)
+    mainCode += `static HWND g_ycSubWinHandles[${secWinCount}] = { NULL };\n`
+    mainCode += 'static int g_ycCurEventWin = 0;\n'
+    mainCode += `static HWND yc_win_handle_by_index(int i) { if (i <= 0) return g_hMainWnd; return (i - 1 < ${secWinCount}) ? g_ycSubWinHandles[i - 1] : NULL; }\n`
+    // 程序退出时机 = 所有窗口都被销毁（易语言语义）：销毁主窗只销毁它自己，无父窗口的辅助窗继续存活；
+    // 指定了父窗口的辅助窗随父销毁（Win32 owner 机制天然如此）。最后一窗销毁时才 PostQuitMessage。
+    mainCode += `static int yc_any_window_alive(void) { if (g_hMainWnd && IsWindow(g_hMainWnd)) return 1; for (int i = 0; i < ${secWinCount}; i++) { if (g_ycSubWinHandles[i] && IsWindow(g_ycSubWinHandles[i])) return 1; } return 0; }\n`
+    mainCode += 'struct YcCtrlNameEntry { const wchar_t* name; int win; int id; };\n'
+    {
+      const nameEntries: string[] = []
+      let mainId = 1001
+      for (const ctrl of winInfo.controls) {
+        nameEntries.push(`    { L"${escapeCString(ctrl.name)}", 0, ${mainId++} },`)
+      }
+      for (let si = 0; si < secondaryWindows.length; si++) {
+        const swx = secondaryWindows[si]
+        swx.info.controls.forEach((ctrl, ci) => {
+          nameEntries.push(`    { L"${escapeCString(ctrl.name)}", ${si + 1}, ${swx.ctrlIds[ci]} },`)
+        })
+      }
+      mainCode += 'static YcCtrlNameEntry g_ycCtrlNames[] = {\n'
+      mainCode += nameEntries.length > 0 ? nameEntries.join('\n') + '\n' : '    { NULL, -1, 0 },\n'
+      mainCode += '};\n'
     }
+    mainCode += 'HWND yc_get_control_handle_by_name(const wchar_t* ctrlName) {\n'
+    // 不能因 g_hMainWnd 为空就早退：主窗被销毁后（多窗口下程序继续运行）存活的辅助窗仍要能按名解析
+    mainCode += '    if (!ctrlName) return NULL;\n'
+    // 窗体名解析到窗口句柄——`窗口名.标题/宽度/可视` 等经通用控件属性绑定直接作用于窗口本身
+    mainCode += `    if (lstrcmpW(ctrlName, L"${escapeCString(winInfo.formName)}") == 0) return g_hMainWnd;\n`
+    for (let si = 0; si < secondaryWindows.length; si++) {
+      mainCode += `    if (lstrcmpW(ctrlName, L"${escapeCString(secondaryWindows[si].info.formName)}") == 0) return g_ycSubWinHandles[${si}];\n`
+    }
+    // 两遍扫描：先当前事件窗口（跨窗重名取本窗的），再其余窗口（跨窗访问唯一名控件）
+    mainCode += '    for (int pass = 0; pass < 2; pass++) {\n'
+    mainCode += '        for (size_t i = 0; i < sizeof(g_ycCtrlNames)/sizeof(g_ycCtrlNames[0]); i++) {\n'
+    mainCode += '            if (!g_ycCtrlNames[i].name) continue;\n'
+    mainCode += '            if ((pass == 0) != (g_ycCtrlNames[i].win == g_ycCurEventWin)) continue;\n'
+    mainCode += '            if (lstrcmpW(ctrlName, g_ycCtrlNames[i].name) != 0) continue;\n'
+    mainCode += '            HWND w = yc_win_handle_by_index(g_ycCtrlNames[i].win);\n'
+    mainCode += '            if (!w) continue;\n'
+    mainCode += '            return GetDlgItem(w, g_ycCtrlNames[i].id);\n'
+    mainCode += '        }\n'
+    mainCode += '    }\n'
     mainCode += '    return NULL;\n'
     mainCode += '}\n\n'
 
@@ -7893,6 +8059,12 @@ function generateMainC(
     mainCode += 'extern "C" void krnln_commdlg_set_text(const wchar_t* name, int propId, const wchar_t* v);\n'
     mainCode += 'YC_TEXT yc_commdlg_get_text(const wchar_t* name, int propId) { wchar_t* p = krnln_commdlg_get_text(name, propId); YC_TEXT t(p ? p : L""); krnln_ctrl_free_text(p); return t; }\n\n'
 
+    // 脚本组件（script 库，非可视）：窗口创建期把设计期语言/超时灌入 script 库按名状态表。
+    mainCode += 'extern "C" long long script_get_int(const wchar_t* name, int propId);\n'
+    mainCode += 'extern "C" void script_set_int(const wchar_t* name, int propId, long long v);\n'
+    mainCode += 'extern "C" const char* script_get_text(const wchar_t* name, int propId);\n'
+    mainCode += 'extern "C" void script_set_text(const wchar_t* name, int propId, const wchar_t* v);\n\n'
+
     // 日期框/月历日期属性：解析 "年/月/日 [时:分:秒]"（分隔符 / 或 -）为 SYSTEMTIME。
     mainCode += 'static int yc_parse_systemtime(const wchar_t* s, SYSTEMTIME* st) {\n'
     mainCode += '    if (!s || !st || !s[0]) return 0; ZeroMemory(st, sizeof(SYSTEMTIME));\n'
@@ -7914,6 +8086,9 @@ function generateMainC(
     // 窗体名也注册为「窗口」类型——`窗口名.标题/宽度/可视` 等经通用绑定生效（启动窗口经名字解析到 g_hMainWnd；
     // 非启动窗口暂解析不到句柄，运行时为无害空操作，与声明式化前的行为一致）。
     currentProjectControls = new Map<string, string>()
+    currentProjectWindowNames = new Set<string>()
+    // 代码文件 → 所属窗口名（efw.sourceFile 显式关联，缺省回退 <efw基名>.eyc）：裸 销毁() 的归属判定
+    const eycFileToWindowName = new Map<string, string>()
     // 已知常量名（供颜色名色转换防遮蔽）：库常量 + 项目常量，剥去前导 #。
     currentKnownConstantNames = new Set<string>()
     for (const c of libraryConstants) currentKnownConstantNames.add((c.name || '').replace(/^#/, ''))
@@ -7922,19 +8097,30 @@ function generateMainC(
       if (f.type !== 'EFW' && !f.fileName.toLowerCase().endsWith('.efw')) continue
       const efwEditorContent = editorFiles?.get(f.fileName)
       let formName = ''
+      let sourceFileName = ''
       let ctrls: Array<{ name?: unknown; type?: unknown }> = []
-      if (efwEditorContent) {
+      const efwRaw = efwEditorContent || (() => {
+        const p = join(project.projectDir, f.fileName)
+        return existsSync(p) ? readFileSync(p, 'utf-8') : ''
+      })()
+      if (efwRaw) {
         try {
-          const d = JSON.parse(efwEditorContent)
+          const d = JSON.parse(efwRaw)
           ctrls = Array.isArray(d.controls) ? d.controls : []
           formName = typeof d.name === 'string' ? d.name : ''
+          sourceFileName = typeof d.sourceFile === 'string' ? d.sourceFile : ''
         } catch { /* ignore */ }
-      } else {
+      }
+      if (!formName && !efwEditorContent) {
         const parsed = parseWindowFile(join(project.projectDir, f.fileName))
         ctrls = parsed.controls
         formName = parsed.formName || ''
       }
-      if (formName) currentProjectControls.set(formName, '窗口')
+      if (formName) {
+        currentProjectControls.set(formName, '窗口')
+        currentProjectWindowNames.add(formName)
+        eycFileToWindowName.set(sourceFileName || `${basename(f.fileName, '.efw')}.eyc`, formName)
+      }
       for (const c of ctrls) {
         const nm = typeof c?.name === 'string' ? c.name : ''
         const ty = typeof c?.type === 'string' ? c.type : ''
@@ -7953,7 +8139,13 @@ function generateMainC(
         const content = editorContent || (existsSync(eycPath) ? readFileSync(eycPath, 'utf-8') : '')
         if (!content) continue
 
-        transpileProjectFile(f.fileName, content, libraryConstants)
+        // 当前文件所属窗口（裸 销毁() 的目标；模块等非窗口文件为空串）
+        currentTranspileWindowName = eycFileToWindowName.get(f.fileName) || ''
+        try {
+          transpileProjectFile(f.fileName, content, libraryConstants)
+        } finally {
+          currentTranspileWindowName = ''
+        }
       }
     }
     compileLogMark('  组装: 二次转译 .eyc(前向声明)')
@@ -8017,6 +8209,40 @@ function generateMainC(
           const lbc = buildStdListBoxCodegen(ctrl.extraProps, ctrl.type === '选择列表框' || ctrl.type === 'ChkListBox')
           if (lbc.colorEntry) editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...lbc.colorEntry, transparent: 0 })
         }
+      }
+      // 辅助窗口控件的颜色/输入过滤并入同一张全局表（ID 全局唯一，WM_CTLCOLOR* 查表按 ID 天然共用）
+      for (const swx of secondaryWindows) {
+        swx.info.controls.forEach((ctrl, ci) => {
+          const idText = String(swx.ctrlIds[ci])
+          const unitInfo = allUnits.find(u => u.name === ctrl.type || u.englishName === ctrl.type)
+          const libraryFileName = unitInfo ? (libNameToFileName.get(normalizeKey(unitInfo.libraryName)) || '') : ''
+          const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
+          if (className === 'EDIT') {
+            const ec = buildStdEditCodegen(ctrl.extraProps)
+            if (ec.colorEntry) editColorEntries.push({ idMacro: idText, ...ec.colorEntry, transparent: 0 })
+            if (ec.needsInputFilter) anyEditNeedsInputFilter = true
+          } else if (ctrl.type === '标签' || ctrl.type === 'Label') {
+            const lc = buildStdLabelCodegen(ctrl.extraProps)
+            if (lc.colorEntry || lc.transparent) {
+              editColorEntries.push({ idMacro: idText, textColor: lc.colorEntry?.textColor ?? 0, backColor: lc.colorEntry?.backColor ?? 0xffffff, transparent: lc.transparent ? 1 : 0 })
+            }
+          } else if (ctrl.type === '选择框' || ctrl.type === 'CheckBox' || ctrl.type === '单选框' || ctrl.type === 'RadioBox') {
+            const cc = buildStdCheckableCodegen(ctrl.extraProps, ctrl.type === '单选框' || ctrl.type === 'RadioBox')
+            if (cc.colorEntry) editColorEntries.push({ idMacro: idText, ...cc.colorEntry, transparent: 0 })
+          } else if (ctrl.type === '分组框' || ctrl.type === 'GroupBox') {
+            const gc = buildStdGroupBoxCodegen(ctrl.extraProps)
+            if (gc.colorEntry) editColorEntries.push({ idMacro: idText, ...gc.colorEntry, transparent: 0 })
+          } else if (ctrl.type === '图片框' || ctrl.type === 'PicBox') {
+            const pc = buildStdPicBoxCodegen(ctrl.extraProps, false)
+            if (pc.colorEntry) editColorEntries.push({ idMacro: idText, ...pc.colorEntry, transparent: 0 })
+          } else if (ctrl.type === '组合框' || ctrl.type === 'ComboBox') {
+            const cbc = buildStdComboBoxCodegen(ctrl.extraProps)
+            if (cbc.colorEntry) editColorEntries.push({ idMacro: idText, ...cbc.colorEntry, transparent: 0 })
+          } else if (className === 'LISTBOX') {
+            const lbc = buildStdListBoxCodegen(ctrl.extraProps, false)
+            if (lbc.colorEntry) editColorEntries.push({ idMacro: idText, ...lbc.colorEntry, transparent: 0 })
+          }
+        })
       }
     }
     if (anyEditNeedsInputFilter) {
@@ -8217,6 +8443,18 @@ function generateMainC(
         url: String(ctrl.extraProps?.['Internet地址'] ?? ''),
       })
     }
+    // 辅助窗口的超级链接框并入同一张表（ID 全局唯一）
+    for (const swx of secondaryWindows) {
+      swx.info.controls.forEach((ctrl, ci) => {
+        if (!(ctrl.type === '超级链接框' || ctrl.type === 'HyperLinker')) return
+        hyperLinkEntries.push({
+          idMacro: String(swx.ctrlIds[ci]),
+          type: readIntProp(ctrl.extraProps?.['类型'], 0),
+          email: String(ctrl.extraProps?.['电子邮件地址'] ?? ''),
+          url: String(ctrl.extraProps?.['Internet地址'] ?? ''),
+        })
+      })
+    }
     // 表与助手始终生成（空时给占位项，id=0 永不匹配真实控件 id≥1001），使「跳转」方法跨编译单元恒可链接。
     mainCode += '/* 超级链接框表（类型/邮件/网址）+ 跳转 */\n'
     mainCode += 'typedef struct { int id; int type; const wchar_t* email; const wchar_t* url; } YcHyperLinkEntry;\n'
@@ -8382,9 +8620,48 @@ int yc_dp_get_prop(const wchar_t* n, int prop){ YC_DP_R(n,0); switch(prop){ case
 void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop){ case 0:st.penStyle=v;break; case 1:st.penWidth=v;break; case 2:st.rop2=v;break; case 3:st.brushStyle=v;break; case 4:st.unit=v;break; case 5:st.autoRedraw=v?1:0;break; case 6:st.penColor=(COLORREF)v;break; case 7:st.brushColor=(COLORREF)v;break; case 8:st.backColor=(COLORREF)v;break; case 9:st.textColor=(COLORREF)v;break; case 10:st.textBkColor=(COLORREF)v;break; } if(prop==5||prop==8) InvalidateRect(_h,NULL,FALSE); }
 `
 
-    // ===== 图片框鼠标事件运行时：SetWindowSubclass 按控件派发（带 横向位置/纵向位置/功能键状态 参数，bool 返回=拦截缺省处理）=====
+    // ===== 图形按钮运行时：四态图片(懒解码)+类型/选中/悬停/透明色 表（WM_DRAWITEM 绘制、BN_CLICKED 切换选中）=====
+    const picBtnCtrls = winInfo.controls
+      .map((c, i) => ({ c, i }))
+      .filter(x => x.c.type === '图形按钮' || x.c.type === 'PicBtn')
+    mainCode += '/* 图形按钮表（四态图片懒解码/类型/选中/悬停/透明色）*/\n'
+    mainCode += 'struct YcPicBtnEntry { int id; int type; int checked; int hover; long long tclr; const unsigned char* img[4]; unsigned int imgSize[4]; Gdiplus::Image* decoded[4]; };\n'
+    mainCode += 'static YcPicBtnEntry g_ycPicBtns[] = {\n'
+    if (picBtnCtrls.length > 0) {
+      for (const { c, i } of picBtnCtrls) {
+        const states = picBtnImageBytes[i]
+        const imgPtrs = [0, 1, 2, 3].map(k => (states && states[k]) ? `g_pbImg_${i}_${k}` : 'NULL').join(', ')
+        const imgSizes = [0, 1, 2, 3].map(k => (states && states[k]) ? `g_pbImgSize_${i}_${k}` : '0u').join(', ')
+        const tp = readIntProp(c.extraProps?.['类型'], 0)
+        const ck = readBoolProp(c.extraProps?.['选中'], false) ? 1 : 0
+        const tclr = readIntProp(c.extraProps?.['透明颜色'], -1)
+        mainCode += `    { IDC_${c.name.toUpperCase()}, ${tp}, ${ck}, 0, ${tclr}LL, { ${imgPtrs} }, { ${imgSizes} }, { NULL, NULL, NULL, NULL } },\n`
+      }
+    } else {
+      mainCode += '    { 0, 0, 0, 0, -1LL, { NULL, NULL, NULL, NULL }, { 0u, 0u, 0u, 0u }, { NULL, NULL, NULL, NULL } },\n'
+    }
+    mainCode += '};\n'
+    mainCode += 'static YcPicBtnEntry* yc_picbtn_by_id(int id){ if (id <= 0) return NULL; for (size_t i = 0; i < sizeof(g_ycPicBtns)/sizeof(g_ycPicBtns[0]); i++) { if (g_ycPicBtns[i].id == id) return &g_ycPicBtns[i]; } return NULL; }\n'
+    mainCode += 'static Gdiplus::Image* yc_picbtn_img(YcPicBtnEntry* e, int k){\n'
+    mainCode += '    if (!e || k < 0 || k > 3 || !e->img[k] || !e->imgSize[k]) return NULL;\n'
+    mainCode += '    if (!e->decoded[k]) {\n'
+    mainCode += '        HGLOBAL hm = GlobalAlloc(GMEM_MOVEABLE, e->imgSize[k]);\n'
+    mainCode += '        if (!hm) return NULL;\n'
+    mainCode += '        void* pm = GlobalLock(hm); if (pm) { memcpy(pm, e->img[k], e->imgSize[k]); GlobalUnlock(hm); }\n'
+    mainCode += '        IStream* ps = NULL;\n'
+    mainCode += '        if (CreateStreamOnHGlobal(hm, TRUE, &ps) == S_OK && ps) { Gdiplus::Image* im = Gdiplus::Image::FromStream(ps, FALSE); if (im && im->GetLastStatus() != Gdiplus::Ok) { delete im; im = NULL; } e->decoded[k] = im; ps->Release(); } else { GlobalFree(hm); }\n'
+    mainCode += '    }\n'
+    mainCode += '    return e->decoded[k];\n'
+    mainCode += '}\n'
+    // 「选中」属性运行时读写（window-units.json 图形按钮 成员绑定引用这两个符号）
+    mainCode += 'int yc_picbtn_get_checked(HWND h){ YcPicBtnEntry* e = yc_picbtn_by_id(GetDlgCtrlID(h)); return (e && e->checked) ? 1 : 0; }\n'
+    mainCode += 'void yc_picbtn_set_checked(HWND h, int v){ YcPicBtnEntry* e = yc_picbtn_by_id(GetDlgCtrlID(h)); if (!e) return; e->checked = v ? 1 : 0; if (h) InvalidateRect(h, NULL, TRUE); }\n'
+    mainCode += 'static void yc_picbtn_toggle(HWND h){ YcPicBtnEntry* e = yc_picbtn_by_id(GetDlgCtrlID(h)); if (!e || e->type != 1) return; e->checked = !e->checked; if (h) InvalidateRect(h, NULL, TRUE); }\n\n'
+
+    // ===== 图片框/图形按钮鼠标事件运行时：SetWindowSubclass 按控件派发（带 横向位置/纵向位置/功能键状态 参数，bool 返回=拦截缺省处理）=====
     // 事件签名与 .eyc 转译严格一致（逻辑型→bool、整数型→int），用户子程序参数不符时弱空实现兜底（事件静默不触发）。
-    const picBoxMouseCtrls = winInfo.controls.filter(c => c.type === '图片框' || c.type === 'PicBox')
+    // 图形按钮共用同一子类过程：额外做「点燃」悬停跟踪（TrackMouseEvent + 悬停态重绘）。
+    const picBoxMouseCtrls = winInfo.controls.filter(c => c.type === '图片框' || c.type === 'PicBox' || c.type === '图形按钮' || c.type === 'PicBtn')
     if (picBoxMouseCtrls.length > 0) {
       // 处理函数原型：普通声明即可取址（弱定义在事件区、用户 .eyc 强符号覆盖，同画板 paintHandler 定式）
       for (const pb of picBoxMouseCtrls) {
@@ -8404,6 +8681,9 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       mainCode += '};\n'
       mainCode += 'static int yc_pb_fkeys(WPARAM w){ int fk=0; if(w & MK_CONTROL) fk|=1; if(w & MK_SHIFT) fk|=2; if(GetKeyState(VK_MENU)&0x8000) fk|=4; return fk; }\n'
       mainCode += 'static LRESULT CALLBACK YcPicBoxMouseProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR ref){\n'
+      // 图形按钮「点燃」悬停：进入置 hover+TME_LEAVE 跟踪，离开清除，态变即重绘（在事件派发之前，拦截不影响悬停视觉）
+      mainCode += '    if (m == WM_MOUSEMOVE) { YcPicBtnEntry* pbe = yc_picbtn_by_id(GetDlgCtrlID(h)); if (pbe && !pbe->hover) { pbe->hover = 1; InvalidateRect(h, NULL, TRUE); TRACKMOUSEEVENT tme; tme.cbSize = sizeof(tme); tme.dwFlags = TME_LEAVE; tme.hwndTrack = h; tme.dwHoverTime = 0; TrackMouseEvent(&tme); } }\n'
+      mainCode += '    else if (m == WM_MOUSELEAVE) { YcPicBtnEntry* pbe = yc_picbtn_by_id(GetDlgCtrlID(h)); if (pbe && pbe->hover) { pbe->hover = 0; InvalidateRect(h, NULL, TRUE); } }\n'
       mainCode += '    YcPicBoxMouseEntry* pb = (YcPicBoxMouseEntry*)ref;\n'
       mainCode += '    if (pb) {\n'
       mainCode += '        bool (*fn)(int,int,int) = NULL;\n'
@@ -8475,6 +8755,19 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         ctrlId++
         continue
       }
+      // 脚本组件（Script）：非可视功能组件，不创建窗口——把设计期语言/超时灌入 script 库按名状态表。
+      // 缺省语言 JScript、超时 0 在库结构体里（与 window-units.json defaultValue 一致），只对改过默认的属性发调用。
+      if (ctrl.type === '脚本组件' || ctrl.type === 'Script') {
+        const scName = `L"${escapeCString(ctrl.name)}"`
+        const scLang = ctrl.extraProps?.['语言']
+        if (typeof scLang === 'string' && scLang && scLang !== 'JScript') {
+          mainCode += `    script_set_text(${scName}, 0, L"${escapeCString(scLang)}");\n`
+        }
+        const scTimeout = readIntProp(ctrl.extraProps?.['超时'], 0)
+        if (scTimeout !== 0) mainCode += `    script_set_int(${scName}, 2, ${scTimeout});\n`
+        ctrlId++
+        continue
+      }
       const isStdEdit = className === 'EDIT'
       const editCodegen = isStdEdit ? buildStdEditCodegen(ctrl.extraProps) : null
       // 标准按钮（非复选框/单选框/分组框，它们也是 BUTTON 类但样式不同）
@@ -8495,6 +8788,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       const isStdPicBox = ctrl.type === '图片框' || ctrl.type === 'PicBox'
       const picBoxImageBytes = controlImageBytes[ctrlIndex]
       const picBoxCodegen = isStdPicBox ? buildStdPicBoxCodegen(ctrl.extraProps, !!picBoxImageBytes) : null
+      // 图形按钮：BS_OWNERDRAW（样式/类名取 json），四态图片/类型/选中在 g_ycPicBtns 表，WM_DRAWITEM 绘制
+      const isStdPicBtn = ctrl.type === '图形按钮' || ctrl.type === 'PicBtn'
       // 外形框：SS_OWNERDRAW（样式取 json），自绘参数在 g_ycShapeBoxes 表，需跳过 WCM_SETPROP
       const isStdShapeBox = ctrl.type === '外形框' || ctrl.type === 'ShapeBox'
       // 画板：自注册 YCDRAWPANEL 类（边框→style/exStyle），运行时状态/绘画由 g_ycDrawPanels + YcDrawPanelProc 负责
@@ -8628,6 +8923,12 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         // 选中态创建后经 BM_SETCHECK 落定；颜色已在颜色表，图片/数据源/数据列暂声明占位。
         if (checkableCodegen?.checked) {
           mainCode += '    SendMessage(hCtrl, BM_SETCHECK, BST_CHECKED, 0);\n'
+        }
+      } else if (isStdPicBtn) {
+        // 图形按钮：四态图片/类型/选中在 g_ycPicBtns 表（WM_DRAWITEM 绘制），只挂鼠标事件子类（悬停点燃+7 鼠标事件）
+        const pbtnMouseIdx = picBoxMouseCtrls.indexOf(ctrl)
+        if (pbtnMouseIdx >= 0) {
+          mainCode += `    SetWindowSubclass(hCtrl, YcPicBoxMouseProc, 1, (DWORD_PTR)&g_ycPicBoxMouse[${pbtnMouseIdx}]);\n`
         }
       } else if (picBoxCodegen) {
         // 标准 STATIC·图片框（忽略 WM_APP+1）：先挂鼠标事件子类（表项按 picBoxMouseCtrls 序对齐），图片经 GDI+ 解码为 HBITMAP 后 STM_SETIMAGE
@@ -8776,8 +9077,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         if ((ctrl.type === '画板' || ctrl.type === 'DrawPanel') && ev.name === '绘画') continue
         // 时钟「周期事件」不走 WM_COMMAND/NOTIFY/SCROLL 通道，由主窗 WM_TIMER 按定时器 id 直接派发。
         if ((ctrl.type === '时钟' || ctrl.type === 'Timer') && ev.name === '周期事件') continue
-        // 图片框鼠标事件不走上述通道（且 被双击 会被 STN_DBLCLK 兜底误绑成无参 void 处理），由 YcPicBoxMouseProc 子类带参直接派发。
-        if ((ctrl.type === '图片框' || ctrl.type === 'PicBox') && PICBOX_MOUSE_EVENT_SET.has(ev.name)) continue
+        // 图片框/图形按钮鼠标事件不走上述通道（且 被双击 会被 STN_DBLCLK/BN_DBLCLK 兜底误绑成无参 void 处理），由 YcPicBoxMouseProc 子类带参直接派发。
+        if ((ctrl.type === '图片框' || ctrl.type === 'PicBox' || ctrl.type === '图形按钮' || ctrl.type === 'PicBtn') && PICBOX_MOUSE_EVENT_SET.has(ev.name)) continue
         const handlerName = `_${ctrl.name.replace(/^_+/, '')}_${ev.name}`
         const proto = resolveEventByProtocol(
           protocolBindings,
@@ -8995,6 +9296,10 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       const hasCompatClickBinding = bindings.some(b => b.notifyCode === 'BN_CLICKED' && b.handlerName === compatClickHandler)
       if (bindings.length > 0 || hasCompatClick) {
         mainCode += `        case IDC_${ctrl.name.toUpperCase()}:\n`
+        // 图形按钮·选择框类型：单击先切换「选中」再进用户事件（易语言语义：事件里读到的是新状态）
+        if (ctrl.type === '图形按钮' || ctrl.type === 'PicBtn') {
+          mainCode += `            if (wmEvent == BN_CLICKED) { yc_picbtn_toggle(GetDlgItem(hWnd, IDC_${ctrl.name.toUpperCase()})); }\n`
+        }
         if (hasCompatClick && !hasCompatClickBinding) {
           mainCode += '            if (wmEvent == BN_CLICKED) {\n'
           mainCode += `                ${compatClickHandler}();\n`
@@ -9127,9 +9432,39 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       mainCode += '        return DefWindowProcW(hWnd, message, wParam, lParam);\n'
       mainCode += '    }\n'
     }
-    if (buttonDrawEntries.length > 0 || shapeBoxEntries.length > 0 || chkListIds.length > 0) {
+    if (buttonDrawEntries.length > 0 || shapeBoxEntries.length > 0 || chkListIds.length > 0 || picBtnCtrls.length > 0) {
       mainCode += '    case WM_DRAWITEM: {\n'
       mainCode += '        LPDRAWITEMSTRUCT dis = (LPDRAWITEMSTRUCT)lParam;\n'
+    }
+    if (picBtnCtrls.length > 0) {
+      // 图形按钮：按状态选图（禁止>按下/选中>点燃>正常，缺态回落正常图）拉伸铺满；透明颜色经 GDI+ 色键抠掉
+      mainCode += '        if (dis && dis->CtlType == ODT_BUTTON) {\n'
+      mainCode += '            YcPicBtnEntry* pe = yc_picbtn_by_id((int)dis->CtlID);\n'
+      mainCode += '            if (pe) {\n'
+      mainCode += '                RECT rc = dis->rcItem;\n'
+      mainCode += '                BOOL pbPressed = ((dis->itemState & ODS_SELECTED) != 0) || (pe->type == 1 && pe->checked);\n'
+      mainCode += '                BOOL pbDisabled = (dis->itemState & ODS_DISABLED) != 0;\n'
+      mainCode += '                int k = (pbDisabled && pe->img[3]) ? 3 : (pbPressed && pe->img[2]) ? 2 : (pe->hover && pe->type == 0 && pe->img[1]) ? 1 : 0;\n'
+      mainCode += '                Gdiplus::Image* im = yc_picbtn_img(pe, k);\n'
+      mainCode += '                if (!im) im = yc_picbtn_img(pe, 0);\n'
+      mainCode += '                FillRect(dis->hDC, &rc, GetSysColorBrush(COLOR_BTNFACE));\n'
+      mainCode += '                if (im) {\n'
+      mainCode += '                    Gdiplus::Graphics g(dis->hDC);\n'
+      mainCode += '                    g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);\n'
+      mainCode += '                    Gdiplus::Rect dst(rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);\n'
+      mainCode += '                    if (pe->tclr >= 0) {\n'
+      mainCode += '                        COLORREF ck = (COLORREF)pe->tclr;\n'
+      mainCode += '                        Gdiplus::ImageAttributes ia;\n'
+      mainCode += '                        Gdiplus::Color cc(GetRValue(ck), GetGValue(ck), GetBValue(ck));\n'
+      mainCode += '                        ia.SetColorKey(cc, cc);\n'
+      mainCode += '                        g.DrawImage(im, dst, 0, 0, (int)im->GetWidth(), (int)im->GetHeight(), Gdiplus::UnitPixel, &ia);\n'
+      mainCode += '                    } else {\n'
+      mainCode += '                        g.DrawImage(im, dst.X, dst.Y, dst.Width, dst.Height);\n'
+      mainCode += '                    }\n'
+      mainCode += '                }\n'
+      mainCode += '                return TRUE;\n'
+      mainCode += '            }\n'
+      mainCode += '        }\n'
     }
     if (chkListIds.length > 0) {
       // 选择列表框自绘：填背景(选中态高亮) → 画复选框(勾选/禁止) → 画项目文本
@@ -9211,7 +9546,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       mainCode += '            }\n'
       mainCode += '        }\n'
     }
-    if (buttonDrawEntries.length > 0 || shapeBoxEntries.length > 0 || chkListIds.length > 0) {
+    if (buttonDrawEntries.length > 0 || shapeBoxEntries.length > 0 || chkListIds.length > 0 || picBtnCtrls.length > 0) {
       mainCode += '        break;\n'
       mainCode += '    }\n'
     }
@@ -9308,7 +9643,9 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '        break;\n'
     mainCode += '    case WM_DESTROY:\n'
     mainCode += `        ${windowEventPrefix}_被销毁();\n`
-    mainCode += '        PostQuitMessage(0);\n'
+    // 易语言语义：销毁主窗只销毁它自己；程序在**所有窗口**都销毁后才退出（无父窗口的辅助窗继续存活）
+    mainCode += '        g_hMainWnd = NULL;\n'
+    mainCode += '        if (!yc_any_window_alive()) PostQuitMessage(0);\n'
     mainCode += '        break;\n'
     if (!winInfo.movable) {
       // 可否移动=假：标题栏拖动与 HTCAPTION 拖动都会走 SC_MOVE，一处拦全断
@@ -9334,6 +9671,365 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '    }\n'
     mainCode += '    return 0;\n'
     mainCode += '}\n\n'
+
+    // ===== 多窗口：辅助窗口运行时（事件分发 + 控件创建 + 通用子窗过程 + 窗口注册表 + 载入/销毁）=====
+    // v1 轻量形态：常规控件经 buildStd* 构建器创建；不支持 画板/选择夹/时钟/外形框/菜单/控件图片（跳过并告警）。
+    {
+      type SecBinding = { id: number; code: string; handler: string }
+      const secCommandBindings: SecBinding[] = []
+      const secNotifyBindings: SecBinding[] = []
+      const secScrollBindings: Array<{ id: number; message: 'WM_HSCROLL' | 'WM_VSCROLL'; handler: string }> = []
+      const secWarned = new Set<string>()
+      for (const swx of secondaryWindows) {
+        swx.info.controls.forEach((ctrl, ci) => {
+          const unit = allUnits.find(u => u.name === ctrl.type || u.englishName === ctrl.type)
+          const libraryFileName = unit ? (libNameToFileName.get(normalizeKey(unit.libraryName)) || '') : ''
+          const className = resolveControlClassName(ctrl.type, unit, libraryFileName, controlProtocolBindings)
+          for (const ev of unit?.events || []) {
+            if ((ctrl.type === '画板' || ctrl.type === 'DrawPanel') && ev.name === '绘画') continue
+            if ((ctrl.type === '时钟' || ctrl.type === 'Timer') && ev.name === '周期事件') continue
+            if ((ctrl.type === '图片框' || ctrl.type === 'PicBox') && PICBOX_MOUSE_EVENT_SET.has(ev.name)) continue
+            const handlerName = `_${ctrl.name.replace(/^_+/, '')}_${ev.name}`
+            const proto = resolveEventByProtocol(protocolBindings, libraryFileName, unit?.name || ctrl.type, unit?.englishName || '', ev.name)
+            const id = swx.ctrlIds[ci]
+            if (proto) {
+              if (proto.channel === 'WM_COMMAND') { secCommandBindings.push({ id, code: proto.code, handler: handlerName }); continue }
+              if (proto.channel === 'WM_NOTIFY') { secNotifyBindings.push({ id, code: proto.code, handler: handlerName }); continue }
+              if (proto.channel === 'WM_HSCROLL' || proto.channel === 'WM_VSCROLL') { secScrollBindings.push({ id, message: proto.channel, handler: handlerName }); continue }
+            }
+            const notifyCode = resolveCommandNotifyCode(className, ev.name)
+            if (notifyCode) { secCommandBindings.push({ id, code: notifyCode, handler: handlerName }); continue }
+            const nmCode = resolveNotifyCode(className, ev.name)
+            if (nmCode) { secNotifyBindings.push({ id, code: nmCode, handler: handlerName }); continue }
+            const scrollMsg = resolveScrollMessage(className, ev.name)
+            if (scrollMsg) { secScrollBindings.push({ id, message: scrollMsg, handler: handlerName }); continue }
+          }
+        })
+      }
+      const seenSec = new Set<string>()
+      const uSecCmd = secCommandBindings.filter(b => { const k = `c${b.id}|${b.code}|${b.handler}`; if (seenSec.has(k)) return false; seenSec.add(k); return true })
+      const uSecNtf = secNotifyBindings.filter(b => { const k = `n${b.id}|${b.code}|${b.handler}`; if (seenSec.has(k)) return false; seenSec.add(k); return true })
+      const uSecScr = secScrollBindings.filter(b => { const k = `s${b.id}|${b.message}|${b.handler}`; if (seenSec.has(k)) return false; seenSec.add(k); return true })
+
+      if (secondaryWindows.length > 0) {
+        // weak：辅助窗口窗级事件 + 控件事件（与主窗重名的控件共用同一处理函数，declaredHandlers 全局去重）
+        mainCode += '/* 辅助窗口事件处理默认实现 */\n'
+        for (const swx of secondaryWindows) {
+          for (const evn of ['创建完毕', '即将被销毁', '被销毁']) {
+            const h = `_${swx.info.formName}_${evn}`
+            if (declaredHandlers.has(h)) continue
+            declaredHandlers.add(h)
+            mainCode += `WEAK_FUNC void ${h}(void) { }\n`
+          }
+        }
+        for (const b of [...uSecCmd, ...uSecNtf]) {
+          if (declaredHandlers.has(b.handler)) continue
+          declaredHandlers.add(b.handler)
+          mainCode += `WEAK_FUNC void ${b.handler}(void) { }\n`
+        }
+        for (const b of uSecScr) {
+          if (declaredHandlers.has(b.handler)) continue
+          declaredHandlers.add(b.handler)
+          mainCode += `WEAK_FUNC void ${b.handler}(void) { }\n`
+        }
+        mainCode += '\n'
+
+        // 每辅助窗口的控件创建（复用与主窗同一批构建器；不支持类型跳过并在编译输出告警一次）
+        for (let si = 0; si < secondaryWindows.length; si++) {
+          const swx = secondaryWindows[si]
+          mainCode += `static void CreateControls_W${si + 1}(HWND hWndParent) {\n`
+          mainCode += '    HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);\n'
+          mainCode += '    HWND hCtrl; (void)hCtrl;\n'
+          swx.info.controls.forEach((ctrl, ci) => {
+            const cid = swx.ctrlIds[ci]
+            const unitInfo = allUnits.find(u => u.name === ctrl.type || u.englishName === ctrl.type)
+            const libraryFileName = unitInfo ? (libNameToFileName.get(normalizeKey(unitInfo.libraryName)) || '') : ''
+            const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
+            const unsupported = ['画板', 'DrawPanel', '选择夹', 'Tab', '时钟', 'Timer', '外形框', 'ShapeBox', '菜单', 'menu', '字体', 'font', '图形按钮', 'PicBtn']
+            if (unsupported.includes(ctrl.type)) {
+              const wk = `${swx.info.formName}:${ctrl.type}`
+              if (!secWarned.has(wk)) {
+                secWarned.add(wk)
+                sendMessage({ type: 'warning', text: `辅助窗口「${swx.info.formName}」暂不支持控件类型「${ctrl.type}」，已跳过（v1 限制）` })
+              }
+              return
+            }
+            // 通用对话框：非可视组件，属性灌入 krnln 按名状态表（与主窗同路径），不创建窗口
+            if (ctrl.type === '通用对话框' || ctrl.type === 'CommonDlg') return
+            const isStdEdit = className === 'EDIT'
+            const editCodegen = isStdEdit ? buildStdEditCodegen(ctrl.extraProps) : null
+            const isStdButton = ctrl.type === '按钮' || ctrl.type === 'Button'
+            const buttonCodegen = isStdButton ? buildStdButtonCodegen(ctrl.extraProps, false, false) : null
+            const isStdLabel = ctrl.type === '标签' || ctrl.type === 'Label'
+            const labelCodegen = isStdLabel ? buildStdLabelCodegen(ctrl.extraProps) : null
+            const isStdCheckable = ctrl.type === '选择框' || ctrl.type === 'CheckBox' || ctrl.type === '单选框' || ctrl.type === 'RadioBox'
+            const checkableCodegen = isStdCheckable ? buildStdCheckableCodegen(ctrl.extraProps, ctrl.type === '单选框' || ctrl.type === 'RadioBox') : null
+            const isStdGroupBox = ctrl.type === '分组框' || ctrl.type === 'GroupBox'
+            const groupBoxCodegen = isStdGroupBox ? buildStdGroupBoxCodegen(ctrl.extraProps) : null
+            const isStdPicBox = ctrl.type === '图片框' || ctrl.type === 'PicBox'
+            const picBoxCodegen = isStdPicBox ? buildStdPicBoxCodegen(ctrl.extraProps, false) : null
+            const progressCodegen = (ctrl.type === '进度条' || ctrl.type === 'ProgressBar') ? buildStdProgressCodegen(ctrl.extraProps) : null
+            const sliderCodegen = (ctrl.type === '滑块条' || ctrl.type === 'SliderBar') ? buildStdSliderCodegen(ctrl.extraProps) : null
+            const scrollBarCodegen = (ctrl.type === '横向滚动条' || ctrl.type === '纵向滚动条' || ctrl.type === 'HScrollBar' || ctrl.type === 'VScrollBar')
+              ? buildStdScrollBarCodegen(ctrl.extraProps, ctrl.type === '纵向滚动条' || ctrl.type === 'VScrollBar') : null
+            const datePickerCodegen = (ctrl.type === '日期框' || ctrl.type === 'DatePicker') ? buildStdDatePickerCodegen(ctrl.extraProps) : null
+            const monthCalCodegen = (ctrl.type === '月历' || ctrl.type === 'MonthCalendar') ? buildStdMonthCalCodegen(ctrl.extraProps) : null
+            const comboCodegen = (ctrl.type === '组合框' || ctrl.type === 'ComboBox') ? buildStdComboBoxCodegen(ctrl.extraProps) : null
+            const listBoxCodegen = className === 'LISTBOX' ? buildStdListBoxCodegen(ctrl.extraProps, false) : null
+            const anyCodegen = editCodegen || buttonCodegen || labelCodegen || checkableCodegen || groupBoxCodegen || picBoxCodegen
+              || progressCodegen || sliderCodegen || scrollBarCodegen || datePickerCodegen || monthCalCodegen || comboCodegen || listBoxCodegen
+            const baseStyle = anyCodegen ? anyCodegen.style
+              : resolveControlStyle(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
+            const exStyle = (anyCodegen && 'exStyle' in anyCodegen ? (anyCodegen as { exStyle?: string }).exStyle : '') || '0'
+            const visFlag = ctrl.visible === false ? '' : ' | WS_VISIBLE'
+            const disFlag = ctrl.disabled ? ' | WS_DISABLED' : ''
+            const isEditLike = isStdEdit || comboCodegen !== null || listBoxCodegen !== null || datePickerCodegen !== null || monthCalCodegen !== null
+              || progressCodegen !== null || sliderCodegen !== null || scrollBarCodegen !== null
+            const isStdHyperLink = ctrl.type === '超级链接框' || ctrl.type === 'HyperLinker'
+            const text = isStdHyperLink ? `<a>${ctrl.text || ctrl.name}</a>` : isEditLike ? (ctrl.text || '') : (ctrl.text || ctrl.name)
+            mainCode += `    hCtrl = CreateWindowExW(${exStyle}, L"${className}", L"${escapeCString(text)}",\n`
+            mainCode += `        ${baseStyle}${visFlag}${disFlag},\n`
+            mainCode += `        ${ctrl.x}, ${ctrl.y}, ${ctrl.width}, ${ctrl.height},\n`
+            mainCode += `        hWndParent, (HMENU)${cid}, g_hInstance, NULL);\n`
+            const ctrlFont = parseControlFont(ctrl.extraProps?.['字体'])
+            if (ctrlFont) {
+              mainCode += '    {\n'
+              mainCode += '      HDC hdcF = GetDC(NULL);\n'
+              mainCode += `      int fh = -MulDiv(${ctrlFont.size}, GetDeviceCaps(hdcF, LOGPIXELSY), 72);\n`
+              mainCode += '      ReleaseDC(NULL, hdcF);\n'
+              mainCode += `      HFONT hCtrlFont = CreateFontW(fh, 0, 0, 0, ${ctrlFont.bold ? 700 : 400}, ${ctrlFont.italic ? 'TRUE' : 'FALSE'}, ${ctrlFont.underline ? 'TRUE' : 'FALSE'}, ${ctrlFont.strikeout ? 'TRUE' : 'FALSE'}, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"${escapeCString(ctrlFont.name)}");\n`
+              mainCode += '      SendMessageW(hCtrl, WM_SETFONT, (WPARAM)(hCtrlFont ? hCtrlFont : hFont), TRUE);\n'
+              mainCode += '    }\n'
+            } else {
+              mainCode += '    SendMessage(hCtrl, WM_SETFONT, (WPARAM)hFont, TRUE);\n'
+            }
+            if (checkableCodegen?.checked) {
+              mainCode += '    SendMessage(hCtrl, BM_SETCHECK, BST_CHECKED, 0);\n'
+            }
+            const postLines = (anyCodegen as { postCreateLines?: string[] } | null)?.postCreateLines || []
+            for (const line of postLines) mainCode += `    ${line}\n`
+            // 第三方/通用组件属性：标准 WCM_SETPROP（WM_APP+1）协议
+            if (!anyCodegen && unitInfo && Object.keys(ctrl.extraProps).length > 0) {
+              for (let pi = 0; pi < unitInfo.properties.length; pi++) {
+                const prop = unitInfo.properties[pi]
+                const value = ctrl.extraProps[prop.name]
+                if (value === undefined || prop.typeName === '文本型') continue
+                const lparamCode = prop.typeName === '逻辑型'
+                  ? ((value === true || value === '真') ? 'TRUE' : 'FALSE')
+                  : (typeof value === 'number' ? String(value) : '0')
+                mainCode += `    SendMessage(hCtrl, WM_APP + 1, ${pi}, (LPARAM)${lparamCode});\n`
+              }
+            }
+          })
+          mainCode += '}\n\n'
+        }
+
+        // 通用对话框（辅助窗口上的）：属性灌入按名状态表——挂在各窗创建函数外统一发（非可视、与窗口无关）
+        // （与主窗同一 krnln_commdlg_set_* 通道，这里跳过：设计期默认值即可用，改值走代码路径。）
+
+        // 窗口注册表 + 通用子窗过程 + 载入/销毁
+        mainCode += '/* 辅助窗口注册表 */\n'
+        mainCode += 'struct YcSubWinDef { const wchar_t* name; const wchar_t* title; int cw; int ch; };\n'
+        mainCode += 'static YcSubWinDef g_ycSubWinDefs[] = {\n'
+        for (const swx of secondaryWindows) {
+          mainCode += `    { L"${escapeCString(swx.info.formName)}", L"${escapeCString(swx.info.title || swx.info.formName)}", ${swx.info.width}, ${swx.info.height} },\n`
+        }
+        mainCode += '};\n'
+        mainCode += 'static LRESULT CALLBACK YcSubWinProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);\n\n'
+
+        mainCode += 'int yc_win_load(const wchar_t* name, const wchar_t* parentName, int dialogMode) {\n'
+        mainCode += '    if (!name || !name[0]) return 0;\n'
+        mainCode += `    if (lstrcmpW(name, L"${escapeCString(winInfo.formName)}") == 0) { if (g_hMainWnd) { ShowWindow(g_hMainWnd, SW_SHOW); SetForegroundWindow(g_hMainWnd); } return 1; }\n`
+        mainCode += '    int idx = -1;\n'
+        mainCode += `    for (int i = 0; i < ${secondaryWindows.length}; i++) { if (lstrcmpW(name, g_ycSubWinDefs[i].name) == 0) { idx = i; break; } }\n`
+        mainCode += '    if (idx < 0) return 0;\n'
+        mainCode += '    if (g_ycSubWinHandles[idx]) { ShowWindow(g_ycSubWinHandles[idx], SW_SHOW); SetForegroundWindow(g_ycSubWinHandles[idx]); return 1; }\n'
+        mainCode += '    HWND owner = (parentName && parentName[0]) ? yc_get_control_handle_by_name(parentName) : NULL;\n'
+        // 客户区尺寸 → 窗口外框尺寸；居屏
+        mainCode += '    RECT rc = { 0, 0, g_ycSubWinDefs[idx].cw, g_ycSubWinDefs[idx].ch };\n'
+        mainCode += '    DWORD style = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX;\n'
+        mainCode += '    AdjustWindowRect(&rc, style, FALSE);\n'
+        mainCode += '    int ww = rc.right - rc.left, wh = rc.bottom - rc.top;\n'
+        mainCode += '    int sx = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2, sy = (GetSystemMetrics(SM_CYSCREEN) - wh) / 2;\n'
+        mainCode += '    HWND h = CreateWindowExW(0, L"ycIDESubWindowClass", g_ycSubWinDefs[idx].title, style, sx, sy, ww, wh, owner, NULL, g_hInstance, NULL);\n'
+        mainCode += '    if (!h) return 0;\n'
+        mainCode += '    g_ycSubWinHandles[idx] = h;\n'
+        mainCode += '    SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)(idx + 1));\n'
+        mainCode += '    switch (idx) {\n'
+        for (let si = 0; si < secondaryWindows.length; si++) {
+          mainCode += `    case ${si}: CreateControls_W${si + 1}(h); break;\n`
+        }
+        mainCode += '    }\n'
+        mainCode += '    { int save = g_ycCurEventWin; g_ycCurEventWin = idx + 1;\n'
+        mainCode += '      switch (idx) {\n'
+        for (let si = 0; si < secondaryWindows.length; si++) {
+          mainCode += `      case ${si}: _${secondaryWindows[si].info.formName}_创建完毕(); break;\n`
+        }
+        mainCode += '      }\n'
+        mainCode += '      g_ycCurEventWin = save; }\n'
+        mainCode += '    ShowWindow(h, SW_SHOW);\n'
+        mainCode += '    UpdateWindow(h);\n'
+        mainCode += '    if (dialogMode) {\n'
+        mainCode += '        HWND own = owner ? owner : g_hMainWnd;\n'
+        mainCode += '        if (own) EnableWindow(own, FALSE);\n'
+        mainCode += '        MSG mmsg;\n'
+        mainCode += '        while (IsWindow(h)) {\n'
+        mainCode += '            if (!GetMessageW(&mmsg, NULL, 0, 0)) { PostQuitMessage((int)mmsg.wParam); break; }\n'
+        mainCode += '            TranslateMessage(&mmsg);\n'
+        mainCode += '            DispatchMessageW(&mmsg);\n'
+        mainCode += '        }\n'
+        mainCode += '        if (own) { EnableWindow(own, TRUE); SetActiveWindow(own); SetForegroundWindow(own); }\n'
+        mainCode += '    }\n'
+        mainCode += '    return 1;\n'
+        mainCode += '}\n\n'
+
+        mainCode += 'void yc_win_destroy(const wchar_t* name) {\n'
+        mainCode += '    HWND h = yc_get_control_handle_by_name(name);\n'
+        mainCode += '    if (h && IsWindow(h)) DestroyWindow(h);\n'
+        mainCode += '}\n\n'
+
+        // 通用子窗过程：事件分发前设 g_ycCurEventWin（控件跨窗重名时按名解析取本窗的）
+        mainCode += 'static LRESULT CALLBACK YcSubWinProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {\n'
+        mainCode += '    int wi = (int)GetWindowLongPtrW(hWnd, GWLP_USERDATA);\n'
+        mainCode += '    switch (message) {\n'
+        mainCode += '    case WM_COMMAND: {\n'
+        mainCode += '        int wmId = LOWORD(wParam);\n'
+        mainCode += '        int wmEvent = HIWORD(wParam); (void)wmEvent;\n'
+        mainCode += '        int save = g_ycCurEventWin; g_ycCurEventWin = wi;\n'
+        mainCode += '        switch (wmId) {\n'
+        {
+          const byId = new Map<number, Array<{ code: string; handler: string }>>()
+          for (const b of uSecCmd) {
+            const list = byId.get(b.id) || []
+            list.push({ code: b.code, handler: b.handler })
+            byId.set(b.id, list)
+          }
+          for (const [id, list] of byId) {
+            mainCode += `        case ${id}:\n`
+            for (const b of list) mainCode += `            if (wmEvent == ${b.code}) { ${b.handler}(); }\n`
+            mainCode += '            break;\n'
+          }
+        }
+        mainCode += '        }\n'
+        mainCode += '        g_ycCurEventWin = save;\n'
+        mainCode += '        break;\n'
+        mainCode += '    }\n'
+        mainCode += '    case WM_NOTIFY: {\n'
+        mainCode += '        LPNMHDR pnm = (LPNMHDR)lParam;\n'
+        mainCode += '        if (!pnm) break;\n'
+        mainCode += '        if (pnm->code == NM_CLICK || pnm->code == NM_RETURN) yc_hyperlink_do((int)pnm->idFrom);\n'
+        mainCode += '        int save = g_ycCurEventWin; g_ycCurEventWin = wi;\n'
+        mainCode += '        switch ((int)pnm->idFrom) {\n'
+        {
+          const byId = new Map<number, Array<{ code: string; handler: string }>>()
+          for (const b of uSecNtf) {
+            const list = byId.get(b.id) || []
+            list.push({ code: b.code, handler: b.handler })
+            byId.set(b.id, list)
+          }
+          for (const [id, list] of byId) {
+            mainCode += `        case ${id}:\n`
+            for (const b of list) mainCode += `            if (pnm->code == ${b.code}) { ${b.handler}(); }\n`
+            mainCode += '            break;\n'
+          }
+        }
+        mainCode += '        }\n'
+        mainCode += '        g_ycCurEventWin = save;\n'
+        mainCode += '        break;\n'
+        mainCode += '    }\n'
+        mainCode += '    case WM_HSCROLL:\n'
+        mainCode += '    case WM_VSCROLL: {\n'
+        mainCode += '        HWND hScroll = (HWND)lParam;\n'
+        mainCode += '        if (!hScroll) break;\n'
+        mainCode += '        int sid = GetDlgCtrlID(hScroll);\n'
+        mainCode += '        int save = g_ycCurEventWin; g_ycCurEventWin = wi;\n'
+        mainCode += '        switch (sid) {\n'
+        {
+          const byId = new Map<number, Array<{ message: string; handler: string }>>()
+          for (const b of uSecScr) {
+            const list = byId.get(b.id) || []
+            list.push({ message: b.message, handler: b.handler })
+            byId.set(b.id, list)
+          }
+          for (const [id, list] of byId) {
+            mainCode += `        case ${id}:\n`
+            for (const b of list) mainCode += `            if (message == ${b.message}) { ${b.handler}(); }\n`
+            mainCode += '            break;\n'
+          }
+        }
+        mainCode += '        default: break;\n'
+        mainCode += '        }\n'
+        mainCode += '        g_ycCurEventWin = save;\n'
+        mainCode += '        break;\n'
+        mainCode += '    }\n'
+        // 控件配色：与主窗共用 g_ycEditColors/g_ycTextColorOverride（ID 全局唯一）；
+        // 查表不中绝不返回 0（NULL 刷黑底陷阱，同主窗）：STATIC 非 EDIT → 窗体底色刷，其余 DefWindowProc。
+        mainCode += '    case WM_CTLCOLOREDIT:\n'
+        mainCode += '    case WM_CTLCOLORLISTBOX:\n'
+        mainCode += '    case WM_CTLCOLORSTATIC: {\n'
+        mainCode += '        int colorCtrlId = GetDlgCtrlID((HWND)lParam);\n'
+        mainCode += '        std::map<HWND,COLORREF>::iterator _ovIt = g_ycTextColorOverride.find((HWND)lParam);\n'
+        mainCode += '        bool _hasOv = (_ovIt != g_ycTextColorOverride.end());\n'
+        mainCode += '        for (size_t ci = 0; ci < sizeof(g_ycEditColors) / sizeof(g_ycEditColors[0]); ci++) {\n'
+        mainCode += '            if (g_ycEditColors[ci].id <= 0 || g_ycEditColors[ci].id != colorCtrlId) continue;\n'
+        mainCode += '            SetTextColor((HDC)wParam, _hasOv ? _ovIt->second : g_ycEditColors[ci].textColor);\n'
+        mainCode += '            if (g_ycEditColors[ci].transparent) { SetBkMode((HDC)wParam, TRANSPARENT); return (LRESULT)GetStockObject(NULL_BRUSH); }\n'
+        mainCode += '            SetBkColor((HDC)wParam, g_ycEditColors[ci].backColor);\n'
+        mainCode += '            if (!g_ycEditColors[ci].brush) g_ycEditColors[ci].brush = CreateSolidBrush(g_ycEditColors[ci].backColor);\n'
+        mainCode += '            return (LRESULT)g_ycEditColors[ci].brush;\n'
+        mainCode += '        }\n'
+        mainCode += '        if (_hasOv) SetTextColor((HDC)wParam, _ovIt->second);\n'
+        mainCode += '        if (message == WM_CTLCOLORSTATIC) {\n'
+        mainCode += '            wchar_t ccCls[16] = L""; GetClassNameW((HWND)lParam, ccCls, 16);\n'
+        mainCode += '            if (_wcsicmp(ccCls, L"EDIT") != 0) {\n'
+        mainCode += '                SetBkColor((HDC)wParam, GetSysColor(COLOR_BTNFACE));\n'
+        mainCode += '                return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);\n'
+        mainCode += '            }\n'
+        mainCode += '        }\n'
+        mainCode += '        return DefWindowProcW(hWnd, message, wParam, lParam);\n'
+        mainCode += '    }\n'
+        mainCode += '    case WM_CLOSE: {\n'
+        mainCode += '        int save = g_ycCurEventWin; g_ycCurEventWin = wi;\n'
+        mainCode += '        switch (wi) {\n'
+        for (let si = 0; si < secondaryWindows.length; si++) {
+          mainCode += `        case ${si + 1}: _${secondaryWindows[si].info.formName}_即将被销毁(); break;\n`
+        }
+        mainCode += '        }\n'
+        mainCode += '        g_ycCurEventWin = save;\n'
+        mainCode += '        DestroyWindow(hWnd);\n'
+        mainCode += '        return 0;\n'
+        mainCode += '    }\n'
+        mainCode += '    case WM_DESTROY: {\n'
+        mainCode += '        int save = g_ycCurEventWin; g_ycCurEventWin = wi;\n'
+        mainCode += '        switch (wi) {\n'
+        for (let si = 0; si < secondaryWindows.length; si++) {
+          mainCode += `        case ${si + 1}: _${secondaryWindows[si].info.formName}_被销毁(); break;\n`
+        }
+        mainCode += '        }\n'
+        mainCode += '        g_ycCurEventWin = save;\n'
+        mainCode += `        if (wi >= 1 && wi <= ${secondaryWindows.length}) g_ycSubWinHandles[wi - 1] = NULL;\n`
+        // 最后一个窗口销毁 → 程序退出（主窗可能早已销毁而程序仍在跑）
+        mainCode += '        if (!yc_any_window_alive()) PostQuitMessage(0);\n'
+        mainCode += '        return 0;\n'
+        mainCode += '    }\n'
+        mainCode += '    default:\n'
+        mainCode += '        return DefWindowProcW(hWnd, message, wParam, lParam);\n'
+        mainCode += '    }\n'
+        mainCode += '    return 0;\n'
+        mainCode += '}\n\n'
+      } else {
+        // 无辅助窗口：载入/销毁 仍须可链接（用户可能只 载入(启动窗口) 或 销毁()）
+        mainCode += 'int yc_win_load(const wchar_t* name, const wchar_t* parentName, int dialogMode) {\n'
+        mainCode += '    (void)parentName; (void)dialogMode;\n'
+        mainCode += `    if (name && lstrcmpW(name, L"${escapeCString(winInfo.formName)}") == 0 && g_hMainWnd) { ShowWindow(g_hMainWnd, SW_SHOW); SetForegroundWindow(g_hMainWnd); return 1; }\n`
+        mainCode += '    return 0;\n'
+        mainCode += '}\n'
+        mainCode += 'void yc_win_destroy(const wchar_t* name) {\n'
+        mainCode += '    HWND h = yc_get_control_handle_by_name(name);\n'
+        mainCode += '    if (h && IsWindow(h)) DestroyWindow(h);\n'
+        mainCode += '}\n\n'
+      }
+    }
 
     // 源码型带窗口组件的支持库：注册函数前置声明
     {
@@ -9362,7 +10058,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '    g_hInstance = hInstance;\n'
     mainCode += '    INITCOMMONCONTROLSEX icc = { sizeof(INITCOMMONCONTROLSEX), ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES | ICC_LISTVIEW_CLASSES | ICC_TREEVIEW_CLASSES | ICC_TAB_CLASSES | ICC_DATE_CLASSES | ICC_LINK_CLASSES };\n'
     mainCode += '    InitCommonControlsEx(&icc);\n'
-    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel) {
+    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage) {
       // 底图/图标/按钮图片/画板：启动 GDI+，从内嵌字节建内存流并解码
       mainCode += '    { Gdiplus::GdiplusStartupInput gdiplusStartupInput;\n'
       mainCode += '      Gdiplus::GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, NULL);\n'
@@ -9423,6 +10119,10 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     if (hasDrawPanel) {
       // 画板自绘画布窗口类（首个自注册控件类）：cbWndExtra=0（状态存 std::map），hbrBackground=NULL（全靠 backbuffer 贴图）。
       mainCode += '    { WNDCLASSEXW dpwc; ZeroMemory(&dpwc, sizeof(dpwc)); dpwc.cbSize = sizeof(WNDCLASSEXW); dpwc.style = CS_HREDRAW | CS_VREDRAW; dpwc.lpfnWndProc = YcDrawPanelProc; dpwc.cbClsExtra = 0; dpwc.cbWndExtra = 0; dpwc.hInstance = hInstance; dpwc.hCursor = LoadCursor(NULL, IDC_ARROW); dpwc.hbrBackground = NULL; dpwc.lpszClassName = L"YCDRAWPANEL"; RegisterClassExW(&dpwc); }\n'
+    }
+    if (secondaryWindows.length > 0) {
+      // 辅助窗口共用窗口类（GWLP_USERDATA=窗口序号+1，YcSubWinProc 按序号分发）
+      mainCode += '    { WNDCLASSEXW swc; ZeroMemory(&swc, sizeof(swc)); swc.cbSize = sizeof(WNDCLASSEXW); swc.style = CS_HREDRAW | CS_VREDRAW; swc.lpfnWndProc = YcSubWinProc; swc.hInstance = hInstance; swc.hCursor = LoadCursor(NULL, IDC_ARROW); swc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1); swc.lpszClassName = L"ycIDESubWindowClass"; RegisterClassExW(&swc); }\n'
     }
     mainCode += '    WNDCLASSEXW wcex;\n'
     mainCode += '    wcex.cbSize = sizeof(WNDCLASSEXW);\n'

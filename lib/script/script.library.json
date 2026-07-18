@@ -1,0 +1,9 @@
+{
+  "guid": "EDF19861DC454d15BA0B9E3FF9CA4F57",
+  "description": "脚本语言支持组件：提供对 JScript / VBScript 等脚本语言的支持（基于 Windows 系统的 IActiveScript 引擎）。",
+  "author": "ycIDE",
+  "qq": "-",
+  "email": "-",
+  "homePage": "https://ycide.dev",
+  "otherInfo": "对齐易语言官方「脚本语言支持组件」(script.fne) 的命令与用法；底层改用系统 IActiveScript 引擎实现，无需易语言运行时。"
+}

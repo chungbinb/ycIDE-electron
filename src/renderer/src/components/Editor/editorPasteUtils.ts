@@ -230,8 +230,15 @@ export function buildMultiLinePasteResult(params: {
    * 该子程序）；未被选中的同名子程序仍走既有改名（原名_1/_2）。无选区时行为不变。
    */
   replaceLineIndices?: number[]
+  /**
+   * 当前文档自身就是路由目标类型（常量表 'ecs'/全局变量 'egv'/DLL命令 'ell'/数据类型 'edt'）时传其语言：
+   * 该类型的声明行**不路由、留在本地粘贴**。否则会被从本地剔除去走路由，而路由把内容追加到
+   * 「当前标签的旧值」上、随后又被编辑器 onChange(剔除后文本) 覆盖——内容凭空消失（用户报的
+   * 「常量表里粘贴 .常量 行无效」即此）。
+   */
+  localRouteLanguage?: string
 }): MultiLinePasteResult | null {
-  const { currentText: originalText, clipText, cursorLine: rawCursorLine, sanitizePastedText, extractAssemblyVarLines, extractRoutedDeclarationLines, replaceLineIndices } = params
+  const { currentText: originalText, clipText, cursorLine: rawCursorLine, sanitizePastedText, extractAssemblyVarLines, extractRoutedDeclarationLines, replaceLineIndices, localRouteLanguage } = params
   if (!clipText) return null
 
   // 选区覆盖粘贴：先从文档剔除选中行，后续全部判定（重名/归位/插入点）基于剔除后的文本
@@ -257,9 +264,13 @@ export function buildMultiLinePasteResult(params: {
     }
   }
 
-  const routedDeclarations = extractRoutedDeclarationLines
+  const routedDeclarationsAll = extractRoutedDeclarationLines
     ? extractRoutedDeclarationLines(clipText, currentText)
     : []
+  // 当前文档自身类型的声明不外送（留在本地粘贴），其余照常路由
+  const routedDeclarations = localRouteLanguage
+    ? routedDeclarationsAll.filter(r => r.language !== localRouteLanguage)
+    : routedDeclarationsAll
 
   const sanitized = sanitizePastedText(clipText, currentText)
   let pastedLines = sanitized
@@ -269,25 +280,31 @@ export function buildMultiLinePasteResult(params: {
   if (routedDeclarations.length > 0 && pastedLines.length > 0) {
     const parsed = parseLines(pastedLines.join('\n'))
     const keepMask = new Array<boolean>(parsed.length).fill(true)
+    // 本地保留（不剔除）的声明行类型：与 localRouteLanguage 对应
+    const keepDll = localRouteLanguage === 'ell'
+    const keepGlobalVar = localRouteLanguage === 'egv'
+    const keepConstant = localRouteLanguage === 'ecs'
+    const keepDataType = localRouteLanguage === 'edt'
     let owner: 'dll' | 'dataType' | '' = ''
     for (let i = 0; i < parsed.length; i++) {
       const ln = parsed[i]
       if (ln.type === 'dll') {
         owner = 'dll'
-        keepMask[i] = false
+        if (!keepDll) keepMask[i] = false
         continue
       }
       if (ln.type === 'globalVar' || ln.type === 'constant' || ln.type === 'dataType') {
         owner = ln.type === 'dataType' ? 'dataType' : ''
-        keepMask[i] = false
+        const keepHere = (ln.type === 'globalVar' && keepGlobalVar) || (ln.type === 'constant' && keepConstant) || (ln.type === 'dataType' && keepDataType)
+        if (!keepHere) keepMask[i] = false
         continue
       }
       if (ln.type === 'subParam' && owner === 'dll') {
-        keepMask[i] = false
+        if (!keepDll) keepMask[i] = false
         continue
       }
       if (ln.type === 'dataTypeMember' && owner === 'dataType') {
-        keepMask[i] = false
+        if (!keepDataType) keepMask[i] = false
         continue
       }
       if (
