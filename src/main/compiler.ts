@@ -386,7 +386,7 @@ interface TranspileCacheFile {
 // 38: 真/假/且/或 裸词替换改为引号感知——旧产物字符串字面量里的 真/假 被改写成 1/0
 // 39: 多窗口（载入/销毁）——prelude 新增 yc_win_load/yc_win_destroy 声明
 // 40: 图形按钮（PicBtn）——prelude 新增 yc_picbtn_get/set_checked 声明
-const TRANSPILE_CACHE_VERSION = 40
+const TRANSPILE_CACHE_VERSION = 47
 
 interface BuildArtifactCacheFile {
   version: number
@@ -1707,6 +1707,8 @@ function applyMemberTemplate(template: string, handleExpr: string, valueExpr: st
     .replace(/\{h\}/g, handleExpr)
     .replace(/\{n\}/g, nameExpr)
     .replace(/\{vtext\}/g, vtext)
+    // {vbin}=字节集形态值（字节集属性用，如 列表框.列表项目）。valueExpr 由 propSet 路径按字节集编组好（YC_BIN{…}/字节集变量/命令），此处直接嵌入。
+    .replace(/\{vbin\}/g, valueExpr || 'YC_BIN{}')
     .replace(/\{v\}/g, valueExpr || '0')
     // {argst}=从索引1起的尾参、每个包 (const wchar_t*)yc_value_to_text(…) 转宽串指针（脚本组件.运行 传通用型参数用；
     // 直接过 C variadic 会因 YC_TEXT 非平凡类型编译失败，故转成 initializer_list<const wchar_t*>）。空参展开为空串。
@@ -1714,7 +1716,9 @@ function applyMemberTemplate(template: string, handleExpr: string, valueExpr: st
     .replace(/\{args\}/g, cArgs.join(', '))
     .replace(/\{(\d+)(?:\|([^}]*))?\}/g, (_m, idxText, dflt) => {
       const idx = parseInt(idxText, 10)
-      if (Number.isInteger(idx) && idx >= 0 && idx < cArgs.length) return cArgs[idx]
+      // 省略的实参（源码里 `,,` 之间为空）传空串占位 → 走「默认」，而非落成 '0'。
+      // 这样 对象.移动(左,顶,,) 的空宽高能拿到 INT_MIN 哨兵（保持当前），而不是被设成 0。
+      if (Number.isInteger(idx) && idx >= 0 && idx < cArgs.length && cArgs[idx] !== '') return cArgs[idx]
       return dflt !== undefined ? dflt : '0'
     })
 }
@@ -1750,7 +1754,8 @@ function translateControlMethodCall(call: { name: string; args: string[] }, tx: 
   if (!type) return null
   const binding = resolveControlMethod(loadCompileProtocols().controlMethods, type, method)
   if (!binding) return null
-  const cArgs = (call.args || []).map(a => tx(a ?? '0'))
+  // 省略实参保留空串（不转译成 '0'）：让 applyMemberTemplate 的 {N|默认} 占位对省略参数取默认（如移动的哨兵）。
+  const cArgs = (call.args || []).map(a => (a ?? '').trim() === '' ? '' : tx(a))
   const hExpr = `yc_get_control_handle_by_name(L"${escapeCString(objName)}")`
   const nExpr = `L"${escapeCString(objName)}"`
   // 尾参可重复（如 编辑框.加入文本(甲, 乙, 丙)）：逐实参展开一次模板、用逗号表达式串成单个表达式，
@@ -3889,12 +3894,28 @@ function replaceLogicalOperatorAliases(expr: string): string {
     .replace(/\bOr\b/gi, '||'))
 }
 
+// 控件.字体.子属性（复合子对象属性链）→ 运行时 get/set 符号。「字体」是复合对象、非两级 控件.属性，
+// 故走此专表；暂只字体大小(点数)，可扩展 字体名/是否粗体/是否斜体… 到对应 krnln_ctrl_get/set_font_*。
+const FONT_SUBPROP_CALLS: Record<string, { get: string; set: string }> = {
+  '字体大小': { get: 'krnln_ctrl_get_font_size', set: 'krnln_ctrl_set_font_size' },
+}
+
 // 控件属性【读取】：`控件名.属性` → 声明式 get 模板（按控件类型键控派发）。
 // 触发条件：①ctrlName 确在 currentProjectControls（是控件，非自定义类型变量）；②该控件类型在协议里为此属性声明了 get 绑定。
 // 否则原样保留。方法调用（成员名后接 '(' 或全角 '（'）用负向前瞻排除（方法本就无 get 绑定，双重保险）。
 function replaceControlPropertyReads(expr: string, variableTypeResolver?: (name: string) => string | undefined): string {
   if (currentProjectControls.size === 0) return expr
   const bindings = loadCompileProtocols().controlMembers
+  // 先处理三级 控件.字体.子属性（读）——否则两级正则会把 `.字体` 当普通属性、后面的 `.子属性` 掉队。
+  expr = expr.replace(
+    /([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)\.字体\.([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)(?!\s*[(（])(?![一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])/g,
+    (whole, ctrlName: string, sub: string) => {
+      const type = resolveProjectControlType(ctrlName)
+      if (!type || variableTypeResolver?.(ctrlName)) return whole
+      const fc = FONT_SUBPROP_CALLS[sub]
+      if (!fc) throw new Error(`${type}“${ctrlName}”的字体属性“${sub}”暂不支持在代码中读取`)
+      return `${fc.get}(yc_get_control_handle_by_name(L"${escapeCString(ctrlName)}"))`
+    })
   return expr.replace(
     /([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)\.([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)(?!\s*[(（])(?![一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_])/g,
     (whole, ctrlName: string, member: string) => {
@@ -5153,6 +5174,24 @@ const YCMD_CUSTOM_NATIVE_EXPRS: Record<string, (args: string[], name: string, co
     const isInt32Literal = /^[+-]?\d+$/.test(t) && Math.abs(Number(t)) <= 2147483647
     return `yc_to_bin(${isInt32Literal ? `(int)(${src})` : src})`
   },
+  // 多项选择(索引值, 待选择项…)：帮助「命令参数表中最后一个参数可以被重复添加」，按 1 基索引从
+  // 候选列表选一个返回。通用编组按定长 2 参表达不了、且 impl krnln_choose 是只支持 2 候选又丢类型的残缺占位——
+  // 这里改纯 codegen 内联：所有候选经 yc_value_to_text 归一为 YC_TEXT（全部求值，保留易语言「参数先求值」语义），
+  // 按索引三元选一个返回 YC_TEXT。index<1 取第一个、超界取最后一个（越界在易语言是运行错误，这里宽松兜底不崩）。
+  //【已知限制】候选一律文本化：数值候选会转成文本；若后续需要数值型返回，再引入带类型标签的通用值编组。
+  krnln_choose: (args, name, commandMap, directCallables) => {
+    const idxRaw = (args[0] ?? '').trim()
+    if (idxRaw === '') throw new Error(`命令“${name}”缺少「索引值」参数`)
+    const choices = args.slice(1).map(a => (a ?? '').trim()).filter(a => a !== '')
+    if (choices.length === 0) throw new Error(`命令“${name}”至少需要一个「待选择项数据」`)
+    const idxExpr = formatArgForC(idxRaw, commandMap, directCallables)
+    const decls = choices
+      .map((c, i) => `YC_TEXT __yc_ch${i} = yc_value_to_text(${formatArgForC(c, commandMap, directCallables)});`)
+      .join(' ')
+    let sel = `__yc_ch${choices.length - 1}`
+    for (let i = choices.length - 2; i >= 0; i--) sel = `(__yc_ch_i <= ${i + 1} ? __yc_ch${i} : ${sel})`
+    return `([&]() -> YC_TEXT { ${decls} long long __yc_ch_i = (long long)(${idxExpr}); (void)__yc_ch_i; return ${sel}; })()`
+  },
 }
 
 // 返回内存地址的命令（显示名）：x64 地址 64 位，赋给更窄的变量会被截断成无效地址——
@@ -6021,6 +6060,23 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'extern "C" void krnln_ctrl_set_date(HWND h, const wchar_t* prop, const wchar_t* text);\n'
   result += 'extern "C" long long krnln_ctrl_get_number(HWND h, const wchar_t* prop);\n'
   result += 'extern "C" void krnln_ctrl_set_number(HWND h, const wchar_t* prop, long long value);\n'
+  result += 'extern "C" void krnln_ctrl_move(HWND h, int x, int y, int w, int hh);\n'
+  result += 'extern "C" long long krnln_ctrl_get_hwnd(HWND h);\n'
+  result += 'extern "C" void krnln_ctrl_set_focus(HWND h);\n'
+  result += 'extern "C" int krnln_ctrl_is_focus(HWND h);\n'
+  result += 'extern "C" int krnln_ctrl_client_width(HWND h);\n'
+  result += 'extern "C" int krnln_ctrl_client_height(HWND h);\n'
+  result += 'extern "C" void krnln_ctrl_lock_update(HWND h, int lock);\n'
+  result += 'extern "C" void krnln_ctrl_invalidate(HWND h);\n'
+  result += 'extern "C" void krnln_ctrl_invalidate_rect(HWND h, int x, int y, int w, int hh);\n'
+  result += 'extern "C" void krnln_ctrl_validate(HWND h);\n'
+  result += 'extern "C" void krnln_ctrl_update(HWND h);\n'
+  result += 'extern "C" void krnln_ctrl_zorder(HWND h, int z);\n'
+  result += 'extern "C" int krnln_ctrl_send_msg(HWND h, int msg, int p1, int p2);\n'
+  result += 'extern "C" void krnln_ctrl_post_msg(HWND h, int msg, int p1, int p2);\n'
+  result += 'extern "C" void krnln_ctrl_activate(HWND h);\n'
+  result += 'extern "C" int krnln_ctrl_get_font_size(HWND h);\n'
+  result += 'extern "C" void krnln_ctrl_set_font_size(HWND h, int pt);\n'
   result += 'extern "C" void krnln_ctrl_set_text(HWND h, const wchar_t* text);\n'
   // 通用对话框（非可视组件，状态按实例名存 krnln 库内；文本读取走 main.cpp 薄封装返回 YC_TEXT）
   result += 'extern "C" long long krnln_commdlg_get_int(const wchar_t* name, int propId);\n'
@@ -6047,6 +6103,8 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += 'extern "C" void krnln_ll_clear(HWND h);\n'
   result += 'extern "C" int krnln_ll_count(HWND h);\n'
   result += 'extern YC_TEXT yc_ll_get_text(HWND h, int idx);\n'
+  result += 'extern YC_BIN yc_ll_get_items(HWND h);\n'
+  result += 'extern void yc_ll_set_items(HWND h, const YC_BIN& items);\n'
   result += 'extern "C" int krnln_ll_set_text(HWND h, int idx, const wchar_t* t);\n'
   result += 'extern "C" int krnln_ll_get_data(HWND h, int idx);\n'
   result += 'extern "C" int krnln_ll_set_data(HWND h, int idx, int data);\n'
@@ -6884,8 +6942,14 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   if (projectConstants.length > 0) {
     result += '/* 项目常量定义 */\n'
     for (const c of projectConstants) {
+      // 用户 .ecs 常量值常带引号（`.常量 加, "1"`——易语言把数值常量也序列化成带引号形态）。
+      // 引号内若是纯数字，去引号按**整数**展开；否则 `#define 加 ("1")` 会让 加 沦为 const char*，
+      // 与整数比较即 `int == const char*` 编译错。文本常量（引号内非纯数字）保留引号不动。
+      let rawConstVal = (c.value || '0').trim() || '0'
+      const numLit = rawConstVal.match(/^["“](-?\d+(?:\.\d+)?)["”]$/)
+      if (numLit) rawConstVal = numLit[1]
       // 常量值直接铺进 #define（不走 translateExpressionToC，故也没有乘除拆分）→ ÷ 哨兵在此就地落地
-      const cValue = inlineRealDiv(replaceConstantRefs(convertFullWidthOps((c.value || '0').trim() || '0')))
+      const cValue = inlineRealDiv(replaceConstantRefs(convertFullWidthOps(rawConstVal)))
       if (libraryConstants.some(lc => lc.name === c.name)) {
         result += `#undef ${c.name}\n`
       }
@@ -7371,9 +7435,10 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         }
       }
 
-      // 注释行
+      // 注释行 → C++ **行注释 //**（不能用块注释 /* */：注释内容里若含 */（如 `用+-*/`）会
+      // 提前闭合块注释、后面内容泄漏成非法代码）。行注释到行尾即止，只需去掉行尾反斜杠防续行。
       if (line.startsWith("'")) {
-        emitSubLine(`/* ${line.slice(1).trim()} */`)
+        emitSubLine(`// ${line.slice(1).replace(/\\+\s*$/, '').trim()}`)
         continue
       }
 
@@ -7424,6 +7489,18 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         const left = assignMatch[1]
         const rightRaw = assignMatch[2].trim()
 
+        // 控件.字体.子属性 赋值（复合子对象，如 答案动画标签.字体.字体大小 ＝ 8）：走字体 set helper。
+        // 必须先于 propMatch——propMatch 的控件名部分含 '.'，会把 `控件.字体` 误当控件名。
+        const fontLeft = left.match(/^([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)\.字体\.([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)$/)
+        if (fontLeft && resolveProjectControlType(fontLeft[1]) && !resolveVisibleVarType(fontLeft[1])) {
+          const fType = resolveProjectControlType(fontLeft[1])
+          const fc = FONT_SUBPROP_CALLS[fontLeft[2]]
+          if (!fc) throwSourceError(lineIndex + 1, `${fType}“${fontLeft[1]}”的字体属性“${fontLeft[2]}”暂不支持在代码中赋值`)
+          const rhsC = translateExpressionToC(rightRaw, commandMap, directCallables, resolveVisibleVarType)
+          emitSubLine(`${fc.set}(yc_get_control_handle_by_name(L"${escapeCString(fontLeft[1])}"), (int)(${rhsC}));`)
+          continue
+        }
+
         const propMatch = left.match(/^([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]*)\.([\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]*)$/)
         // 控件属性做左值：按控件类型解析协议里声明的 set 模板（进度条.位置、编辑框.内容 等），读写机制来自 window-units.json 而非硬编码。
         // 模板占位 {h}=控件句柄、{v}=原始值、{vtext}=文本化值。
@@ -7437,6 +7514,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
           throwSourceError(lineIndex + 1, `${propCtrlType}“${propMatch[1]}”的属性“${propMatch[2]}”暂不支持在代码中赋值`)
         }
         const propSetIsText = !!propSetTpl && propSetTpl.includes('{vtext}')
+        const propSetIsBin = !!propSetTpl && propSetTpl.includes('{vbin}')
         const emitPropSet = (valueExpr: string) =>
           emitSubLine(applyMemberTemplate(propSetTpl!, `yc_get_control_handle_by_name(L"${escapeCString(propMatch![1])}")`, valueExpr, [], `L"${escapeCString(propMatch![1])}"`) + ';')
 
@@ -7487,13 +7565,18 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
           return ''
         })()
 
-        // 字节集字面量赋值（易语言 { 1, 2, 3 } 亦为字节集常量）：按元素构造 YC_BIN
-        if (leftSimpleVarType === '字节集') {
+        // 字节集字面量赋值（易语言 { 1, 2, 3 } 亦为字节集常量）：按元素构造 YC_BIN。
+        // 也覆盖字节集**属性**赋字面量（如 列表框.列表项目 ＝ { }，帮助定义列表项目为字节集）——
+        // 属性左值不是简单变量、leftSimpleVarType 为空，故须一并按 propSetIsBin 走字节集编组，
+        // 否则 { } 会被 translateExpressionToC 当数组字面量译成 vector、传给 YC_BIN 参数类型不符。
+        if (leftSimpleVarType === '字节集' || propSetIsBin) {
           const binLit = matchArrayLiteral(rightRaw)
           if (binLit) {
             const parts = splitArguments(binLit.inner).filter(e => e.trim().length > 0)
               .map(e => translateExpressionToC(e, commandMap, directCallables, resolveVisibleVarType))
-            emitSubLine(`${left} = YC_BIN{${parts.map(x => `(unsigned char)(${x})`).join(', ')}};`)
+            const binExpr = `YC_BIN{${parts.map(x => `(unsigned char)(${x})`).join(', ')}}`
+            if (propSetTpl) { emitPropSet(binExpr); continue }
+            emitSubLine(`${left} = ${binExpr};`)
             continue
           }
         }
@@ -7559,7 +7642,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
           const cArgs = call.args.map(a => formatArgForC(a, commandMap, directCallables)).join(', ')
           emitSubLine(`${call.name}(${cArgs});`)
         } else {
-          emitSubLine(`/* ${line} */`)
+          emitSubLine(`// ${line.replace(/\\+\s*$/, '')}`)
         }
       }
     }
@@ -8080,6 +8163,13 @@ function generateMainC(
     mainCode += 'extern "C" wchar_t* krnln_ll_get_text(HWND h, int idx);\n'
     mainCode += 'YC_TEXT yc_ll_get_text(HWND h, int idx){ wchar_t* p=krnln_ll_get_text(h, idx); YC_TEXT t(p?p:L""); if(p) free(p); return t; }\n'
     mainCode += 'std::vector<long long> yc_lb_get_sel_items(HWND h){ std::vector<long long> r; if(!h) return r; int cnt=(int)SendMessageW(h, LB_GETSELCOUNT, 0, 0); if(cnt<=0) return r; std::vector<int> ix(cnt); if(SendMessageW(h, LB_GETSELITEMS, (WPARAM)cnt, (LPARAM)ix.data())!=LB_ERR){ for(int i=0;i<cnt;i++) r.push_back((long long)ix[i]); } return r; }\n\n'
+    // 列表框/组合框「列表项目」字节集属性（帮助：成员属性类型字节集）：本 IDE 生成独立 C++、不与易语言 exe 互操作，
+    // 故用自洽格式序列化——[u32 项数] 后接每项 [u32 字符数][字符数×UTF-16LE]。空字节集={ } → set 只清空。get/set 往返一致。
+    // 本区域（main.cpp mainCode）无完整 prelude：就地 extern 声明依赖的 krnln_ll_*；YC_BIN 直接写 std::vector<unsigned char>
+    //（YC_BIN 即其 typedef，声明侧 prelude 用 YC_BIN，二者链接兼容）。
+    mainCode += 'extern "C" int krnln_ll_count(HWND h);\nextern "C" void krnln_ll_clear(HWND h);\nextern "C" int krnln_ll_add_item(HWND h, const wchar_t* t, int data);\n'
+    mainCode += 'std::vector<unsigned char> yc_ll_get_items(HWND h){ std::vector<unsigned char> b; int n=krnln_ll_count(h); if(n<0) n=0; auto pu=[&](unsigned v){ b.push_back((unsigned char)(v&0xff)); b.push_back((unsigned char)((v>>8)&0xff)); b.push_back((unsigned char)((v>>16)&0xff)); b.push_back((unsigned char)((v>>24)&0xff)); }; pu((unsigned)n); for(int i=0;i<n;i++){ YC_TEXT t=yc_ll_get_text(h,i); const wchar_t* p=(const wchar_t*)t; unsigned wlen=(unsigned)(p?wcslen(p):0); pu(wlen); const unsigned char* raw=(const unsigned char*)(p?p:L""); b.insert(b.end(), raw, raw+(size_t)wlen*sizeof(wchar_t)); } return b; }\n'
+    mainCode += 'void yc_ll_set_items(HWND h, const std::vector<unsigned char>& items){ krnln_ll_clear(h); const unsigned char* d=items.data(); size_t sz=items.size(), off=0; auto gu=[&](unsigned& v)->bool{ if(off+4>sz) return false; v=(unsigned)d[off]|((unsigned)d[off+1]<<8)|((unsigned)d[off+2]<<16)|((unsigned)d[off+3]<<24); off+=4; return true; }; unsigned count; if(!gu(count)) return; for(unsigned i=0;i<count;i++){ unsigned wlen; if(!gu(wlen)) break; size_t bytes=(size_t)wlen*sizeof(wchar_t); if(off+bytes>sz) break; std::wstring s((const wchar_t*)(d+off), wlen); off+=bytes; krnln_ll_add_item(h, s.c_str(), 0); } }\n\n'
 
     // 控件成员访问按控件类型键控派发：转译前从项目所有窗口(.efw)灌一次「控件名→类型」表。
     // 只有确属控件的 `名.成员` 才走声明式读写，避免与自定义类型成员撞名。

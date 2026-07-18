@@ -8,6 +8,9 @@ import './OutputPanel.css'
 export interface OutputMessage {
   type: 'info' | 'success' | 'error' | 'warning'
   text: string
+  /** 带位置的编译报错：file=相对项目文件名，line=文本行号，raw=text 中代表位置/行号的子串。
+   *  输出面板据此把 raw 中的行号就地改写为「表格行(文本行)」（已打开的文件）并可点击跳转。 */
+  location?: { file: string; line: number; raw: string }
 }
 
 /** 命令详细信息（用于提示面板展示） */
@@ -78,12 +81,29 @@ interface OutputPanelProps {
   onDebugContinue?: () => void
   forceTab?: OutputTab | null
   onProblemClick?: (problem: FileProblem) => void
+  /** 点击编译输出里带位置的报错时触发：打开并定位跳转到该文件该行 */
+  onLocationClick?: (file: string, line: number) => void
+  /** 已解析的「文本行→表格行」缓存：basename → { 文本行号: 表格行号 }。有值即就地改写行号显示。 */
+  errorTableLines?: Record<string, Record<number, number>>
   terminalRunning?: boolean
   terminalLastCommand?: string
   /** 程序化整行执行（当前 UI 已改为 xterm 直连；保留供"在终端运行"等入口调用） */
   onTerminalSend?: (command: string) => Promise<{ ok: boolean; error?: string }>
   onTerminalInterrupt?: () => Promise<{ ok: boolean; error?: string }>
   onTerminalActivate?: () => Promise<void> | void
+}
+
+function baseNameOf(filePath: string): string {
+  const parts = (filePath || '').split(/[\\/]/)
+  return parts[parts.length - 1] || filePath
+}
+
+// 把 raw 里最后一处 line 数字替换成 replacement，兼容「选题窗口.eyc:103」与「第 103 行」两种写法。
+// 取“最后一处”是因为行号总在末尾，避免误伤文件名里的数字（如「窗口103.eyc:103」）。
+function replaceLastNumber(raw: string, line: number, replacement: string): string {
+  const s = String(line)
+  const idx = raw.lastIndexOf(s)
+  return idx < 0 ? raw : raw.slice(0, idx) + replacement + raw.slice(idx + s.length)
 }
 
 function setCssVars(element: HTMLElement | null, vars: Record<string, string>): void {
@@ -117,7 +137,7 @@ function getXtermTheme(): ITheme {
   }
 }
 
-function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, highlightParamIndex, problems = [], debugPause = null, debugDisplayLine = null, isDebugPaused = false, onDebugContinue, forceTab, onProblemClick, terminalRunning = false, terminalLastCommand = '', onTerminalInterrupt, onTerminalActivate }: OutputPanelProps): React.JSX.Element {
+function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, highlightParamIndex, problems = [], debugPause = null, debugDisplayLine = null, isDebugPaused = false, onDebugContinue, forceTab, onProblemClick, onLocationClick, errorTableLines, terminalRunning = false, terminalLastCommand = '', onTerminalInterrupt, onTerminalActivate }: OutputPanelProps): React.JSX.Element {
   const OUTPUT_MIN_HEIGHT = 100
   const OUTPUT_MAX_HEIGHT = 500
   const OUTPUT_RESIZE_STEP = 16
@@ -338,6 +358,31 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
     if (!keyword) return debugPause.variables
     return debugPause.variables.filter(variable => variable.name.toLowerCase().includes(keyword))
   })()
+
+  // 渲染一条编译输出：无 location 就是纯文本；带 location 时把 raw 子串渲染成可点击链接，
+  // 若该文件已解析出表格行号，则把行号就地改写为「表格行(文本行)」（未解析则保持文本行号）。
+  const renderCompileLine = (msg: OutputMessage): React.ReactNode => {
+    const loc = msg.location
+    if (!loc) return msg.text
+    const idx = msg.text.indexOf(loc.raw)
+    if (idx < 0) return msg.text
+    const table = errorTableLines?.[baseNameOf(loc.file)]?.[loc.line]
+    const label = (table && table > 0)
+      ? replaceLastNumber(loc.raw, loc.line, `${table}(${loc.line})`)
+      : loc.raw
+    return (
+      <>
+        {msg.text.slice(0, idx)}
+        <button
+          type="button"
+          className="output-line-loc-link"
+          title="点击跳转到该行"
+          onClick={() => onLocationClick?.(loc.file, loc.line)}
+        >{label}</button>
+        {msg.text.slice(idx + loc.raw.length)}
+      </>
+    )
+  }
 
   const buildProblemAriaLabel = (problem: FileProblem): string => {
     const severityText = problem.severity === 'error' ? '错误' : '警告'
@@ -592,7 +637,7 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
         <div id="output-panel-compile" className="output-content" ref={contentRef} role="tabpanel" aria-labelledby="output-tab-compile" tabIndex={0} onKeyDown={handlePanelSelectAllKeyDown}>
           <div role="log" aria-live="polite" aria-atomic="false">
           {messages.map((msg, i) => (
-            <div key={i} className={`output-line ${msg.type}`}>{msg.text}</div>
+            <div key={i} className={`output-line ${msg.type}`}>{renderCompileLine(msg)}</div>
           ))}
           </div>
         </div>

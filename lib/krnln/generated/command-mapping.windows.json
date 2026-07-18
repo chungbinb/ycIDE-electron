@@ -1,15 +1,15 @@
 {
-  "generatedAt": "2026-07-16T02:46:03.332Z",
+  "generatedAt": "2026-07-18T18:03:24.495Z",
   "abiSpecVersion": "v1",
   "abiContractRef": "docs/krnln-abi-contract.md",
   "summary": {
-    "totalCommands": 513,
+    "totalCommands": 514,
     "declared": 513,
     "implemented": 513,
     "stubbed": 0,
-    "undeclared": 0,
+    "undeclared": 1,
     "abiRisk": {
-      "high": 141,
+      "high": 142,
       "low": 240,
       "medium": 132
     },
@@ -25,7 +25,7 @@
       "通用型": 10,
       "文本型": 60,
       "文本型数组": 4,
-      "无返回值": 133,
+      "无返回值": 134,
       "小数型": 2,
       "长整数型": 2,
       "整数型": 112,
@@ -2438,7 +2438,8 @@
           "name": "数组对应维的上限值",
           "type": "整数型",
           "optional": false,
-          "description": "。"
+          "description": "。本参数提供数组某维的成员上限值，多维数组按维顺序重复提供本参数（如 重定义数组 (数组, 假, 3, 4) 定义 3×4 二维数组）。本参数可以被重复添加。",
+          "repeatable": true
         }
       ],
       "abiSpecVersion": "v1",
@@ -5447,6 +5448,7 @@
           "name": "待选择项数据",
           "type": "通用型",
           "optional": false,
+          "repeatable": true,
           "description": "。"
         }
       ],
@@ -7240,6 +7242,26 @@
       "abiRisk": "high",
       "declared": true,
       "implemented": true,
+      "stubbed": false
+    },
+    {
+      "commandId": "krnln.DestroyWin",
+      "displayName": "销毁",
+      "nativeSymbol": "krnln_DestroyWin",
+      "returnType": "无返回值",
+      "params": [
+        {
+          "name": "欲销毁的窗口",
+          "type": "窗口",
+          "optional": true,
+          "description": "，可以被省略。参数值指定欲销毁的窗口，省略时销毁当前代码所在的窗口。"
+        }
+      ],
+      "abiSpecVersion": "v1",
+      "abiContractRef": "docs/krnln-abi-contract.md",
+      "abiRisk": "high",
+      "declared": false,
+      "implemented": false,
       "stubbed": false
     },
     {

@@ -740,6 +740,27 @@ function getDirName(filePath: string): string {
   return idx >= 0 ? normalized.slice(0, idx) : ''
 }
 
+// 文件主名（去目录去扩展名）。用于「活动文件是否就是报错文件」的判定：窗口的代码(.eyc)与
+// 窗体(.efw)同主名同源，活动标签可能是任一扩展名，按主名比较才不会漏配。
+function getFileStem(filePath: string): string {
+  return getBaseName(filePath).replace(/\.[^.]+$/, '')
+}
+
+// 从编译报错文本里解析「文件:行号」定位（如「错误: 选题窗口.eyc:103 命令…」）。
+// 扩展名限定为源码类型（eyc/egv/ecs/edt/ell），避免把无关的“冒号+数字”误判成定位。
+// 行号是文本模式行号，交给 openFileByPath→navigateToLine 定位到对应表格行。
+const BUILD_ERROR_LOC_RE = /([^\s:：]+\.(?:eyc|egv|ecs|edt|ell)):(\d+)/i
+// zig 编译错误回溯成的中文格式（无冒号）：「选题窗口.eyc 第 253 行」——与签名错误的「文件:行号」并列支持，
+// 否则这类 C++ 编译错报出来点不动、也不显示表格行号。
+const BUILD_ERROR_LOC_CN_RE = /([^\s:：]+\.(?:eyc|egv|ecs|edt|ell))\s*第\s*(\d+)\s*行/
+function parseBuildErrorLocation(text: string): { file: string; line: number; raw: string } | null {
+  const match = BUILD_ERROR_LOC_RE.exec(text || '') || BUILD_ERROR_LOC_CN_RE.exec(text || '')
+  if (!match) return null
+  const line = Number.parseInt(match[2], 10)
+  if (!Number.isFinite(line) || line <= 0) return null
+  return { file: match[1], line, raw: match[0] }
+}
+
 function App(): React.JSX.Element {
   const runtimePlatform = (window.api?.system?.getRuntimePlatform?.() ?? 'windows') as RuntimePlatform
   const pathSeparator = runtimePlatform === 'windows' ? '\\' : '/'
@@ -804,6 +825,11 @@ function App(): React.JSX.Element {
   const [themeSaveFeedback, setThemeSaveFeedback] = useState<string | null>(null)
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
   const [outputMessages, setOutputMessages] = useState<OutputMessage[]>([])
+  // 编译报错的「文本行→表格行」解析缓存：basename → { 文本行号: 表格行号 }。
+  // 文本→表格映射只有“当前打开(活动)的那个文件”能拿到（getVisibleLineForSourceLine），
+  // 所以每打开/跳转到一个报错文件就把它的报错行解析进来并累积保留（切走也不丢），
+  // 输出面板据此把已打开文件的报错就地改写成「表格行(文本行)」，未打开的仍显示文本行。
+  const [errorTableLines, setErrorTableLines] = useState<Record<string, Record<number, number>>>({})
   // 终端输出不再在 App 层累积（避免每块输出触发全量重渲染）；xterm 由 OutputPanel 直连 PTY。
   const [terminalCommands, setTerminalCommands] = useState<string[]>([])
   const [terminalRunning, setTerminalRunning] = useState(false)
@@ -828,6 +854,8 @@ function App(): React.JSX.Element {
   const cursorRef = useRef<{ line?: number; sourceLine?: number; column?: number }>({})
   const [docType, setDocType] = useState('')
   const [isCompiling, setIsCompiling] = useState(false)
+  const isCompilingRef = useRef(false)
+  useEffect(() => { isCompilingRef.current = isCompiling }, [isCompiling])
   const [isRunning, setIsRunning] = useState(false)
   const [forceOutputTab, setForceOutputTab] = useState<'compile' | 'hint' | 'problems' | 'debug' | null>(null)
   const [breakpointsByFile, setBreakpointsByFile] = useState<Record<string, number[]>>({})
@@ -1029,6 +1057,14 @@ function App(): React.JSX.Element {
   const OUTPUT_MSG_LIMIT = 5000
   const outputBufferRef = useRef<OutputMessage[]>([])
   const outputFlushRafRef = useRef<number | null>(null)
+  // 「本次编译是否已自动跳转到首个报错」——每次编译开始（resetOutputMessages）复位，
+  // 保证一次编译只跳一次，且只在编译阶段跳（运行期程序输出即便含 xxx.eyc:NN 也不跳）。
+  const didJumpToBuildErrorRef = useRef(false)
+  // 本次编译收集到的、带位置的报错行：basename → 文本行号集合。用于打开某文件后
+  // 批量解析它的表格行号（不依赖 React 状态时序，setTimeout 里也能拿到最新集合）。
+  const locatedErrorsRef = useRef<Record<string, Set<number>>>({})
+  // 表格行号解析的延迟重试计时器（basename → 计时器 id 列表），用于合并重复调度。
+  const resolveTimersRef = useRef<Record<string, number[]>>({})
   const flushOutputBuffer = useCallback(() => {
     outputFlushRafRef.current = null
     const buffered = outputBufferRef.current
@@ -1050,8 +1086,76 @@ function App(): React.JSX.Element {
   const resetOutputMessages = useCallback(() => {
     if (outputFlushRafRef.current !== null) { window.cancelAnimationFrame(outputFlushRafRef.current); outputFlushRafRef.current = null }
     outputBufferRef.current = []
+    didJumpToBuildErrorRef.current = false
+    locatedErrorsRef.current = {}
+    setErrorTableLines({})
     setOutputMessages([])
   }, [])
+
+  // 活动编辑器文件的 basename（用于把“文本→表格”解析限定在真正活动的那个文件上）。
+  const getActiveEditorFileBaseName = useCallback((): string => {
+    const activeTab = openTabsRef.current.find(t => t.id === activeFileIdRef.current)
+    return getBaseName(activeTab?.filePath || activeTab?.label || '')
+  }, [])
+
+  // 解析并缓存某文件已收集到的报错行的表格行号。只在该文件当前活动时解析——
+  // getVisibleLineForSourceLine 读的是活动编辑器的映射；活动文件不是它就跳过（避免张冠李戴）。
+  // 打开/跳转后布局需要几拍才稳，故多次延迟重试；结果累积合并、幂等。
+  const scheduleResolveTableLines = useCallback((base: string) => {
+    const run = (): void => {
+      // 只在活动文件确实是该报错文件时解析（按主名比较，兼容 .eyc/.efw 同源标签）。
+      if (!base || getFileStem(getActiveEditorFileBaseName()) !== getFileStem(base)) return
+      const lines = locatedErrorsRef.current[base]
+      if (!lines || lines.size === 0) return
+      const updates: Record<number, number> = {}
+      for (const ln of lines) {
+        const table = editorRef.current?.getVisibleLineForSourceLine(ln)
+        // 未映射时 getVisibleLineForSourceLine 原样返回入参（table===ln），视为未解析（文本模式亦然）。
+        if (typeof table === 'number' && table > 0 && table !== ln) updates[ln] = table
+      }
+      if (Object.keys(updates).length === 0) return
+      setErrorTableLines(prev => {
+        const prevForFile = prev[base] || {}
+        let changed = false
+        const nextForFile: Record<number, number> = { ...prevForFile }
+        for (const key of Object.keys(updates)) {
+          const ln = Number(key)
+          if (nextForFile[ln] !== updates[ln]) { nextForFile[ln] = updates[ln]; changed = true }
+        }
+        return changed ? { ...prev, [base]: nextForFile } : prev
+      })
+    }
+    // 合并重复调度：编译期 outputMessages 会多次刷新触发本函数，取消旧的延迟重试再排，
+    // 每个文件同时最多挂 3 个待跑计时器，避免堆积。
+    const prevTimers = resolveTimersRef.current[base]
+    if (prevTimers) prevTimers.forEach(id => window.clearTimeout(id))
+    run()
+    resolveTimersRef.current[base] = [
+      window.setTimeout(run, 140),
+      window.setTimeout(run, 360),
+      window.setTimeout(run, 700),
+    ]
+  }, [getActiveEditorFileBaseName])
+
+  // 打开并定位跳转到某报错位置（点击报错、自动跳首个报错共用）。跳转后活动文件变化，
+  // 由下方 effect（依赖 activeFileId/outputMessages）负责解析该文件的表格行号。
+  const openErrorLocation = useCallback((file: string, line: number) => {
+    const projectDir = currentProjectDirRef.current
+    if (projectDir) {
+      void openFileByPathRef.current(joinPath(projectDir, file), line)
+    } else {
+      editorRef.current?.navigateToLine(line)
+    }
+  }, [joinPath])
+
+  // 活动文件或输出消息变化时，解析当前活动文件已收集到的报错行的表格行号并累积缓存。
+  // 覆盖三种情形：编译产出多条报错（outputMessages 变）、自动跳/点击打开某报错文件（activeFileId 变）、
+  // 之后手动切到另一个报错文件（activeFileId 变）。未打开过的文件不解析、输出里保持文本行号。
+  useEffect(() => {
+    const activeTab = openTabsRef.current.find(t => t.id === activeFileId)
+    const base = getBaseName(activeTab?.filePath || activeTab?.label || '')
+    if (base) scheduleResolveTableLines(base)
+  }, [outputMessages, activeFileId, scheduleResolveTableLines])
 
   const syncDebugDisplayLine = useCallback((sourceLine: number) => {
     if (!sourceLine || sourceLine <= 0) {
@@ -1109,11 +1213,23 @@ function App(): React.JSX.Element {
         }
         return
       }
-      appendOutputMessage(msg)
+      // 带「文件:行号」定位的编译报错：登记该行（供打开后解析表格行号）、给消息附上
+      // location（供输出面板就地改写为「表格行(文本行)」并可点击跳转）；并在编译阶段自动
+      // 跳转到首个报错——落到表格行后即可解析出它的表格行号。
+      const loc = parseBuildErrorLocation(text)
+      if (loc) {
+        const base = getBaseName(loc.file)
+        ;(locatedErrorsRef.current[base] ||= new Set()).add(loc.line)
+        if (msg.type === 'error' && !didJumpToBuildErrorRef.current && isCompilingRef.current && currentProjectDirRef.current) {
+          didJumpToBuildErrorRef.current = true
+          openErrorLocation(loc.file, loc.line)
+        }
+      }
+      appendOutputMessage(loc ? { ...msg, location: loc } : msg)
     }
     const dispose = window.api.on('compiler:output', handleOutput)
     return () => { dispose() }
-  }, [joinPath, syncDebugDisplayLine, appendOutputMessage])
+  }, [joinPath, syncDebugDisplayLine, appendOutputMessage, openErrorLocation])
 
   // 监听程序退出
   useEffect(() => {
@@ -1253,19 +1369,31 @@ function App(): React.JSX.Element {
     setForceOutputTab('compile')
     setTimeout(() => setForceOutputTab(null), 100)
     appendOutputMessage({ type: 'error', text: `编译已取消：${sweep.length} 个文件存在 ${total} 个错误` })
+    // 预检阶段即有报错：自动跳到首个报错位置（打开后 openErrorLocation 会解析该文件表格行号）。
+    {
+      const firstFile = sweep[0]?.file
+      const firstLine = sweep[0]?.problems?.[0]?.line
+      if (firstFile && typeof firstLine === 'number' && firstLine > 0) {
+        didJumpToBuildErrorRef.current = true
+        openErrorLocation(firstFile, firstLine)
+      }
+    }
     let emitted = 0
     for (const f of sweep) {
       appendOutputMessage({ type: 'error', text: `${f.file}（${f.problems.length} 个错误）:` })
+      const base = getBaseName(f.file)
       for (const p of f.problems) {
         if (emitted >= 50) break
-        appendOutputMessage({ type: 'error', text: `    第 ${p.line} 行: ${p.message}` })
+        // 附 location：raw=「第 N 行」，输出面板会把其中的行号就地改写为「表格行(文本行)」并可点击跳转。
+        ;(locatedErrorsRef.current[base] ||= new Set()).add(p.line)
+        appendOutputMessage({ type: 'error', text: `    第 ${p.line} 行: ${p.message}`, location: { file: f.file, line: p.line, raw: `第 ${p.line} 行` } })
         emitted++
       }
       if (emitted >= 50) break
     }
     if (total > emitted) appendOutputMessage({ type: 'error', text: `    …其余 ${total - emitted} 个错误未列出（打开对应文件可在问题面板查看）` })
     return true
-  }, [resetOutputMessages, appendOutputMessage])
+  }, [resetOutputMessages, appendOutputMessage, openErrorLocation])
 
   // 编译运行
   const handleCompileRun = useCallback(async () => {
@@ -4519,7 +4647,7 @@ function App(): React.JSX.Element {
 
   const aiIdeContext = useMemo(() => {
     const lines: string[] = [
-      `IDE: ycIDE v0.0.5-beta.17（易承语言集成开发环境）`,
+      `IDE: ycIDE v0.0.5-beta.18（易承语言集成开发环境）`,
       `运行平台: ${runtimePlatform}`,
       `编译目标: ${targetPlatform} / ${targetArch}`,
     ]
@@ -5671,6 +5799,8 @@ function App(): React.JSX.Element {
               onDebugContinue={handleDebugContinueClick}
               forceTab={forceOutputTab}
               onProblemClick={handleProblemClick}
+              onLocationClick={openErrorLocation}
+              errorTableLines={errorTableLines}
               terminalRunning={terminalRunning}
               terminalLastCommand={terminalCommands.length > 0 ? terminalCommands[terminalCommands.length - 1] : ''}
               onTerminalSend={handleTerminalSend}
