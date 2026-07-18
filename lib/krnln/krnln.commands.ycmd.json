@@ -5667,6 +5667,7 @@
           "name": "待选择项数据",
           "type": "通用型",
           "optional": false,
+          "repeatable": true,
           "description": "。"
         }
       ],

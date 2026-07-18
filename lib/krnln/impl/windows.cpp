@@ -905,6 +905,60 @@ extern "C" int krnln_move(void* hwnd, int left, int top, int width, int height) 
   return MoveWindow(h, left, top, width, height, TRUE) ? 1 : 0;
 }
 
+// 对象.移动（［左边］，［顶边］，［宽度］，［高度］）：可视组件公共方法（帮助「对象．移动」）。
+// 各参数可省略——省略传 INT_MIN 哨兵，保持当前值。坐标系与 krnln_ctrl_get/set_number 一致：父窗口 client 坐标、像素。
+extern "C" void krnln_ctrl_move(HWND h, int x, int y, int w, int hh) {
+  if (!h) return;
+  const int OMIT = (-2147483647 - 1);
+  RECT r; GetWindowRect(h, &r); POINT p = { r.left, r.top }; HWND par = GetParent(h); if (par) ScreenToClient(par, &p);
+  int cx = p.x, cy = p.y, cw = r.right - r.left, ch = r.bottom - r.top;
+  if (x == OMIT) x = cx; if (y == OMIT) y = cy; if (w == OMIT) w = cw; if (hh == OMIT) hh = ch;
+  MoveWindow(h, x, y, w, hh, TRUE);
+}
+
+// ===== 窗口基类公共方法（帮助分类 系统核心支持库->窗口，所有可视组件通用，走 window-units.json 的 * 绑定）=====
+extern "C" long long krnln_ctrl_get_hwnd(HWND h) { return (long long)(intptr_t)h; }
+extern "C" void krnln_ctrl_set_focus(HWND h) { if (h) SetFocus(h); }
+extern "C" int krnln_ctrl_is_focus(HWND h) { return (h && GetFocus() == h) ? 1 : 0; }
+extern "C" int krnln_ctrl_client_width(HWND h) { if (!h) return 0; RECT r; GetClientRect(h, &r); return r.right - r.left; }
+extern "C" int krnln_ctrl_client_height(HWND h) { if (!h) return 0; RECT r; GetClientRect(h, &r); return r.bottom - r.top; }
+extern "C" void krnln_ctrl_lock_update(HWND h, int lock) { LockWindowUpdate(lock ? h : NULL); }
+extern "C" void krnln_ctrl_invalidate(HWND h) { if (h) InvalidateRect(h, NULL, TRUE); }
+extern "C" void krnln_ctrl_invalidate_rect(HWND h, int x, int y, int w, int hh) { if (!h) return; RECT r = { x, y, x + w, y + hh }; InvalidateRect(h, &r, TRUE); }
+extern "C" void krnln_ctrl_validate(HWND h) { if (h) ValidateRect(h, NULL); }
+extern "C" void krnln_ctrl_update(HWND h) { if (h) UpdateWindow(h); }
+// 调整层次：帮助「欲调整到的层次」——简化为 ≤0 置顶、否则置底（易语言常用 0=最前）。
+extern "C" void krnln_ctrl_zorder(HWND h, int z) { if (!h) return; SetWindowPos(h, (z <= 0) ? HWND_TOP : HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); }
+extern "C" int krnln_ctrl_send_msg(HWND h, int msg, int p1, int p2) { if (!h) return 0; return (int)SendMessageW(h, (UINT)msg, (WPARAM)p1, (LPARAM)p2); }
+extern "C" void krnln_ctrl_post_msg(HWND h, int msg, int p1, int p2) { if (h) PostMessageW(h, (UINT)msg, (WPARAM)p1, (LPARAM)p2); }
+extern "C" void krnln_ctrl_activate(HWND h) { if (h) SetActiveWindow(h); }
+
+// 控件.字体.字体大小（复合子对象属性，链式 控件.字体.子属性）：字体大小=点数(pt)。
+// 读=WM_GETFONT→LOGFONT.lfHeight 换算 pt；写=改 lfHeight 后 CreateFontIndirect+WM_SETFONT，删旧自建字体(表管理防泄漏)。
+static std::unordered_map<HWND, HFONT> g_ycCtrlFonts;
+extern "C" int krnln_ctrl_get_font_size(HWND h) {
+  if (!h) return 0;
+  HFONT f = (HFONT)SendMessageW(h, WM_GETFONT, 0, 0);
+  if (!f) f = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+  LOGFONTW lf; if (!GetObjectW(f, sizeof(lf), &lf)) return 0;
+  HDC dc = GetDC(h); int dpi = GetDeviceCaps(dc, LOGPIXELSY); ReleaseDC(h, dc);
+  int px = lf.lfHeight < 0 ? -lf.lfHeight : lf.lfHeight;
+  return dpi > 0 ? MulDiv(px, 72, dpi) : px;
+}
+extern "C" void krnln_ctrl_set_font_size(HWND h, int pt) {
+  if (!h || pt <= 0) return;
+  HFONT cur = (HFONT)SendMessageW(h, WM_GETFONT, 0, 0);
+  if (!cur) cur = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+  LOGFONTW lf; if (!GetObjectW(cur, sizeof(lf), &lf)) return;
+  HDC dc = GetDC(h); lf.lfHeight = -MulDiv(pt, GetDeviceCaps(dc, LOGPIXELSY), 72); ReleaseDC(h, dc);
+  HFONT nf = CreateFontIndirectW(&lf);
+  if (!nf) return;
+  SendMessageW(h, WM_SETFONT, (WPARAM)nf, TRUE);
+  auto it = g_ycCtrlFonts.find(h);
+  if (it != g_ycCtrlFonts.end() && it->second) DeleteObject(it->second);
+  g_ycCtrlFonts[h] = nf;
+}
+
 extern "C" int krnln_ZOrder(void* hwnd, int zOrder) {
   HWND h = reinterpret_cast<HWND>(hwnd);
   if (!h) return 0;

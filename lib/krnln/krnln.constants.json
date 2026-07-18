@@ -1310,6 +1310,1056 @@
       "description": "双引号字符。",
       "type": "text",
       "value": "\""
+    },
+    {
+      "name": "#左引号",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "text",
+      "value": "“"
+    },
+    {
+      "name": "#右引号",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "text",
+      "value": "”"
+    },
+    {
+      "name": "#黑色",
+      "englishName": "black",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "0"
+    },
+    {
+      "name": "#藏青",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "8388608"
+    },
+    {
+      "name": "#墨绿",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "32768"
+    },
+    {
+      "name": "#深青",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "8421376"
+    },
+    {
+      "name": "#红褐",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "128"
+    },
+    {
+      "name": "#紫红",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "8388736"
+    },
+    {
+      "name": "#褐绿",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "32896"
+    },
+    {
+      "name": "#浅灰",
+      "englishName": "gray",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "12632256"
+    },
+    {
+      "name": "#灰色",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "8421504"
+    },
+    {
+      "name": "#蓝色",
+      "englishName": "blue",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "16711680"
+    },
+    {
+      "name": "#绿色",
+      "englishName": "green",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "65280"
+    },
+    {
+      "name": "#艳青",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "16776960"
+    },
+    {
+      "name": "#红色",
+      "englishName": "red",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "255"
+    },
+    {
+      "name": "#品红",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "16711935"
+    },
+    {
+      "name": "#黄色",
+      "englishName": "yellow",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "65535"
+    },
+    {
+      "name": "#白色",
+      "englishName": "white",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "16777215"
+    },
+    {
+      "name": "#蓝灰",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "16744576"
+    },
+    {
+      "name": "#藏蓝",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "14692440"
+    },
+    {
+      "name": "#嫩绿",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "57472"
+    },
+    {
+      "name": "#青绿",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "8445952"
+    },
+    {
+      "name": "#黄褐",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "24768"
+    },
+    {
+      "name": "#粉红",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "16754943"
+    },
+    {
+      "name": "#嫩黄",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "55512"
+    },
+    {
+      "name": "#银白",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "15527148"
+    },
+    {
+      "name": "#紫色",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "16711824"
+    },
+    {
+      "name": "#天蓝",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "16746496"
+    },
+    {
+      "name": "#灰绿",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "8429696"
+    },
+    {
+      "name": "#青蓝",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "12607488"
+    },
+    {
+      "name": "#橙黄",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "33023"
+    },
+    {
+      "name": "#桃红",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "8409343"
+    },
+    {
+      "name": "#芙红",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "12615935"
+    },
+    {
+      "name": "#深灰",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "6316128"
+    },
+    {
+      "name": "#无属性文件",
+      "englishName": "NormalFile",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "128"
+    },
+    {
+      "name": "#Ctrl键状态",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "1"
+    },
+    {
+      "name": "#Shift键状态",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "2"
+    },
+    {
+      "name": "#Alt键状态",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "4"
+    },
+    {
+      "name": "#键0",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "48"
+    },
+    {
+      "name": "#键1",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "49"
+    },
+    {
+      "name": "#键2",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "50"
+    },
+    {
+      "name": "#键3",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "51"
+    },
+    {
+      "name": "#键4",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "52"
+    },
+    {
+      "name": "#键5",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "53"
+    },
+    {
+      "name": "#键6",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "54"
+    },
+    {
+      "name": "#键7",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "55"
+    },
+    {
+      "name": "#键8",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "56"
+    },
+    {
+      "name": "#键9",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "57"
+    },
+    {
+      "name": "#A键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "65"
+    },
+    {
+      "name": "#B键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "66"
+    },
+    {
+      "name": "#C键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "67"
+    },
+    {
+      "name": "#D键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "68"
+    },
+    {
+      "name": "#E键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "69"
+    },
+    {
+      "name": "#F键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "70"
+    },
+    {
+      "name": "#G键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "71"
+    },
+    {
+      "name": "#H键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "72"
+    },
+    {
+      "name": "#I键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "73"
+    },
+    {
+      "name": "#J键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "74"
+    },
+    {
+      "name": "#K键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "75"
+    },
+    {
+      "name": "#L键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "76"
+    },
+    {
+      "name": "#M键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "77"
+    },
+    {
+      "name": "#N键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "78"
+    },
+    {
+      "name": "#O键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "79"
+    },
+    {
+      "name": "#P键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "80"
+    },
+    {
+      "name": "#Q键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "81"
+    },
+    {
+      "name": "#R键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "82"
+    },
+    {
+      "name": "#S键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "83"
+    },
+    {
+      "name": "#T键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "84"
+    },
+    {
+      "name": "#U键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "85"
+    },
+    {
+      "name": "#V键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "86"
+    },
+    {
+      "name": "#W键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "87"
+    },
+    {
+      "name": "#X键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "88"
+    },
+    {
+      "name": "#Y键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "89"
+    },
+    {
+      "name": "#Z键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "90"
+    },
+    {
+      "name": "#F1键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "112"
+    },
+    {
+      "name": "#F2键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "113"
+    },
+    {
+      "name": "#F3键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "114"
+    },
+    {
+      "name": "#F4键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "115"
+    },
+    {
+      "name": "#F5键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "116"
+    },
+    {
+      "name": "#F6键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "117"
+    },
+    {
+      "name": "#F7键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "118"
+    },
+    {
+      "name": "#F8键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "119"
+    },
+    {
+      "name": "#F9键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "120"
+    },
+    {
+      "name": "#F10键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "121"
+    },
+    {
+      "name": "#F11键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "122"
+    },
+    {
+      "name": "#F12键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "123"
+    },
+    {
+      "name": "#F13键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "124"
+    },
+    {
+      "name": "#F14键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "125"
+    },
+    {
+      "name": "#F15键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "126"
+    },
+    {
+      "name": "#F16键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "127"
+    },
+    {
+      "name": "#Break键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "3"
+    },
+    {
+      "name": "#退格键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "8"
+    },
+    {
+      "name": "#Tab键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "9"
+    },
+    {
+      "name": "#回车键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "13"
+    },
+    {
+      "name": "#Shift键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "16"
+    },
+    {
+      "name": "#Ctrl键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "17"
+    },
+    {
+      "name": "#Alt键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "18"
+    },
+    {
+      "name": "#Pause键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "19"
+    },
+    {
+      "name": "#CapsLock键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "20"
+    },
+    {
+      "name": "#NumLock键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "144"
+    },
+    {
+      "name": "#ScrollLock键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "145"
+    },
+    {
+      "name": "#Esc键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "27"
+    },
+    {
+      "name": "#空格键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "32"
+    },
+    {
+      "name": "#PageUp键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "33"
+    },
+    {
+      "name": "#PageDown键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "34"
+    },
+    {
+      "name": "#Home键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "36"
+    },
+    {
+      "name": "#End键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "35"
+    },
+    {
+      "name": "#左光标键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "37"
+    },
+    {
+      "name": "#上光标键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "38"
+    },
+    {
+      "name": "#右光标键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "39"
+    },
+    {
+      "name": "#下光标键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "40"
+    },
+    {
+      "name": "#Ins键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "45"
+    },
+    {
+      "name": "#Del键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "46"
+    },
+    {
+      "name": "#分号键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "186"
+    },
+    {
+      "name": "#等号键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "187"
+    },
+    {
+      "name": "#逗号键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "188"
+    },
+    {
+      "name": "#减号键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "189"
+    },
+    {
+      "name": "#圆点键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "190"
+    },
+    {
+      "name": "#除号键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "191"
+    },
+    {
+      "name": "#反撇号键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "192"
+    },
+    {
+      "name": "#左中括号键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "219"
+    },
+    {
+      "name": "#右中括号键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "221"
+    },
+    {
+      "name": "#斜杠键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "220"
+    },
+    {
+      "name": "#单引号键",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "222"
+    },
+    {
+      "name": "#从左上到右下",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "3"
+    },
+    {
+      "name": "#从右上到左下",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "4"
+    },
+    {
+      "name": "#从下到上",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "5"
+    },
+    {
+      "name": "#从右到左",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "6"
+    },
+    {
+      "name": "#从右下到左上",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "7"
+    },
+    {
+      "name": "#从左下到右上",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "8"
+    },
+    {
+      "name": "#通常索引",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "1"
+    },
+    {
+      "name": "#读音索引",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "2"
+    },
+    {
+      "name": "#南方读音索引",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "3"
+    },
+    {
+      "name": "#不区分大小写",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "1"
+    },
+    {
+      "name": "#忽略所有空格",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "2"
+    },
+    {
+      "name": "#取平均值",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "1"
+    },
+    {
+      "name": "#求和",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "2"
+    },
+    {
+      "name": "#取最大值",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "3"
+    },
+    {
+      "name": "#取最小值",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "4"
+    },
+    {
+      "name": "#禁止修改",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "1"
+    },
+    {
+      "name": "#禁止添加",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "2"
+    },
+    {
+      "name": "#禁止删除",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "4"
+    },
+    {
+      "name": "#禁止自动判断",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "8"
+    },
+    {
+      "name": "#无页号",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "0"
+    },
+    {
+      "name": "#常量",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "0"
+    },
+    {
+      "name": "#资源",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "1"
+    },
+    {
+      "name": "#GBK中文",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "1"
+    },
+    {
+      "name": "#英文",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "2"
+    },
+    {
+      "name": "#BIG5中文",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "3"
+    },
+    {
+      "name": "#无法载入的常量",
+      "englishName": "",
+      "description": "系统核心常量",
+      "type": "number",
+      "value": "-1"
     }
   ]
 }
