@@ -1405,46 +1405,87 @@ extern "C" int krnln_not(int value) {
   return value ? 0 : 1;
 }
 
+// ============ UTF-8 码点遍历工具 ============
+// 文本命令按「码点(code point)」而非字节操作，使中文/emoji 的长度、切分、位置跨平台一致
+// （易语言字节语义在 UTF-8 内核下会数错/切坏）。输入均为合法 UTF-8（由 YC_TEXT 转来）。
+// 首字节 → 该码点占的字节数（续字节 0x80-0xBF 容错当 1 字节，遇非法字节不卡死）
+static inline size_t yc_utf8_seq_len(unsigned char c) {
+  if (c < 0xC0) return 1;   // ASCII(<0x80) 与续字节(0x80-0xBF，非法起始)都当 1
+  if (c < 0xE0) return 2;
+  if (c < 0xF0) return 3;
+  return 4;
+}
+// s 的码点数
+static size_t yc_utf8_cp_count(const std::string& s) {
+  size_t i = 0, n = 0;
+  while (i < s.size()) { i += yc_utf8_seq_len((unsigned char)s[i]); ++n; }
+  return n;
+}
+// 第 cpIdx 个码点(0 基)的字节偏移；cpIdx≥码点数 → s.size()。返回值总落在码点边界。
+static size_t yc_utf8_byte_off(const std::string& s, size_t cpIdx) {
+  size_t i = 0, n = 0;
+  while (i < s.size() && n < cpIdx) { i += yc_utf8_seq_len((unsigned char)s[i]); ++n; }
+  return i > s.size() ? s.size() : i;
+}
+// 码点 → UTF-8 字节序列（字符命令：Unicode 码点编码成文本）
+static std::string yc_utf8_encode_cp(unsigned int cp) {
+  std::string o;
+  if (cp < 0x80) o.push_back((char)cp);
+  else if (cp < 0x800) { o.push_back((char)(0xC0 | (cp >> 6))); o.push_back((char)(0x80 | (cp & 0x3F))); }
+  else if (cp < 0x10000) { o.push_back((char)(0xE0 | (cp >> 12))); o.push_back((char)(0x80 | ((cp >> 6) & 0x3F))); o.push_back((char)(0x80 | (cp & 0x3F))); }
+  else { o.push_back((char)(0xF0 | (cp >> 18))); o.push_back((char)(0x80 | ((cp >> 12) & 0x3F))); o.push_back((char)(0x80 | ((cp >> 6) & 0x3F))); o.push_back((char)(0x80 | (cp & 0x3F))); }
+  return o;
+}
+// byteOff 处（须在码点边界）码点的 Unicode 值（取代码命令）
+static unsigned int yc_utf8_decode_cp(const std::string& s, size_t byteOff) {
+  if (byteOff >= s.size()) return 0;
+  unsigned char c = (unsigned char)s[byteOff];
+  size_t len = yc_utf8_seq_len(c);
+  if (len == 1) return c;
+  unsigned int cp = (len == 2) ? (c & 0x1F) : (len == 3) ? (c & 0x0F) : (c & 0x07);
+  for (size_t k = 1; k < len && byteOff + k < s.size(); ++k) cp = (cp << 6) | ((unsigned char)s[byteOff + k] & 0x3F);
+  return cp;
+}
+
 extern "C" int krnln_len(const char* text) {
-  return static_cast<int>(std::strlen(text ? text : ""));
+  return static_cast<int>(yc_utf8_cp_count(text ? text : ""));
 }
 
 extern "C" const char* krnln_left(const char* text, int count) {
   std::string s = text ? text : "";
   if (count <= 0) return keepUtf8("");
-  if (static_cast<size_t>(count) >= s.size()) return keepUtf8(s);
-  return keepUtf8(s.substr(0, static_cast<size_t>(count)));
+  return keepUtf8(s.substr(0, yc_utf8_byte_off(s, static_cast<size_t>(count))));
 }
 
 extern "C" const char* krnln_right(const char* text, int count) {
   std::string s = text ? text : "";
   if (count <= 0) return keepUtf8("");
-  if (static_cast<size_t>(count) >= s.size()) return keepUtf8(s);
-  return keepUtf8(s.substr(s.size() - static_cast<size_t>(count)));
+  size_t total = yc_utf8_cp_count(s);
+  if (static_cast<size_t>(count) >= total) return keepUtf8(s);
+  return keepUtf8(s.substr(yc_utf8_byte_off(s, total - static_cast<size_t>(count))));
 }
 
 extern "C" const char* krnln_mid(const char* text, int startPos, int count) {
   std::string s = text ? text : "";
   if (count <= 0) return keepUtf8("");
   if (startPos < 1) startPos = 1;
-  size_t start = static_cast<size_t>(startPos - 1);
+  size_t start = yc_utf8_byte_off(s, static_cast<size_t>(startPos - 1));
   if (start >= s.size()) return keepUtf8("");
-  return keepUtf8(s.substr(start, static_cast<size_t>(count)));
+  size_t end = yc_utf8_byte_off(s, static_cast<size_t>(startPos - 1) + static_cast<size_t>(count));
+  return keepUtf8(s.substr(start, end - start));
 }
 
-extern "C" const char* krnln_chr(unsigned char code) {   // 帮助：参数为「字节型」→ 声明侧是 unsigned char
-  char ch = static_cast<char>(code);
-  std::string out(1, ch);
-  return keepUtf8(out);
+extern "C" const char* krnln_chr(int code) {   // 参数放宽整数型：字符(20013)="中"、字符(128512)=😀（Unicode 码点，不再是 0-255 字节）
+  return keepUtf8(yc_utf8_encode_cp(code < 0 ? 0u : (unsigned int)code));
 }
 
-extern "C" int krnln_asc(const char* text, int pos, ...) {
+extern "C" int krnln_asc(const char* text, int pos, ...) {   // 返回第 pos 个码点的 Unicode 值（取代码("中")=20013），pos 按码点
   std::string s = text ? text : "";
   if (s.empty()) return 0;
   if (pos < 1) pos = 1;
-  size_t idx = static_cast<size_t>(pos - 1);
-  if (idx >= s.size()) return 0;
-  return static_cast<unsigned char>(s[idx]);
+  size_t byteOff = yc_utf8_byte_off(s, static_cast<size_t>(pos - 1));
+  if (byteOff >= s.size()) return 0;
+  return static_cast<int>(yc_utf8_decode_cp(s, byteOff));
 }
 
 extern "C" int krnln_InStr(const char* source, const char* needle, int startPos, int ignoreCase, ...) {
@@ -1452,35 +1493,29 @@ extern "C" int krnln_InStr(const char* source, const char* needle, int startPos,
   std::string n = needle ? needle : "";
   if (n.empty()) return 1;
   if (startPos < 1) startPos = 1;
-  size_t start = static_cast<size_t>(startPos - 1);
+  size_t start = yc_utf8_byte_off(s, static_cast<size_t>(startPos - 1));   // 起始位置按码点
   if (start >= s.size()) return -1;
-
-  if (ignoreCase) {
-    s = toLowerAscii(s);
-    n = toLowerAscii(n);
-  }
-
-  size_t found = s.find(n, start);
+  std::string hay = ignoreCase ? toLowerAscii(s) : s;   // toLowerAscii 只改 A-Z，不动中文字节/长度→码点边界不变
+  std::string ndl = ignoreCase ? toLowerAscii(n) : n;
+  size_t found = hay.find(ndl, start);
   if (found == std::string::npos) return -1;
-  return static_cast<int>(found + 1);
+  return static_cast<int>(yc_utf8_cp_count(s.substr(0, found)) + 1);       // 返回码点位置（在原始 s 上数）
 }
 
 extern "C" int krnln_InStrRev(const char* source, const char* needle, int startPos, int ignoreCase, ...) {
   std::string s = source ? source : "";
   std::string n = needle ? needle : "";
-  if (n.empty()) return static_cast<int>(s.size());
+  size_t total = yc_utf8_cp_count(s);
+  if (n.empty()) return static_cast<int>(total);
   if (s.empty()) return -1;
-  if (startPos < 1) startPos = static_cast<int>(s.size());
-  size_t start = static_cast<size_t>(std::min(startPos - 1, static_cast<int>(s.size() - 1)));
-
-  if (ignoreCase) {
-    s = toLowerAscii(s);
-    n = toLowerAscii(n);
-  }
-
-  size_t found = s.rfind(n, start);
+  if (startPos < 1) startPos = static_cast<int>(total);
+  size_t startCp = std::min(static_cast<size_t>(startPos - 1), total > 0 ? total - 1 : 0);
+  size_t start = yc_utf8_byte_off(s, startCp);   // 起始位置按码点
+  std::string hay = ignoreCase ? toLowerAscii(s) : s;
+  std::string ndl = ignoreCase ? toLowerAscii(n) : n;
+  size_t found = hay.rfind(ndl, start);
   if (found == std::string::npos) return -1;
-  return static_cast<int>(found + 1);
+  return static_cast<int>(yc_utf8_cp_count(s.substr(0, found)) + 1);       // 返回码点位置（在原始 s 上数）
 }
 
 extern "C" const char* krnln_UCase(const char* text) {
@@ -1533,9 +1568,9 @@ extern "C" const char* krnln_ReplaceText(const char* text, int startPos, int rep
   std::string repl = replacement ? replacement : "";
   if (startPos < 1) startPos = 1;
   if (replaceLen < 0) replaceLen = 0;
-  size_t start = static_cast<size_t>(startPos - 1);
-  if (start > s.size()) start = s.size();
-  s.replace(start, static_cast<size_t>(replaceLen), repl);
+  size_t start = yc_utf8_byte_off(s, static_cast<size_t>(startPos - 1));   // 起始位置按码点
+  size_t end = yc_utf8_byte_off(s, static_cast<size_t>(startPos - 1) + static_cast<size_t>(replaceLen));   // 替换长度按码点
+  s.replace(start, end - start, repl);
   return keepUtf8(s);
 }
 
@@ -2775,7 +2810,7 @@ extern "C" const char* krnln_RpSubText(const char* text,
   std::string repl = newSub ? newSub : "";
 
   if (needle.empty()) return keepUtf8(src);
-  size_t pos = startPos > 0 ? static_cast<size_t>(startPos - 1) : 0;
+  size_t pos = startPos > 0 ? yc_utf8_byte_off(src, static_cast<size_t>(startPos - 1)) : 0;   // 起始位置按码点
   if (pos > src.size()) return keepUtf8(src);
 
   auto findNext = [&](size_t from) -> size_t {
