@@ -386,7 +386,7 @@ interface TranspileCacheFile {
 // 38: 真/假/且/或 裸词替换改为引号感知——旧产物字符串字面量里的 真/假 被改写成 1/0
 // 39: 多窗口（载入/销毁）——prelude 新增 yc_win_load/yc_win_destroy 声明
 // 40: 图形按钮（PicBtn）——prelude 新增 yc_picbtn_get/set_checked 声明
-const TRANSPILE_CACHE_VERSION = 50
+const TRANSPILE_CACHE_VERSION = 51
 
 interface BuildArtifactCacheFile {
   version: number
@@ -8051,7 +8051,10 @@ function generateMainC(
     const hasAnyPicBtnImage = picBtnImageBytes.some(a => !!a && a.some(Boolean))
     // 画板即使无底图也用 GDI+（取图片 PNG 编码、画图片 字节集解码），故 GDI+ 门控含画板；图形按钮画图同样要 GDI+
     const hasDrawPanel = winInfo.controls.some(c => c.type === '画板' || c.type === 'DrawPanel')
-    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage) {
+    // 辅助窗背景图（v1 补齐）：每个有底图的辅助窗一份字节，运行时按窗序号查表画（同主窗 GDI+ 内存流解码）
+    const subBackImageBytes = secondaryWindows.map(swx => swx.info.backImage ? decodeImageDataUrl(swx.info.backImage) : null)
+    const hasAnySubBackImage = subBackImageBytes.some(Boolean)
+    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage || hasAnySubBackImage) {
       mainCode += 'static ULONG_PTR g_gdiplusToken = 0;\n'
     }
     if (backImageBytes) {
@@ -8096,6 +8099,23 @@ function generateMainC(
     // 各窗口事件分发前设置 g_ycCurEventWin：控件跨窗重名时按名解析优先取「当前事件所在窗口」的那个。
     const secWinCount = Math.max(1, secondaryWindows.length)
     mainCode += `static HWND g_ycSubWinHandles[${secWinCount}] = { NULL };\n`
+    // 辅助窗背景图：per-window 字节内嵌 + 按窗序号的表（YcSubWinProc WM_PAINT 懒解码并绘制）
+    subBackImageBytes.forEach((bytes, si) => {
+      if (bytes) {
+        mainCode += `static const unsigned char g_subBackData_${si}[] = {\n${bytesToCArrayBody(bytes)}};\n`
+        mainCode += `static const unsigned int g_subBackSize_${si} = ${bytes.length}u;\n`
+      }
+    })
+    if (hasAnySubBackImage) {
+      mainCode += 'struct YcSubBackImg { const unsigned char* data; unsigned int size; Gdiplus::Image* img; int mode; };\n'
+      mainCode += `static YcSubBackImg g_ycSubBackImages[${secWinCount}] = {\n`
+      for (let si = 0; si < secWinCount; si++) {
+        const bytes = subBackImageBytes[si]
+        if (bytes) mainCode += `    { g_subBackData_${si}, g_subBackSize_${si}, NULL, ${secondaryWindows[si].info.backImageMode} },\n`
+        else mainCode += '    { NULL, 0, NULL, 0 },\n'
+      }
+      mainCode += '};\n'
+    }
     mainCode += 'static int g_ycCurEventWin = 0;\n'
     mainCode += `static HWND yc_win_handle_by_index(int i) { if (i <= 0) return g_hMainWnd; return (i - 1 < ${secWinCount}) ? g_ycSubWinHandles[i - 1] : NULL; }\n`
     // 程序退出时机 = 所有窗口都被销毁（易语言语义）：销毁主窗只销毁它自己，无父窗口的辅助窗继续存活；
@@ -10005,6 +10025,34 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         mainCode += 'static LRESULT CALLBACK YcSubWinProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {\n'
         mainCode += '    int wi = (int)GetWindowLongPtrW(hWnd, GWLP_USERDATA);\n'
         mainCode += '    switch (message) {\n'
+        if (hasAnySubBackImage) {
+          // 辅助窗背景图：按窗序号(wi-1)查表，懒解码 GDI+ Image、按底图方式绘制（复用主窗逻辑；无底图窗走 break→DefWindowProc）
+          mainCode += '    case WM_PAINT: {\n'
+          mainCode += '        int bi = wi - 1;\n'
+          mainCode += `        if (bi >= 0 && bi < ${secWinCount} && g_ycSubBackImages[bi].size > 0) {\n`
+          mainCode += '            PAINTSTRUCT ps; HDC hdc = BeginPaint(hWnd, &ps);\n'
+          mainCode += '            YcSubBackImg& e = g_ycSubBackImages[bi];\n'
+          mainCode += '            if (!e.img && e.data && e.size > 0) {\n'
+          mainCode += '                HGLOBAL hm = GlobalAlloc(GMEM_MOVEABLE, e.size);\n'
+          mainCode += '                if (hm) { void* pm = GlobalLock(hm); if (pm) { memcpy(pm, e.data, e.size); GlobalUnlock(hm); }\n'
+          mainCode += '                    IStream* pst = NULL;\n'
+          mainCode += '                    if (CreateStreamOnHGlobal(hm, TRUE, &pst) == S_OK && pst) { e.img = Gdiplus::Image::FromStream(pst, FALSE); if (e.img && e.img->GetLastStatus() != Gdiplus::Ok) { delete e.img; e.img = NULL; } pst->Release(); }\n'
+          mainCode += '                    else { GlobalFree(hm); }\n'
+          mainCode += '                }\n'
+          mainCode += '            }\n'
+          mainCode += '            if (e.img) {\n'
+          mainCode += '                RECT crc; GetClientRect(hWnd, &crc); int cw = crc.right - crc.left, ch = crc.bottom - crc.top;\n'
+          mainCode += '                Gdiplus::Graphics graphics(hdc);\n'
+          mainCode += '                if (e.mode == 4) { graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic); graphics.DrawImage(e.img, 0, 0, cw, ch); }\n'
+          mainCode += '                else if (e.mode == 0) { Gdiplus::TextureBrush tb(e.img); graphics.FillRectangle(&tb, 0, 0, cw, ch); }\n'
+          mainCode += '                else { int iw = (int)e.img->GetWidth(), ih = (int)e.img->GetHeight(); int ix, iy; if (e.mode == 1) { ix = 0; iy = 0; } else if (e.mode == 2) { ix = (cw - iw) / 2; iy = (ch - ih) / 2; } else { ix = cw - iw; iy = ch - ih; } graphics.DrawImage(e.img, ix, iy, iw, ih); }\n'
+          mainCode += '            }\n'
+          mainCode += '            EndPaint(hWnd, &ps);\n'
+          mainCode += '            return 0;\n'
+          mainCode += '        }\n'
+          mainCode += '        break;\n'
+          mainCode += '    }\n'
+        }
         mainCode += '    case WM_COMMAND: {\n'
         mainCode += '        int wmId = LOWORD(wParam);\n'
         mainCode += '        int wmEvent = HIWORD(wParam); (void)wmEvent;\n'
