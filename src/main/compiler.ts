@@ -386,7 +386,7 @@ interface TranspileCacheFile {
 // 38: 真/假/且/或 裸词替换改为引号感知——旧产物字符串字面量里的 真/假 被改写成 1/0
 // 39: 多窗口（载入/销毁）——prelude 新增 yc_win_load/yc_win_destroy 声明
 // 40: 图形按钮（PicBtn）——prelude 新增 yc_picbtn_get/set_checked 声明
-const TRANSPILE_CACHE_VERSION = 52
+const TRANSPILE_CACHE_VERSION = 53
 
 interface BuildArtifactCacheFile {
   version: number
@@ -8445,6 +8445,24 @@ function generateMainC(
         isDefault: readIntProp(ctrl.extraProps?.['类型'], 0) === 1,
       })
     }
+    // 辅助窗按钮的底色/文本色并入同一表（控件 ID 全局唯一，WM_DRAWITEM 按 ID 查天然共用；辅助窗用数字 ID）
+    for (const swx of secondaryWindows) {
+      swx.info.controls.forEach((ctrl, ci) => {
+        if (!(ctrl.type === '按钮' || ctrl.type === 'Button')) return
+        const backColor = readIntProp(ctrl.extraProps?.['底色'], 0)
+        const font = parseControlFont(ctrl.extraProps?.['字体'])
+        const textColor = font && typeof font.color === 'number' ? font.color : -1
+        if (backColor === 0 && textColor < 0) return
+        buttonDrawEntries.push({
+          idMacro: String(swx.ctrlIds[ci]),
+          bgColor: backColor,
+          textColor,
+          hAlign: readIntProp(ctrl.extraProps?.['横向对齐方式'], 1),
+          vAlign: readIntProp(ctrl.extraProps?.['纵向对齐方式'], 1),
+          isDefault: readIntProp(ctrl.extraProps?.['类型'], 0) === 1,
+        })
+      })
+    }
     if (buttonDrawEntries.length > 0) {
       mainCode += '/* 自绘按钮颜色表（底色/文本色）*/\n'
       mainCode += 'typedef struct { int id; COLORREF bgColor; LONG textColor; int hAlign; int vAlign; int isDefault; } YcButtonDrawEntry;\n'
@@ -9892,7 +9910,9 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
             const isStdEdit = className === 'EDIT'
             const editCodegen = isStdEdit ? buildStdEditCodegen(ctrl.extraProps) : null
             const isStdButton = ctrl.type === '按钮' || ctrl.type === 'Button'
-            const buttonCodegen = isStdButton ? buildStdButtonCodegen(ctrl.extraProps, false, false) : null
+            // 底色/文本色 → 自绘按钮(BS_OWNERDRAW)，颜色由 YcSubWinProc WM_DRAWITEM 查 g_ycButtonDraws 画
+            const swOwnerDrawButton = isStdButton && (readIntProp(ctrl.extraProps?.['底色'], 0) !== 0 || typeof parseControlFont(ctrl.extraProps?.['字体'])?.color === 'number')
+            const buttonCodegen = isStdButton ? buildStdButtonCodegen(ctrl.extraProps, false, swOwnerDrawButton) : null
             const isStdLabel = ctrl.type === '标签' || ctrl.type === 'Label'
             const labelCodegen = isStdLabel ? buildStdLabelCodegen(ctrl.extraProps) : null
             const isStdCheckable = ctrl.type === '选择框' || ctrl.type === 'CheckBox' || ctrl.type === '单选框' || ctrl.type === 'RadioBox'
@@ -10049,6 +10069,37 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
           mainCode += '            }\n'
           mainCode += '            EndPaint(hWnd, &ps);\n'
           mainCode += '            return 0;\n'
+          mainCode += '        }\n'
+          mainCode += '        break;\n'
+          mainCode += '    }\n'
+        }
+        if (buttonDrawEntries.length > 0) {
+          // 辅助窗自绘按钮：查全局 g_ycButtonDraws(与主窗共表,ID 全局唯一)填底色/边框(按下下沉)/文本
+          mainCode += '    case WM_DRAWITEM: {\n'
+          mainCode += '        DRAWITEMSTRUCT* dis = (DRAWITEMSTRUCT*)lParam;\n'
+          mainCode += '        if (dis && dis->CtlType == ODT_BUTTON) {\n'
+          mainCode += '            for (size_t bi = 0; bi < sizeof(g_ycButtonDraws) / sizeof(g_ycButtonDraws[0]); bi++) {\n'
+          mainCode += '                if (g_ycButtonDraws[bi].id != (int)dis->CtlID) continue;\n'
+          mainCode += '                RECT rc = dis->rcItem;\n'
+          mainCode += '                BOOL pressed = (dis->itemState & ODS_SELECTED) != 0;\n'
+          mainCode += '                HBRUSH hbr = CreateSolidBrush(g_ycButtonDraws[bi].bgColor);\n'
+          mainCode += '                FillRect(dis->hDC, &rc, hbr); DeleteObject(hbr);\n'
+          mainCode += '                DrawEdge(dis->hDC, &rc, pressed ? EDGE_SUNKEN : EDGE_RAISED, BF_RECT);\n'
+          mainCode += '                if (g_ycButtonDraws[bi].isDefault) { HBRUSH hbf = CreateSolidBrush(GetSysColor(COLOR_WINDOWFRAME)); FrameRect(dis->hDC, &dis->rcItem, hbf); DeleteObject(hbf); }\n'
+          mainCode += '                wchar_t btxt[256] = L""; GetWindowTextW(dis->hwndItem, btxt, 256);\n'
+          mainCode += '                HFONT hbfont = (HFONT)SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0);\n'
+          mainCode += '                HGDIOBJ oldF = hbfont ? SelectObject(dis->hDC, hbfont) : NULL;\n'
+          mainCode += '                SetBkMode(dis->hDC, TRANSPARENT);\n'
+          mainCode += '                SetTextColor(dis->hDC, g_ycButtonDraws[bi].textColor >= 0 ? (COLORREF)g_ycButtonDraws[bi].textColor : GetSysColor(COLOR_BTNTEXT));\n'
+          mainCode += '                UINT fmt = DT_SINGLELINE;\n'
+          mainCode += '                fmt |= (g_ycButtonDraws[bi].hAlign == 0) ? DT_LEFT : (g_ycButtonDraws[bi].hAlign == 2) ? DT_RIGHT : DT_CENTER;\n'
+          mainCode += '                fmt |= (g_ycButtonDraws[bi].vAlign == 0) ? DT_TOP : (g_ycButtonDraws[bi].vAlign == 2) ? DT_BOTTOM : DT_VCENTER;\n'
+          mainCode += '                RECT tr = rc; if (pressed) OffsetRect(&tr, 1, 1);\n'
+          mainCode += '                DrawTextW(dis->hDC, btxt, -1, &tr, fmt);\n'
+          mainCode += '                if (oldF) SelectObject(dis->hDC, oldF);\n'
+          mainCode += '                if (dis->itemState & ODS_FOCUS) { RECT fr = dis->rcItem; InflateRect(&fr, -3, -3); DrawFocusRect(dis->hDC, &fr); }\n'
+          mainCode += '                return TRUE;\n'
+          mainCode += '            }\n'
           mainCode += '        }\n'
           mainCode += '        break;\n'
           mainCode += '    }\n'
