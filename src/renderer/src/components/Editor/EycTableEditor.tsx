@@ -4627,7 +4627,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         return true
       })()
       // 检查是否需要插入自动补齐的后续行（只在新输入时插入，已有匹配结束标记时不重复插入）
-      const preservesExistingFlowStructure = editingExistingFlowStart && existingFlowStructureIsIntact && (!cmdCheckName || cmdCheckName === effectiveOriginalFlowKw)
+      // 编辑已有流程头、关键字完全不变（纯改参数，isSameFlowKeywordEdit）时无条件保留结构——
+      // 不能因 body 缩进不规范（如 body 缩进 < 头缩进，existingFlowStructureIsIntact 会误判为不完整）
+      // 而去补标记/溶解，那会把结构内容甩到结构外（用户报障：循环体缩进为 0 时改参数散架）。
+      const preservesExistingFlowStructure = editingExistingFlowStart && (existingFlowStructureIsIntact || isSameFlowKeywordEdit) && (!cmdCheckName || cmdCheckName === effectiveOriginalFlowKw)
       let extraLines = preservesExistingFlowStructure ? [] : formattedLines.slice(1)
       const rawExtraLineCount = extraLines.length
       if (extraLines.length > 0) {
@@ -4665,7 +4668,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       // 流程命令被删除 → 溶解整个流程块：移除分支/结束标记行，将块内正文缩进还原
       const oldKw = effectiveOriginalFlowKw
       const newIsFlow = !!(trimmedCmd && FLOW_AUTO_COMPLETE[cmdCheckName] && !preferJudgeBranch)
-      const shouldDissolveExistingFlow = editingExistingFlowStart && (!newIsFlow || !existingFlowStructureIsIntact || cmdCheckName !== effectiveOriginalFlowKw)
+      // 纯改参数（关键字不变）绝不溶解——existingFlowStructureIsIntact 会被 body 缩进不规范误判，
+      // 但改参数不该动结构。只有关键字真变了 / 改成非流程命令，才按原逻辑溶解。
+      const shouldDissolveExistingFlow = editingExistingFlowStart && !isSameFlowKeywordEdit && (!newIsFlow || !existingFlowStructureIsIntact || cmdCheckName !== effectiveOriginalFlowKw)
       // 作为分支的「判断」被编辑/退格清空后失焦时不溶解整块——它是判断块的 case，不是块头（行此刻可能已空，按原缩进向上扫判定）。
       const oldKwIsJudgeBranch = oldKw === '判断' && isEnclosedJudgeBranchAt(nl, editCell.lineIndex, effectiveFlowOrigIndent.length)
       if (!editCell.isVirtual && oldKw && shouldDissolveExistingFlow && FLOW_START[oldKw] && !oldKwIsJudgeBranch) {

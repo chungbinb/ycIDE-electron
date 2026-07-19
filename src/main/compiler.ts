@@ -386,7 +386,7 @@ interface TranspileCacheFile {
 // 38: 真/假/且/或 裸词替换改为引号感知——旧产物字符串字面量里的 真/假 被改写成 1/0
 // 39: 多窗口（载入/销毁）——prelude 新增 yc_win_load/yc_win_destroy 声明
 // 40: 图形按钮（PicBtn）——prelude 新增 yc_picbtn_get/set_checked 声明
-const TRANSPILE_CACHE_VERSION = 47
+const TRANSPILE_CACHE_VERSION = 49
 
 interface BuildArtifactCacheFile {
   version: number
@@ -4050,6 +4050,19 @@ function isTextRawOperand(expr: string, variableTypeResolver?: VariableTypeResol
   return dataType === '文本型'
 }
 
+// 命令调用返回文本型 → 该表达式是文本（供 ＋ 判文本连接、比较判 yc_text_compare）。
+// isTextExpression 只认硬编码的 helper 前缀白名单，覆盖不到「字符」「取文本左边」「到大写」等**所有**返回文本的
+// 核心库命令——那些命令转译成 native 调用（如 krnln_chr(...)）后不在白名单，＋ 便退化成数值加法，生成
+// `YC_TEXT + YC_TEXT` 被 C++ 拒绝（invalid operands）。这里改用 ycmd 元数据的 returnType 数据驱动补齐：
+// rawExpr 是**转译前**的易语言子表达式，命令名可直接读，查 commandMap 即得权威返回类型。
+function isTextReturningCommandCall(rawExpr: string, commandMap?: Map<string, ResolvedCommand>): boolean {
+  if (!commandMap) return false
+  const m = (rawExpr || '').trim().match(/^([^\s(（]+)\s*[(（]/)
+  if (!m) return false
+  const cmd = commandMap.get(m[1].trim())
+  return !!cmd && (cmd.returnType || '').trim() === '文本型'
+}
+
 function isBigRawOperand(expr: string, variableTypeResolver?: VariableTypeResolver): boolean {
   const dataType = getExprSimpleIdentifierType(expr, variableTypeResolver)
   return dataType === '大整数型' || dataType === '大数'
@@ -4460,6 +4473,8 @@ function translateExpressionToC(
         || isTextExpression(right)
         || isTextRawOperand(comparison.left, variableTypeResolver)
         || isTextRawOperand(comparison.right, variableTypeResolver)
+        || isTextReturningCommandCall(comparison.left, commandMap)
+        || isTextReturningCommandCall(comparison.right, commandMap)
       )
     ) {
       return `(yc_text_compare(${left}, ${right}) ${normalizedOperator} 0)`
@@ -4486,6 +4501,8 @@ function translateExpressionToC(
         || isTextExpression(right)
         || isTextRawOperand(additive.left, variableTypeResolver)
         || isTextRawOperand(additive.right, variableTypeResolver)
+        || isTextReturningCommandCall(additive.left, commandMap)
+        || isTextReturningCommandCall(additive.right, commandMap)
       )
     ) {
       return `yc_text_concat(${left}, ${right})`
@@ -4541,7 +4558,12 @@ function translateExpressionToC(
 function buildComparisonExpression(leftArg: string, rightArg: string, operator: '==' | '!=' | '<' | '>' | '<=' | '>=', commandMap?: Map<string, ResolvedCommand>, directCallables?: DirectCallableNames): string {
   const left = translateExpressionToC(leftArg, commandMap, directCallables)
   const right = translateExpressionToC(rightArg, commandMap, directCallables)
-  if (isTextExpression(left) || isTextExpression(right)) {
+  if (
+    isTextExpression(left)
+    || isTextExpression(right)
+    || isTextReturningCommandCall(leftArg, commandMap)
+    || isTextReturningCommandCall(rightArg, commandMap)
+  ) {
     return `(yc_text_compare(${left}, ${right}) ${operator} 0)`
   }
   return `(${left} ${operator} ${right})`
@@ -4741,6 +4763,7 @@ const YCMD_ARRAY_PARAM_KINDS: Record<string, Array<'arrayptr' | 'binref' | 'int'
   krnln_RemoveElement: ['arrayptr', 'int', 'int'],
   krnln_RemoveAll: ['arrayptr'],
   krnln_GetAryElementCount: ['arrayptr'],
+  krnln_GetCmdLine: ['arrayptr'],  // 取命令行：把命令行段填入文本数组变量（帮助〈无返回值〉，参数=文本型变量数组）
   // 重定义数组/取数组下标 已改走 YCMD_CUSTOM_NATIVE_EXPRS（可重复维参/运行时维度），不在此表。
   krnln_CopyAry: ['arrayptr', 'arrayptr'],
   krnln_SortAry: ['arrayptr', 'int'],

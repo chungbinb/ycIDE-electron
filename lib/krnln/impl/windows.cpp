@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <commdlg.h>  // 通用对话框（GetOpenFileNameW/GetSaveFileNameW/ChooseFontW）
+#include <shellapi.h>  // CommandLineToArgvW（取命令行 按空格分段解析）
 
 #include <algorithm>
 #include <cmath>
@@ -562,8 +563,19 @@ extern "C" const char* krnln_GetRunPath() {
   return keepWideAsUtf8(dir);
 }
 
-extern "C" const char* krnln_GetCmdLine() {
-  return keepUtf8(wideToUtf8(GetCommandLineW()));
+// 取命令行（帮助：〈无返回值〉，参数为文本型变量数组）：把可执行文件名后的、以空格分隔的命令行段
+// 顺序填入数组变量；原有数据全部销毁、维数自动调整为段数。文本元素按数组 ABI 存堆 wchar_t* 指针。
+extern "C" void krnln_GetCmdLine(void* aryPtr) {
+  if (!aryPtr) return;
+  std::vector<long long>* ary = static_cast<std::vector<long long>*>(aryPtr);
+  ary->clear();
+  int argc = 0;
+  LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+  if (!argv) return;
+  for (int i = 1; i < argc; i++) {  // 跳过 argv[0]=可执行文件名，只要其后的命令行段
+    ary->push_back((long long)(intptr_t)_wcsdup(argv[i] ? argv[i] : L""));
+  }
+  LocalFree(argv);
 }
 
 extern "C" const char* krnln_GetEnv(const char* name) {

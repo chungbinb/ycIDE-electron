@@ -240,7 +240,7 @@ const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
   'impl/linux.cpp': '088edd74d09dac6c9e70da4feed932e3e0d4aceba36b6aab5d9fb152077aef34',
   'impl/macos.mm': '798149470018bf45a3e996d82db1db41f473f6a6aca2fd3badf7b8ad1538b4ac',
   'impl/pinyin-table.inc': 'dd70222f361e247007abaa4a5c441d9be2f5d54bfa89a777624ef2a52c93f504',
-  'impl/windows.cpp': '595d455c86e10f64b68e8ebfad10ec252b16ce515c491f203f1bd491c493b581',
+  'impl/windows.cpp': 'bf602ee6914a1257a6142d538cd7ae405fabd0e2e21cdc250da5ce473901d1e8',
   'krnln.commands.ycmd.json': '7e3439246dadb819842086785833d3f9da395bfbfe79d3e8d3ebf5d4ddf282eb',
   'krnln.constants.json': 'f351e8dfb8a4f3d47c1e02e015ee37b5fe3ada180983084a422ff08c43b8a9a2',
   'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
