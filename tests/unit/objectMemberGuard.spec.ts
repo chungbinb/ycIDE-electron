@@ -56,11 +56,13 @@ describe('对象成员命令不能当自由命令调用', () => {
     expect(ok.r.success, `不该误伤普通命令：\n${ok.errs}`).toBe(true)
 
     // 控件成员：未绑定的方法仍给「暂不支持在代码中调用」（走 window-units 那条路，不经过本守卫）
+    // 注：原样例用「按钮1.移动」，但通用方法「移动」已接入 window-units（beta.18），按钮全走 * 通用绑定已无未接方法；
+    // 这里改用编辑框当前尚未接入的方法「取选中文本」（编辑框仅接了「加入文本」）继续验证守卫。
     const dir = mkdtempSync(join(tmpdir(), 'ycide-objguard2-'))
     writeFileSync(join(dir, 'p.epp'), ['# YiCode Project File', 'Version=1', 'ProjectName=g2', 'OutputType=WindowsApp', 'Platform=windows', '', 'File=EFW|_启动窗口.efw|1', 'File=EYC|_启动窗口.eyc|0', ''].join('\n'), 'utf-8')
     writeFileSync(join(dir, '_启动窗口.efw'), JSON.stringify({ name: '_启动窗口', title: 'w', width: 300, height: 200, sourceFile: '_启动窗口.eyc',
-      controls: [{ name: '按钮1', type: '按钮', left: 10, top: 10, width: 80, height: 30, title: 'b' }] }), 'utf-8')
-    writeFileSync(join(dir, '_启动窗口.eyc'), ['.版本 2', '.程序集 窗口程序集_启动窗口', '', '.子程序 __启动窗口_创建完毕', '按钮1.移动 (1, 2, 3, 4)', ''].join('\n'), 'utf-8')
+      controls: [{ name: '编辑框1', type: '编辑框', left: 10, top: 10, width: 80, height: 30, title: 'b' }] }), 'utf-8')
+    writeFileSync(join(dir, '_启动窗口.eyc'), ['.版本 2', '.程序集 窗口程序集_启动窗口', '', '.子程序 __启动窗口_创建完毕', '编辑框1.取选中文本 ()', ''].join('\n'), 'utf-8')
     const before = messages.length
     const r = await compileProject({ projectDir: dir, mode: 'build' })
     const errs = messages.slice(before).filter(m => m.type === 'error').map(m => m.text).join(' | ')
