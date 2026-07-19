@@ -386,7 +386,7 @@ interface TranspileCacheFile {
 // 38: 真/假/且/或 裸词替换改为引号感知——旧产物字符串字面量里的 真/假 被改写成 1/0
 // 39: 多窗口（载入/销毁）——prelude 新增 yc_win_load/yc_win_destroy 声明
 // 40: 图形按钮（PicBtn）——prelude 新增 yc_picbtn_get/set_checked 声明
-const TRANSPILE_CACHE_VERSION = 51
+const TRANSPILE_CACHE_VERSION = 52
 
 interface BuildArtifactCacheFile {
   version: number
@@ -10219,8 +10219,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '    g_hInstance = hInstance;\n'
     mainCode += '    INITCOMMONCONTROLSEX icc = { sizeof(INITCOMMONCONTROLSEX), ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES | ICC_LISTVIEW_CLASSES | ICC_TREEVIEW_CLASSES | ICC_TAB_CLASSES | ICC_DATE_CLASSES | ICC_LINK_CLASSES };\n'
     mainCode += '    InitCommonControlsEx(&icc);\n'
-    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage) {
-      // 底图/图标/按钮图片/画板：启动 GDI+，从内嵌字节建内存流并解码
+    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage || hasAnySubBackImage) {
+      // 底图/图标/按钮图片/画板/辅助窗背景图：启动 GDI+，从内嵌字节建内存流并解码
       mainCode += '    { Gdiplus::GdiplusStartupInput gdiplusStartupInput;\n'
       mainCode += '      Gdiplus::GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, NULL);\n'
       mainCode += '    }\n'
