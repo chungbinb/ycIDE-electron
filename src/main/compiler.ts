@@ -386,7 +386,7 @@ interface TranspileCacheFile {
 // 38: 真/假/且/或 裸词替换改为引号感知——旧产物字符串字面量里的 真/假 被改写成 1/0
 // 39: 多窗口（载入/销毁）——prelude 新增 yc_win_load/yc_win_destroy 声明
 // 40: 图形按钮（PicBtn）——prelude 新增 yc_picbtn_get/set_checked 声明
-const TRANSPILE_CACHE_VERSION = 54
+const TRANSPILE_CACHE_VERSION = 55
 
 interface BuildArtifactCacheFile {
   version: number
@@ -5214,6 +5214,16 @@ const YCMD_CUSTOM_NATIVE_EXPRS: Record<string, (args: string[], name: string, co
     let sel = `__yc_ch${choices.length - 1}`
     for (let i = choices.length - 2; i >= 0; i--) sel = `(__yc_ch_i <= ${i + 1} ? __yc_ch${i} : ${sel})`
     return `([&]() -> YC_TEXT { ${decls} long long __yc_ch_i = (long long)(${idxExpr}); (void)__yc_ch_i; return ${sel}; })()`
+  },
+  // 选择(逻辑值, 待选项一, 待选项二) = iif：条件真返回项一、假返回项二。同 多项选择 纯 codegen 文本化——
+  // 「选择」returnType 通用型、默认 native 生成把文本值(const char*)当指针整数返回，赋给标签标题→显示成地址整数。
+  //【已知限制】两项一律文本化（数值项转文本），与 多项选择 同款；需数值返回再引入带类型标签的通用值编组。
+  krnln_iif: (args, name, commandMap, directCallables) => {
+    const cond = (args[0] ?? '').trim()
+    if (cond === '') throw new Error(`命令“${name}”缺少「用作选择的逻辑值」参数`)
+    const condExpr = formatArgForC(cond, commandMap, directCallables)
+    const toT = (a: string) => (a.trim() !== '' ? `yc_value_to_text(${formatArgForC(a.trim(), commandMap, directCallables)})` : 'YC_TEXT()')
+    return `([&]() -> YC_TEXT { return (${condExpr}) ? ${toT(args[1] ?? '')} : ${toT(args[2] ?? '')}; })()`
   },
 }
 
