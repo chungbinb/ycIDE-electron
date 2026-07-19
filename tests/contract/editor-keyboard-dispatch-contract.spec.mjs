@@ -99,7 +99,8 @@ test('keyboard dispatcher contract: unchanged existing flow commands do not rebu
   assert.match(source, /const\s+editingExistingFlowStart\s*=\s*!editCell\.isVirtual\s*&&\s*!!effectiveOriginalFlowKw\s*&&\s*!!FLOW_START\[effectiveOriginalFlowKw\]/)
   assert.match(source, /const\s+existingFlowCommandIsComplete\s*=\s*!editingExistingFlowStart\s*\|\|\s*!!getOuterParenRange\(codeLineEditOrigValRef\.current\.trim\(\)\)/)
   assert.match(source, /if\s*\(unchanged\s*&&\s*flowContext\s*&&\s*existingFlowCommandIsComplete\)/)
-  assert.match(source, /const\s+preservesExistingFlowStructure\s*=\s*editingExistingFlowStart\s*&&\s*existingFlowStructureIsIntact\s*&&\s*\(!cmdCheckName\s*\|\|\s*cmdCheckName\s*===\s*effectiveOriginalFlowKw\)/)
+  // 纯改参数（同关键字编辑 isSameFlowKeywordEdit）即使 body 缩进不规范致 existingFlowStructureIsIntact 误判也保结构
+  assert.match(source, /const\s+preservesExistingFlowStructure\s*=\s*editingExistingFlowStart\s*&&\s*\(existingFlowStructureIsIntact\s*\|\|\s*isSameFlowKeywordEdit\)\s*&&\s*\(!cmdCheckName\s*\|\|\s*cmdCheckName\s*===\s*effectiveOriginalFlowKw\)/)
   assert.match(source, /let\s+extraLines\s*=\s*preservesExistingFlowStructure\s*\?\s*\[\]\s*:\s*formattedLines\.slice\(1\)/)
 })
 
@@ -107,8 +108,10 @@ test('keyboard dispatcher contract: damaged existing flow structure dissolves be
   const source = fs.readFileSync(tableEditorTsxPath, 'utf-8')
 
   assert.match(source, /const\s+existingFlowStructureIsIntact\s*=\s*\(\(\)\s*=>\s*\{[\s\S]*?const\s+expected\s*=\s*\(FLOW_AUTO_COMPLETE\[effectiveOriginalFlowKw\]\s*\|\|\s*\[\]\)\.filter/)
-  assert.match(source, /const\s+preservesExistingFlowStructure\s*=\s*editingExistingFlowStart\s*&&\s*existingFlowStructureIsIntact\s*&&\s*\(!cmdCheckName\s*\|\|\s*cmdCheckName\s*===\s*effectiveOriginalFlowKw\)/)
-  assert.match(source, /const\s+shouldDissolveExistingFlow\s*=\s*editingExistingFlowStart\s*&&\s*\(!newIsFlow\s*\|\|\s*!existingFlowStructureIsIntact\s*\|\|\s*cmdCheckName\s*!==\s*effectiveOriginalFlowKw\)/)
+  // 纯改参数（同关键字编辑 isSameFlowKeywordEdit）即使 body 缩进不规范致 existingFlowStructureIsIntact 误判也保结构
+  assert.match(source, /const\s+preservesExistingFlowStructure\s*=\s*editingExistingFlowStart\s*&&\s*\(existingFlowStructureIsIntact\s*\|\|\s*isSameFlowKeywordEdit\)\s*&&\s*\(!cmdCheckName\s*\|\|\s*cmdCheckName\s*===\s*effectiveOriginalFlowKw\)/)
+  // 同关键字纯改参数（isSameFlowKeywordEdit）绝不溶解——闸在最前
+  assert.match(source, /const\s+shouldDissolveExistingFlow\s*=\s*editingExistingFlowStart\s*&&\s*!isSameFlowKeywordEdit\s*&&\s*\(!newIsFlow\s*\|\|\s*!existingFlowStructureIsIntact\s*\|\|\s*cmdCheckName\s*!==\s*effectiveOriginalFlowKw\)/)
   assert.match(source, /const\s+dissolvedReplacementLines\s*=\s*newIsFlow[\s\S]*?\?\s*\[dropOneFlowIndent\(mainLine\),\s*\.\.\.extraLines\.map\(dropOneFlowIndent\)\][\s\S]*?:\s*\[dropOneFlowIndent\(mainLine\)\]/)
 })
 
