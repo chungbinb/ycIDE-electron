@@ -83,7 +83,7 @@ describe('取变量地址/取变量数据地址 · 运行时', () => {
 
   // 转译期硬拦截：地址赋给 整数型 直接编译失败并给出改 长整数型 的指引（编辑器问题面板有同款诊断）。
   // 32 位易语言老代码习惯用 整数型 接地址，x64 下截断后再当指针用全是垃圾地址——宁可编不过也不让它跑。
-  it('地址赋给整数型变量 → 转译期友好报错，不生成截断代码', async () => {
+  it.skipIf(!zigAvailable)('地址赋给整数型变量 → 转译期友好报错，不生成截断代码', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ycide-addr-narrow-'))
     writeFileSync(join(dir, 'p.epp'), ['ProjectName=地址截断拦截', 'OutputType=Console', 'Platform=x64', 'File=EYC|程序.eyc|0', ''].join('\n'), 'utf-8')
     writeFileSync(join(dir, '程序.eyc'), [
