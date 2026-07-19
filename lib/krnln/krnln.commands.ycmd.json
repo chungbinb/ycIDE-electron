@@ -3098,7 +3098,7 @@
       "params": [
         {
           "name": "欲取其字符的字符代码",
-          "type": "字节型",
+          "type": "整数型",
           "optional": false,
           "description": "。"
         }

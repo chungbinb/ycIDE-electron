@@ -8,6 +8,7 @@ export default tseslint.config(
   // 全局忽略：构建产物、子项目（C#/C++）、二进制与数据资源
   {
     ignores: [
+      '.claude/**',   // 工具目录：worktrees（会有多个候选 tsconfigRootDir 干扰 parser）、settings 等
       'out/**',
       'dist/**',
       'node_modules/**',
