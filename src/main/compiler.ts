@@ -386,7 +386,7 @@ interface TranspileCacheFile {
 // 38: 真/假/且/或 裸词替换改为引号感知——旧产物字符串字面量里的 真/假 被改写成 1/0
 // 39: 多窗口（载入/销毁）——prelude 新增 yc_win_load/yc_win_destroy 声明
 // 40: 图形按钮（PicBtn）——prelude 新增 yc_picbtn_get/set_checked 声明
-const TRANSPILE_CACHE_VERSION = 53
+const TRANSPILE_CACHE_VERSION = 54
 
 interface BuildArtifactCacheFile {
   version: number
@@ -8049,12 +8049,21 @@ function generateMainC(
       })
     })
     const hasAnyPicBtnImage = picBtnImageBytes.some(a => !!a && a.some(Boolean))
+    // 辅助窗图形按钮四态图片（v1 补齐显示）：per-window per-control 收集，g_subPbImg_{si}_{ci}_{k} 内嵌、并入 g_ycPicBtns 表
+    const subPicBtnImageBytes: Array<Array<Array<Buffer | null> | null>> = secondaryWindows.map(swx => swx.info.controls.map(c => {
+      if (!(c.type === '图形按钮' || c.type === 'PicBtn')) return null
+      return PICBTN_IMG_PROPS.map(p => {
+        const img = c.extraProps?.[p]
+        return (typeof img === 'string' && img.startsWith('data:image')) ? decodeImageDataUrl(img) : null
+      })
+    }))
+    const hasAnySubPicBtnImage = subPicBtnImageBytes.some(w => w.some(a => !!a && a.some(Boolean)))
     // 画板即使无底图也用 GDI+（取图片 PNG 编码、画图片 字节集解码），故 GDI+ 门控含画板；图形按钮画图同样要 GDI+
     const hasDrawPanel = winInfo.controls.some(c => c.type === '画板' || c.type === 'DrawPanel')
     // 辅助窗背景图（v1 补齐）：每个有底图的辅助窗一份字节，运行时按窗序号查表画（同主窗 GDI+ 内存流解码）
     const subBackImageBytes = secondaryWindows.map(swx => swx.info.backImage ? decodeImageDataUrl(swx.info.backImage) : null)
     const hasAnySubBackImage = subBackImageBytes.some(Boolean)
-    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage || hasAnySubBackImage) {
+    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage || hasAnySubBackImage || hasAnySubPicBtnImage) {
       mainCode += 'static ULONG_PTR g_gdiplusToken = 0;\n'
     }
     if (backImageBytes) {
@@ -8081,6 +8090,18 @@ function generateMainC(
           mainCode += `static const unsigned char g_pbImg_${idx}_${k}[] = {\n${bytesToCArrayBody(bytes)}};\n`
           mainCode += `static const unsigned int g_pbImgSize_${idx}_${k} = ${bytes.length}u;\n`
         }
+      })
+    })
+    // 辅助窗图形按钮四态图片字节（g_subPbImg_{si}_{ci}_{k}）
+    subPicBtnImageBytes.forEach((winCtrls, si) => {
+      winCtrls.forEach((states, ci) => {
+        if (!states) return
+        states.forEach((bytes, k) => {
+          if (bytes) {
+            mainCode += `static const unsigned char g_subPbImg_${si}_${ci}_${k}[] = {\n${bytesToCArrayBody(bytes)}};\n`
+            mainCode += `static const unsigned int g_subPbImgSize_${si}_${ci}_${k} = ${bytes.length}u;\n`
+          }
+        })
       })
     })
     mainCode += '\n'
@@ -8778,7 +8799,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '/* 图形按钮表（四态图片懒解码/类型/选中/悬停/透明色）*/\n'
     mainCode += 'struct YcPicBtnEntry { int id; int type; int checked; int hover; long long tclr; const unsigned char* img[4]; unsigned int imgSize[4]; Gdiplus::Image* decoded[4]; };\n'
     mainCode += 'static YcPicBtnEntry g_ycPicBtns[] = {\n'
-    if (picBtnCtrls.length > 0) {
+    const hasAnySubPicBtn = subPicBtnImageBytes.some(w => w.some(s => s !== null))
+    if (picBtnCtrls.length > 0 || hasAnySubPicBtn) {
       for (const { c, i } of picBtnCtrls) {
         const states = picBtnImageBytes[i]
         const imgPtrs = [0, 1, 2, 3].map(k => (states && states[k]) ? `g_pbImg_${i}_${k}` : 'NULL').join(', ')
@@ -8788,6 +8810,20 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         const tclr = readIntProp(c.extraProps?.['透明颜色'], -1)
         mainCode += `    { IDC_${c.name.toUpperCase()}, ${tp}, ${ck}, 0, ${tclr}LL, { ${imgPtrs} }, { ${imgSizes} }, { NULL, NULL, NULL, NULL } },\n`
       }
+      // 辅助窗图形按钮条目并入同表（数字 ID + 辅助窗字节引用；ID 全局唯一，WM_DRAWITEM 按 ID 查天然共用）
+      subPicBtnImageBytes.forEach((winCtrls, si) => {
+        winCtrls.forEach((states, ci) => {
+          if (!states) return
+          const ctrl = secondaryWindows[si].info.controls[ci]
+          const id = secondaryWindows[si].ctrlIds[ci]
+          const imgPtrs = [0, 1, 2, 3].map(k => states[k] ? `g_subPbImg_${si}_${ci}_${k}` : 'NULL').join(', ')
+          const imgSizes = [0, 1, 2, 3].map(k => states[k] ? `g_subPbImgSize_${si}_${ci}_${k}` : '0u').join(', ')
+          const tp = readIntProp(ctrl.extraProps?.['类型'], 0)
+          const ck = readBoolProp(ctrl.extraProps?.['选中'], false) ? 1 : 0
+          const tclr = readIntProp(ctrl.extraProps?.['透明颜色'], -1)
+          mainCode += `    { ${id}, ${tp}, ${ck}, 0, ${tclr}LL, { ${imgPtrs} }, { ${imgSizes} }, { NULL, NULL, NULL, NULL } },\n`
+        })
+      })
     } else {
       mainCode += '    { 0, 0, 0, 0, -1LL, { NULL, NULL, NULL, NULL }, { 0u, 0u, 0u, 0u }, { NULL, NULL, NULL, NULL } },\n'
     }
@@ -9896,7 +9932,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
             const unitInfo = allUnits.find(u => u.name === ctrl.type || u.englishName === ctrl.type)
             const libraryFileName = unitInfo ? (libNameToFileName.get(normalizeKey(unitInfo.libraryName)) || '') : ''
             const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
-            const unsupported = ['画板', 'DrawPanel', '选择夹', 'Tab', '时钟', 'Timer', '外形框', 'ShapeBox', '菜单', 'menu', '字体', 'font', '图形按钮', 'PicBtn']
+            // 图形按钮已支持显示(style 从 json 带 BS_OWNERDRAW、四态图片并入 g_ycPicBtns、YcSubWinProc WM_DRAWITEM 绘制)；鼠标悬停/点击切换交互仍 v1 未接
+            const unsupported = ['画板', 'DrawPanel', '选择夹', 'Tab', '时钟', 'Timer', '外形框', 'ShapeBox', '菜单', 'menu', '字体', 'font']
             if (unsupported.includes(ctrl.type)) {
               const wk = `${swx.info.formName}:${ctrl.type}`
               if (!secWarned.has(wk)) {
@@ -10073,33 +10110,54 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
           mainCode += '        break;\n'
           mainCode += '    }\n'
         }
-        if (buttonDrawEntries.length > 0) {
-          // 辅助窗自绘按钮：查全局 g_ycButtonDraws(与主窗共表,ID 全局唯一)填底色/边框(按下下沉)/文本
+        if (buttonDrawEntries.length > 0 || hasAnySubPicBtn) {
+          // 辅助窗 ODT_BUTTON 自绘：自绘按钮(g_ycButtonDraws)+图形按钮(g_ycPicBtns)，按 ID 查表(与主窗共表,ID 全局唯一)
           mainCode += '    case WM_DRAWITEM: {\n'
           mainCode += '        DRAWITEMSTRUCT* dis = (DRAWITEMSTRUCT*)lParam;\n'
           mainCode += '        if (dis && dis->CtlType == ODT_BUTTON) {\n'
-          mainCode += '            for (size_t bi = 0; bi < sizeof(g_ycButtonDraws) / sizeof(g_ycButtonDraws[0]); bi++) {\n'
-          mainCode += '                if (g_ycButtonDraws[bi].id != (int)dis->CtlID) continue;\n'
-          mainCode += '                RECT rc = dis->rcItem;\n'
-          mainCode += '                BOOL pressed = (dis->itemState & ODS_SELECTED) != 0;\n'
-          mainCode += '                HBRUSH hbr = CreateSolidBrush(g_ycButtonDraws[bi].bgColor);\n'
-          mainCode += '                FillRect(dis->hDC, &rc, hbr); DeleteObject(hbr);\n'
-          mainCode += '                DrawEdge(dis->hDC, &rc, pressed ? EDGE_SUNKEN : EDGE_RAISED, BF_RECT);\n'
-          mainCode += '                if (g_ycButtonDraws[bi].isDefault) { HBRUSH hbf = CreateSolidBrush(GetSysColor(COLOR_WINDOWFRAME)); FrameRect(dis->hDC, &dis->rcItem, hbf); DeleteObject(hbf); }\n'
-          mainCode += '                wchar_t btxt[256] = L""; GetWindowTextW(dis->hwndItem, btxt, 256);\n'
-          mainCode += '                HFONT hbfont = (HFONT)SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0);\n'
-          mainCode += '                HGDIOBJ oldF = hbfont ? SelectObject(dis->hDC, hbfont) : NULL;\n'
-          mainCode += '                SetBkMode(dis->hDC, TRANSPARENT);\n'
-          mainCode += '                SetTextColor(dis->hDC, g_ycButtonDraws[bi].textColor >= 0 ? (COLORREF)g_ycButtonDraws[bi].textColor : GetSysColor(COLOR_BTNTEXT));\n'
-          mainCode += '                UINT fmt = DT_SINGLELINE;\n'
-          mainCode += '                fmt |= (g_ycButtonDraws[bi].hAlign == 0) ? DT_LEFT : (g_ycButtonDraws[bi].hAlign == 2) ? DT_RIGHT : DT_CENTER;\n'
-          mainCode += '                fmt |= (g_ycButtonDraws[bi].vAlign == 0) ? DT_TOP : (g_ycButtonDraws[bi].vAlign == 2) ? DT_BOTTOM : DT_VCENTER;\n'
-          mainCode += '                RECT tr = rc; if (pressed) OffsetRect(&tr, 1, 1);\n'
-          mainCode += '                DrawTextW(dis->hDC, btxt, -1, &tr, fmt);\n'
-          mainCode += '                if (oldF) SelectObject(dis->hDC, oldF);\n'
-          mainCode += '                if (dis->itemState & ODS_FOCUS) { RECT fr = dis->rcItem; InflateRect(&fr, -3, -3); DrawFocusRect(dis->hDC, &fr); }\n'
-          mainCode += '                return TRUE;\n'
-          mainCode += '            }\n'
+          if (buttonDrawEntries.length > 0) {
+            mainCode += '            for (size_t bi = 0; bi < sizeof(g_ycButtonDraws) / sizeof(g_ycButtonDraws[0]); bi++) {\n'
+            mainCode += '                if (g_ycButtonDraws[bi].id != (int)dis->CtlID) continue;\n'
+            mainCode += '                RECT rc = dis->rcItem;\n'
+            mainCode += '                BOOL pressed = (dis->itemState & ODS_SELECTED) != 0;\n'
+            mainCode += '                HBRUSH hbr = CreateSolidBrush(g_ycButtonDraws[bi].bgColor);\n'
+            mainCode += '                FillRect(dis->hDC, &rc, hbr); DeleteObject(hbr);\n'
+            mainCode += '                DrawEdge(dis->hDC, &rc, pressed ? EDGE_SUNKEN : EDGE_RAISED, BF_RECT);\n'
+            mainCode += '                if (g_ycButtonDraws[bi].isDefault) { HBRUSH hbf = CreateSolidBrush(GetSysColor(COLOR_WINDOWFRAME)); FrameRect(dis->hDC, &dis->rcItem, hbf); DeleteObject(hbf); }\n'
+            mainCode += '                wchar_t btxt[256] = L""; GetWindowTextW(dis->hwndItem, btxt, 256);\n'
+            mainCode += '                HFONT hbfont = (HFONT)SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0);\n'
+            mainCode += '                HGDIOBJ oldF = hbfont ? SelectObject(dis->hDC, hbfont) : NULL;\n'
+            mainCode += '                SetBkMode(dis->hDC, TRANSPARENT);\n'
+            mainCode += '                SetTextColor(dis->hDC, g_ycButtonDraws[bi].textColor >= 0 ? (COLORREF)g_ycButtonDraws[bi].textColor : GetSysColor(COLOR_BTNTEXT));\n'
+            mainCode += '                UINT fmt = DT_SINGLELINE;\n'
+            mainCode += '                fmt |= (g_ycButtonDraws[bi].hAlign == 0) ? DT_LEFT : (g_ycButtonDraws[bi].hAlign == 2) ? DT_RIGHT : DT_CENTER;\n'
+            mainCode += '                fmt |= (g_ycButtonDraws[bi].vAlign == 0) ? DT_TOP : (g_ycButtonDraws[bi].vAlign == 2) ? DT_BOTTOM : DT_VCENTER;\n'
+            mainCode += '                RECT tr = rc; if (pressed) OffsetRect(&tr, 1, 1);\n'
+            mainCode += '                DrawTextW(dis->hDC, btxt, -1, &tr, fmt);\n'
+            mainCode += '                if (oldF) SelectObject(dis->hDC, oldF);\n'
+            mainCode += '                if (dis->itemState & ODS_FOCUS) { RECT fr = dis->rcItem; InflateRect(&fr, -3, -3); DrawFocusRect(dis->hDC, &fr); }\n'
+            mainCode += '                return TRUE;\n'
+            mainCode += '            }\n'
+          }
+          if (hasAnySubPicBtn) {
+            // 图形按钮：按 ID 查 g_ycPicBtns，按状态选四态图片(禁止/按下(含选择框选中)/悬停点燃/正常)绘制+透明色(复用主窗逻辑)
+            mainCode += '            YcPicBtnEntry* pe = yc_picbtn_by_id((int)dis->CtlID);\n'
+            mainCode += '            if (pe) {\n'
+            mainCode += '                RECT rc = dis->rcItem;\n'
+            mainCode += '                BOOL pbPressed = ((dis->itemState & ODS_SELECTED) != 0) || (pe->type == 1 && pe->checked);\n'
+            mainCode += '                BOOL pbDisabled = (dis->itemState & ODS_DISABLED) != 0;\n'
+            mainCode += '                int k = (pbDisabled && pe->img[3]) ? 3 : (pbPressed && pe->img[2]) ? 2 : (pe->hover && pe->type == 0 && pe->img[1]) ? 1 : 0;\n'
+            mainCode += '                Gdiplus::Image* im = yc_picbtn_img(pe, k); if (!im) im = yc_picbtn_img(pe, 0);\n'
+            mainCode += '                FillRect(dis->hDC, &rc, GetSysColorBrush(COLOR_BTNFACE));\n'
+            mainCode += '                if (im) {\n'
+            mainCode += '                    Gdiplus::Graphics g(dis->hDC); g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);\n'
+            mainCode += '                    Gdiplus::Rect dst(rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);\n'
+            mainCode += '                    if (pe->tclr >= 0) { COLORREF ck = (COLORREF)pe->tclr; Gdiplus::ImageAttributes ia; Gdiplus::Color cc(GetRValue(ck), GetGValue(ck), GetBValue(ck)); ia.SetColorKey(cc, cc); g.DrawImage(im, dst, 0, 0, (int)im->GetWidth(), (int)im->GetHeight(), Gdiplus::UnitPixel, &ia); }\n'
+            mainCode += '                    else { g.DrawImage(im, dst.X, dst.Y, dst.Width, dst.Height); }\n'
+            mainCode += '                }\n'
+            mainCode += '                return TRUE;\n'
+            mainCode += '            }\n'
+          }
           mainCode += '        }\n'
           mainCode += '        break;\n'
           mainCode += '    }\n'
@@ -10270,8 +10328,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '    g_hInstance = hInstance;\n'
     mainCode += '    INITCOMMONCONTROLSEX icc = { sizeof(INITCOMMONCONTROLSEX), ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES | ICC_LISTVIEW_CLASSES | ICC_TREEVIEW_CLASSES | ICC_TAB_CLASSES | ICC_DATE_CLASSES | ICC_LINK_CLASSES };\n'
     mainCode += '    InitCommonControlsEx(&icc);\n'
-    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage || hasAnySubBackImage) {
-      // 底图/图标/按钮图片/画板/辅助窗背景图：启动 GDI+，从内嵌字节建内存流并解码
+    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage || hasAnySubBackImage || hasAnySubPicBtnImage) {
+      // 底图/图标/按钮图片/画板/辅助窗背景图/辅助窗图形按钮：启动 GDI+，从内嵌字节建内存流并解码
       mainCode += '    { Gdiplus::GdiplusStartupInput gdiplusStartupInput;\n'
       mainCode += '      Gdiplus::GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, NULL);\n'
       mainCode += '    }\n'
