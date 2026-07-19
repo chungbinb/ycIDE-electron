@@ -1869,6 +1869,17 @@ extern "C" void krnln_ctrl_append_text(HWND h, const wchar_t* t) {
 extern "C" void krnln_ctrl_set_text(HWND h, const wchar_t* text) {
   if (!h) return;
   SetWindowTextW(h, text ? text : L"");
+  // 透明背景控件（标签叠在图形按钮/背景图上，WM_CTLCOLORSTATIC 返 NULL_BRUSH）改文本后旧文字不会被自身擦除
+  // → 让父窗重绘该控件区域（背景图/图形按钮重画掉旧字），再让控件画新字。否则新旧文本叠成两层。
+  HWND parent = GetParent(h);
+  if (parent) {
+    RECT rc; GetWindowRect(h, &rc);
+    POINT tl = { rc.left, rc.top }, br = { rc.right, rc.bottom };
+    ScreenToClient(parent, &tl); ScreenToClient(parent, &br);
+    RECT prc = { tl.x, tl.y, br.x, br.y };
+    InvalidateRect(parent, &prc, TRUE);
+    InvalidateRect(h, NULL, TRUE);
+  }
 }
 
 // 文本读取：返回 malloc 的独占宽串拷贝（易语言文本型「赋值即拷贝」值语义），调用方（编译器生成的包装）负责 krnln_ctrl_free_text 释放。
