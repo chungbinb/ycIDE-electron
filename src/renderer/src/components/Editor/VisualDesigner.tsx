@@ -1576,6 +1576,13 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     e.stopPropagation()
     if (e.button !== 0) return
 
+    // 工具箱选了待放置控件时，在已有控件上按下也应当是「画新控件」——否则铺满窗口的控件（如拉满整窗的图片框）
+    // 会吃掉画布上所有 mousedown，新控件根本放不下去（只能先把那个控件挪开）。转交画布逻辑走拖拽绘制。
+    if (activeTool) {
+      handleCanvasMouseDown(e)
+      return
+    }
+
     if (e.shiftKey) {
       // Shift+点击：切换多选
       setSelectedIds(prev => {
@@ -1731,7 +1738,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
     }
-  }, [updateControl, selectedIds, selectedId, form.controls, form.width, form.height, getCanvasPoint])
+  }, [updateControl, selectedIds, selectedId, form.controls, form.width, form.height, getCanvasPoint, activeTool, handleCanvasMouseDown])
 
   // 句柄鼠标按下 — 开始缩放
   const handleResizeMouseDown = useCallback((e: React.MouseEvent, ctrl: DesignControl, handle: HandleDir) => {
