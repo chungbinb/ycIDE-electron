@@ -1200,6 +1200,21 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   // 删除行（右键删除/Ctrl+X/Delete 共用）的流程感知处理：
   // 单个「流程起始行」→ 溶解整个结构（删前定位头，删头+分支+结束+反缩进正文）；
   // 其余（含删除「结束行」）→ 补齐被删起始行的隐藏结束/分支行 + repairBrokenFlowAfterDelete（起始未闭合则溶解）。
+  // 折叠子程序的选区展开：选区含折叠子程序的声明行（折叠后它是该子程序唯一可见行）时，把整个
+  // 折叠范围并入——删除路径少了它只删掉声明行、隐藏的局部变量/代码暴露残留；剪切/复制路径少了它
+  // 剪贴板只有声明行、粘回会静默丢失整个子程序体。未折叠的子程序不受影响（collapsedSubRanges 只含折叠中的）。
+  const expandSelectionWithCollapsedSubs = useCallback((selection: Set<number>): Set<number> => {
+    const ranges = collapsedSubRangesRef.current
+    if (ranges.length === 0) return selection
+    let out = selection
+    for (const r of ranges) {
+      if (!selection.has(r.startLine)) continue
+      if (out === selection) out = new Set(selection)
+      for (let li = r.startLine + 1; li <= r.endLine; li++) out.add(li)
+    }
+    return out
+  }, [])
+
   const applyFlowAwareDeletion = useCallback((ls: string[], deletable: Set<number>): string[] => {
     if (deletable.size === 1) {
       const only = [...deletable][0]
@@ -1548,7 +1563,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const getDeletableSelection = (ls: string[], selection: Set<number>): { protectedLine: number; deletable: Set<number>; sorted: number[] } => {
       const protectedLine = getProtectedDeclarationLine(ls)
       const deletable = new Set<number>()
-      for (const i of selection) {
+      for (const i of expandSelectionWithCollapsedSubs(selection)) {
         if (i < 0 || i >= ls.length) continue
         if (i === protectedLine) continue
         deletable.add(i)
@@ -1657,7 +1672,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
       if (ctrl && e.key === 'c') {
         e.preventDefault()
-        const sorted = [...selectedLines].sort((a, b) => a - b)
+        const sorted = [...expandSelectionWithCollapsedSubs(selectedLines)].sort((a, b) => a - b)
         const ls = currentText.split('\n')
         const selectedText = eycToYiFormat(appendMissingFlowEnds(filterClipboardSelectionIndices(ls, sorted.filter(i => i >= 0 && i < ls.length)).map(i => ls[i])).join('\n'))
         navigator.clipboard.writeText(selectedText)
@@ -1734,7 +1749,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo, localRouteLanguage])
+  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo, localRouteLanguage, expandSelectionWithCollapsedSubs])
 
   // ===== 自动补全状态 =====
   const [acItems, setAcItems] = useState<AcDisplayItem[]>([])
@@ -3890,12 +3905,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   }, [scrollbarLaneHeightPx, scrollbarStatusMarkers])
 
   const getSelectedSourceText = useCallback((): string => {
-    const sorted = [...selectedLines].sort((a, b) => a - b)
+    const sorted = [...expandSelectionWithCollapsedSubs(selectedLines)].sort((a, b) => a - b)
     const ls = currentText.split('\n')
     const kept = filterClipboardSelectionIndices(ls, sorted.filter(i => i >= 0 && i < ls.length))
     // 复制护栏：选区含流程头但没选到配对结束时，剪贴板自动补齐结束行（粘贴不破坏流程线）
     return eycToYiFormat(appendMissingFlowEnds(kept.map(i => ls[i])).join('\n'))
-  }, [selectedLines, currentText])
+  }, [selectedLines, currentText, expandSelectionWithCollapsedSubs])
 
   const getMouseRangeSelectedSourceText = useCallback((): string | null => {
     if (!wrapperRef.current) return null
@@ -6421,7 +6436,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })()
 
     const deletable = new Set<number>()
-    for (const i of selection) {
+    for (const i of expandSelectionWithCollapsedSubs(selection)) {
       if (i < 0 || i >= ls.length) continue
       if (i === protectedLine) continue
       deletable.add(i)
@@ -6438,7 +6453,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     onChange(nt)
     setSelectedLines(new Set())
     return true
-  }, [currentText, onChange, pushUndo, applyFlowAwareDeletion])
+  }, [currentText, onChange, pushUndo, applyFlowAwareDeletion, expandSelectionWithCollapsedSubs])
 
   const handleWrapperContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault()
