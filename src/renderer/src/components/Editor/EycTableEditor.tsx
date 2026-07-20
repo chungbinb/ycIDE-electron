@@ -2978,6 +2978,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       map.set(lineIndex, segs.map(seg => ({ ...seg })))
     }
 
+    // 折叠子程序范围内的行整体隐藏——其流程段从显示模型中剔除。否则下面的隐藏标记重映射趟
+    // （隐藏否则/默认锚上一可见行、隐藏如果真结束的 endArrowOnly 等）会把折叠范围内的段
+    // 锚到折叠范围之外的上一可见代码行（= 上一个子程序的行）上，流程线"跑出"折叠的子程序。
+    for (const range of collapsedSubRanges) {
+      for (let li = range.startLine + 1; li <= range.endLine; li++) map.delete(li)
+    }
+
     const visibleCodeLineSet = new Set<number>()
     for (const blk of visibleBlocks) {
       if (blk.kind === 'codeline') visibleCodeLineSet.add(blk.lineIndex)
@@ -3376,7 +3383,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       map,
       maxDepth: flowLines.maxDepth,
     }
-  }, [blocks, flowLines, lines.length, visibleBlocks])
+  }, [blocks, flowLines, lines.length, visibleBlocks, collapsedSubRanges])
 
   blocksRef.current = visibleBlocks
 
