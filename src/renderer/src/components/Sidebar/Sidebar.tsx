@@ -129,7 +129,7 @@ interface SidebarProps {
   canPasteWindow?: boolean
 }
 
-export type ProjectNodeAction = 'newAssembly' | 'newClassModule' | 'newSub' | 'deleteModule' | 'newWindow' | 'newGlobalVar' | 'newConstant' | 'newDataType' | 'newDllCmd' | 'newPtrCmd' | 'copyWindow' | 'pasteWindow' | 'deleteWindow'
+export type ProjectNodeAction = 'newAssembly' | 'newClassModule' | 'newSub' | 'deleteModule' | 'newWindow' | 'newGlobalVar' | 'newConstant' | 'newDataType' | 'newDllCmd' | 'newPtrCmd' | 'newResource' | 'copyWindow' | 'pasteWindow' | 'deleteWindow'
 
 // 项目树各分类节点右键的「新建」菜单项（分类 id → 菜单项；动作复用插入菜单同款逻辑）
 const CATEGORY_CONTEXT_MENU_ITEMS: Record<string, Array<{ action: ProjectNodeAction; label: string }>> = {
@@ -145,6 +145,7 @@ const CATEGORY_CONTEXT_MENU_ITEMS: Record<string, Array<{ action: ProjectNodeAct
     { action: 'newDllCmd', label: '新建DLL命令' },
     { action: 'newPtrCmd', label: '新建指针命令' },
   ],
+  _cat_resources: [{ action: 'newResource', label: '新建资源' }],
 }
 
 interface LibItem {

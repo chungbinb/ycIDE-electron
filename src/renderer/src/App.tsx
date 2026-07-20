@@ -4080,6 +4080,7 @@ function App(): React.JSX.Element {
     if (action === 'newDataType') { void handleMenuAction('insert:dataType'); return }
     if (action === 'newDllCmd') { void handleMenuAction('insert:dllCmd'); return }
     if (action === 'newPtrCmd') { void handleMenuAction('insert:ptrCmd'); return }
+    if (action === 'newResource') { void handleMenuAction('insert:resource'); return }
 
     const fileName = node.id
     const filePath = joinPath(dir, fileName)
