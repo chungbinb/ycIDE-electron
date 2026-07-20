@@ -318,6 +318,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
+  const editValRef = useRef('')
+  editValRef.current = editVal
   const editorRootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   // onChange 归一化改写输入值（如 “”→"）后，受控 input 会把光标重置到末尾；
@@ -1595,6 +1597,42 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const handler = (e: KeyboardEvent): void => {
       // 正在编辑输入框时不处理（交给 onKey）
       const tag = (document.activeElement as HTMLElement)?.tagName
+      // Ctrl+K 屏蔽 / Ctrl+M 解除——**编辑态也响应**（必须在下面 INPUT 早退之前处理，
+      // 否则 Ctrl+M 落到系统默认把整个 IDE 最小化）：作用于正在编辑的行；代码行编辑值按
+      // live 语义写回后再屏蔽（防 24ms 节流未刷的按键丢失），退出编辑并抑制其 blur 提交。
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'm')) {
+        const ec = editCellRef.current
+        const activeEl = document.activeElement as HTMLElement | null
+        const tagNow = activeEl?.tagName
+        if (ec && (tagNow === 'INPUT' || tagNow === 'TEXTAREA') && wrapperRef.current?.contains(activeEl)) {
+          e.preventDefault()
+          const li = ec.lineIndex
+          const base = prevRef.current
+          const ls = base.split('\n')
+          // 代码行编辑（非虚拟）：编辑值写回该行；表格单元格/参数编辑：行文本以 prevRef 为准（整行屏蔽语义）
+          if (ec.cellIndex === -1 && ec.paramIdx === undefined && !ec.isVirtual && li >= 0 && li < ls.length) {
+            ls[li] = flowIndentRef.current + flowMarkRef.current + restoreJudgeStartAlias(editValRef.current)
+          }
+          const line = ls[li] || ''
+          const indent = line.match(/^\s*/)?.[0] || ''
+          const body = line.slice(indent.length)
+          if (e.key === 'k') {
+            if (!body || body.startsWith("'")) return
+            ls[li] = `${indent}' ${body}`
+          } else {
+            if (body.startsWith("' ")) ls[li] = indent + body.slice(2)
+            else if (body.startsWith("'")) ls[li] = indent + body.slice(1)
+            else return
+          }
+          suppressBlurCommitUntilRef.current = Date.now() + 300
+          setEditCell(null)
+          pushUndo(base)
+          const nt = ls.join('\n')
+          setCurrentText(nt); prevRef.current = nt; onChange(nt)
+          return
+        }
+      }
+
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
 
       // 检查焦点是否在本编辑器区域内
