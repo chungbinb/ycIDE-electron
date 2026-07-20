@@ -9160,7 +9160,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               </button>
             </>
           )}
-          {(docLanguage === 'ecs' || docLanguage === 'egv') && (
+          {docLanguage === 'ecs' && (
+            // 仅常量表有此项（易语言参照）；全局变量表菜单没有
             <>
               <div className="eyc-editor-context-menu-sep" />
               <button type="button" className="eyc-editor-context-menu-item" disabled>
