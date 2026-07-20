@@ -249,6 +249,15 @@ const setCssVars = (element: HTMLElement | null, vars: Record<string, string>): 
 
 const TABLE_MODE_HIDDEN_FLOW_COMMANDS = new Set(['否则', '如果结束', '默认', '判断结束', '如果真结束'])
 
+// 屏蔽(注释)不作用于表格声明行——注释掉 .子程序/.局部变量 等会破坏表格结构(易语言同语义:
+// 屏蔽只针对代码行;.如果/.计次循环首 等流程命令是代码行、不在此列可正常屏蔽)。解除屏蔽不设限
+// (允许修复历史上已被注释的声明行)。裸关键字(空框架行,如 .全局变量)同样不可屏蔽。
+const NON_COMMENTABLE_DECL_PREFIXES = ['.版本 ', '.程序集 ', '.程序集变量 ', '.子程序 ', '.局部变量 ', '.参数 ', '.全局变量 ', '.常量 ', '.资源 ', '.数据类型 ', '.DLL命令 ', '.指针命令 ', '.图片 ', '.声音 ']
+function isNonCommentableDeclLine(body: string): boolean {
+  const t = body.replace(/[\r\t]/g, '')
+  return NON_COMMENTABLE_DECL_PREFIXES.some(p => t === p.trim() || t.startsWith(p))
+}
+
 // 复制/剪切时过滤选区：范围拖选（rangeSet 填满整个 index 区间）会把区间内**表格模式隐藏的配对标记**
 //（否则/默认/如果结束/判断结束/如果真结束）一并纳进选区。若某隐藏标记所属结构的**头**（如果/判断开始/
 // 循环首 等）不在选区里，说明用户只是选了中间可见的正文、并没打算连隐藏标记一起剪切/复制（表格模式里
@@ -1617,7 +1626,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           const indent = line.match(/^\s*/)?.[0] || ''
           const body = line.slice(indent.length)
           if (e.key === 'k') {
-            if (!body || body.startsWith("'")) return
+            if (!body || body.startsWith("'") || isNonCommentableDeclLine(body)) return
             ls[li] = `${indent}' ${body}`
           } else {
             if (body.startsWith("' ")) ls[li] = indent + body.slice(2)
@@ -6582,7 +6591,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const body = line.slice(indent.length)
 
       if (mode === 'block') {
-        if (!body || body.startsWith("'")) continue
+        if (!body || body.startsWith("'") || isNonCommentableDeclLine(body)) continue
         ls[idx] = `${indent}' ${body}`
         changed = true
         continue
