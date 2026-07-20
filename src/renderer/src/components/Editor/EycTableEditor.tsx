@@ -9281,13 +9281,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             <span className="eyc-editor-context-menu-item-label">I.插入新行</span>
             <span className="eyc-editor-context-menu-item-shortcut">Ins</span>
           </button>
-          {docLanguage !== 'ecs' && docLanguage !== 'egv' && docLanguage !== 'edt' && (
+          {/* 编译当前行/屏蔽/解除屏蔽只属于代码文档——四类声明表格文档(ecs/egv/edt/ell,即 localRouteLanguage 非空)一律隐藏 */}
+          {!localRouteLanguage && (
             <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('compileLine')}>
               <span className="eyc-editor-context-menu-item-label">K.编译当前行</span>
               <span className="eyc-editor-context-menu-item-shortcut">Shift+Enter</span>
             </button>
           )}
-          {docLanguage !== 'ecs' && docLanguage !== 'egv' && docLanguage !== 'edt' && (
+          {!localRouteLanguage && (
             <>
               <div className="eyc-editor-context-menu-sep" />
               <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('block')}>
