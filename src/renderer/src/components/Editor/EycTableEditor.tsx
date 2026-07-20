@@ -9052,10 +9052,23 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       {editorContextMenu && (
         <div
           className="eyc-editor-context-menu"
-          ref={(element) => setCssVars(element, {
-            '--eyc-context-menu-left': `${editorContextMenu.x}px`,
-            '--eyc-context-menu-top': `${editorContextMenu.y}px`,
-          })}
+          ref={(element) => {
+            if (!element) return
+            // 视口边缘自适应：挂载后测菜单实际尺寸，下/右不够放就往反方向弹（贴不下再夹回 0）。
+            // 坐标系注意：编辑器根有 zoom 缩放，写入的 fixed 坐标渲染时被 ×eycScale——
+            // 故可用空间按写入坐标系折算为 innerWidth/Height ÷ scale；offsetWidth/Height 本就是 zoom 前值，同系可比。
+            const menuScale = Math.max(eycScale, 0.01)
+            const vw = window.innerWidth / menuScale
+            const vh = window.innerHeight / menuScale
+            let left = editorContextMenu.x
+            let top = editorContextMenu.y
+            if (left + element.offsetWidth > vw) left = Math.max(0, left - element.offsetWidth)
+            if (top + element.offsetHeight > vh) top = Math.max(0, top - element.offsetHeight)
+            setCssVars(element, {
+              '--eyc-context-menu-left': `${left}px`,
+              '--eyc-context-menu-top': `${top}px`,
+            })
+          }}
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
