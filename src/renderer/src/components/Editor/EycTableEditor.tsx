@@ -6698,12 +6698,23 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return
     }
     if (action === 'delete') {
-      if (selectedLines.size > 0) {
-        deleteLineSelection(selectedLines)
+      // 删除目标按「右键落点行」优先——不能无条件用 selectedLines：单元格点击不更新行选区
+      // (td mousedown stopPropagation)，右键落在表头/空白时(无 data-line-index)也不重置选区，
+      // 旧选中行残留会让「删除行」删到别的行(用户报障)。语义：
+      // ①右键落在明确行上：该行在选区内→删整个选区(多选删除)；不在→只删该行(残留选区不牵连)
+      // ②右键无行上下文但正在编辑单元格→删编辑行 ③其余按选区/焦点行兜底。
+      const ctxLine = editorContextMenu?.lineIndex
+      let target: Set<number>
+      if (ctxLine !== null && ctxLine !== undefined) {
+        target = selectedLines.has(ctxLine) ? selectedLines : new Set([ctxLine])
+      } else if (editCellRef.current) {
+        target = new Set([editCellRef.current.lineIndex])
+      } else if (selectedLines.size > 0) {
+        target = selectedLines
       } else {
-        const line = resolveContextLineIndex()
-        deleteLineSelection(new Set([line]))
+        target = new Set([Math.max(lastFocusedLine.current, 0)])
       }
+      deleteLineSelection(target)
       setEditorContextMenu(null)
       return
     }
@@ -6749,7 +6760,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setSelectedLines(all)
     dragAnchor.current = 0
     setEditorContextMenu(null)
-  }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine, onGlobalUndo, onGlobalRedo, docLanguage])
+  }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine, onGlobalUndo, onGlobalRedo, docLanguage, editorContextMenu?.lineIndex])
 
   // 撤销/重做统一走外层全局撤销栈：只要外层接了全局处理器就允许点击，
   // 是否真有可撤销/重做项由全局栈在点击时决定（无项则空操作）。
