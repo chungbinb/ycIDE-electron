@@ -1726,7 +1726,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       // 空格 = 删除：易语言代码里没有空格语义，行多选状态下按空格等同 Delete（同一套
       // 最小结构保护/溶解逻辑）。仅在有行选区时劫持空格；输入框内的空格不受影响（本
       // 监听器开头已对 INPUT/TEXTAREA 提前返回，正常文本编辑照常输入空格）。
-      if (e.key === 'Delete' || e.key === 'Backspace' || (e.key === ' ' && !ctrl && selectedLines.size > 0)) {
+      // F10 = 删除行（易语言快捷键，与右键菜单标注一致）：仅在有行选中时消费（handler 开头已保证），
+      // 无选中时不劫持——调试「逐过程」的 F10 照常；运行到光标已挪 Ctrl+F8 不打架。
+      if (e.key === 'Delete' || e.key === 'Backspace' || ((e.key === ' ' || e.key === 'F10') && !ctrl && selectedLines.size > 0)) {
         e.preventDefault()
         const ls = currentText.split('\n')
         const { deletable: rawDeletable, sorted: sortedSel } = getDeletableSelection(ls, selectedLines)

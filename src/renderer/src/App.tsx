@@ -4495,7 +4495,7 @@ function App(): React.JSX.Element {
       else if (!ctrl && shift && key === 'F5') action = 'debug:stop'
       else if (!ctrl && !shift && key === 'F9') action = 'debug:toggleBreakpoint'
       else if (!ctrl && !shift && key === 'F10') action = 'debug:stepOver'
-      else if (ctrl && !shift && key === 'F10') action = 'debug:runToCursor'
+      else if (ctrl && !shift && key === 'F8') action = 'debug:runToCursor'
       else if (!ctrl && !shift && key === 'F11') action = 'debug:stepInto'
       else if (!ctrl && shift && key === 'F11') action = 'debug:stepOut'
       // 帮助

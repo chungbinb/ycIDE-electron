@@ -128,7 +128,7 @@ function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasWo
       { label: '逐过程(O)', shortcut: 'F10', action: 'debug:stepOver', disabled: np },
       { label: '逐语句(I)', shortcut: 'F11', action: 'debug:stepInto', disabled: np },
       { label: '跳出(U)', shortcut: 'Shift+F11', action: 'debug:stepOut', disabled: np },
-      { label: '运行到光标处(C)', shortcut: `${mod}+F10`, action: 'debug:runToCursor', disabled: np },
+      { label: '运行到光标处(C)', shortcut: `${mod}+F8`, action: 'debug:runToCursor', disabled: np },
       { label: '', divider: true },
       { label: '切换断点(B)', shortcut: 'F9', action: 'debug:toggleBreakpoint', disabled: np },
       { label: '清除所有断点', action: 'debug:clearBreakpoints', disabled: np },

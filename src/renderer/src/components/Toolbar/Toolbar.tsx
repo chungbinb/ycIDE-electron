@@ -99,7 +99,7 @@ function Toolbar({
 }: ToolbarProps): React.JSX.Element {
   const mod = getPrimaryModifierLabel(runtimePlatform)
   const redoShortcut = getRedoShortcutLabel(runtimePlatform)
-  const runToCursorShortcut = `${mod}+F10`
+  const runToCursorShortcut = `${mod}+F8`
   const canStartOrContinue = (canCompileRun ?? !!hasProject) && !isCompiling && (!isRunning || isDebugPaused)
   const canStop = !!isRunning
   const canStep = !!hasProject && !!isDebugPaused
