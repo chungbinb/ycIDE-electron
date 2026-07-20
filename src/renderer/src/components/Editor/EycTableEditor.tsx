@@ -252,7 +252,7 @@ const TABLE_MODE_HIDDEN_FLOW_COMMANDS = new Set(['否则', '如果结束', '默�
 // 屏蔽(注释)不作用于表格声明行——注释掉 .子程序/.局部变量 等会破坏表格结构(易语言同语义:
 // 屏蔽只针对代码行;.如果/.计次循环首 等流程命令是代码行、不在此列可正常屏蔽)。解除屏蔽不设限
 // (允许修复历史上已被注释的声明行)。裸关键字(空框架行,如 .全局变量)同样不可屏蔽。
-const NON_COMMENTABLE_DECL_PREFIXES = ['.版本 ', '.程序集 ', '.程序集变量 ', '.子程序 ', '.局部变量 ', '.参数 ', '.全局变量 ', '.常量 ', '.资源 ', '.数据类型 ', '.DLL命令 ', '.指针命令 ', '.图片 ', '.声音 ']
+const NON_COMMENTABLE_DECL_PREFIXES = ['.版本 ', '.程序集 ', '.程序集变量 ', '.子程序 ', '.局部变量 ', '.参数 ', '.全局变量 ', '.常量 ', '.资源 ', '.数据类型 ', '.成员 ', '.DLL命令 ', '.指针命令 ', '.图片 ', '.声音 ']
 function isNonCommentableDeclLine(body: string): boolean {
   const t = body.replace(/[\r\t]/g, '')
   return NON_COMMENTABLE_DECL_PREFIXES.some(p => t === p.trim() || t.startsWith(p))
@@ -6688,7 +6688,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })
   }, [editorContextMenu?.lineIndex, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted, onChange, onRouteDeclarationPaste, pushUndo, sanitizePastedTextForCurrent, shouldUseNativeInputPaste, localRouteLanguage])
 
-  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'newConstant' | 'newGlobalVar' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
+  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'newConstant' | 'newGlobalVar' | 'newDataType' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
     if (action === 'newSubprogram') {
       setEditorContextMenu(null)
       if (ref && typeof ref !== 'function') {
@@ -6696,12 +6696,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
       return
     }
-    if (action === 'newConstant' || action === 'newGlobalVar') {
-      // 常量表（ecs）/全局变量表（egv）：追加一条新声明并滚动高亮（对齐易语言编辑器右键「N.新常量/新全局变量」）
+    if (action === 'newConstant' || action === 'newGlobalVar' || action === 'newDataType') {
+      // 常量表（ecs）/全局变量表（egv）/数据类型表（edt）：追加新声明并滚动高亮（对齐易语言右键「N.新×××」）
       setEditorContextMenu(null)
-      const declPrefix = action === 'newConstant' ? '.常量 ' : '.全局变量 '
-      const baseName = action === 'newConstant' ? '常量' : '全局变量'
-      const lineTail = action === 'newConstant' ? ', ""' : ', 整数型'
+      const declPrefix = action === 'newConstant' ? '.常量 ' : action === 'newGlobalVar' ? '.全局变量 ' : '.数据类型 '
+      const baseName = action === 'newConstant' ? '常量' : action === 'newGlobalVar' ? '全局变量' : '数据类型'
       const baseText = prevRef.current
       const curLines = baseText.split('\n')
       const existingNames = new Set<string>()
@@ -6714,12 +6713,16 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
       let num = 1
       while (existingNames.has(baseName + num)) num++
+      // 数据类型是两行块（声明+首个成员，与项目树新建格式一致）；常量/全局变量是单行
+      const newDeclLines = action === 'newDataType'
+        ? [`.数据类型 数据类型${num}`, '    .成员 成员1, 整数型']
+        : [`${declPrefix}${baseName}${num}${action === 'newConstant' ? ', ""' : ', 整数型'}`]
       let end = curLines.length
       while (end > 0 && curLines[end - 1].replace(/[\r\t]/g, '').trim() === '') end--
-      const nl = [...curLines.slice(0, end), `${declPrefix}${baseName}${num}${lineTail}`, '']
+      const nl = [...curLines.slice(0, end), ...newDeclLines, '']
       pushUndo(baseText)
       applyTextChange(nl.join('\n'))
-      const newLineIndex = nl.length - 2
+      const newLineIndex = nl.length - 1 - newDeclLines.length
       lastFocusedLine.current = newLineIndex
       window.setTimeout(() => {
         const row = wrapperRef.current?.querySelector<HTMLElement>(`tr.eyc-data-row[data-line-index="${newLineIndex}"]`)
@@ -6882,7 +6885,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const key = (event.key || '').toLowerCase()
       if (key === 'n') {
         event.preventDefault()
-        applyEditorContextAction(docLanguage === 'ell' ? 'newDllCommand' : docLanguage === 'ecs' ? 'newConstant' : docLanguage === 'egv' ? 'newGlobalVar' : 'newSubprogram')
+        applyEditorContextAction(docLanguage === 'ell' ? 'newDllCommand' : docLanguage === 'ecs' ? 'newConstant' : docLanguage === 'egv' ? 'newGlobalVar' : docLanguage === 'edt' ? 'newDataType' : 'newSubprogram')
         return
       }
       if (key === 'z' && docLanguage === 'ell') {
@@ -9232,6 +9235,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               <span className="eyc-editor-context-menu-item-label">N.新全局变量</span>
               <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
             </button>
+          ) : docLanguage === 'edt' ? (
+            <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newDataType')}>
+              <span className="eyc-editor-context-menu-item-label">N.新数据类型</span>
+              <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
+            </button>
           ) : (
             <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newSubprogram')}>
               <span className="eyc-editor-context-menu-item-label">N.新子程序</span>
@@ -9273,13 +9281,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             <span className="eyc-editor-context-menu-item-label">I.插入新行</span>
             <span className="eyc-editor-context-menu-item-shortcut">Ins</span>
           </button>
-          {docLanguage !== 'ecs' && docLanguage !== 'egv' && (
+          {docLanguage !== 'ecs' && docLanguage !== 'egv' && docLanguage !== 'edt' && (
             <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('compileLine')}>
               <span className="eyc-editor-context-menu-item-label">K.编译当前行</span>
               <span className="eyc-editor-context-menu-item-shortcut">Shift+Enter</span>
             </button>
           )}
-          {docLanguage !== 'ecs' && docLanguage !== 'egv' && (
+          {docLanguage !== 'ecs' && docLanguage !== 'egv' && docLanguage !== 'edt' && (
             <>
               <div className="eyc-editor-context-menu-sep" />
               <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('block')}>
