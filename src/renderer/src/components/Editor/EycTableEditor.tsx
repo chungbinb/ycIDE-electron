@@ -6574,12 +6574,43 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })
   }, [editorContextMenu?.lineIndex, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted, onChange, onRouteDeclarationPaste, pushUndo, sanitizePastedTextForCurrent, shouldUseNativeInputPaste, localRouteLanguage])
 
-  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
+  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'newConstant' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
     if (action === 'newSubprogram') {
       setEditorContextMenu(null)
       if (ref && typeof ref !== 'function') {
         ref.current?.insertSubroutine?.()
       }
+      return
+    }
+    if (action === 'newConstant') {
+      // 常量表（ecs）：追加一条空值常量并滚动高亮（对齐易语言常量编辑器右键「N.新常量」）
+      setEditorContextMenu(null)
+      const baseText = prevRef.current
+      const curLines = baseText.split('\n')
+      const existingNames = new Set<string>()
+      for (const ln of curLines) {
+        const t = ln.replace(/[\r\t]/g, '').trim()
+        if (t.startsWith('.常量 ')) {
+          const name = (splitCSV(t.slice('.常量 '.length))[0] || '').trim()
+          if (name) existingNames.add(name)
+        }
+      }
+      let num = 1
+      while (existingNames.has('常量' + num)) num++
+      let end = curLines.length
+      while (end > 0 && curLines[end - 1].replace(/[\r\t]/g, '').trim() === '') end--
+      const nl = [...curLines.slice(0, end), `.常量 常量${num}, ""`, '']
+      pushUndo(baseText)
+      applyTextChange(nl.join('\n'))
+      const newLineIndex = nl.length - 2
+      lastFocusedLine.current = newLineIndex
+      window.setTimeout(() => {
+        const row = wrapperRef.current?.querySelector<HTMLElement>(`tr.eyc-data-row[data-line-index="${newLineIndex}"]`)
+        if (!row) return
+        row.scrollIntoView({ block: 'center' })
+        row.classList.add('highlight-flash')
+        window.setTimeout(() => row.classList.remove('highlight-flash'), 900)
+      }, 80)
       return
     }
     if (action === 'newDllCommand' || action === 'newPtrCommand') {
@@ -6716,7 +6747,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const key = (event.key || '').toLowerCase()
       if (key === 'n') {
         event.preventDefault()
-        applyEditorContextAction(docLanguage === 'ell' ? 'newDllCommand' : 'newSubprogram')
+        applyEditorContextAction(docLanguage === 'ell' ? 'newDllCommand' : docLanguage === 'ecs' ? 'newConstant' : 'newSubprogram')
         return
       }
       if (key === 'z' && docLanguage === 'ell') {
@@ -9037,6 +9068,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 <span className="eyc-editor-context-menu-item-label">Z.新指针命令</span>
               </button>
             </>
+          ) : docLanguage === 'ecs' ? (
+            // 常量表：对齐易语言常量编辑器右键菜单（新长文本常量/跳回先前位置为易语言项，功能暂未接、先禁用占位）
+            <>
+              <button type="button" className="eyc-editor-context-menu-item" disabled>
+                <span className="eyc-editor-context-menu-item-label">X.新长文本常量</span>
+              </button>
+              <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newConstant')}>
+                <span className="eyc-editor-context-menu-item-label">N.新常量</span>
+                <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
+              </button>
+            </>
           ) : (
             <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newSubprogram')}>
               <span className="eyc-editor-context-menu-item-label">N.新子程序</span>
@@ -9078,19 +9120,34 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             <span className="eyc-editor-context-menu-item-label">I.插入新行</span>
             <span className="eyc-editor-context-menu-item-shortcut">Ins</span>
           </button>
-          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('compileLine')}>
-            <span className="eyc-editor-context-menu-item-label">K.编译当前行</span>
-            <span className="eyc-editor-context-menu-item-shortcut">Shift+Enter</span>
-          </button>
-          <div className="eyc-editor-context-menu-sep" />
-          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('block')}>
-            <span className="eyc-editor-context-menu-item-label">G.屏蔽</span>
-            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+K</span>
-          </button>
-          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('unblock')}>
-            <span className="eyc-editor-context-menu-item-label">B.解除屏蔽</span>
-            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+M</span>
-          </button>
+          {docLanguage !== 'ecs' && (
+            <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('compileLine')}>
+              <span className="eyc-editor-context-menu-item-label">K.编译当前行</span>
+              <span className="eyc-editor-context-menu-item-shortcut">Shift+Enter</span>
+            </button>
+          )}
+          {docLanguage !== 'ecs' && (
+            <>
+              <div className="eyc-editor-context-menu-sep" />
+              <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('block')}>
+                <span className="eyc-editor-context-menu-item-label">G.屏蔽</span>
+                <span className="eyc-editor-context-menu-item-shortcut">Ctrl+K</span>
+              </button>
+              <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('unblock')}>
+                <span className="eyc-editor-context-menu-item-label">B.解除屏蔽</span>
+                <span className="eyc-editor-context-menu-item-shortcut">Ctrl+M</span>
+              </button>
+            </>
+          )}
+          {docLanguage === 'ecs' && (
+            <>
+              <div className="eyc-editor-context-menu-sep" />
+              <button type="button" className="eyc-editor-context-menu-item" disabled>
+                <span className="eyc-editor-context-menu-item-label">Z.跳回先前位置</span>
+                <span className="eyc-editor-context-menu-item-shortcut">Ctrl+J</span>
+              </button>
+            </>
+          )}
         </div>
       )}
       {debugHover && (
