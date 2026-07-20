@@ -358,8 +358,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const wasFlowOrigIndentRef = useRef<string>('') // 编辑流程起始行的"真实"前导空格（flowIndent 在回退路径下可能虚撑，需要真值用于熔解）
   const commitGuardRef = useRef(false) // 防止 commit 被重复调用（mousedown + blur-on-unmount）
   const suppressBlurCommitUntilRef = useRef(0) // 键盘切行时临时屏蔽 blur->commit，避免编辑态被抢占清空
-  // Ctrl+K/M 屏蔽快捷键用：applyLineCommentState 定义在键盘 handler 之后，经 ref 转发（deps 数组直引会 TS2454）
+  // 行级快捷键(Ctrl+K/M 屏蔽、F10 删除行、Insert 插入新行)用：这些函数定义在键盘 handler 之后，
+  // 经 ref 转发（deps 数组直引会 TS2454）。菜单标注的行级快捷键须在编辑态与非编辑态都生效。
   const applyLineCommentStateRef = useRef<(mode: 'block' | 'unblock') => void>(() => {})
+  const deleteLineSelectionRef = useRef<(selection: Set<number>) => boolean>(() => false)
+  const applyEditorContextActionRef = useRef<(action: 'insertLine') => void>(() => {})
   const preserveEditOnScrollbarRef = useRef(false) // 拖动滚动条时保留编辑态，避免 blur 提交
   const editCellOrigValRef = useRef<string>('') // 表格单元格编辑前的原始值（liveUpdate 会实时更新 lines，需保存原始值用于重命名比较）
   const codeLineEditOrigValRef = useRef<string>('') // 代码行编辑初始值，用于无改动时跳过重排
@@ -1606,14 +1609,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const handler = (e: KeyboardEvent): void => {
       // 正在编辑输入框时不处理（交给 onKey）
       const tag = (document.activeElement as HTMLElement)?.tagName
-      // Ctrl+K 屏蔽 / Ctrl+M 解除——**编辑态也响应**（必须在下面 INPUT 早退之前处理，
-      // 否则 Ctrl+M 落到系统默认把整个 IDE 最小化）：作用于正在编辑的行；代码行编辑值按
-      // live 语义写回后再屏蔽（防 24ms 节流未刷的按键丢失），退出编辑并抑制其 blur 提交。
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'm')) {
+      // ===== 编辑态行级快捷键（统一分派，必须在下面 INPUT 早退之前）=====
+      // 原则：右键菜单标注的**行级**快捷键在编辑态也要作用于当前编辑行——Ctrl+K/M 屏蔽/解除、
+      // F10 删除行、Insert 插入新行；文本级快捷键(复制/粘贴/全选/撤销)保持输入框原生行为不劫持。
+      // Ctrl+M 若不消费会落到系统默认把整个 IDE 最小化。代码行编辑值按 live 语义写回（防 24ms
+      // 节流丢键）；表格单元格未提交值在删除/插入语境下丢弃（用户意图是行级操作）。
+      {
         const ec = editCellRef.current
         const activeEl = document.activeElement as HTMLElement | null
         const tagNow = activeEl?.tagName
-        if (ec && (tagNow === 'INPUT' || tagNow === 'TEXTAREA') && wrapperRef.current?.contains(activeEl)) {
+        const inEditorInput = !!ec && (tagNow === 'INPUT' || tagNow === 'TEXTAREA') && !!wrapperRef.current?.contains(activeEl)
+        const ctrlNow = e.ctrlKey || e.metaKey
+        if (inEditorInput && ctrlNow && (e.key === 'k' || e.key === 'm')) {
           e.preventDefault()
           const li = ec.lineIndex
           const base = prevRef.current
@@ -1638,6 +1645,24 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           pushUndo(base)
           const nt = ls.join('\n')
           setCurrentText(nt); prevRef.current = nt; onChange(nt)
+          return
+        }
+        if (inEditorInput && !ctrlNow && e.key === 'F10') {
+          // 编辑态 F10 = 删除当前编辑行（走与菜单/Delete 同一套删除逻辑：流程溶解/最小骨架保底等）
+          e.preventDefault()
+          suppressBlurCommitUntilRef.current = Date.now() + 300
+          lastFocusedLine.current = ec.lineIndex
+          setEditCell(null)
+          deleteLineSelectionRef.current(new Set([ec.lineIndex]))
+          return
+        }
+        if (inEditorInput && !ctrlNow && e.key === 'Insert') {
+          // 编辑态 Insert = 当前编辑行下插入新行并进入其编辑（insertLine 按 lastFocusedLine 定位）
+          e.preventDefault()
+          suppressBlurCommitUntilRef.current = Date.now() + 300
+          lastFocusedLine.current = ec.lineIndex
+          setEditCell(null)
+          applyEditorContextActionRef.current('insertLine')
           return
         }
       }
@@ -1682,6 +1707,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if (ctrl && (e.key === 'k' || e.key === 'm') && inEditor) {
         e.preventDefault()
         applyLineCommentStateRef.current(e.key === 'k' ? 'block' : 'unblock')
+        return
+      }
+
+      // Insert = 插入新行（非编辑态；菜单 I.插入新行 的快捷键，此前只有标注没有绑定）
+      if (!ctrl && e.key === 'Insert' && inEditor) {
+        e.preventDefault()
+        applyEditorContextActionRef.current('insertLine')
         return
       }
 
@@ -6532,6 +6564,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setSelectedLines(new Set())
     return true
   }, [currentText, onChange, pushUndo, applyFlowAwareDeletion, expandSelectionWithCollapsedSubs, ensureDeclTableSkeleton])
+  deleteLineSelectionRef.current = deleteLineSelection
 
   const handleWrapperContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -6621,6 +6654,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   applyLineCommentStateRef.current = applyLineCommentState
 
   const pasteFromClipboardAtContext = useCallback(() => {
+
     if (shouldUseNativeInputPaste(editCellRef.current)) return
     void navigator.clipboard.readText().then(clipText => {
       if (!clipText) return
@@ -6830,6 +6864,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     dragAnchor.current = 0
     setEditorContextMenu(null)
   }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine, onGlobalUndo, onGlobalRedo, docLanguage, editorContextMenu?.lineIndex])
+  applyEditorContextActionRef.current = applyEditorContextAction
 
   // 撤销/重做统一走外层全局撤销栈：只要外层接了全局处理器就允许点击，
   // 是否真有可撤销/重做项由全局栈在点击时决定（无项则空操作）。
