@@ -826,6 +826,13 @@
 .vd-crosshair {
   cursor: crosshair;
 }
+/* 工具箱选了待放置控件时，画布上的控件不接收鼠标——事件穿透到画布：
+   ①光标保持十字（不被控件自身光标覆盖）②mousedown 只触发画布一次，铺满窗口的控件（如拉满整窗的图片框）
+   不再吃掉事件、新控件能直接画在它上面（也不会因在控件里转发画布逻辑而双触发画出两个控件）。
+   未选工具时（无 .vd-crosshair）控件照常可选中/拖动/右键。 */
+.vd-crosshair .vd-control {
+  pointer-events: none;
+}
 
 /* 拖拽绘制预览矩形 */
 .vd-draw-preview {
