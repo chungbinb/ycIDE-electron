@@ -2570,6 +2570,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   useEffect(() => {
     const normalizedValue = normalizeNonFlowCommandIndent(value)
     if (normalizedValue !== prevRef.current) {
+      // 外部替换了整份文本（切换文档标签复用同一编辑器实例 / 全局撤销等外部写入）：挂着的
+      // 单元格/行编辑态必须丢弃并抑制其 blur 提交——否则旧文档的编辑值会按旧行号、旧字段
+      // commit 进新文本（实测：常量值单元格编辑中切到全局变量文档，「全局变量2, 整数型」被
+      // 写成「全局变量2, 6」）。编辑自身提交的 value 回流不走这里（commit 已同步 prevRef）。
+      if (editCellRef.current) {
+        suppressBlurCommitUntilRef.current = Date.now() + 300
+        setEditCell(null)
+      }
       setCurrentText(normalizedValue)
       prevRef.current = normalizedValue
     }
