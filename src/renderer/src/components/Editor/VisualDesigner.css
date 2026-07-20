@@ -826,6 +826,13 @@
 .vd-crosshair {
   cursor: crosshair;
 }
+/* 工具箱选了待放置控件时，画布上的控件不接收鼠标——事件穿透到画布：
+   ①光标保持十字（不被控件自身光标覆盖）②mousedown 只触发画布一次，铺满窗口的控件（如拉满整窗的图片框）
+   不再吃掉事件、新控件能直接画在它上面（也不会因在控件里转发画布逻辑而双触发画出两个控件）。
+   未选工具时（无 .vd-crosshair）控件照常可选中/拖动/右键。 */
+.vd-crosshair .vd-control {
+  pointer-events: none;
+}
 
 /* 拖拽绘制预览矩形 */
 .vd-draw-preview {
@@ -989,6 +996,9 @@
   justify-content: var(--vd-preview-justify, flex-start);
   color: var(--vd-preview-text, var(--text-primary));
   background: var(--vd-preview-bg, transparent);
+  /* 自动折行按「是否自动折行」属性渲染（默认 nowrap 不折行，与运行时 STATIC 一致）：设计时所见即运行所得 */
+  white-space: var(--vd-preview-wrap, nowrap);
+  overflow: hidden;
 }
 .vd-preview-label.vd-preview-label-sunken { border: 1px solid; border-color: var(--vd-border-dark, #808080) var(--vd-border-light, #fff) var(--vd-border-light, #fff) var(--vd-border-dark, #808080); }
 .vd-preview-label.vd-preview-label-raised { border: 1px solid; border-color: var(--vd-border-light, #fff) var(--vd-border-dark, #808080) var(--vd-border-dark, #808080) var(--vd-border-light, #fff); }

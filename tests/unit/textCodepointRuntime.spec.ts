@@ -104,4 +104,18 @@ describe('文本命令按码点', () => {
     expect(val('子替换全'), '全部"甲"→Z').toBe('Z乙Z乙')
     expect(val('子替换起始'), '码点 2 起，只替换后一个"甲"').toBe('甲乙Z乙')
   }, 180000)
+
+  it.skipIf(!zigAvailable)('选择(iif) 返回文本而非指针整数（用户场景：透明标签显示"共N种解"）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ycide-cp-iif-')); tmpDirs.push(dir)
+    const val = await runConsole(dir, [
+      say('真取一', ['选择 (真, “无解”, “共5种解”)']),                        // 无解（条件真取项一）
+      say('假取二', ['选择 (假, “无解”, “共5种解”)']),                        // 共5种解
+      say('比较条件', ['选择 (3 ＝ 0, “零”, “非零”)']),                       // 非零
+      say('文本连接项', ['选择 (假, “x”, “共 ” ＋ 到文本 (5) ＋ “ 种解”)']),   // 共 5 种解（此前返回文本指针整数）
+    ])
+    expect(val('真取一'), '条件真取项一').toBe('无解')
+    expect(val('假取二'), '条件假取项二').toBe('共5种解')
+    expect(val('比较条件'), '3≠0 → 非零').toBe('非零')
+    expect(val('文本连接项'), '选择项含 ＋文本连接，返回文本不是指针地址整数').toBe('共 5 种解')
+  }, 180000)
 })

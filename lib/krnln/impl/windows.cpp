@@ -935,8 +935,20 @@ extern "C" int krnln_ctrl_is_focus(HWND h) { return (h && GetFocus() == h) ? 1 :
 extern "C" int krnln_ctrl_client_width(HWND h) { if (!h) return 0; RECT r; GetClientRect(h, &r); return r.right - r.left; }
 extern "C" int krnln_ctrl_client_height(HWND h) { if (!h) return 0; RECT r; GetClientRect(h, &r); return r.bottom - r.top; }
 extern "C" void krnln_ctrl_lock_update(HWND h, int lock) { LockWindowUpdate(lock ? h : NULL); }
-extern "C" void krnln_ctrl_invalidate(HWND h) { if (h) InvalidateRect(h, NULL, TRUE); }
-extern "C" void krnln_ctrl_invalidate_rect(HWND h, int x, int y, int w, int hh) { if (!h) return; RECT r = { x, y, x + w, y + hh }; InvalidateRect(h, &r, TRUE); }
+// 透明背景控件(标签叠图/背景图,自身透明不擦旧内容)重绘前让父窗重画该区域，擦掉旧字/旧字号残留
+// （字号动画每帧放大会一帧帧叠加成一团）。不透明控件无害：父窗重画后控件自身盖住。
+static void yc_ctrl_parent_erase(HWND h) {
+  if (!h) return;
+  HWND parent = GetParent(h);
+  if (!parent) return;
+  RECT rc; GetWindowRect(h, &rc);
+  POINT tl = { rc.left, rc.top }, br = { rc.right, rc.bottom };
+  ScreenToClient(parent, &tl); ScreenToClient(parent, &br);
+  RECT prc = { tl.x, tl.y, br.x, br.y };
+  InvalidateRect(parent, &prc, TRUE);
+}
+extern "C" void krnln_ctrl_invalidate(HWND h) { if (!h) return; yc_ctrl_parent_erase(h); InvalidateRect(h, NULL, TRUE); }
+extern "C" void krnln_ctrl_invalidate_rect(HWND h, int x, int y, int w, int hh) { if (!h) return; yc_ctrl_parent_erase(h); RECT r = { x, y, x + w, y + hh }; InvalidateRect(h, &r, TRUE); }
 extern "C" void krnln_ctrl_validate(HWND h) { if (h) ValidateRect(h, NULL); }
 extern "C" void krnln_ctrl_update(HWND h) { if (h) UpdateWindow(h); }
 // 调整层次：帮助「欲调整到的层次」——简化为 ≤0 置顶、否则置底（易语言常用 0=最前）。
@@ -969,6 +981,7 @@ extern "C" void krnln_ctrl_set_font_size(HWND h, int pt) {
   auto it = g_ycCtrlFonts.find(h);
   if (it != g_ycCtrlFonts.end() && it->second) DeleteObject(it->second);
   g_ycCtrlFonts[h] = nf;
+  yc_ctrl_parent_erase(h);  // 字号变化后擦父窗背景，否则透明标签旧字号文字残留（字号动画叠加）
 }
 
 extern "C" int krnln_ZOrder(void* hwnd, int zOrder) {
@@ -1869,6 +1882,9 @@ extern "C" void krnln_ctrl_append_text(HWND h, const wchar_t* t) {
 extern "C" void krnln_ctrl_set_text(HWND h, const wchar_t* text) {
   if (!h) return;
   SetWindowTextW(h, text ? text : L"");
+  // 透明背景控件改文本后旧文字自身不擦 → 让父窗重画该区域擦旧字、再画新字（详见 yc_ctrl_parent_erase）
+  yc_ctrl_parent_erase(h);
+  InvalidateRect(h, NULL, TRUE);
 }
 
 // 文本读取：返回 malloc 的独占宽串拷贝（易语言文本型「赋值即拷贝」值语义），调用方（编译器生成的包装）负责 krnln_ctrl_free_text 释放。

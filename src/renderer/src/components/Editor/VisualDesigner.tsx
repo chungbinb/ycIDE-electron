@@ -1927,6 +1927,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               '--vd-preview-text': colorFromNumber(textNum) || controlColors.text,
               '--vd-preview-justify': toFlex(hAlign),
               '--vd-preview-align-items': vAlign === 0 ? 'flex-start' : vAlign === 2 ? 'flex-end' : 'center',
+              // 自动折行按属性实时渲染（默认 false=不折行，与运行时 buildStdLabelCodegen 一致）——
+              // 此前设计器不看该属性恒折行，设计时多行、运行后单行，看着像 bug 其实是没所见即所得
+              '--vd-preview-wrap': (props['是否自动折行'] === true || props['是否自动折行'] === '真') ? 'pre-wrap' : 'nowrap',
             })}
           >{ctrl.text}</div>
         )

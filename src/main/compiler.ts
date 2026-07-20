@@ -386,7 +386,7 @@ interface TranspileCacheFile {
 // 38: 真/假/且/或 裸词替换改为引号感知——旧产物字符串字面量里的 真/假 被改写成 1/0
 // 39: 多窗口（载入/销毁）——prelude 新增 yc_win_load/yc_win_destroy 声明
 // 40: 图形按钮（PicBtn）——prelude 新增 yc_picbtn_get/set_checked 声明
-const TRANSPILE_CACHE_VERSION = 50
+const TRANSPILE_CACHE_VERSION = 55
 
 interface BuildArtifactCacheFile {
   version: number
@@ -5215,6 +5215,16 @@ const YCMD_CUSTOM_NATIVE_EXPRS: Record<string, (args: string[], name: string, co
     for (let i = choices.length - 2; i >= 0; i--) sel = `(__yc_ch_i <= ${i + 1} ? __yc_ch${i} : ${sel})`
     return `([&]() -> YC_TEXT { ${decls} long long __yc_ch_i = (long long)(${idxExpr}); (void)__yc_ch_i; return ${sel}; })()`
   },
+  // 选择(逻辑值, 待选项一, 待选项二) = iif：条件真返回项一、假返回项二。同 多项选择 纯 codegen 文本化——
+  // 「选择」returnType 通用型、默认 native 生成把文本值(const char*)当指针整数返回，赋给标签标题→显示成地址整数。
+  //【已知限制】两项一律文本化（数值项转文本），与 多项选择 同款；需数值返回再引入带类型标签的通用值编组。
+  krnln_iif: (args, name, commandMap, directCallables) => {
+    const cond = (args[0] ?? '').trim()
+    if (cond === '') throw new Error(`命令“${name}”缺少「用作选择的逻辑值」参数`)
+    const condExpr = formatArgForC(cond, commandMap, directCallables)
+    const toT = (a: string) => (a.trim() !== '' ? `yc_value_to_text(${formatArgForC(a.trim(), commandMap, directCallables)})` : 'YC_TEXT()')
+    return `([&]() -> YC_TEXT { return (${condExpr}) ? ${toT(args[1] ?? '')} : ${toT(args[2] ?? '')}; })()`
+  },
 }
 
 // 返回内存地址的命令（显示名）：x64 地址 64 位，赋给更窄的变量会被截断成无效地址——
@@ -8049,9 +8059,21 @@ function generateMainC(
       })
     })
     const hasAnyPicBtnImage = picBtnImageBytes.some(a => !!a && a.some(Boolean))
+    // 辅助窗图形按钮四态图片（v1 补齐显示）：per-window per-control 收集，g_subPbImg_{si}_{ci}_{k} 内嵌、并入 g_ycPicBtns 表
+    const subPicBtnImageBytes: Array<Array<Array<Buffer | null> | null>> = secondaryWindows.map(swx => swx.info.controls.map(c => {
+      if (!(c.type === '图形按钮' || c.type === 'PicBtn')) return null
+      return PICBTN_IMG_PROPS.map(p => {
+        const img = c.extraProps?.[p]
+        return (typeof img === 'string' && img.startsWith('data:image')) ? decodeImageDataUrl(img) : null
+      })
+    }))
+    const hasAnySubPicBtnImage = subPicBtnImageBytes.some(w => w.some(a => !!a && a.some(Boolean)))
     // 画板即使无底图也用 GDI+（取图片 PNG 编码、画图片 字节集解码），故 GDI+ 门控含画板；图形按钮画图同样要 GDI+
     const hasDrawPanel = winInfo.controls.some(c => c.type === '画板' || c.type === 'DrawPanel')
-    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage) {
+    // 辅助窗背景图（v1 补齐）：每个有底图的辅助窗一份字节，运行时按窗序号查表画（同主窗 GDI+ 内存流解码）
+    const subBackImageBytes = secondaryWindows.map(swx => swx.info.backImage ? decodeImageDataUrl(swx.info.backImage) : null)
+    const hasAnySubBackImage = subBackImageBytes.some(Boolean)
+    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage || hasAnySubBackImage || hasAnySubPicBtnImage) {
       mainCode += 'static ULONG_PTR g_gdiplusToken = 0;\n'
     }
     if (backImageBytes) {
@@ -8080,6 +8102,18 @@ function generateMainC(
         }
       })
     })
+    // 辅助窗图形按钮四态图片字节（g_subPbImg_{si}_{ci}_{k}）
+    subPicBtnImageBytes.forEach((winCtrls, si) => {
+      winCtrls.forEach((states, ci) => {
+        if (!states) return
+        states.forEach((bytes, k) => {
+          if (bytes) {
+            mainCode += `static const unsigned char g_subPbImg_${si}_${ci}_${k}[] = {\n${bytesToCArrayBody(bytes)}};\n`
+            mainCode += `static const unsigned int g_subPbImgSize_${si}_${ci}_${k} = ${bytes.length}u;\n`
+          }
+        })
+      })
+    })
     mainCode += '\n'
 
     // 控件ID
@@ -8096,6 +8130,23 @@ function generateMainC(
     // 各窗口事件分发前设置 g_ycCurEventWin：控件跨窗重名时按名解析优先取「当前事件所在窗口」的那个。
     const secWinCount = Math.max(1, secondaryWindows.length)
     mainCode += `static HWND g_ycSubWinHandles[${secWinCount}] = { NULL };\n`
+    // 辅助窗背景图：per-window 字节内嵌 + 按窗序号的表（YcSubWinProc WM_PAINT 懒解码并绘制）
+    subBackImageBytes.forEach((bytes, si) => {
+      if (bytes) {
+        mainCode += `static const unsigned char g_subBackData_${si}[] = {\n${bytesToCArrayBody(bytes)}};\n`
+        mainCode += `static const unsigned int g_subBackSize_${si} = ${bytes.length}u;\n`
+      }
+    })
+    if (hasAnySubBackImage) {
+      mainCode += 'struct YcSubBackImg { const unsigned char* data; unsigned int size; Gdiplus::Image* img; int mode; };\n'
+      mainCode += `static YcSubBackImg g_ycSubBackImages[${secWinCount}] = {\n`
+      for (let si = 0; si < secWinCount; si++) {
+        const bytes = subBackImageBytes[si]
+        if (bytes) mainCode += `    { g_subBackData_${si}, g_subBackSize_${si}, NULL, ${secondaryWindows[si].info.backImageMode} },\n`
+        else mainCode += '    { NULL, 0, NULL, 0 },\n'
+      }
+      mainCode += '};\n'
+    }
     mainCode += 'static int g_ycCurEventWin = 0;\n'
     mainCode += `static HWND yc_win_handle_by_index(int i) { if (i <= 0) return g_hMainWnd; return (i - 1 < ${secWinCount}) ? g_ycSubWinHandles[i - 1] : NULL; }\n`
     // 程序退出时机 = 所有窗口都被销毁（易语言语义）：销毁主窗只销毁它自己，无父窗口的辅助窗继续存活；
@@ -8425,6 +8476,24 @@ function generateMainC(
         isDefault: readIntProp(ctrl.extraProps?.['类型'], 0) === 1,
       })
     }
+    // 辅助窗按钮的底色/文本色并入同一表（控件 ID 全局唯一，WM_DRAWITEM 按 ID 查天然共用；辅助窗用数字 ID）
+    for (const swx of secondaryWindows) {
+      swx.info.controls.forEach((ctrl, ci) => {
+        if (!(ctrl.type === '按钮' || ctrl.type === 'Button')) return
+        const backColor = readIntProp(ctrl.extraProps?.['底色'], 0)
+        const font = parseControlFont(ctrl.extraProps?.['字体'])
+        const textColor = font && typeof font.color === 'number' ? font.color : -1
+        if (backColor === 0 && textColor < 0) return
+        buttonDrawEntries.push({
+          idMacro: String(swx.ctrlIds[ci]),
+          bgColor: backColor,
+          textColor,
+          hAlign: readIntProp(ctrl.extraProps?.['横向对齐方式'], 1),
+          vAlign: readIntProp(ctrl.extraProps?.['纵向对齐方式'], 1),
+          isDefault: readIntProp(ctrl.extraProps?.['类型'], 0) === 1,
+        })
+      })
+    }
     if (buttonDrawEntries.length > 0) {
       mainCode += '/* 自绘按钮颜色表（底色/文本色）*/\n'
       mainCode += 'typedef struct { int id; COLORREF bgColor; LONG textColor; int hAlign; int vAlign; int isDefault; } YcButtonDrawEntry;\n'
@@ -8740,7 +8809,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '/* 图形按钮表（四态图片懒解码/类型/选中/悬停/透明色）*/\n'
     mainCode += 'struct YcPicBtnEntry { int id; int type; int checked; int hover; long long tclr; const unsigned char* img[4]; unsigned int imgSize[4]; Gdiplus::Image* decoded[4]; };\n'
     mainCode += 'static YcPicBtnEntry g_ycPicBtns[] = {\n'
-    if (picBtnCtrls.length > 0) {
+    const hasAnySubPicBtn = subPicBtnImageBytes.some(w => w.some(s => s !== null))
+    if (picBtnCtrls.length > 0 || hasAnySubPicBtn) {
       for (const { c, i } of picBtnCtrls) {
         const states = picBtnImageBytes[i]
         const imgPtrs = [0, 1, 2, 3].map(k => (states && states[k]) ? `g_pbImg_${i}_${k}` : 'NULL').join(', ')
@@ -8750,6 +8820,20 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         const tclr = readIntProp(c.extraProps?.['透明颜色'], -1)
         mainCode += `    { IDC_${c.name.toUpperCase()}, ${tp}, ${ck}, 0, ${tclr}LL, { ${imgPtrs} }, { ${imgSizes} }, { NULL, NULL, NULL, NULL } },\n`
       }
+      // 辅助窗图形按钮条目并入同表（数字 ID + 辅助窗字节引用；ID 全局唯一，WM_DRAWITEM 按 ID 查天然共用）
+      subPicBtnImageBytes.forEach((winCtrls, si) => {
+        winCtrls.forEach((states, ci) => {
+          if (!states) return
+          const ctrl = secondaryWindows[si].info.controls[ci]
+          const id = secondaryWindows[si].ctrlIds[ci]
+          const imgPtrs = [0, 1, 2, 3].map(k => states[k] ? `g_subPbImg_${si}_${ci}_${k}` : 'NULL').join(', ')
+          const imgSizes = [0, 1, 2, 3].map(k => states[k] ? `g_subPbImgSize_${si}_${ci}_${k}` : '0u').join(', ')
+          const tp = readIntProp(ctrl.extraProps?.['类型'], 0)
+          const ck = readBoolProp(ctrl.extraProps?.['选中'], false) ? 1 : 0
+          const tclr = readIntProp(ctrl.extraProps?.['透明颜色'], -1)
+          mainCode += `    { ${id}, ${tp}, ${ck}, 0, ${tclr}LL, { ${imgPtrs} }, { ${imgSizes} }, { NULL, NULL, NULL, NULL } },\n`
+        })
+      })
     } else {
       mainCode += '    { 0, 0, 0, 0, -1LL, { NULL, NULL, NULL, NULL }, { 0u, 0u, 0u, 0u }, { NULL, NULL, NULL, NULL } },\n'
     }
@@ -9858,7 +9942,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
             const unitInfo = allUnits.find(u => u.name === ctrl.type || u.englishName === ctrl.type)
             const libraryFileName = unitInfo ? (libNameToFileName.get(normalizeKey(unitInfo.libraryName)) || '') : ''
             const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
-            const unsupported = ['画板', 'DrawPanel', '选择夹', 'Tab', '时钟', 'Timer', '外形框', 'ShapeBox', '菜单', 'menu', '字体', 'font', '图形按钮', 'PicBtn']
+            // 图形按钮已支持显示(style 从 json 带 BS_OWNERDRAW、四态图片并入 g_ycPicBtns、YcSubWinProc WM_DRAWITEM 绘制)；鼠标悬停/点击切换交互仍 v1 未接
+            const unsupported = ['画板', 'DrawPanel', '选择夹', 'Tab', '时钟', 'Timer', '外形框', 'ShapeBox', '菜单', 'menu', '字体', 'font']
             if (unsupported.includes(ctrl.type)) {
               const wk = `${swx.info.formName}:${ctrl.type}`
               if (!secWarned.has(wk)) {
@@ -9872,7 +9957,9 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
             const isStdEdit = className === 'EDIT'
             const editCodegen = isStdEdit ? buildStdEditCodegen(ctrl.extraProps) : null
             const isStdButton = ctrl.type === '按钮' || ctrl.type === 'Button'
-            const buttonCodegen = isStdButton ? buildStdButtonCodegen(ctrl.extraProps, false, false) : null
+            // 底色/文本色 → 自绘按钮(BS_OWNERDRAW)，颜色由 YcSubWinProc WM_DRAWITEM 查 g_ycButtonDraws 画
+            const swOwnerDrawButton = isStdButton && (readIntProp(ctrl.extraProps?.['底色'], 0) !== 0 || typeof parseControlFont(ctrl.extraProps?.['字体'])?.color === 'number')
+            const buttonCodegen = isStdButton ? buildStdButtonCodegen(ctrl.extraProps, false, swOwnerDrawButton) : null
             const isStdLabel = ctrl.type === '标签' || ctrl.type === 'Label'
             const labelCodegen = isStdLabel ? buildStdLabelCodegen(ctrl.extraProps) : null
             const isStdCheckable = ctrl.type === '选择框' || ctrl.type === 'CheckBox' || ctrl.type === '单选框' || ctrl.type === 'RadioBox'
@@ -10005,6 +10092,86 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         mainCode += 'static LRESULT CALLBACK YcSubWinProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {\n'
         mainCode += '    int wi = (int)GetWindowLongPtrW(hWnd, GWLP_USERDATA);\n'
         mainCode += '    switch (message) {\n'
+        if (hasAnySubBackImage) {
+          // 辅助窗背景图：按窗序号(wi-1)查表，懒解码 GDI+ Image、按底图方式绘制（复用主窗逻辑；无底图窗走 break→DefWindowProc）
+          mainCode += '    case WM_PAINT: {\n'
+          mainCode += '        int bi = wi - 1;\n'
+          mainCode += `        if (bi >= 0 && bi < ${secWinCount} && g_ycSubBackImages[bi].size > 0) {\n`
+          mainCode += '            PAINTSTRUCT ps; HDC hdc = BeginPaint(hWnd, &ps);\n'
+          mainCode += '            YcSubBackImg& e = g_ycSubBackImages[bi];\n'
+          mainCode += '            if (!e.img && e.data && e.size > 0) {\n'
+          mainCode += '                HGLOBAL hm = GlobalAlloc(GMEM_MOVEABLE, e.size);\n'
+          mainCode += '                if (hm) { void* pm = GlobalLock(hm); if (pm) { memcpy(pm, e.data, e.size); GlobalUnlock(hm); }\n'
+          mainCode += '                    IStream* pst = NULL;\n'
+          mainCode += '                    if (CreateStreamOnHGlobal(hm, TRUE, &pst) == S_OK && pst) { e.img = Gdiplus::Image::FromStream(pst, FALSE); if (e.img && e.img->GetLastStatus() != Gdiplus::Ok) { delete e.img; e.img = NULL; } pst->Release(); }\n'
+          mainCode += '                    else { GlobalFree(hm); }\n'
+          mainCode += '                }\n'
+          mainCode += '            }\n'
+          mainCode += '            if (e.img) {\n'
+          mainCode += '                RECT crc; GetClientRect(hWnd, &crc); int cw = crc.right - crc.left, ch = crc.bottom - crc.top;\n'
+          mainCode += '                Gdiplus::Graphics graphics(hdc);\n'
+          mainCode += '                if (e.mode == 4) { graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic); graphics.DrawImage(e.img, 0, 0, cw, ch); }\n'
+          mainCode += '                else if (e.mode == 0) { Gdiplus::TextureBrush tb(e.img); graphics.FillRectangle(&tb, 0, 0, cw, ch); }\n'
+          mainCode += '                else { int iw = (int)e.img->GetWidth(), ih = (int)e.img->GetHeight(); int ix, iy; if (e.mode == 1) { ix = 0; iy = 0; } else if (e.mode == 2) { ix = (cw - iw) / 2; iy = (ch - ih) / 2; } else { ix = cw - iw; iy = ch - ih; } graphics.DrawImage(e.img, ix, iy, iw, ih); }\n'
+          mainCode += '            }\n'
+          mainCode += '            EndPaint(hWnd, &ps);\n'
+          mainCode += '            return 0;\n'
+          mainCode += '        }\n'
+          mainCode += '        break;\n'
+          mainCode += '    }\n'
+        }
+        if (buttonDrawEntries.length > 0 || hasAnySubPicBtn) {
+          // 辅助窗 ODT_BUTTON 自绘：自绘按钮(g_ycButtonDraws)+图形按钮(g_ycPicBtns)，按 ID 查表(与主窗共表,ID 全局唯一)
+          mainCode += '    case WM_DRAWITEM: {\n'
+          mainCode += '        DRAWITEMSTRUCT* dis = (DRAWITEMSTRUCT*)lParam;\n'
+          mainCode += '        if (dis && dis->CtlType == ODT_BUTTON) {\n'
+          if (buttonDrawEntries.length > 0) {
+            mainCode += '            for (size_t bi = 0; bi < sizeof(g_ycButtonDraws) / sizeof(g_ycButtonDraws[0]); bi++) {\n'
+            mainCode += '                if (g_ycButtonDraws[bi].id != (int)dis->CtlID) continue;\n'
+            mainCode += '                RECT rc = dis->rcItem;\n'
+            mainCode += '                BOOL pressed = (dis->itemState & ODS_SELECTED) != 0;\n'
+            mainCode += '                HBRUSH hbr = CreateSolidBrush(g_ycButtonDraws[bi].bgColor);\n'
+            mainCode += '                FillRect(dis->hDC, &rc, hbr); DeleteObject(hbr);\n'
+            mainCode += '                DrawEdge(dis->hDC, &rc, pressed ? EDGE_SUNKEN : EDGE_RAISED, BF_RECT);\n'
+            mainCode += '                if (g_ycButtonDraws[bi].isDefault) { HBRUSH hbf = CreateSolidBrush(GetSysColor(COLOR_WINDOWFRAME)); FrameRect(dis->hDC, &dis->rcItem, hbf); DeleteObject(hbf); }\n'
+            mainCode += '                wchar_t btxt[256] = L""; GetWindowTextW(dis->hwndItem, btxt, 256);\n'
+            mainCode += '                HFONT hbfont = (HFONT)SendMessageW(dis->hwndItem, WM_GETFONT, 0, 0);\n'
+            mainCode += '                HGDIOBJ oldF = hbfont ? SelectObject(dis->hDC, hbfont) : NULL;\n'
+            mainCode += '                SetBkMode(dis->hDC, TRANSPARENT);\n'
+            mainCode += '                SetTextColor(dis->hDC, g_ycButtonDraws[bi].textColor >= 0 ? (COLORREF)g_ycButtonDraws[bi].textColor : GetSysColor(COLOR_BTNTEXT));\n'
+            mainCode += '                UINT fmt = DT_SINGLELINE;\n'
+            mainCode += '                fmt |= (g_ycButtonDraws[bi].hAlign == 0) ? DT_LEFT : (g_ycButtonDraws[bi].hAlign == 2) ? DT_RIGHT : DT_CENTER;\n'
+            mainCode += '                fmt |= (g_ycButtonDraws[bi].vAlign == 0) ? DT_TOP : (g_ycButtonDraws[bi].vAlign == 2) ? DT_BOTTOM : DT_VCENTER;\n'
+            mainCode += '                RECT tr = rc; if (pressed) OffsetRect(&tr, 1, 1);\n'
+            mainCode += '                DrawTextW(dis->hDC, btxt, -1, &tr, fmt);\n'
+            mainCode += '                if (oldF) SelectObject(dis->hDC, oldF);\n'
+            mainCode += '                if (dis->itemState & ODS_FOCUS) { RECT fr = dis->rcItem; InflateRect(&fr, -3, -3); DrawFocusRect(dis->hDC, &fr); }\n'
+            mainCode += '                return TRUE;\n'
+            mainCode += '            }\n'
+          }
+          if (hasAnySubPicBtn) {
+            // 图形按钮：按 ID 查 g_ycPicBtns，按状态选四态图片(禁止/按下(含选择框选中)/悬停点燃/正常)绘制+透明色(复用主窗逻辑)
+            mainCode += '            YcPicBtnEntry* pe = yc_picbtn_by_id((int)dis->CtlID);\n'
+            mainCode += '            if (pe) {\n'
+            mainCode += '                RECT rc = dis->rcItem;\n'
+            mainCode += '                BOOL pbPressed = ((dis->itemState & ODS_SELECTED) != 0) || (pe->type == 1 && pe->checked);\n'
+            mainCode += '                BOOL pbDisabled = (dis->itemState & ODS_DISABLED) != 0;\n'
+            mainCode += '                int k = (pbDisabled && pe->img[3]) ? 3 : (pbPressed && pe->img[2]) ? 2 : (pe->hover && pe->type == 0 && pe->img[1]) ? 1 : 0;\n'
+            mainCode += '                Gdiplus::Image* im = yc_picbtn_img(pe, k); if (!im) im = yc_picbtn_img(pe, 0);\n'
+            mainCode += '                FillRect(dis->hDC, &rc, GetSysColorBrush(COLOR_BTNFACE));\n'
+            mainCode += '                if (im) {\n'
+            mainCode += '                    Gdiplus::Graphics g(dis->hDC); g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);\n'
+            mainCode += '                    Gdiplus::Rect dst(rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);\n'
+            mainCode += '                    if (pe->tclr >= 0) { COLORREF ck = (COLORREF)pe->tclr; Gdiplus::ImageAttributes ia; Gdiplus::Color cc(GetRValue(ck), GetGValue(ck), GetBValue(ck)); ia.SetColorKey(cc, cc); g.DrawImage(im, dst, 0, 0, (int)im->GetWidth(), (int)im->GetHeight(), Gdiplus::UnitPixel, &ia); }\n'
+            mainCode += '                    else { g.DrawImage(im, dst.X, dst.Y, dst.Width, dst.Height); }\n'
+            mainCode += '                }\n'
+            mainCode += '                return TRUE;\n'
+            mainCode += '            }\n'
+          }
+          mainCode += '        }\n'
+          mainCode += '        break;\n'
+          mainCode += '    }\n'
+        }
         mainCode += '    case WM_COMMAND: {\n'
         mainCode += '        int wmId = LOWORD(wParam);\n'
         mainCode += '        int wmEvent = HIWORD(wParam); (void)wmEvent;\n'
@@ -10171,8 +10338,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '    g_hInstance = hInstance;\n'
     mainCode += '    INITCOMMONCONTROLSEX icc = { sizeof(INITCOMMONCONTROLSEX), ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES | ICC_LISTVIEW_CLASSES | ICC_TREEVIEW_CLASSES | ICC_TAB_CLASSES | ICC_DATE_CLASSES | ICC_LINK_CLASSES };\n'
     mainCode += '    InitCommonControlsEx(&icc);\n'
-    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage) {
-      // 底图/图标/按钮图片/画板：启动 GDI+，从内嵌字节建内存流并解码
+    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage || hasAnySubBackImage || hasAnySubPicBtnImage) {
+      // 底图/图标/按钮图片/画板/辅助窗背景图/辅助窗图形按钮：启动 GDI+，从内嵌字节建内存流并解码
       mainCode += '    { Gdiplus::GdiplusStartupInput gdiplusStartupInput;\n'
       mainCode += '      Gdiplus::GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, NULL);\n'
       mainCode += '    }\n'
