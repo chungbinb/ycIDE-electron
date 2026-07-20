@@ -6574,7 +6574,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })
   }, [editorContextMenu?.lineIndex, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted, onChange, onRouteDeclarationPaste, pushUndo, sanitizePastedTextForCurrent, shouldUseNativeInputPaste, localRouteLanguage])
 
-  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'newConstant' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
+  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'newConstant' | 'newGlobalVar' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
     if (action === 'newSubprogram') {
       setEditorContextMenu(null)
       if (ref && typeof ref !== 'function') {
@@ -6582,24 +6582,27 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
       return
     }
-    if (action === 'newConstant') {
-      // 常量表（ecs）：追加一条空值常量并滚动高亮（对齐易语言常量编辑器右键「N.新常量」）
+    if (action === 'newConstant' || action === 'newGlobalVar') {
+      // 常量表（ecs）/全局变量表（egv）：追加一条新声明并滚动高亮（对齐易语言编辑器右键「N.新常量/新全局变量」）
       setEditorContextMenu(null)
+      const declPrefix = action === 'newConstant' ? '.常量 ' : '.全局变量 '
+      const baseName = action === 'newConstant' ? '常量' : '全局变量'
+      const lineTail = action === 'newConstant' ? ', ""' : ', 整数型'
       const baseText = prevRef.current
       const curLines = baseText.split('\n')
       const existingNames = new Set<string>()
       for (const ln of curLines) {
         const t = ln.replace(/[\r\t]/g, '').trim()
-        if (t.startsWith('.常量 ')) {
-          const name = (splitCSV(t.slice('.常量 '.length))[0] || '').trim()
+        if (t.startsWith(declPrefix)) {
+          const name = (splitCSV(t.slice(declPrefix.length))[0] || '').trim()
           if (name) existingNames.add(name)
         }
       }
       let num = 1
-      while (existingNames.has('常量' + num)) num++
+      while (existingNames.has(baseName + num)) num++
       let end = curLines.length
       while (end > 0 && curLines[end - 1].replace(/[\r\t]/g, '').trim() === '') end--
-      const nl = [...curLines.slice(0, end), `.常量 常量${num}, ""`, '']
+      const nl = [...curLines.slice(0, end), `${declPrefix}${baseName}${num}${lineTail}`, '']
       pushUndo(baseText)
       applyTextChange(nl.join('\n'))
       const newLineIndex = nl.length - 2
@@ -6747,7 +6750,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const key = (event.key || '').toLowerCase()
       if (key === 'n') {
         event.preventDefault()
-        applyEditorContextAction(docLanguage === 'ell' ? 'newDllCommand' : docLanguage === 'ecs' ? 'newConstant' : 'newSubprogram')
+        applyEditorContextAction(docLanguage === 'ell' ? 'newDllCommand' : docLanguage === 'ecs' ? 'newConstant' : docLanguage === 'egv' ? 'newGlobalVar' : 'newSubprogram')
         return
       }
       if (key === 'z' && docLanguage === 'ell') {
@@ -9092,6 +9095,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
               </button>
             </>
+          ) : docLanguage === 'egv' ? (
+            <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newGlobalVar')}>
+              <span className="eyc-editor-context-menu-item-label">N.新全局变量</span>
+              <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
+            </button>
           ) : (
             <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newSubprogram')}>
               <span className="eyc-editor-context-menu-item-label">N.新子程序</span>
@@ -9133,13 +9141,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             <span className="eyc-editor-context-menu-item-label">I.插入新行</span>
             <span className="eyc-editor-context-menu-item-shortcut">Ins</span>
           </button>
-          {docLanguage !== 'ecs' && (
+          {docLanguage !== 'ecs' && docLanguage !== 'egv' && (
             <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('compileLine')}>
               <span className="eyc-editor-context-menu-item-label">K.编译当前行</span>
               <span className="eyc-editor-context-menu-item-shortcut">Shift+Enter</span>
             </button>
           )}
-          {docLanguage !== 'ecs' && (
+          {docLanguage !== 'ecs' && docLanguage !== 'egv' && (
             <>
               <div className="eyc-editor-context-menu-sep" />
               <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('block')}>
@@ -9152,7 +9160,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               </button>
             </>
           )}
-          {docLanguage === 'ecs' && (
+          {(docLanguage === 'ecs' || docLanguage === 'egv') && (
             <>
               <div className="eyc-editor-context-menu-sep" />
               <button type="button" className="eyc-editor-context-menu-item" disabled>
