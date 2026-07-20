@@ -347,6 +347,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const wasFlowOrigIndentRef = useRef<string>('') // 编辑流程起始行的"真实"前导空格（flowIndent 在回退路径下可能虚撑，需要真值用于熔解）
   const commitGuardRef = useRef(false) // 防止 commit 被重复调用（mousedown + blur-on-unmount）
   const suppressBlurCommitUntilRef = useRef(0) // 键盘切行时临时屏蔽 blur->commit，避免编辑态被抢占清空
+  // Ctrl+K/M 屏蔽快捷键用：applyLineCommentState 定义在键盘 handler 之后，经 ref 转发（deps 数组直引会 TS2454）
+  const applyLineCommentStateRef = useRef<(mode: 'block' | 'unblock') => void>(() => {})
   const preserveEditOnScrollbarRef = useRef(false) // 拖动滚动条时保留编辑态，避免 blur 提交
   const editCellOrigValRef = useRef<string>('') // 表格单元格编辑前的原始值（liveUpdate 会实时更新 lines，需保存原始值用于重命名比较）
   const codeLineEditOrigValRef = useRef<string>('') // 代码行编辑初始值，用于无改动时跳过重排
@@ -1626,6 +1628,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           setEditCell(null)
           return
         }
+      }
+
+      // Ctrl+K 屏蔽 / Ctrl+M 解除屏蔽（易语言快捷键，与右键菜单 G.屏蔽/B.解除屏蔽 同一路径：
+      // 有行选中作用于选区、否则作用于焦点行）。单元格/行输入态不劫持（handler 开头 INPUT 已早退）。
+      if (ctrl && (e.key === 'k' || e.key === 'm') && inEditor) {
+        e.preventDefault()
+        applyLineCommentStateRef.current(e.key === 'k' ? 'block' : 'unblock')
+        return
       }
 
       // Ctrl+A：全选所有行（只要焦点在编辑器区域）
@@ -6560,6 +6570,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     onChange(nextText)
     setEditorContextMenu(null)
   }, [onChange, pushUndo, resolveContextLineIndex, selectedLines])
+
+  applyLineCommentStateRef.current = applyLineCommentState
 
   const pasteFromClipboardAtContext = useCallback(() => {
     if (shouldUseNativeInputPaste(editCellRef.current)) return
