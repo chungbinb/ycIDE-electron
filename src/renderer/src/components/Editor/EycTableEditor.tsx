@@ -1215,6 +1215,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return out
   }, [])
 
+  // 常量/全局变量表的最小空框架：删除后一条声明行都不剩时补一条空声明行(裸关键字=表格空行)，
+  // 保证表格框架(表头+一空行)不随最后一行删除而消失（易语言常量/变量表语义）。
+  const ensureDeclTableSkeleton = useCallback((lines: string[]): string[] => {
+    const kw = docLanguage === 'ecs' ? '.常量' : docLanguage === 'egv' ? '.全局变量' : null
+    if (!kw) return lines
+    if (lines.some(l => { const t = l.replace(/[\r\t]/g, '').trim(); return t === kw || t.startsWith(kw + ' ') })) return lines
+    let end = lines.length
+    while (end > 0 && (lines[end - 1] || '').trim() === '') end--
+    return [...lines.slice(0, end), kw, '']
+  }, [docLanguage])
+
   const applyFlowAwareDeletion = useCallback((ls: string[], deletable: Set<number>): string[] => {
     if (deletable.size === 1) {
       const only = [...deletable][0]
@@ -1706,7 +1717,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           acc.push(forceBlank.has(i) ? '' : line)
           return acc
         }, []))
-        const nl = ensureMinimalFlowBodies(repairBrokenFlowAfterDelete(deletedLines, cutFlowEndKws))
+        const nl = ensureDeclTableSkeleton(ensureMinimalFlowBodies(repairBrokenFlowAfterDelete(deletedLines, cutFlowEndKws)))
         const nt = nl.join('\n')
         setCurrentText(nt); prevRef.current = nt; onChange(nt)
         setSelectedLines(new Set())
@@ -1740,7 +1751,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           acc.push(forceBlank.has(i) ? '' : line)
           return acc
         }, []))
-        const nl = ensureMinimalFlowBodies(repairBrokenFlowAfterDelete(deletedLines, delFlowEndKws))
+        const nl = ensureDeclTableSkeleton(ensureMinimalFlowBodies(repairBrokenFlowAfterDelete(deletedLines, delFlowEndKws)))
         const nt = nl.join('\n')
         setCurrentText(nt); prevRef.current = nt; onChange(nt)
         setSelectedLines(new Set())
@@ -1749,7 +1760,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo, localRouteLanguage, expandSelectionWithCollapsedSubs])
+  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo, localRouteLanguage, expandSelectionWithCollapsedSubs, ensureDeclTableSkeleton])
 
   // ===== 自动补全状态 =====
   const [acItems, setAcItems] = useState<AcDisplayItem[]>([])
@@ -6446,14 +6457,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     // 删除结构性结束/起始行不再拒绝：统一按"溶解"语义处理。
     pushUndo(currentText)
-    const repaired = applyFlowAwareDeletion(ls, deletable)
+    const repaired = ensureDeclTableSkeleton(applyFlowAwareDeletion(ls, deletable))
     const nt = repaired.join('\n')
     setCurrentText(nt)
     prevRef.current = nt
     onChange(nt)
     setSelectedLines(new Set())
     return true
-  }, [currentText, onChange, pushUndo, applyFlowAwareDeletion, expandSelectionWithCollapsedSubs])
+  }, [currentText, onChange, pushUndo, applyFlowAwareDeletion, expandSelectionWithCollapsedSubs, ensureDeclTableSkeleton])
 
   const handleWrapperContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -6700,7 +6711,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const line = resolveContextLineIndex()
       const latestLines = prevRef.current.split('\n')
       const insertAt = Math.min(Math.max(line + 1, 0), latestLines.length)
-      latestLines.splice(insertAt, 0, '')
+      // 常量/全局变量表：插入的是「空声明行」（表格里的空行，名称/类型待填）而非纯空白行——
+      // 裸 `.全局变量`/`.常量` 在 parseLines 里按 `t === kw` 判为对应表格行、字段全空，用户点单元格填写。
+      const declTableEmptyLine = docLanguage === 'ecs' ? '.常量' : docLanguage === 'egv' ? '.全局变量' : null
+      latestLines.splice(insertAt, 0, declTableEmptyLine ?? '')
       const nextText = latestLines.join('\n')
       pushUndo(prevRef.current)
       setCurrentText(nextText)
@@ -6708,7 +6722,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       onChange(nextText)
       lastFocusedLine.current = insertAt
       setEditorContextMenu(null)
-      window.setTimeout(() => startEditLine(insertAt, undefined, undefined, undefined, true), 0)
+      // 表格空行不进代码行编辑（单元格点击编辑）；代码文档保持原进编辑行为
+      if (!declTableEmptyLine) {
+        window.setTimeout(() => startEditLine(insertAt, undefined, undefined, undefined, true), 0)
+      }
       return
     }
     if (action === 'compileLine') {
@@ -6732,7 +6749,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setSelectedLines(all)
     dragAnchor.current = 0
     setEditorContextMenu(null)
-  }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine, onGlobalUndo, onGlobalRedo])
+  }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine, onGlobalUndo, onGlobalRedo, docLanguage])
 
   // 撤销/重做统一走外层全局撤销栈：只要外层接了全局处理器就允许点击，
   // 是否真有可撤销/重做项由全局栈在点击时决定（无项则空操作）。
