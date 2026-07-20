@@ -996,6 +996,9 @@
   justify-content: var(--vd-preview-justify, flex-start);
   color: var(--vd-preview-text, var(--text-primary));
   background: var(--vd-preview-bg, transparent);
+  /* 自动折行按「是否自动折行」属性渲染（默认 nowrap 不折行，与运行时 STATIC 一致）：设计时所见即运行所得 */
+  white-space: var(--vd-preview-wrap, nowrap);
+  overflow: hidden;
 }
 .vd-preview-label.vd-preview-label-sunken { border: 1px solid; border-color: var(--vd-border-dark, #808080) var(--vd-border-light, #fff) var(--vd-border-light, #fff) var(--vd-border-dark, #808080); }
 .vd-preview-label.vd-preview-label-raised { border: 1px solid; border-color: var(--vd-border-light, #fff) var(--vd-border-dark, #808080) var(--vd-border-dark, #808080) var(--vd-border-light, #fff); }
