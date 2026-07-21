@@ -2675,13 +2675,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         suppressBlurCommitUntilRef.current = Date.now() + 300
         setEditCell(null)
       }
-      // 【临时诊断 2026-07-21】外部 value 替换(切文档/回流)——旧值回滚会在这现形
-      if (import.meta.env.DEV) console.warn('[ycide-diag] 外部value替换: prev行数=%d → new行数=%d', prevRef.current.split('\n').length, normalizedValue.split('\n').length)
       setCurrentText(normalizedValue)
       prevRef.current = normalizedValue
     }
     if (normalizedValue !== value) {
-      if (import.meta.env.DEV) console.warn('[ycide-diag] normalize回写onChange: value行数=%d → normalized行数=%d', value.split('\n').length, normalizedValue.split('\n').length)
       onChange(normalizedValue)
     }
   }, [value, normalizeNonFlowCommandIndent, onChange])
@@ -6709,9 +6706,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     if (action === 'newConstant' || action === 'newGlobalVar' || action === 'newDataType' || action === 'newResource') {
       // 常量表（ecs）/全局变量表（egv）/数据类型表（edt）/资源表（erc）：追加新声明并滚动高亮（对齐易语言右键「N.新×××」）
-      // 【临时诊断 2026-07-21,定位用户"新建资源要两次"后移除】
-      if (import.meta.env.DEV) console.warn('[ycide-diag] 编辑器新建(%s): 基线行数=%d 基线尾行=%s', action, prevRef.current.split('\n').length, JSON.stringify(prevRef.current.split('\n').slice(-2)[0] || '').slice(0, 60))
       setEditorContextMenu(null)
+      // 防御纵深:挂着的单元格/行编辑态先丢弃并抑制其 blur 提交——追加行后行号平移,残留编辑态的
+      // 迟到提交会把旧值写回到错误的行上(与菜单 mousedown 拦截双保险)
+      if (editCellRef.current) {
+        suppressBlurCommitUntilRef.current = Date.now() + 300
+        setEditCell(null)
+      }
       const declPrefix = action === 'newConstant' ? '.常量 ' : action === 'newGlobalVar' ? '.全局变量 ' : action === 'newResource' ? '.资源 ' : '.数据类型 '
       const baseName = action === 'newConstant' ? '常量' : action === 'newGlobalVar' ? '全局变量' : action === 'newResource' ? '资源' : '数据类型'
       const baseText = prevRef.current
@@ -9221,6 +9222,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             })
           }}
           onClick={(e) => e.stopPropagation()}
+          // mousedown 必须拦——否则菜单按钮的按下会穿到 wrapper 的 handleWrapperMouseDown:
+          // 提交挂着的编辑态(commitActiveEditor)+按菜单坐标下的行乐观进入编辑。追加行后行号平移,
+          // 下一次菜单点击会把旧编辑值写回到已变成资源/常量行的行号上,刚建的行被抹掉再重建同号
+          // (用户日志实锤:「新建资源要两次、第二次才出资源2」的根因)。
+          onMouseDown={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
           {docLanguage === 'ell' ? (

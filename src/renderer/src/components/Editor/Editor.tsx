@@ -2804,8 +2804,6 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 
   // 直接接收 string 的 onChange（给 EycTableEditor 用）
   const handleEycChange = useCallback((value: string) => {
-    // 【临时诊断 2026-07-21】编辑器 onChange 到达 Editor 层
-    if (import.meta.env.DEV) console.warn('[ycide-diag] Editor收到onChange: 行数=%d activeTab=%s', value.split('\n').length, (activeTabId || '').replace(/^.*[\\/]/, ''))
     if (activeTabId) {
       const before = tabsRef.current.find(t => t.id === activeTabId)?.value
       if (before !== undefined) recordUndo(activeTabId, 'content', before, value)

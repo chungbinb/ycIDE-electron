@@ -3995,8 +3995,6 @@ function App(): React.JSX.Element {
       {
         // 串行排队(见 insertResourceChainRef 注释):连点各自基于前一次产物,消除读改写竞态
         insertResourceChainRef.current = insertResourceChainRef.current.then(async () => {
-        // 【临时诊断 2026-07-21】若用户点编辑器菜单却进了这里=路径判断错了
-        if (import.meta.env.DEV) console.warn('[ycide-diag] App insert:resource 进入(项目树/插入菜单路径)')
         const dir = currentProjectDirRef.current
         if (!dir) return
 
