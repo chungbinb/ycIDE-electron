@@ -6,6 +6,9 @@ export function splitCSV(text: string): string[] {
   let inQ = false
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
+    // \u5f15\u53f7\u5185\u7684\u53cd\u659c\u6760\u8f6c\u4e49\uff08\u957f\u6587\u672c\u5e38\u91cf\u7684 \" \\ \n \u7b49\uff09\u6574\u4f53\u900f\u4f20\uff0c\u907f\u514d \" \u88ab\u5f53\u6210\u5f15\u53f7\u7ed3\u675f\u3001
+    // \u5bfc\u81f4\u5176\u540e\u7684\u9017\u53f7\u88ab\u8bef\u5f53\u5b57\u6bb5\u5206\u9694\u7b26\u628a\u503c\u622a\u65ad
+    if (inQ && ch === '\\' && i + 1 < text.length) { cur += ch + text[i + 1]; i++; continue }
     if (inQ) { cur += ch; if (ch === '"' || ch === '\u201d') inQ = false; continue }
     if (ch === '"' || ch === '\u201c') { inQ = true; cur += ch; continue }
     // \u884c\u5c3e\u88f8\u9017\u53f7\u4e5f\u89c6\u4e3a\u5206\u9694\u7b26\uff0c\u907f\u514d\u201c\u540d\u79f0,\u201d\u88ab\u5e76\u5165\u5b57\u6bb5\uff08\u5982 .\u6307\u9488\u547d\u4ee4 \u540d\u79f0,\uff09
@@ -24,6 +27,31 @@ export function unquote(s: string): string {
     return s.slice(1, -1)
   }
   return s
+}
+
+/**
+ * 长文本常量值的行内转义：多行文本要存进单行 `.长文本常量 名, "…"`。
+ * 转义集与 **C++ 字符串字面量完全一致**（\\ \" \n \r \t），故编译期 `#define 名 ("…")` 可直接透传不必反转义。
+ */
+export function escapeLongTextValue(text: string): string {
+  return (text || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t')
+}
+
+/** 行内转义还原为真实多行文本（编辑弹窗显示用） */
+export function unescapeLongTextValue(stored: string): string {
+  let out = ''
+  const s = stored || ''
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== '\\' || i === s.length - 1) { out += s[i]; continue }
+    const next = s[++i]
+    out += next === 'n' ? '\n' : next === 'r' ? '\r' : next === 't' ? '\t' : next === '"' ? '"' : next === '\\' ? '\\' : '\\' + next
+  }
+  return out
 }
 
 export function inferResourceTypeByFileName(fileName: string): string {
@@ -49,7 +77,7 @@ export function parseLines(text: string): ParsedLine[] {
     const decls: [DeclType, string][] = [
       ['assembly', '.程序集 '], ['assemblyVar', '.程序集变量 '],
       ['sub', '.子程序 '], ['localVar', '.局部变量 '],
-      ['globalVar', '.全局变量 '], ['constant', '.常量 '],
+      ['globalVar', '.全局变量 '], ['longConstant', '.长文本常量 '], ['constant', '.常量 '],
       ['resource', '.资源 '],
       ['dataType', '.数据类型 '], ['dll', '.DLL命令 '],
       ['ptrCmd', '.指针命令 '],
@@ -287,7 +315,7 @@ export function buildBlocks(text: string, isClassModule = false, isResourceTable
       he = 6; continue
     }
 
-    if (ln.type === 'constant' || ln.type === 'resource') {
+    if (ln.type === 'constant' || ln.type === 'resource' || ln.type === 'longConstant') {
       if (he !== 9) {
         flush()
         if (isResourceTable) {
@@ -306,6 +334,17 @@ export function buildBlocks(text: string, isClassModule = false, isResourceTable
           { text: legacyPublicAt2 ? inferredType : (f[2] || inferredType || '\u00A0'), cls: 'eTypecolor', fieldIdx: 2 },
           { text: (legacyPublicAt2 || f[3] === '公开') ? '√' : '\u00A0', cls: 'eTickcolor', align: 'center' },
           { text: legacyPublicAt2 ? (f.length > 3 ? f.slice(3).join(', ') : '') : (f.length > 4 ? f.slice(4).join(', ') : ''), cls: 'Remarkscolor', fieldIdx: 4, sliceField: true },
+        ])
+      } else if (ln.type === 'longConstant') {
+        // 长文本常量：值列不显示内容本身，而显示 `<文本长度: N>`（N=还原后真实字符数，与易语言一致）；
+        // 该格标 longText —— 单击/双击弹多行文本编辑框，绝不可行内编辑（否则占位文本会被写回覆盖真值）
+        const storedValue = f.length > 1 ? unquote(f[1]) : ''
+        const realLength = unescapeLongTextValue(storedValue).length
+        pushRow(i, [
+          { text: f[0] || '', cls: 'eOthercolor', fieldIdx: 0 },
+          { text: `<文本长度: ${realLength}>`, cls: 'Constanttext', fieldIdx: 1, longText: true },
+          { text: f[2] === '公开' ? '√' : '\u00A0', cls: 'eTickcolor', align: 'center' },
+          { text: f.length > 3 ? f.slice(3).join(', ') : '', cls: 'Remarkscolor', fieldIdx: 3, sliceField: true },
         ])
       } else {
         pushRow(i, [

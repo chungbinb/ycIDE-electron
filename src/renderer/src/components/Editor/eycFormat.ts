@@ -423,7 +423,9 @@ function extractRoutedDeclarationLinesFromPasted(clipText: string, currentSource
       buckets.get('egv')?.push(line)
       continue
     }
-    if (ln.type === 'constant') {
+    // 长文本常量与普通常量同属常量表：在代码编辑器里粘贴时一并路由到 .ecs，
+    // 漏掉 longConstant 会让 `.长文本常量` 行滞留在代码文件里（.eyc 不认这个声明）
+    if (ln.type === 'constant' || ln.type === 'longConstant') {
       owner = ''
       buckets.get('ecs')?.push(line)
       continue

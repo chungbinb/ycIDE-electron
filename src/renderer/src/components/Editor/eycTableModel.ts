@@ -1,6 +1,6 @@
 export type DeclType =
   | 'assembly' | 'assemblyVar' | 'sub' | 'subParam' | 'localVar'
-  | 'globalVar' | 'constant' | 'dataType' | 'dataTypeMember'
+  | 'globalVar' | 'constant' | 'longConstant' | 'dataType' | 'dataTypeMember'
   | 'dll' | 'ptrCmd' | 'image' | 'sound' | 'resource'
 
 export interface ParsedLine {
@@ -31,4 +31,6 @@ export interface CellData {
   align?: string
   fieldIdx?: number
   sliceField?: boolean
+  /** 长文本常量的值单元格：显示 `<文本长度: N>`，单击/双击弹多行文本编辑框而非行内编辑 */
+  longText?: boolean
 }

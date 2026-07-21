@@ -2732,6 +2732,10 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         className="vd-canvas-area"
         ref={canvasRegionRef}
         onKeyDown={handleCanvasAreaKeyDown}
+        // 兜死浏览器原生拖拽：在控件图片上按下拖动会启动 DnD 并吃掉 mousemove，
+        // 表现为「控件不跟手、松手才瞬移、拖动状态还残留」。CSS 的 -webkit-user-drag 不是所有
+        // 元素都拦得住（背景图/伪元素等），这里在事件层再拦一道。
+        onDragStart={(e) => e.preventDefault()}
         tabIndex={0}
         role="region"
         aria-label="可视化设计器画布。按住Ctrl键后滚轮可按鼠标焦点缩放；按住空格并左键拖拽可平移画布；按加号和减号缩放，按0重置比例。"

@@ -386,7 +386,7 @@ interface TranspileCacheFile {
 // 38: 真/假/且/或 裸词替换改为引号感知——旧产物字符串字面量里的 真/假 被改写成 1/0
 // 39: 多窗口（载入/销毁）——prelude 新增 yc_win_load/yc_win_destroy 声明
 // 40: 图形按钮（PicBtn）——prelude 新增 yc_picbtn_get/set_checked 声明
-const TRANSPILE_CACHE_VERSION = 55
+const TRANSPILE_CACHE_VERSION = 56
 
 interface BuildArtifactCacheFile {
   version: number
@@ -2512,7 +2512,11 @@ function splitDeclPartsQuoted(text: string): string[] {
   let cur = ''
   let inQ = false
   let qc = ''
-  for (const ch of text) {
+  const chars = Array.from(text)
+  for (let ci = 0; ci < chars.length; ci++) {
+    const ch = chars[ci]
+    // 引号内的反斜杠转义（长文本常量的 \" \\ \n 等）整体透传，避免 \" 被当引号结束后逗号截断值
+    if (inQ && ch === '\\' && ci + 1 < chars.length) { cur += ch + chars[ci + 1]; ci++; continue }
     if (inQ) {
       cur += ch
       if ((qc === '"' && ch === '"') || (qc === '“' && ch === '”')) inQ = false
@@ -2574,10 +2578,14 @@ function parseConstantDeclarations(content: string): ConstantDef[] {
   const lines = content.split('\n')
   for (const rawLine of lines) {
     const line = rawLine.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
-    if (!line.startsWith('.常量 ')) continue
-    const parts = splitDeclParts(line.substring(3))
+    // 长文本常量与普通常量同走 #define：其存储转义（\\ \" \n \r \t）与 C++ 字符串字面量一致，
+    // `#define 名 ("第一行\n第二行")` 可直接透传，无需反转义
+    const declPrefix = line.startsWith('.长文本常量 ') ? '.长文本常量 ' : line.startsWith('.常量 ') ? '.常量 ' : ''
+    if (!declPrefix) continue
+    // 必须用引号感知切分：长文本内容必然含逗号，splitDeclParts 的裸逗号切分会把值截断
+    const parts = splitDeclPartsQuoted(line.substring(declPrefix.length))
     const name = parts[0] || ''
-    const value = parts[1] || '0'
+    const value = parts[1] || (declPrefix === '.长文本常量 ' ? '""' : '0')
     if (!name) continue
     constants.push({ name, value })
   }
@@ -2677,6 +2685,7 @@ function collectUsedLibraryFileNames(project: ProjectInfo, editorFiles?: Map<str
         line.startsWith('.全局变量 ') ||
         line.startsWith('.局部变量 ') ||
         line.startsWith('.常量 ') ||
+        line.startsWith(".长文本常量 ") ||
         line.startsWith('.数据类型 ') ||
         line.startsWith('.成员 ') ||
         line.startsWith('.支持库 ')
@@ -2797,6 +2806,7 @@ function collectGenericFallbackLibraryFileNames(project: ProjectInfo, editorFile
         line.startsWith('.全局变量 ') ||
         line.startsWith('.局部变量 ') ||
         line.startsWith('.常量 ') ||
+        line.startsWith(".长文本常量 ") ||
         line.startsWith('.数据类型 ') ||
         line.startsWith('.成员 ') ||
         line.startsWith('.支持库 ')
@@ -2888,6 +2898,13 @@ function toCLibraryConstantValue(c: LibraryConstantDef): string {
 
 // data:image/...;base64,XXXX → 原始文件字节（PNG/JPG 等编码字节，运行时由 GDI+ 解码）
 function decodeImageDataUrl(dataUrl: string): Buffer | null {
+  // 运行时用 GDI+ 解码，它**不支持 SVG**（只认 BMP/JPEG/PNG/GIF/TIFF/WMF/EMF）。
+  // 新选的图在设计器侧已自动光栅化成 PNG；这里兜住历史工程里存量的 svg+xml——
+  // 直接嵌进去运行期必然解码失败（表现为「设计器有图、运行后没图」），给出可行动的告警。
+  if (/^data:image\/svg\+xml/i.test(dataUrl)) {
+    sendMessage({ type: 'warning', text: '警告: 检测到 SVG 图片，运行时(GDI+)不支持 SVG，该图将不显示。请在属性面板重新选择一次该图片（会自动转为 PNG），或改用 PNG/JPG。' })
+    return null
+  }
   const m = /^data:[^;]*;base64,([\s\S]*)$/.exec(dataUrl)
   if (!m) return null
   try {
@@ -3421,6 +3438,7 @@ function validateProjectCommandSignatures(project: ProjectInfo, editorFiles?: Ma
         line.startsWith('.全局变量 ') ||
         line.startsWith('.局部变量 ') ||
         line.startsWith('.常量 ') ||
+        line.startsWith(".长文本常量 ") ||
         line.startsWith('.数据类型 ') ||
         line.startsWith('.成员 ') ||
         line.startsWith('.支持库 ') ||
@@ -6529,6 +6547,11 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   result += '}\n\n'
   result += 'static YC_TEXT yc_value_to_text(const wchar_t* value) {\n'
   result += '    return YC_TEXT(value ? value : L"");\n'
+  result += '}\n\n'
+  // 窄字符串（UTF-8）重载：文本常量 `#define 名 ("文本")` 展开即 const char*，缺此重载会退化匹配
+  // 到 bool（指针非空→真），使 `标准输出(0, #文本常量)` 输出「真」而不是文本内容
+  result += 'static YC_TEXT yc_value_to_text(const char* value) {\n'
+  result += '    return value ? yc_utf8_to_wide(value) : YC_TEXT(L"");\n'
   result += '}\n\n'
   result += 'static YC_TEXT yc_value_to_text(const YC_TEXT& value) {\n'
   result += '    return value;\n'

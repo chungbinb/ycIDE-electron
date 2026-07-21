@@ -2969,13 +2969,18 @@ extern "C" double krnln_TimeChg(double oaDate, int part, int delta) {
   tmValue.tm_min = static_cast<int>(st.wMinute);
   tmValue.tm_sec = static_cast<int>(st.wSecond);
 
+  // 时间部分常量（易语言 krnln.constants.json 权威值，**不是**内部自定义枚举）：
+  //   1 年份 / 2 季度 / 3 月份 / 4 周(自年首周数) / 5 日 / 6 小时 / 7 分钟 / 8 秒 / 9 星期几 / 10 自年首天数
+  // 旧实现漏了季度与周，从「日」起整体偏移 2，导致 增减时间(t,#日,3) 变成加 3 分钟（用户对比测试发现）。
   switch (part) {
-    case 1: tmValue.tm_year += delta; break;
-    case 2: tmValue.tm_mon += delta; break;
-    case 3: tmValue.tm_mday += delta; break;
-    case 4: tmValue.tm_hour += delta; break;
-    case 5: tmValue.tm_min += delta; break;
-    case 6: tmValue.tm_sec += delta; break;
+    case 1: tmValue.tm_year += delta; break;                 // 年份
+    case 2: tmValue.tm_mon += delta * 3; break;              // 季度
+    case 3: tmValue.tm_mon += delta; break;                  // 月份
+    case 4: tmValue.tm_mday += delta * 7; break;             // 周
+    case 5: case 9: case 10: tmValue.tm_mday += delta; break; // 日 / 星期几 / 自年首天数：均按天推进
+    case 6: tmValue.tm_hour += delta; break;                 // 小时
+    case 7: tmValue.tm_min += delta; break;                  // 分钟
+    case 8: tmValue.tm_sec += delta; break;                  // 秒
     default: tmValue.tm_mday += delta; break;
   }
 
@@ -3004,13 +3009,20 @@ extern "C" double krnln_TimeChg(double oaDate, int part, int delta) {
 
 extern "C" double krnln_TimeDiff(double time1, double time2, int part) {
   if (!std::isfinite(time1) || !std::isfinite(time2)) return 0.0;
-  double dayDiff = time2 - time1;
+  // 易语言语义：返回 **时间1 - 时间2**（旧实现算反了，取时间间隔(晚,早,#日) 得 -5 而非 5）
+  double dayDiff = time1 - time2;
 
+  // 单位同 krnln_TimeChg 的易语言常量表（旧实现只认 2/3/4 三档且含义错位）
   switch (part) {
-    case 2: return dayDiff * 24.0;
-    case 3: return dayDiff * 24.0 * 60.0;
-    case 4: return dayDiff * 24.0 * 60.0 * 60.0;
-    default: return dayDiff;
+    case 1: return std::trunc(dayDiff / 365.0);              // 年份（按 365 天近似，与易语言一致）
+    case 2: return std::trunc(dayDiff / 91.0);               // 季度
+    case 3: return std::trunc(dayDiff / 30.0);               // 月份
+    case 4: return std::trunc(dayDiff / 7.0);                // 周
+    case 5: case 9: case 10: return std::trunc(dayDiff);     // 日 / 星期几 / 自年首天数
+    case 6: return std::trunc(dayDiff * 24.0);               // 小时
+    case 7: return std::trunc(dayDiff * 24.0 * 60.0);        // 分钟
+    case 8: return std::trunc(dayDiff * 24.0 * 60.0 * 60.0 + (dayDiff >= 0 ? 1e-6 : -1e-6)); // 秒（补浮点误差）
+    default: return std::trunc(dayDiff);
   }
 }
 
@@ -3030,28 +3042,45 @@ extern "C" const char* krnln_TimeToText(double oaDate, int part) {
   SYSTEMTIME st{};
   if (!oaDateToSystemTime(oaDate, &st)) return keepUtf8("");
 
-  char dateBuf[32]{};
-  char timeBuf[32]{};
-  std::snprintf(dateBuf, sizeof(dateBuf), "%04u-%02u-%02u", st.wYear, st.wMonth, st.wDay);
-  std::snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u:%02u", st.wHour, st.wMinute, st.wSecond);
+  // 易语言默认（转换部分省略/为0）输出中文形态「2026年7月20日14时30分45秒」，
+  // 与「到文本(日期时间型)」一致；旧实现输出 ISO "2026-07-20 14:30:45"（用户对比测试发现不一致）。
+  // 转换部分：1=仅日期部分、2=仅时间部分、其余=全部
+  char dateBuf[48]{};
+  char timeBuf[48]{};
+  std::snprintf(dateBuf, sizeof(dateBuf), "%u年%u月%u日", st.wYear, st.wMonth, st.wDay);
+  std::snprintf(timeBuf, sizeof(timeBuf), "%u时%u分%u秒", st.wHour, st.wMinute, st.wSecond);
 
   if (part == 1) return keepUtf8(dateBuf);
   if (part == 2) return keepUtf8(timeBuf);
-  return keepUtf8(std::string(dateBuf) + " " + std::string(timeBuf));
+  return keepUtf8(std::string(dateBuf) + std::string(timeBuf));
 }
 
 extern "C" int krnln_TimePart(double oaDate, int part) {
   SYSTEMTIME st{};
   if (!oaDateToSystemTime(oaDate, &st)) return 0;
 
+  // 单位同 krnln_TimeChg 的易语言常量表（旧实现用内部枚举，#月份 取到日、#日 取到小时…全线错位）
   switch (part) {
-    case 1: return static_cast<int>(st.wYear);
-    case 2: return static_cast<int>(st.wMonth);
-    case 3: return static_cast<int>(st.wDay);
-    case 4: return static_cast<int>(st.wDayOfWeek);
-    case 5: return static_cast<int>(st.wHour);
-    case 6: return static_cast<int>(st.wMinute);
-    case 7: return static_cast<int>(st.wSecond);
+    case 1: return static_cast<int>(st.wYear);                              // 年份
+    case 2: return (static_cast<int>(st.wMonth) - 1) / 3 + 1;               // 季度 1..4
+    case 3: return static_cast<int>(st.wMonth);                             // 月份
+    case 4: {                                                               // 周（自年首周数）
+      SYSTEMTIME jan1 = st; jan1.wMonth = 1; jan1.wDay = 1; jan1.wHour = 0; jan1.wMinute = 0; jan1.wSecond = 0; jan1.wMilliseconds = 0;
+      double a = 0.0, b = 0.0;
+      if (!systemTimeToOaDate(jan1, &a) || !systemTimeToOaDate(st, &b)) return 0;
+      return static_cast<int>(std::trunc((b - a) / 7.0)) + 1;
+    }
+    case 5: return static_cast<int>(st.wDay);                               // 日
+    case 6: return static_cast<int>(st.wHour);                              // 小时
+    case 7: return static_cast<int>(st.wMinute);                            // 分钟
+    case 8: return static_cast<int>(st.wSecond);                            // 秒
+    case 9: return static_cast<int>(st.wDayOfWeek) + 1;                     // 星期几：易语言 星期日=1..星期六=7
+    case 10: {                                                              // 自年首天数
+      SYSTEMTIME jan1 = st; jan1.wMonth = 1; jan1.wDay = 1; jan1.wHour = 0; jan1.wMinute = 0; jan1.wSecond = 0; jan1.wMilliseconds = 0;
+      double a = 0.0, b = 0.0;
+      if (!systemTimeToOaDate(jan1, &a) || !systemTimeToOaDate(st, &b)) return 0;
+      return static_cast<int>(std::trunc(b - a)) + 1;
+    }
     default: return 0;
   }
 }
@@ -3061,27 +3090,27 @@ extern "C" int krnln_year(double oaDate) {
 }
 
 extern "C" int krnln_month(double oaDate) {
-  return krnln_TimePart(oaDate, 2);
-}
-
-extern "C" int krnln_day(double oaDate) {
   return krnln_TimePart(oaDate, 3);
 }
 
-extern "C" int krnln_WeekDay(double oaDate) {
-  return krnln_TimePart(oaDate, 4);
-}
-
-extern "C" int krnln_hour(double oaDate) {
+extern "C" int krnln_day(double oaDate) {
   return krnln_TimePart(oaDate, 5);
 }
 
-extern "C" int krnln_minute(double oaDate) {
+extern "C" int krnln_WeekDay(double oaDate) {
+  return krnln_TimePart(oaDate, 9);
+}
+
+extern "C" int krnln_hour(double oaDate) {
   return krnln_TimePart(oaDate, 6);
 }
 
-extern "C" int krnln_second(double oaDate) {
+extern "C" int krnln_minute(double oaDate) {
   return krnln_TimePart(oaDate, 7);
+}
+
+extern "C" int krnln_second(double oaDate) {
+  return krnln_TimePart(oaDate, 8);
 }
 
 extern "C" double krnln_GetSpecTime(int year, int month, int day, int hour, int minute, int second) {
@@ -3106,18 +3135,126 @@ extern "C" int krnln_SetSysTime(double oaDate) {
   return SetLocalTime(&st) ? 1 : 0;
 }
 
+// ===== 中文数字转换（数值到大写 / 数值到金额）=====
+// 对齐易语言：参数「是否转换为简体」为假=繁体大写(壹贰叁…)，真=简体(一二三…)。
+//   数值到大写(12345.67, 假) → 壹万贰仟叁佰肆拾伍点陆柒   （小数部分**逐位**读）
+//   数值到大写(123, 真)      → 一百二十三
+//   数值到金额(12345.67, 假) → 壹万贰仟叁佰肆拾伍元陆角柒分（元角分，两位小数四舍五入）
+namespace ycnum {
+
+static const char* const DIGIT_TRAD[10] = { "零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖" };
+static const char* const DIGIT_SIMP[10] = { "零", "一", "二", "三", "四", "五", "六", "七", "八", "九" };
+// 节内权位（个十百千）与节权位（万亿），繁简各一套
+static const char* const UNIT_TRAD[4] = { "", "拾", "佰", "仟" };
+static const char* const UNIT_SIMP[4] = { "", "十", "百", "千" };
+static const char* const SECTION_TRAD[4] = { "", "万", "亿", "万亿" };
+static const char* const SECTION_SIMP[4] = { "", "万", "亿", "万亿" };
+
+// 一节（≤4 位）转中文：处理节内「零」合并与末尾零省略
+static std::string sectionToChinese(unsigned int section, bool simp, bool padHighZero) {
+  const char* const* D = simp ? DIGIT_SIMP : DIGIT_TRAD;
+  const char* const* U = simp ? UNIT_SIMP : UNIT_TRAD;
+  std::string out;
+  bool pendingZero = padHighZero;   // 高位节非零而本节高位为零时，需补一个「零」
+  bool any = false;
+  for (int pos = 3; pos >= 0; pos--) {
+    unsigned int d = (section / (unsigned int)std::pow(10.0, pos)) % 10;
+    if (d == 0) {
+      if (any) pendingZero = true;   // 中间零：先挂起，遇到后续非零位才落一个「零」
+      continue;
+    }
+    if (pendingZero) { out += D[0]; pendingZero = false; }
+    // 简体「一十几」口语读作「十几」（一百一十三 里的十不省，仅最高位是十位时省）
+    if (!(simp && !any && pos == 1 && d == 1)) out += D[d];
+    out += U[pos];
+    any = true;
+  }
+  return out;
+}
+
+/** 整数部分转中文（按万/亿分节） */
+static std::string integerToChinese(unsigned long long n, bool simp) {
+  const char* const* D = simp ? DIGIT_SIMP : DIGIT_TRAD;
+  const char* const* S = simp ? SECTION_SIMP : SECTION_TRAD;
+  if (n == 0) return D[0];
+  unsigned int sections[4] = { 0, 0, 0, 0 };   // 低→高：个、万、亿、万亿
+  int count = 0;
+  while (n > 0 && count < 4) { sections[count++] = (unsigned int)(n % 10000ULL); n /= 10000ULL; }
+  std::string out;
+  bool higherNonZero = false;
+  for (int i = count - 1; i >= 0; i--) {
+    if (sections[i] == 0) {
+      // 空节：整节为零时不写节权位，但需要在下一非零节前补「零」（如 1 0000 0001）
+      if (higherNonZero && i > 0) { /* 由下一节的 padHighZero 处理 */ }
+      continue;
+    }
+    // 本节高位为零且更高节非零 → 补「零」（如 1 0001 → 壹万零壹）
+    bool padHighZero = higherNonZero && sections[i] < 1000;
+    out += sectionToChinese(sections[i], simp, padHighZero);
+    out += S[i];
+    higherNonZero = true;
+  }
+  return out;
+}
+
+/** 四舍五入到指定小数位，返回整数部分与小数位数字 */
+static void splitRounded(double value, int decimals, bool* negative, unsigned long long* intPart, int* fracDigits) {
+  *negative = value < 0;
+  double v = *negative ? -value : value;
+  double scale = std::pow(10.0, decimals);
+  double scaled = std::floor(v * scale + 0.5);          // 四舍五入
+  double ip = std::floor(scaled / scale);
+  *intPart = (unsigned long long)ip;
+  long long frac = (long long)(scaled - ip * scale + 0.5);
+  for (int i = decimals - 1; i >= 0; i--) {
+    fracDigits[i] = (int)(frac % 10);
+    frac /= 10;
+  }
+}
+
+} // namespace ycnum
+
 extern "C" const char* krnln_UNum(double value, int simplified) {
-  std::ostringstream oss;
-  oss << std::fixed << std::setprecision(2) << clampFinite(value);
-  std::string prefix = simplified ? "大写数值(简体): " : "大写数值(繁体): ";
-  return keepUtf8(prefix + oss.str());
+  const bool simp = simplified != 0;
+  const char* const* D = simp ? ycnum::DIGIT_SIMP : ycnum::DIGIT_TRAD;
+  double v = clampFinite(value);
+  bool neg = false;
+  unsigned long long ip = 0;
+  int fd[4] = { 0, 0, 0, 0 };
+  // 小数最多取 4 位（易语言按实际位数逐位读；这里以 4 位为上限并去掉末尾零）
+  ycnum::splitRounded(v, 4, &neg, &ip, fd);
+  std::string out;
+  if (neg) out += simp ? "负" : "负";
+  out += ycnum::integerToChinese(ip, simp);
+  int last = -1;
+  for (int i = 3; i >= 0; i--) { if (fd[i] != 0) { last = i; break; } }
+  if (last >= 0) {
+    out += "点";                                  // 小数部分逐位读：12345.67 → …点陆柒
+    for (int i = 0; i <= last; i++) out += D[fd[i]];
+  }
+  return keepUtf8(out);
 }
 
 extern "C" const char* krnln_NumToRMB(double value, int simplified) {
-  std::ostringstream oss;
-  oss << std::fixed << std::setprecision(2) << clampFinite(value);
-  std::string prefix = simplified ? "人民币(简体): " : "人民幣(繁體): ";
-  return keepUtf8(prefix + oss.str());
+  const bool simp = simplified != 0;
+  const char* const* D = simp ? ycnum::DIGIT_SIMP : ycnum::DIGIT_TRAD;
+  double v = clampFinite(value);
+  bool neg = false;
+  unsigned long long ip = 0;
+  int fd[2] = { 0, 0 };                            // 角、分
+  ycnum::splitRounded(v, 2, &neg, &ip, fd);
+  std::string out;
+  if (neg) out += "负";
+  out += ycnum::integerToChinese(ip, simp);
+  out += "元";
+  if (fd[0] == 0 && fd[1] == 0) {
+    out += "整";                                   // 无角无分 → 「…元整」
+  } else {
+    if (fd[0] != 0) { out += D[fd[0]]; out += "角"; }
+    else if (fd[1] != 0 && ip > 0) { out += D[0]; }  // 有分无角 → 「…元零X分」
+    if (fd[1] != 0) { out += D[fd[1]]; out += "分"; }
+  }
+  return keepUtf8(out);
 }
 
 extern "C" const char* krnln_NumToText(double value, int decimals, int useThousands) {

@@ -1,9 +1,10 @@
-import { app, BrowserWindow, Menu, dialog, ipcMain, shell, screen, safeStorage, type BrowserWindowConstructorOptions, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, shell, screen, safeStorage, type BrowserWindowConstructorOptions, type MenuItemConstructorOptions } from 'electron'
 import { join, dirname, basename, extname } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync, unlinkSync, rmSync } from 'fs'
 import { readFile as readFileAsync, writeFile as writeFileAsync, readdir as readdirAsync, stat as statAsync } from 'fs/promises'
 import { spawn as spawnPty, type IPty } from 'node-pty'
 import iconv from 'iconv-lite'
+import { parseEClipLongTextConstants, restoreLongTextConstantsInPastedText } from './eclipClipboard'
 import { libraryManager } from './libraryManager'
 import { runExecutable, stopExecutable, isRunning, continueDebugExecutable, setCompilerHost } from './compiler'
 import { compileViaWorker, notifyWorkerLibrariesChanged } from './compileWorkerClient'
@@ -1588,6 +1589,18 @@ app.whenReady().then(() => {
   })
 
   // 保存文件内容
+  // 易语言剪贴板私有格式：粘贴时把占位 `<文本长度: N>` 还原成真实长文本（渲染进程读不到自定义剪贴板格式）
+  ipcMain.handle('clipboard:restoreEycLongTexts', (_event, pastedText: string): { text: string; restored: number } | null => {
+    try {
+      if (!clipboard.has('EClipFormat')) return null
+      const buf = clipboard.readBuffer('EClipFormat')
+      if (!buf || buf.length === 0) return null
+      return restoreLongTextConstantsInPastedText(pastedText, parseEClipLongTextConstants(buf))
+    } catch {
+      return null   // 私有格式解析失败一律回落普通文本粘贴，绝不阻断
+    }
+  })
+
   ipcMain.handle('file:openDialog', async (): Promise<string | null> => {
     const win = BrowserWindow.getFocusedWindow()
     if (!win) return null

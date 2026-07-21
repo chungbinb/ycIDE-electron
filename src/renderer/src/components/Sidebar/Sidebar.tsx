@@ -1519,7 +1519,36 @@ function EditableColorCell({ value, onChange, ariaLabel = '颜色', resetValue, 
   )
 }
 
-/** 可编辑图片属性单元格（文件选择 → base64 data URL） */
+/**
+ * SVG 光栅化为 PNG data URL。
+ * 运行时用 GDI+ 解码图片，而 **GDI+ 不支持 SVG**（只认 BMP/JPEG/PNG/GIF/TIFF/WMF/EMF）——
+ * 直接存 svg+xml 会「设计器有图、运行后没图」。这里在选择图片时就用 Chromium 渲染成 PNG 落盘。
+ * 尺寸取 SVG 自身固有尺寸（无固有尺寸时回落 256×256），并限制上限避免超大位图。
+ */
+async function rasterizeSvgToPngDataUrl(svgDataUrl: string): Promise<string> {
+  const MAX_SIDE = 1024
+  const img = new Image()
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve()
+    img.onerror = () => reject(new Error('SVG 解码失败'))
+    img.src = svgDataUrl
+  })
+  let w = img.naturalWidth || img.width || 0
+  let h = img.naturalHeight || img.height || 0
+  if (!w || !h) { w = 256; h = 256 }                       // 无固有尺寸的 SVG（只有 viewBox）
+  const scale = Math.min(1, MAX_SIDE / Math.max(w, h))
+  const cw = Math.max(1, Math.round(w * scale))
+  const ch = Math.max(1, Math.round(h * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = cw
+  canvas.height = ch
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('canvas 不可用')
+  ctx.drawImage(img, 0, 0, cw, ch)                          // 透明背景保留（PNG 带 alpha）
+  return canvas.toDataURL('image/png')
+}
+
+/** 可编辑图片属性单元格（文件选择 → base64 data URL；SVG 自动光栅化，见 rasterizeSvgToPngDataUrl） */
 function EditableImageCell({ value, onChange, ariaLabel = '图片' }: { value: string; onChange: (v: string) => void; ariaLabel?: string }): React.JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null)
   const hasImage = typeof value === 'string' && value.startsWith('data:image')
@@ -1529,7 +1558,13 @@ function EditableImageCell({ value, onChange, ariaLabel = '图片' }: { value: s
     const reader = new FileReader()
     reader.onload = () => {
       const result = typeof reader.result === 'string' ? reader.result : ''
-      if (result) onChange(result)
+      if (!result) return
+      if (/^data:image\/svg\+xml/i.test(result)) {
+        // 运行时 GDI+ 不认 SVG：转 PNG 后再存（失败则原样存，至少设计器可见）
+        void rasterizeSvgToPngDataUrl(result).then(onChange).catch(() => onChange(result))
+        return
+      }
+      onChange(result)
     }
     reader.readAsDataURL(file)
     // 允许再次选择同一文件

@@ -1554,3 +1554,13 @@
   opacity: 0.7;
   pointer-events: none;
 }
+
+/* 设计画布内的图片禁止浏览器原生拖拽（HTML <img> 默认 draggable）：
+   在按钮/图片框的图片上按下拖动会启动原生 DnD，拖出图片幽灵并**吃掉 mousemove**——
+   控件不跟手、松手才瞬移到位，且拖动状态残留（要再点一下才恢复）。用户报障 2026-07-21。
+   CSS 一处覆盖画布内所有图片（含未来新增的控件预览图），不必逐个 <img> 加 draggable={false}。 */
+.vd-canvas-area img,
+.vd-canvas-area [style*="background-image"] {
+  -webkit-user-drag: none;
+  user-select: none;
+}

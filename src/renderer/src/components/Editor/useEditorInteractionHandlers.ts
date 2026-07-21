@@ -1,6 +1,9 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
 import { buildMultiLinePasteResult } from './editorPasteUtils'
 
+// 易语言长文本常量在文本形态里的占位：`.常量 名, "<文本长度: N>"`（真值在私有剪贴板格式 EClipFormat 里）
+export const EYC_LONG_TEXT_PLACEHOLDER_RE = /\.常量\s+[^,，\n]+[,，]\s*["“]<文本长度:\s*\d+>["”]/
+
 export interface TableCellActionParams {
   rowIsHeader: boolean
   tableType?: string
@@ -229,25 +232,8 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     e.clipboardData.setData('text/plain', selectedLines.size > 0 ? getSelectedSourceText() : (mouseRangeText || ''))
   }, [getMouseRangeSelectedSourceText, getSelectedSourceText, selectedLines])
 
-  const handleWrapperPaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
-    const clipText = e.clipboardData.getData('text/plain')
-    if (!clipText) return
-    const target = e.target as HTMLElement
-    const state = editCellRef.current
-    const isMultiLinePaste = /[\r\n]/.test(clipText)
-    if (target.closest('input')) {
-      // 单行剪贴板：原生粘贴进当前输入框；多行剪贴板：任何编辑态（代码行/表格单元格/参数）
-      // 都改走文档级整行粘贴——这些输入框的值都只住在单一源码行里，装不下多行内容
-      // （旧行为：单元格无条件原生粘贴，整段代码被压成一行挤进单元格）。
-      if (!state || !isMultiLinePaste) return
-    }
-    e.preventDefault()
-    const cursorLine = editCellRef.current?.lineIndex ?? lastFocusedLineRef.current
-    debugFlowPaste('paste-wrapper:input', {
-      cursorLine,
-      clipPreview: String(clipText || '').replace(/\r\n?/g, '\n').split('\n').slice(0, 8),
-      clipLength: (clipText || '').length,
-    })
+  /** 文档级整行粘贴的落地（从 handleWrapperPaste 抽出，便于易语言长文本还原后复用） */
+  const applyDocumentPaste = useCallback((clipText: string, cursorLine: number, state: EditCellLike | null) => {
     const pasteResult = buildMultiLinePasteResult({
       currentText,
       clipText,
@@ -295,6 +281,47 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
     setEditCell,
     suppressInlineBlurCommit,
   ])
+
+  const handleWrapperPaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    const clipText = e.clipboardData.getData('text/plain')
+    if (!clipText) return
+    const target = e.target as HTMLElement
+    const state = editCellRef.current
+    const isMultiLinePaste = /[\r\n]/.test(clipText)
+    if (target.closest('input')) {
+      // 单行剪贴板：原生粘贴进当前输入框；多行剪贴板：任何编辑态（代码行/表格单元格/参数）
+      // 都改走文档级整行粘贴——这些输入框的值都只住在单一源码行里，装不下多行内容
+      // （旧行为：单元格无条件原生粘贴，整段代码被压成一行挤进单元格）。
+      if (!state || !isMultiLinePaste) return
+    }
+    e.preventDefault()
+    const cursorLine = editCellRef.current?.lineIndex ?? lastFocusedLineRef.current
+    debugFlowPaste('paste-wrapper:input', {
+      cursorLine,
+      clipPreview: String(clipText || '').replace(/\r\n?/g, '\n').split('\n').slice(0, 8),
+      clipLength: (clipText || '').length,
+    })
+
+    // 从易语言复制的长文本常量，文本形态只有占位 `.常量 名, "<文本长度: N>"`（真值在私有剪贴板
+    // 格式 EClipFormat 里）。检测到占位才走主进程异步还原——常规粘贴路径完全不受影响。
+    if (EYC_LONG_TEXT_PLACEHOLDER_RE.test(clipText)) {
+      void (async () => {
+        let effective = clipText
+        try {
+          const restored = await window.api?.clipboard?.restoreEycLongTexts?.(clipText)
+          if (restored?.text) effective = restored.text
+        } catch { /* 还原失败按原文粘贴 */ }
+        applyDocumentPaste(effective, cursorLine, state)
+      })()
+      return
+    }
+    applyDocumentPaste(clipText, cursorLine, state)
+  }, [
+    applyDocumentPaste,
+    editCellRef,
+    lastFocusedLineRef,
+  ])
+
 
   const handleTableBlockMouseDown = useCallback((
     e: React.MouseEvent<HTMLDivElement>,
