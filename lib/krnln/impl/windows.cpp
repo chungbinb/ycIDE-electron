@@ -3106,18 +3106,126 @@ extern "C" int krnln_SetSysTime(double oaDate) {
   return SetLocalTime(&st) ? 1 : 0;
 }
 
+// ===== 中文数字转换（数值到大写 / 数值到金额）=====
+// 对齐易语言：参数「是否转换为简体」为假=繁体大写(壹贰叁…)，真=简体(一二三…)。
+//   数值到大写(12345.67, 假) → 壹万贰仟叁佰肆拾伍点陆柒   （小数部分**逐位**读）
+//   数值到大写(123, 真)      → 一百二十三
+//   数值到金额(12345.67, 假) → 壹万贰仟叁佰肆拾伍元陆角柒分（元角分，两位小数四舍五入）
+namespace ycnum {
+
+static const char* const DIGIT_TRAD[10] = { "零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖" };
+static const char* const DIGIT_SIMP[10] = { "零", "一", "二", "三", "四", "五", "六", "七", "八", "九" };
+// 节内权位（个十百千）与节权位（万亿），繁简各一套
+static const char* const UNIT_TRAD[4] = { "", "拾", "佰", "仟" };
+static const char* const UNIT_SIMP[4] = { "", "十", "百", "千" };
+static const char* const SECTION_TRAD[4] = { "", "万", "亿", "万亿" };
+static const char* const SECTION_SIMP[4] = { "", "万", "亿", "万亿" };
+
+// 一节（≤4 位）转中文：处理节内「零」合并与末尾零省略
+static std::string sectionToChinese(unsigned int section, bool simp, bool padHighZero) {
+  const char* const* D = simp ? DIGIT_SIMP : DIGIT_TRAD;
+  const char* const* U = simp ? UNIT_SIMP : UNIT_TRAD;
+  std::string out;
+  bool pendingZero = padHighZero;   // 高位节非零而本节高位为零时，需补一个「零」
+  bool any = false;
+  for (int pos = 3; pos >= 0; pos--) {
+    unsigned int d = (section / (unsigned int)std::pow(10.0, pos)) % 10;
+    if (d == 0) {
+      if (any) pendingZero = true;   // 中间零：先挂起，遇到后续非零位才落一个「零」
+      continue;
+    }
+    if (pendingZero) { out += D[0]; pendingZero = false; }
+    // 简体「一十几」口语读作「十几」（一百一十三 里的十不省，仅最高位是十位时省）
+    if (!(simp && !any && pos == 1 && d == 1)) out += D[d];
+    out += U[pos];
+    any = true;
+  }
+  return out;
+}
+
+/** 整数部分转中文（按万/亿分节） */
+static std::string integerToChinese(unsigned long long n, bool simp) {
+  const char* const* D = simp ? DIGIT_SIMP : DIGIT_TRAD;
+  const char* const* S = simp ? SECTION_SIMP : SECTION_TRAD;
+  if (n == 0) return D[0];
+  unsigned int sections[4] = { 0, 0, 0, 0 };   // 低→高：个、万、亿、万亿
+  int count = 0;
+  while (n > 0 && count < 4) { sections[count++] = (unsigned int)(n % 10000ULL); n /= 10000ULL; }
+  std::string out;
+  bool higherNonZero = false;
+  for (int i = count - 1; i >= 0; i--) {
+    if (sections[i] == 0) {
+      // 空节：整节为零时不写节权位，但需要在下一非零节前补「零」（如 1 0000 0001）
+      if (higherNonZero && i > 0) { /* 由下一节的 padHighZero 处理 */ }
+      continue;
+    }
+    // 本节高位为零且更高节非零 → 补「零」（如 1 0001 → 壹万零壹）
+    bool padHighZero = higherNonZero && sections[i] < 1000;
+    out += sectionToChinese(sections[i], simp, padHighZero);
+    out += S[i];
+    higherNonZero = true;
+  }
+  return out;
+}
+
+/** 四舍五入到指定小数位，返回整数部分与小数位数字 */
+static void splitRounded(double value, int decimals, bool* negative, unsigned long long* intPart, int* fracDigits) {
+  *negative = value < 0;
+  double v = *negative ? -value : value;
+  double scale = std::pow(10.0, decimals);
+  double scaled = std::floor(v * scale + 0.5);          // 四舍五入
+  double ip = std::floor(scaled / scale);
+  *intPart = (unsigned long long)ip;
+  long long frac = (long long)(scaled - ip * scale + 0.5);
+  for (int i = decimals - 1; i >= 0; i--) {
+    fracDigits[i] = (int)(frac % 10);
+    frac /= 10;
+  }
+}
+
+} // namespace ycnum
+
 extern "C" const char* krnln_UNum(double value, int simplified) {
-  std::ostringstream oss;
-  oss << std::fixed << std::setprecision(2) << clampFinite(value);
-  std::string prefix = simplified ? "大写数值(简体): " : "大写数值(繁体): ";
-  return keepUtf8(prefix + oss.str());
+  const bool simp = simplified != 0;
+  const char* const* D = simp ? ycnum::DIGIT_SIMP : ycnum::DIGIT_TRAD;
+  double v = clampFinite(value);
+  bool neg = false;
+  unsigned long long ip = 0;
+  int fd[4] = { 0, 0, 0, 0 };
+  // 小数最多取 4 位（易语言按实际位数逐位读；这里以 4 位为上限并去掉末尾零）
+  ycnum::splitRounded(v, 4, &neg, &ip, fd);
+  std::string out;
+  if (neg) out += simp ? "负" : "负";
+  out += ycnum::integerToChinese(ip, simp);
+  int last = -1;
+  for (int i = 3; i >= 0; i--) { if (fd[i] != 0) { last = i; break; } }
+  if (last >= 0) {
+    out += "点";                                  // 小数部分逐位读：12345.67 → …点陆柒
+    for (int i = 0; i <= last; i++) out += D[fd[i]];
+  }
+  return keepUtf8(out);
 }
 
 extern "C" const char* krnln_NumToRMB(double value, int simplified) {
-  std::ostringstream oss;
-  oss << std::fixed << std::setprecision(2) << clampFinite(value);
-  std::string prefix = simplified ? "人民币(简体): " : "人民幣(繁體): ";
-  return keepUtf8(prefix + oss.str());
+  const bool simp = simplified != 0;
+  const char* const* D = simp ? ycnum::DIGIT_SIMP : ycnum::DIGIT_TRAD;
+  double v = clampFinite(value);
+  bool neg = false;
+  unsigned long long ip = 0;
+  int fd[2] = { 0, 0 };                            // 角、分
+  ycnum::splitRounded(v, 2, &neg, &ip, fd);
+  std::string out;
+  if (neg) out += "负";
+  out += ycnum::integerToChinese(ip, simp);
+  out += "元";
+  if (fd[0] == 0 && fd[1] == 0) {
+    out += "整";                                   // 无角无分 → 「…元整」
+  } else {
+    if (fd[0] != 0) { out += D[fd[0]]; out += "角"; }
+    else if (fd[1] != 0 && ip > 0) { out += D[0]; }  // 有分无角 → 「…元零X分」
+    if (fd[1] != 0) { out += D[fd[1]]; out += "分"; }
+  }
+  return keepUtf8(out);
 }
 
 extern "C" const char* krnln_NumToText(double value, int decimals, int useThousands) {
