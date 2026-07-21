@@ -1413,7 +1413,7 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 .eyc-data-row.eyc-line-selected:hover > td.Rowheight {
   background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
   /* 同焦点行：选中蓝底压上后边框对比度不足，朝文本色提亮保证网格线可见 */
-  border-color: color-mix(in srgb, var(--table-border, var(--border-color, #555)) 45%, var(--table-text, var(--text-primary, #d4d4d4)));
+  border-color: color-mix(in srgb, var(--table-border, var(--border-color, #555)) 78%, var(--table-text, var(--text-primary, #d4d4d4)));
 }
 /* 保持表格本身不拉伸，只给选中行右侧空白区域补背景 */
 .eyc-data-row.eyc-line-selected > td:last-child {
@@ -1440,7 +1440,7 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   background: var(--eyc-current-line-bg);
   /* 焦点行底色（文本色 9% 的半透明白）压在边框上后与 --table-border 对比度不足，边框几乎看不见。
      这里把该行单元格边框朝文本色提亮，保证深色主题下网格线依然清晰（用户报障 2026-07-21）。 */
-  border-color: color-mix(in srgb, var(--table-border, var(--border-color, #555)) 45%, var(--table-text, var(--text-primary, #d4d4d4)));
+  border-color: color-mix(in srgb, var(--table-border, var(--border-color, #555)) 78%, var(--table-text, var(--text-primary, #d4d4d4)));
 }
 .eyc-data-row.eyc-line-editing > td:last-child {
   position: relative;
