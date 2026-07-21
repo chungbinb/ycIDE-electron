@@ -5149,6 +5149,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   const startEditCell = useCallback((li: number, ci: number, cellText: string, fieldIdx?: number, sliceField?: boolean) => {
     if (fieldIdx === undefined) return // 无字段映射（tick 单元格等），不可编辑
+    // 已经在编辑这个单元格：不要用「渲染时的文档值」重置 editVal——那会丢掉尚未提交的输入。
+    // 用户报障：类型格里补全上屏（editVal 已是「字节型」但未 commit）后再次点同一格，
+    // cellText 仍是文档里的旧值「字」，于是补全结果被打回。此时只让光标落位即可。
+    const editing = editCellRef.current
+    if (editing && editing.lineIndex === li && editing.cellIndex === ci && editing.fieldIdx === fieldIdx) {
+      inputRef.current?.focus()
+      return
+    }
     expandSubContainingLine(li)
     setSelectedLines(new Set())
     pushUndo(prevRef.current)
