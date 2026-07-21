@@ -362,7 +362,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   // 经 ref 转发（deps 数组直引会 TS2454）。菜单标注的行级快捷键须在编辑态与非编辑态都生效。
   const applyLineCommentStateRef = useRef<(mode: 'block' | 'unblock') => void>(() => {})
   const deleteLineSelectionRef = useRef<(selection: Set<number>) => boolean>(() => false)
-  const applyEditorContextActionRef = useRef<(action: 'insertLine') => void>(() => {})
+  const applyEditorContextActionRef = useRef<(action: 'insertLine' | 'newConstant' | 'newGlobalVar' | 'newDataType' | 'newResource' | 'newDllCommand') => void>(() => {})
   const preserveEditOnScrollbarRef = useRef(false) // 拖动滚动条时保留编辑态，避免 blur 提交
   const editCellOrigValRef = useRef<string>('') // 表格单元格编辑前的原始值（liveUpdate 会实时更新 lines，需保存原始值用于重命名比较）
   const codeLineEditOrigValRef = useRef<string>('') // 代码行编辑初始值，用于无改动时跳过重排
@@ -1717,6 +1717,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         return
       }
 
+      // Ctrl+N:声明表格文档分派到对应「新建」——否则冒泡到 App 全局(insert:sub 新建子程序),
+      // 子程序表格会被插进资源表/常量表等(用户截图实锤:资源表里 Ctrl+N 出了子程序表格)
+      if (ctrl && !e.altKey && !e.shiftKey && e.key === 'n' && inEditor && (localRouteLanguage || isResourceTableDoc)) {
+        e.preventDefault()
+        applyEditorContextActionRef.current(docLanguage === 'ell' ? 'newDllCommand' : docLanguage === 'ecs' ? 'newConstant' : docLanguage === 'egv' ? 'newGlobalVar' : docLanguage === 'edt' ? 'newDataType' : 'newResource')
+        return
+      }
+
       // Ctrl+A：全选所有行（只要焦点在编辑器区域）
       if (ctrl && e.key === 'a' && inEditor) {
         e.preventDefault()
@@ -1851,7 +1859,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo, localRouteLanguage, expandSelectionWithCollapsedSubs, ensureDeclTableSkeleton])
+  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo, localRouteLanguage, expandSelectionWithCollapsedSubs, ensureDeclTableSkeleton, isResourceTableDoc, docLanguage])
 
   // ===== 自动补全状态 =====
   const [acItems, setAcItems] = useState<AcDisplayItem[]>([])
@@ -2667,10 +2675,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         suppressBlurCommitUntilRef.current = Date.now() + 300
         setEditCell(null)
       }
+      // 【临时诊断 2026-07-21】外部 value 替换(切文档/回流)——旧值回滚会在这现形
+      if (import.meta.env.DEV) console.warn('[ycide-diag] 外部value替换: prev行数=%d → new行数=%d', prevRef.current.split('\n').length, normalizedValue.split('\n').length)
       setCurrentText(normalizedValue)
       prevRef.current = normalizedValue
     }
     if (normalizedValue !== value) {
+      if (import.meta.env.DEV) console.warn('[ycide-diag] normalize回写onChange: value行数=%d → normalized行数=%d', value.split('\n').length, normalizedValue.split('\n').length)
       onChange(normalizedValue)
     }
   }, [value, normalizeNonFlowCommandIndent, onChange])
@@ -6698,6 +6709,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     if (action === 'newConstant' || action === 'newGlobalVar' || action === 'newDataType' || action === 'newResource') {
       // 常量表（ecs）/全局变量表（egv）/数据类型表（edt）/资源表（erc）：追加新声明并滚动高亮（对齐易语言右键「N.新×××」）
+      // 【临时诊断 2026-07-21,定位用户"新建资源要两次"后移除】
+      if (import.meta.env.DEV) console.warn('[ycide-diag] 编辑器新建(%s): 基线行数=%d 基线尾行=%s', action, prevRef.current.split('\n').length, JSON.stringify(prevRef.current.split('\n').slice(-2)[0] || '').slice(0, 60))
       setEditorContextMenu(null)
       const declPrefix = action === 'newConstant' ? '.常量 ' : action === 'newGlobalVar' ? '.全局变量 ' : action === 'newResource' ? '.资源 ' : '.数据类型 '
       const baseName = action === 'newConstant' ? '常量' : action === 'newGlobalVar' ? '全局变量' : action === 'newResource' ? '资源' : '数据类型'
