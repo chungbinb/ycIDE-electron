@@ -425,6 +425,12 @@ export interface CompilerHost {
   notifyProcessExit: (code: number | null) => void
   // 返回空字符串表示成功，否则返回错误描述（对应 shell.openPath 的语义）。
   openPathExternally: (targetPath: string) => Promise<string>
+  /**
+   * 读取编译相关的用户设置（编译器路径、优化级别）。
+   * 由宿主注入而非 compiler 直接读设置文件——worker 里没有主进程的设置模块。
+   * 未注入时返回 null，各处按内置默认行为兜底。
+   */
+  readCompilerSettings?: () => { zigPath: string; optimizeLevel: 'O0' | 'O1' | 'O2' | 'Os' } | null
 }
 
 let compilerHost: CompilerHost | null = null
@@ -865,8 +871,18 @@ function getHostExecutableCandidates(baseName: string): string[] {
   return [baseName, `${baseName}.exe`]
 }
 
-// 查找 Zig 编译器
-function findZigCompiler(): string | null {
+// 查找 Zig 编译器：**用户在设置里指定的路径优先**（绿色版解压到任意目录），
+// 未配置或已失效时回落到 IDE 内置目录扫描。
+export function findZigCompiler(): string | null {
+  const configured = compilerHost?.readCompilerSettings?.()?.zigPath?.trim()
+  if (configured) {
+    if (existsSync(configured)) return configured
+    // 允许用户填目录而非可执行文件本身
+    for (const fileName of getHostExecutableCandidates('zig')) {
+      const inDir = join(configured, fileName)
+      if (existsSync(inDir)) return inDir
+    }
+  }
   const appDir = getAppDirectory()
   const searchDirs = [
     join(appDir, 'compiler', 'zig'),
@@ -10933,9 +10949,12 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       args.push('-O0', '-fno-ident')
       sendMessage({ type: 'info', text: '优化级别: O0 (快速运行)' })
     } else {
-      args.push('-O2', '-fno-ident', '-ffunction-sections', '-fdata-sections')
+      // 「编译」走用户设置的优化级别（运行/调试上面两条分支仍强制 O0 保证响应速度）
+      const level = compilerHost?.readCompilerSettings?.()?.optimizeLevel || 'O2'
+      args.push(`-${level}`, '-fno-ident', '-ffunction-sections', '-fdata-sections')
       args.push('-Wl,--gc-sections')
-      sendMessage({ type: 'info', text: '优化级别: O2 (发布编译)' })
+      const levelDesc = level === 'O0' ? '不优化' : level === 'O1' ? '轻度优化' : level === 'Os' ? '优化体积' : '发布编译'
+      sendMessage({ type: 'info', text: `优化级别: ${level} (${levelDesc})` })
     }
 
     sendMessage({ type: 'info', text: '正在编译...' })

@@ -68,6 +68,12 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
     })
   }, [onChange])
 
+  /** 浏览选择 zig 可执行文件（绿色版解压到任意目录，手填路径易错） */
+  const pickCompilerPath = useCallback(async () => {
+    const picked = await window.api?.file?.openDialog?.()
+    if (picked) updateDraft('compilerZigPath', picked)
+  }, [updateDraft])
+
   const handleNumberChange = (key: keyof IDESettings, raw: string): void => {
     const n = parseInt(raw, 10)
     if (!Number.isNaN(n)) updateDraft(key, n as IDESettings[typeof key])
@@ -322,6 +328,42 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <span className="settings-unit" />
           </div>
         </div>
+        <div className="settings-group">
+          <h4 className="settings-group-title">编译</h4>
+          <div className="settings-row">
+            <span className="settings-label">编译器路径</span>
+            <input
+              type="text"
+              className="settings-input"
+              title="Zig 编译器路径（zig.exe 或其所在目录）"
+              value={draft.compilerZigPath}
+              onChange={(e) => updateDraft('compilerZigPath', e.target.value)}
+              placeholder="留空自动查找 IDE 目录下 compiler\zig"
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              className="settings-browse-btn"
+              onClick={() => { void pickCompilerPath() }}
+            >浏览…</button>
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">优化级别</span>
+            <select
+              className="settings-input"
+              title="编译（生成可执行文件）时的优化级别；运行/调试始终用 O0 保证响应速度"
+              value={draft.compilerOptimizeLevel}
+              onChange={(e) => updateDraft('compilerOptimizeLevel', e.target.value as IDESettings['compilerOptimizeLevel'])}
+            >
+              <option value="O0">O0（不优化，编译最快）</option>
+              <option value="O1">O1（轻度优化）</option>
+              <option value="O2">O2（发布推荐）</option>
+              <option value="Os">Os（优化体积）</option>
+            </select>
+            <span className="settings-unit" />
+          </div>
+        </div>
+
         <div className="settings-group">
           <h4 className="settings-group-title">Android 运行</h4>
           <div className="settings-row">

@@ -632,3 +632,49 @@ export function rebuildLineFlagField(rawLine: string, fieldIdx: number, flag: st
 
   return rawLine
 }
+
+/**
+ * 按**真实渲染字体**把可视 x 坐标换算成文本字符位置（行内文本选择/光标定位共用）。
+ *
+ * 为何不用 canvas measureText：
+ * ① `ctx.font` 取自 `getComputedStyle(el).font` 简写——字体族来自 CSS 变量时该简写可能返回空串，
+ *    调用方回落到硬编码 fallback（如 `13px Consolas`），与用户配置的编辑器字体/字号不一致，
+ *    逐字累计后偏移越来越大（表现为「想选前面的词、选区跑到后面去了」）；
+ * ② 镜像 span 走真实 DOM 渲染，字体加载状态、letter-spacing、字距调整都与目标元素一致。
+ *
+ * 调用方须传入已减去内容起点（padding/border/流程线段宽）并加回 scrollLeft 的相对 x。
+ */
+export function textPosForRelativeX(styleSource: Element, text: string, relX: number): number {
+  if (relX <= 0 || text.length === 0) return 0
+  const cs = getComputedStyle(styleSource)
+  const mirror = document.createElement('span')
+  mirror.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;top:-9999px;left:-9999px;'
+  mirror.style.fontFamily = cs.fontFamily
+  mirror.style.fontSize = cs.fontSize
+  mirror.style.fontWeight = cs.fontWeight
+  mirror.style.fontStyle = cs.fontStyle
+  mirror.style.letterSpacing = cs.letterSpacing
+  mirror.style.textTransform = cs.textTransform
+  mirror.style.fontVariant = cs.fontVariant
+  document.body.appendChild(mirror)
+  try {
+    const widthOf = (n: number): number => {
+      mirror.textContent = text.slice(0, n)
+      return mirror.getBoundingClientRect().width
+    }
+    if (relX >= widthOf(text.length)) return text.length
+    // 二分：镜像测量比 canvas 慢，避免线性逐字
+    let lo = 0
+    let hi = text.length
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (widthOf(mid) <= relX) lo = mid
+      else hi = mid - 1
+    }
+    const wLo = widthOf(lo)
+    const wNext = lo < text.length ? widthOf(lo + 1) : wLo
+    return (relX - wLo <= wNext - relX) ? lo : Math.min(lo + 1, text.length)
+  } finally {
+    mirror.remove()
+  }
+}

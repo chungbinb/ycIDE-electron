@@ -115,6 +115,15 @@ export function notifyWorkerLibrariesChanged(): void {
 }
 
 // 经工作线程编译；worker 不可用时回退主进程编译。
+/**
+ * 编译设置读取器：由主进程注入（worker 侧没有设置模块）。
+ * 每次派发编译时读一次，用户改完设置立即生效、无需重启 worker。
+ */
+let compilerSettingsReader: (() => { zigPath: string; optimizeLevel: 'O0' | 'O1' | 'O2' | 'Os' }) | null = null
+export function setWorkerCompilerSettingsReader(reader: typeof compilerSettingsReader): void {
+  compilerSettingsReader = reader
+}
+
 export async function compileViaWorker(
   options: CompileOptions,
   editorFiles?: Record<string, string>,
@@ -125,8 +134,9 @@ export async function compileViaWorker(
   }
 
   const reqId = ++reqSeq
+  const compilerSettings = compilerSettingsReader ? compilerSettingsReader() : null
   return new Promise<CompileResult>((resolve) => {
     pending.set(reqId, resolve)
-    worker.postMessage({ kind: 'compile', reqId, options, editorFiles })
+    worker.postMessage({ kind: 'compile', reqId, options, editorFiles, compilerSettings })
   })
 }

@@ -7,7 +7,7 @@ import iconv from 'iconv-lite'
 import { parseEClipLongTextConstants, restoreLongTextConstantsInPastedText } from './eclipClipboard'
 import { libraryManager } from './libraryManager'
 import { runExecutable, stopExecutable, isRunning, continueDebugExecutable, setCompilerHost } from './compiler'
-import { compileViaWorker, notifyWorkerLibrariesChanged } from './compileWorkerClient'
+import { compileViaWorker, notifyWorkerLibrariesChanged, setWorkerCompilerSettingsReader } from './compileWorkerClient'
 import { setRuntimeEnv } from './runtimeEnv'
 import { buildAndRunAndroidProject, shouldRunAsAndroid } from './android-runner'
 import { normalizeRuntimePlatform } from '../shared/platform'
@@ -1158,7 +1158,17 @@ app.whenReady().then(() => {
     userDataPath: app.getPath('userData'),
     appVersion: app.getVersion(),
   })
+  setWorkerCompilerSettingsReader(() => {
+    const s = readIDESettings()
+    return { zigPath: s.compilerZigPath || '', optimizeLevel: s.compilerOptimizeLevel }
+  })
+
   setCompilerHost({
+    // 编译器路径与优化级别取自用户设置（每次读取，改设置后无需重启）
+    readCompilerSettings: () => {
+      const s = readIDESettings()
+      return { zigPath: s.compilerZigPath || '', optimizeLevel: s.compilerOptimizeLevel }
+    },
     emitOutput: (msg) => {
       BrowserWindow.getAllWindows().forEach(w => w.webContents.send('compiler:output', msg))
     },
