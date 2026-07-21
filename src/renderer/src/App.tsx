@@ -4037,6 +4037,17 @@ function App(): React.JSX.Element {
         }
         const nextContent = `${normalized}${newRow}\n`
 
+        // UI 先行:先更新编辑器让表格**立即**显示新行,写盘/树刷新跟在后面——否则"写盘→更新编辑器
+        // →刷新项目树"串行下点击到出行有约 1 秒延迟,用户会以为没生效再点一次(实测录屏感知)。
+        editorRef.current?.upsertFile({
+          id: resourceTablePath,
+          label: stripFileExtension(resourceFileName),
+          language: 'erc',
+          value: nextContent,
+          savedValue: nextContent,
+          filePath: resourceTablePath,
+        })
+
         if (fileExists) {
           await window.api?.file?.save(resourceTablePath, nextContent)
         } else {
@@ -4048,14 +4059,6 @@ function App(): React.JSX.Element {
         }
 
         setOutputMessages(prev => [...prev, { type: 'info', text: `已在 ${resourceFileName} 插入空资源: 资源${nextIndex}` }])
-        editorRef.current?.upsertFile({
-          id: resourceTablePath,
-          label: stripFileExtension(resourceFileName),
-          language: 'erc',
-          value: nextContent,
-          savedValue: nextContent,
-          filePath: resourceTablePath,
-        })
         await refreshProjectTree()
         setSidebarTab('project')
         })
