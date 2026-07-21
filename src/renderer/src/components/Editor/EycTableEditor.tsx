@@ -2253,12 +2253,24 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     // 引号内是自由文本输入，不弹补全窗（支持英文/中文引号）
     if (isCursorInsideQuotedText(val, cursorPos)) { setAcVisible(false); return }
 
-    const {
-      wordStart,
-      word,
-      hashMode,
-      isMemberAccess,
-    } = resolveCompletionWordContext(val, cursorPos)
+    const wordCtx = resolveCompletionWordContext(val, cursorPos)
+    const { hashMode, isMemberAccess } = wordCtx
+    let wordStart = wordCtx.wordStart
+    let word = wordCtx.word
+
+    // 数据类型单元格：整格内容就是**一个词**，与光标在词里的哪个位置无关。
+    // 通用取词按「词首→光标」切前缀，会让同一个「字节型」因光标位置不同给出不同候选
+    //（点词尾→字节型、点中间→字节型/字节集、点最左→全部类型），且已确定的类型还照样弹窗。
+    // 正确语义：始终以整格内容过滤；整格已经是**完整合法类型**时不弹（没什么可补的）。
+    if (isTypeCellEdit) {
+      const lead = (val.match(/^\s*/)?.[0] || '').length
+      wordStart = lead
+      word = val.trim()
+      if (word.length > 0 && typeCompletionItemsRef.current.some(t => t.name === word)) {
+        setAcVisible(false)
+        return
+      }
+    }
     // 普通代码输入下，空词且不在成员访问上下文时不弹补全，避免无意义打扰。
     if (!isTypeCellEdit && !isClassNameCellEdit && !hashMode && word.length === 0 && !isMemberAccess) { setAcVisible(false); return }
     // 数字开头的输入是数值字面量（如 .如果真（1） 里的 1），易语言标识符不能以数字开头，
@@ -2346,7 +2358,16 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const activeInput = isParamExprEdit ? paramInputRef.current : inputRef.current
     const cursorPos = activeInput?.selectionStart ?? editVal.length
     const before = editVal.slice(0, prefix ? Math.max(0, wordStart - 1) : wordStart)
-    const after = editVal.slice(cursorPos)
+    // 替换范围必须覆盖**整个词**，而不是只到光标：光标之后若仍是同一个词的字符，
+    // 只切到 cursorPos 会把残余留下 —— 已有「整数型」时点词首选「长整数型」得到
+    // 「长整数型整数型」，删掉「整」剩「数型」再选得到「长整数型数型」（用户报障 2026-07-21）。
+    // 标识符字符集与 resolveCompletionWordContext 的取词规则一致（中日韩/英数/下划线）。
+    let wordEnd = cursorPos
+    while (wordEnd < editVal.length
+      && /[一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]/.test(editVal[wordEnd])) {
+      wordEnd++
+    }
+    const after = editVal.slice(wordEnd)
 
     const commandPool = [
       ...allCommandsRef.current,
