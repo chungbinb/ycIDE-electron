@@ -2969,13 +2969,18 @@ extern "C" double krnln_TimeChg(double oaDate, int part, int delta) {
   tmValue.tm_min = static_cast<int>(st.wMinute);
   tmValue.tm_sec = static_cast<int>(st.wSecond);
 
+  // 时间部分常量（易语言 krnln.constants.json 权威值，**不是**内部自定义枚举）：
+  //   1 年份 / 2 季度 / 3 月份 / 4 周(自年首周数) / 5 日 / 6 小时 / 7 分钟 / 8 秒 / 9 星期几 / 10 自年首天数
+  // 旧实现漏了季度与周，从「日」起整体偏移 2，导致 增减时间(t,#日,3) 变成加 3 分钟（用户对比测试发现）。
   switch (part) {
-    case 1: tmValue.tm_year += delta; break;
-    case 2: tmValue.tm_mon += delta; break;
-    case 3: tmValue.tm_mday += delta; break;
-    case 4: tmValue.tm_hour += delta; break;
-    case 5: tmValue.tm_min += delta; break;
-    case 6: tmValue.tm_sec += delta; break;
+    case 1: tmValue.tm_year += delta; break;                 // 年份
+    case 2: tmValue.tm_mon += delta * 3; break;              // 季度
+    case 3: tmValue.tm_mon += delta; break;                  // 月份
+    case 4: tmValue.tm_mday += delta * 7; break;             // 周
+    case 5: case 9: case 10: tmValue.tm_mday += delta; break; // 日 / 星期几 / 自年首天数：均按天推进
+    case 6: tmValue.tm_hour += delta; break;                 // 小时
+    case 7: tmValue.tm_min += delta; break;                  // 分钟
+    case 8: tmValue.tm_sec += delta; break;                  // 秒
     default: tmValue.tm_mday += delta; break;
   }
 
@@ -3004,13 +3009,20 @@ extern "C" double krnln_TimeChg(double oaDate, int part, int delta) {
 
 extern "C" double krnln_TimeDiff(double time1, double time2, int part) {
   if (!std::isfinite(time1) || !std::isfinite(time2)) return 0.0;
-  double dayDiff = time2 - time1;
+  // 易语言语义：返回 **时间1 - 时间2**（旧实现算反了，取时间间隔(晚,早,#日) 得 -5 而非 5）
+  double dayDiff = time1 - time2;
 
+  // 单位同 krnln_TimeChg 的易语言常量表（旧实现只认 2/3/4 三档且含义错位）
   switch (part) {
-    case 2: return dayDiff * 24.0;
-    case 3: return dayDiff * 24.0 * 60.0;
-    case 4: return dayDiff * 24.0 * 60.0 * 60.0;
-    default: return dayDiff;
+    case 1: return std::trunc(dayDiff / 365.0);              // 年份（按 365 天近似，与易语言一致）
+    case 2: return std::trunc(dayDiff / 91.0);               // 季度
+    case 3: return std::trunc(dayDiff / 30.0);               // 月份
+    case 4: return std::trunc(dayDiff / 7.0);                // 周
+    case 5: case 9: case 10: return std::trunc(dayDiff);     // 日 / 星期几 / 自年首天数
+    case 6: return std::trunc(dayDiff * 24.0);               // 小时
+    case 7: return std::trunc(dayDiff * 24.0 * 60.0);        // 分钟
+    case 8: return std::trunc(dayDiff * 24.0 * 60.0 * 60.0 + (dayDiff >= 0 ? 1e-6 : -1e-6)); // 秒（补浮点误差）
+    default: return std::trunc(dayDiff);
   }
 }
 
@@ -3030,28 +3042,45 @@ extern "C" const char* krnln_TimeToText(double oaDate, int part) {
   SYSTEMTIME st{};
   if (!oaDateToSystemTime(oaDate, &st)) return keepUtf8("");
 
-  char dateBuf[32]{};
-  char timeBuf[32]{};
-  std::snprintf(dateBuf, sizeof(dateBuf), "%04u-%02u-%02u", st.wYear, st.wMonth, st.wDay);
-  std::snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u:%02u", st.wHour, st.wMinute, st.wSecond);
+  // 易语言默认（转换部分省略/为0）输出中文形态「2026年7月20日14时30分45秒」，
+  // 与「到文本(日期时间型)」一致；旧实现输出 ISO "2026-07-20 14:30:45"（用户对比测试发现不一致）。
+  // 转换部分：1=仅日期部分、2=仅时间部分、其余=全部
+  char dateBuf[48]{};
+  char timeBuf[48]{};
+  std::snprintf(dateBuf, sizeof(dateBuf), "%u年%u月%u日", st.wYear, st.wMonth, st.wDay);
+  std::snprintf(timeBuf, sizeof(timeBuf), "%u时%u分%u秒", st.wHour, st.wMinute, st.wSecond);
 
   if (part == 1) return keepUtf8(dateBuf);
   if (part == 2) return keepUtf8(timeBuf);
-  return keepUtf8(std::string(dateBuf) + " " + std::string(timeBuf));
+  return keepUtf8(std::string(dateBuf) + std::string(timeBuf));
 }
 
 extern "C" int krnln_TimePart(double oaDate, int part) {
   SYSTEMTIME st{};
   if (!oaDateToSystemTime(oaDate, &st)) return 0;
 
+  // 单位同 krnln_TimeChg 的易语言常量表（旧实现用内部枚举，#月份 取到日、#日 取到小时…全线错位）
   switch (part) {
-    case 1: return static_cast<int>(st.wYear);
-    case 2: return static_cast<int>(st.wMonth);
-    case 3: return static_cast<int>(st.wDay);
-    case 4: return static_cast<int>(st.wDayOfWeek);
-    case 5: return static_cast<int>(st.wHour);
-    case 6: return static_cast<int>(st.wMinute);
-    case 7: return static_cast<int>(st.wSecond);
+    case 1: return static_cast<int>(st.wYear);                              // 年份
+    case 2: return (static_cast<int>(st.wMonth) - 1) / 3 + 1;               // 季度 1..4
+    case 3: return static_cast<int>(st.wMonth);                             // 月份
+    case 4: {                                                               // 周（自年首周数）
+      SYSTEMTIME jan1 = st; jan1.wMonth = 1; jan1.wDay = 1; jan1.wHour = 0; jan1.wMinute = 0; jan1.wSecond = 0; jan1.wMilliseconds = 0;
+      double a = 0.0, b = 0.0;
+      if (!systemTimeToOaDate(jan1, &a) || !systemTimeToOaDate(st, &b)) return 0;
+      return static_cast<int>(std::trunc((b - a) / 7.0)) + 1;
+    }
+    case 5: return static_cast<int>(st.wDay);                               // 日
+    case 6: return static_cast<int>(st.wHour);                              // 小时
+    case 7: return static_cast<int>(st.wMinute);                            // 分钟
+    case 8: return static_cast<int>(st.wSecond);                            // 秒
+    case 9: return static_cast<int>(st.wDayOfWeek) + 1;                     // 星期几：易语言 星期日=1..星期六=7
+    case 10: {                                                              // 自年首天数
+      SYSTEMTIME jan1 = st; jan1.wMonth = 1; jan1.wDay = 1; jan1.wHour = 0; jan1.wMinute = 0; jan1.wSecond = 0; jan1.wMilliseconds = 0;
+      double a = 0.0, b = 0.0;
+      if (!systemTimeToOaDate(jan1, &a) || !systemTimeToOaDate(st, &b)) return 0;
+      return static_cast<int>(std::trunc(b - a)) + 1;
+    }
     default: return 0;
   }
 }
@@ -3061,27 +3090,27 @@ extern "C" int krnln_year(double oaDate) {
 }
 
 extern "C" int krnln_month(double oaDate) {
-  return krnln_TimePart(oaDate, 2);
-}
-
-extern "C" int krnln_day(double oaDate) {
   return krnln_TimePart(oaDate, 3);
 }
 
-extern "C" int krnln_WeekDay(double oaDate) {
-  return krnln_TimePart(oaDate, 4);
-}
-
-extern "C" int krnln_hour(double oaDate) {
+extern "C" int krnln_day(double oaDate) {
   return krnln_TimePart(oaDate, 5);
 }
 
-extern "C" int krnln_minute(double oaDate) {
+extern "C" int krnln_WeekDay(double oaDate) {
+  return krnln_TimePart(oaDate, 9);
+}
+
+extern "C" int krnln_hour(double oaDate) {
   return krnln_TimePart(oaDate, 6);
 }
 
-extern "C" int krnln_second(double oaDate) {
+extern "C" int krnln_minute(double oaDate) {
   return krnln_TimePart(oaDate, 7);
+}
+
+extern "C" int krnln_second(double oaDate) {
+  return krnln_TimePart(oaDate, 8);
 }
 
 extern "C" double krnln_GetSpecTime(int year, int month, int day, int hour, int minute, int second) {
