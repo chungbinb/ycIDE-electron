@@ -4242,7 +4242,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     for (const ln of parsed) {
-      if (ln.type === 'constant' && ln.fields[0]) {
+      if ((ln.type === 'constant' || ln.type === 'longConstant') && ln.fields[0]) {
         addConstant(ln.fields[0], ln.fields[1] || '')
       }
     }

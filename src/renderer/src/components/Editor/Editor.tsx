@@ -12,6 +12,7 @@ import { eycToInternalFormat, eycToYiFormat, sanitizePastedTextForCurrent, extra
 import { parseLines } from './eycBlocks'
 import { parseColorLiteralToColorref } from '../../../../shared/colorNames'
 import { buildMultiLinePasteResult } from './editorPasteUtils'
+import { EYC_LONG_TEXT_PLACEHOLDER_RE } from './useEditorInteractionHandlers'
 import { buildMonacoThemeTokens } from './monacoThemeTokens'
 import { parseFontSpec, stringifyFontSpec } from './fontSpec'
 import Icon from '../Icon/Icon'
@@ -2114,7 +2115,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     let cancelled = false
 
     const parseConstants = (content: string, out: Map<string, { value: string; kind: 'constant' | 'resource' }>) => {
-      const re = /^\s*\.常量\s+([^,\s]+)(?:\s*,\s*([^,\s]+))?/gm
+      // 长文本常量同属常量，一并收集供 `#名称` 补全/着色（否则引用它会被当未定义标识符）
+      const re = /^\s*\.(?:长文本)?常量\s+([^,\s]+)(?:\s*,\s*([^,\s]+))?/gm
       let m: RegExpExecArray | null
       while ((m = re.exec(content)) !== null) {
         const name = (m[1] || '').trim()
@@ -2884,6 +2886,28 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     })()
   }, [onOpenTabsChange, onProjectTreeRefresh, projectDir])
 
+  /** 把（可能已还原过的）剪贴板文本落到当前标签页：文本模式走整行粘贴，其余仅做跨文档声明路由 */
+  const applyPastedTextToActiveTab = useCallback((clipText: string) => {
+    if (!activeTab) return
+    if (isEycSourceLanguage(activeTab.language) && activeTabUseTextMode) {
+      const cursorLine = Math.max(0, (editorRef.current?.getPosition()?.lineNumber || 1) - 1)
+      const result = buildMultiLinePasteResult({
+        currentText: activeTab.value || '',
+        clipText,
+        cursorLine,
+        sanitizePastedText: sanitizePastedTextForCurrent,
+        extractAssemblyVarLines: extractAssemblyVarLinesFromPasted,
+        extractRoutedDeclarationLines: extractRoutedDeclarationLinesFromPasted,
+      })
+      if (!result) return
+      if (result.routedDeclarations.length > 0) handleRouteDeclarationPaste(result.routedDeclarations)
+      setTabs(prev => prev.map(t => (t.id === activeTab.id ? { ...t, value: result.nextText } : t)))
+      return
+    }
+    const routed = extractRoutedDeclarationLinesFromPasted(clipText, '')
+    if (routed.length > 0) handleRouteDeclarationPaste(routed)
+  }, [activeTab, activeTabUseTextMode, handleRouteDeclarationPaste])
+
   const handleEditorContentPasteCapture = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
     if (!activeTab) return
     const clipText = e.clipboardData?.getData('text/plain') || ''
@@ -2894,6 +2918,22 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
 
     // 表格模式由 EycTableEditor 内部统一处理，避免重复拦截。
     if (tableModeSource) return
+
+    // 从易语言复制的长文本常量在文本形态里只是 `<文本长度: N>` 占位；文本模式编辑器与
+    // 设计器下的跨文档路由同样要先还原真值，否则各编辑器行为不一致（表格模式已还原）。
+    if (EYC_LONG_TEXT_PLACEHOLDER_RE.test(clipText)) {
+      e.preventDefault()
+      e.stopPropagation()
+      void (async () => {
+        let effective = clipText
+        try {
+          const restored = await window.api?.clipboard?.restoreEycLongTexts?.(clipText)
+          if (restored?.text) effective = restored.text
+        } catch { /* 还原失败按原文处理 */ }
+        applyPastedTextToActiveTab(effective)
+      })()
+      return
+    }
 
     if (sourceLanguage && activeTabUseTextMode) {
       const cursorLine = Math.max(0, (editorRef.current?.getPosition()?.lineNumber || 1) - 1)
@@ -2938,6 +2978,14 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
       return
     }
     if (!clipText || clipText.trim().length === 0) return
+
+    // 易语言长文本常量占位 → 还原真值（与其它粘贴入口保持一致）
+    if (EYC_LONG_TEXT_PLACEHOLDER_RE.test(clipText)) {
+      try {
+        const restored = await window.api?.clipboard?.restoreEycLongTexts?.(clipText)
+        if (restored?.text) clipText = restored.text
+      } catch { /* 还原失败按原文处理 */ }
+    }
 
     const sourceLanguage = isEycSourceLanguage(activeTab.language)
     if (sourceLanguage && activeTabUseTextMode) {
