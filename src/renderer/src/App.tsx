@@ -805,6 +805,11 @@ function App(): React.JSX.Element {
   const [fileEncodingByPath, setFileEncodingByPath] = useState<Record<string, string>>({})
 
   const [openProjectFiles, setOpenProjectFiles] = useState<EditorTab[]>()
+  // 新建资源(insert:resource)的串行队列:该动作是"读→改→await 写盘→upsertFile"异步链,
+  // 快速连点时后一次会在前一次落盘前开跑(旧基线→重号/漏号),晚到的 upsertFile 还会用旧内容
+  // 覆盖 tab.value(用户实测:表格"没变化/要点两次/先出资源6后出资源5/放慢就好")。排队后每次
+  // 都基于前一次的产物,一次即成。
+  const insertResourceChainRef = useRef<Promise<void>>(Promise.resolve())
   const [openEditorTabs, setOpenEditorTabs] = useState<EditorTab[]>([])
   const [projectTree, setProjectTree] = useState<TreeNode[]>([])
   const [currentProjectDir, setCurrentProjectDir] = useState<string>('')
@@ -3988,8 +3993,10 @@ function App(): React.JSX.Element {
       }
       case 'insert:resource':
       {
+        // 串行排队(见 insertResourceChainRef 注释):连点各自基于前一次产物,消除读改写竞态
+        insertResourceChainRef.current = insertResourceChainRef.current.then(async () => {
         const dir = currentProjectDirRef.current
-        if (!dir) break
+        if (!dir) return
 
         const resourceFileName = '资源表.erc'
         const resourceTablePath = joinPath(dir, resourceFileName)
@@ -4030,17 +4037,8 @@ function App(): React.JSX.Element {
         }
         const nextContent = `${normalized}${newRow}\n`
 
-        if (fileExists) {
-          await window.api?.file?.save(resourceTablePath, nextContent)
-        } else {
-          const addResult = await window.api?.project?.addFile(dir, resourceFileName, 'ERC', nextContent)
-          if (typeof addResult !== 'string' || addResult.length === 0) {
-            setOutputMessages(prev => [...prev, { type: 'error', text: '创建资源表失败: addFile 返回无效结果' }])
-            break
-          }
-        }
-
-        setOutputMessages(prev => [...prev, { type: 'info', text: `已在 ${resourceFileName} 插入空资源: 资源${nextIndex}` }])
+        // UI 先行:先更新编辑器让表格**立即**显示新行,写盘/树刷新跟在后面——否则"写盘→更新编辑器
+        // →刷新项目树"串行下点击到出行有约 1 秒延迟,用户会以为没生效再点一次(实测录屏感知)。
         editorRef.current?.upsertFile({
           id: resourceTablePath,
           label: stripFileExtension(resourceFileName),
@@ -4049,8 +4047,22 @@ function App(): React.JSX.Element {
           savedValue: nextContent,
           filePath: resourceTablePath,
         })
+
+        if (fileExists) {
+          await window.api?.file?.save(resourceTablePath, nextContent)
+        } else {
+          const addResult = await window.api?.project?.addFile(dir, resourceFileName, 'ERC', nextContent)
+          if (typeof addResult !== 'string' || addResult.length === 0) {
+            setOutputMessages(prev => [...prev, { type: 'error', text: '创建资源表失败: addFile 返回无效结果' }])
+            return
+          }
+        }
+
+        setOutputMessages(prev => [...prev, { type: 'info', text: `已在 ${resourceFileName} 插入空资源: 资源${nextIndex}` }])
         await refreshProjectTree()
         setSidebarTab('project')
+        })
+        await insertResourceChainRef.current
         break
       }
 
@@ -4080,6 +4092,7 @@ function App(): React.JSX.Element {
     if (action === 'newDataType') { void handleMenuAction('insert:dataType'); return }
     if (action === 'newDllCmd') { void handleMenuAction('insert:dllCmd'); return }
     if (action === 'newPtrCmd') { void handleMenuAction('insert:ptrCmd'); return }
+    if (action === 'newResource') { void handleMenuAction('insert:resource'); return }
 
     const fileName = node.id
     const filePath = joinPath(dir, fileName)
@@ -4495,7 +4508,7 @@ function App(): React.JSX.Element {
       else if (!ctrl && shift && key === 'F5') action = 'debug:stop'
       else if (!ctrl && !shift && key === 'F9') action = 'debug:toggleBreakpoint'
       else if (!ctrl && !shift && key === 'F10') action = 'debug:stepOver'
-      else if (ctrl && !shift && key === 'F10') action = 'debug:runToCursor'
+      else if (ctrl && !shift && key === 'F8') action = 'debug:runToCursor'
       else if (!ctrl && !shift && key === 'F11') action = 'debug:stepInto'
       else if (!ctrl && shift && key === 'F11') action = 'debug:stepOut'
       // 帮助

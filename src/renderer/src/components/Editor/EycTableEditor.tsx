@@ -249,6 +249,15 @@ const setCssVars = (element: HTMLElement | null, vars: Record<string, string>): 
 
 const TABLE_MODE_HIDDEN_FLOW_COMMANDS = new Set(['否则', '如果结束', '默认', '判断结束', '如果真结束'])
 
+// 屏蔽(注释)不作用于表格声明行——注释掉 .子程序/.局部变量 等会破坏表格结构(易语言同语义:
+// 屏蔽只针对代码行;.如果/.计次循环首 等流程命令是代码行、不在此列可正常屏蔽)。解除屏蔽不设限
+// (允许修复历史上已被注释的声明行)。裸关键字(空框架行,如 .全局变量)同样不可屏蔽。
+const NON_COMMENTABLE_DECL_PREFIXES = ['.版本 ', '.程序集 ', '.程序集变量 ', '.子程序 ', '.局部变量 ', '.参数 ', '.全局变量 ', '.常量 ', '.资源 ', '.数据类型 ', '.成员 ', '.DLL命令 ', '.指针命令 ', '.图片 ', '.声音 ']
+function isNonCommentableDeclLine(body: string): boolean {
+  const t = body.replace(/[\r\t]/g, '')
+  return NON_COMMENTABLE_DECL_PREFIXES.some(p => t === p.trim() || t.startsWith(p))
+}
+
 // 复制/剪切时过滤选区：范围拖选（rangeSet 填满整个 index 区间）会把区间内**表格模式隐藏的配对标记**
 //（否则/默认/如果结束/判断结束/如果真结束）一并纳进选区。若某隐藏标记所属结构的**头**（如果/判断开始/
 // 循环首 等）不在选区里，说明用户只是选了中间可见的正文、并没打算连隐藏标记一起剪切/复制（表格模式里
@@ -318,6 +327,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
+  const editValRef = useRef('')
+  editValRef.current = editVal
   const editorRootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   // onChange 归一化改写输入值（如 “”→"）后，受控 input 会把光标重置到末尾；
@@ -347,6 +358,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const wasFlowOrigIndentRef = useRef<string>('') // 编辑流程起始行的"真实"前导空格（flowIndent 在回退路径下可能虚撑，需要真值用于熔解）
   const commitGuardRef = useRef(false) // 防止 commit 被重复调用（mousedown + blur-on-unmount）
   const suppressBlurCommitUntilRef = useRef(0) // 键盘切行时临时屏蔽 blur->commit，避免编辑态被抢占清空
+  // 行级快捷键(Ctrl+K/M 屏蔽、F10 删除行、Insert 插入新行)用：这些函数定义在键盘 handler 之后，
+  // 经 ref 转发（deps 数组直引会 TS2454）。菜单标注的行级快捷键须在编辑态与非编辑态都生效。
+  const applyLineCommentStateRef = useRef<(mode: 'block' | 'unblock') => void>(() => {})
+  const deleteLineSelectionRef = useRef<(selection: Set<number>) => boolean>(() => false)
+  const applyEditorContextActionRef = useRef<(action: 'insertLine' | 'newConstant' | 'newGlobalVar' | 'newDataType' | 'newResource' | 'newDllCommand') => void>(() => {})
   const preserveEditOnScrollbarRef = useRef(false) // 拖动滚动条时保留编辑态，避免 blur 提交
   const editCellOrigValRef = useRef<string>('') // 表格单元格编辑前的原始值（liveUpdate 会实时更新 lines，需保存原始值用于重命名比较）
   const codeLineEditOrigValRef = useRef<string>('') // 代码行编辑初始值，用于无改动时跳过重排
@@ -1215,6 +1231,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return out
   }, [])
 
+  // 常量/全局变量表的最小空框架：删除后一条声明行都不剩时补一条空声明行(裸关键字=表格空行)，
+  // 保证表格框架(表头+一空行)不随最后一行删除而消失（易语言常量/变量表语义）。
+  const ensureDeclTableSkeleton = useCallback((lines: string[]): string[] => {
+    const kw = docLanguage === 'ecs' ? '.常量' : docLanguage === 'egv' ? '.全局变量' : isResourceTableDoc ? '.资源' : null
+    if (!kw) return lines
+    if (lines.some(l => { const t = l.replace(/[\r\t]/g, '').trim(); return t === kw || t.startsWith(kw + ' ') })) return lines
+    let end = lines.length
+    while (end > 0 && (lines[end - 1] || '').trim() === '') end--
+    return [...lines.slice(0, end), kw, '']
+  }, [docLanguage, isResourceTableDoc])
+
   const applyFlowAwareDeletion = useCallback((ls: string[], deletable: Set<number>): string[] => {
     if (deletable.size === 1) {
       const only = [...deletable][0]
@@ -1582,6 +1609,64 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const handler = (e: KeyboardEvent): void => {
       // 正在编辑输入框时不处理（交给 onKey）
       const tag = (document.activeElement as HTMLElement)?.tagName
+      // ===== 编辑态行级快捷键（统一分派，必须在下面 INPUT 早退之前）=====
+      // 原则：右键菜单标注的**行级**快捷键在编辑态也要作用于当前编辑行——Ctrl+K/M 屏蔽/解除、
+      // F10 删除行、Insert 插入新行；文本级快捷键(复制/粘贴/全选/撤销)保持输入框原生行为不劫持。
+      // Ctrl+M 若不消费会落到系统默认把整个 IDE 最小化。代码行编辑值按 live 语义写回（防 24ms
+      // 节流丢键）；表格单元格未提交值在删除/插入语境下丢弃（用户意图是行级操作）。
+      {
+        const ec = editCellRef.current
+        const activeEl = document.activeElement as HTMLElement | null
+        const tagNow = activeEl?.tagName
+        const inEditorInput = !!ec && (tagNow === 'INPUT' || tagNow === 'TEXTAREA') && !!wrapperRef.current?.contains(activeEl)
+        const ctrlNow = e.ctrlKey || e.metaKey
+        if (inEditorInput && ctrlNow && (e.key === 'k' || e.key === 'm')) {
+          e.preventDefault()
+          const li = ec.lineIndex
+          const base = prevRef.current
+          const ls = base.split('\n')
+          // 代码行编辑（非虚拟）：编辑值写回该行；表格单元格/参数编辑：行文本以 prevRef 为准（整行屏蔽语义）
+          if (ec.cellIndex === -1 && ec.paramIdx === undefined && !ec.isVirtual && li >= 0 && li < ls.length) {
+            ls[li] = flowIndentRef.current + flowMarkRef.current + restoreJudgeStartAlias(editValRef.current)
+          }
+          const line = ls[li] || ''
+          const indent = line.match(/^\s*/)?.[0] || ''
+          const body = line.slice(indent.length)
+          if (e.key === 'k') {
+            if (!body || body.startsWith("'") || isNonCommentableDeclLine(body)) return
+            ls[li] = `${indent}' ${body}`
+          } else {
+            if (body.startsWith("' ")) ls[li] = indent + body.slice(2)
+            else if (body.startsWith("'")) ls[li] = indent + body.slice(1)
+            else return
+          }
+          suppressBlurCommitUntilRef.current = Date.now() + 300
+          setEditCell(null)
+          pushUndo(base)
+          const nt = ls.join('\n')
+          setCurrentText(nt); prevRef.current = nt; onChange(nt)
+          return
+        }
+        if (inEditorInput && !ctrlNow && e.key === 'F10') {
+          // 编辑态 F10 = 删除当前编辑行（走与菜单/Delete 同一套删除逻辑：流程溶解/最小骨架保底等）
+          e.preventDefault()
+          suppressBlurCommitUntilRef.current = Date.now() + 300
+          lastFocusedLine.current = ec.lineIndex
+          setEditCell(null)
+          deleteLineSelectionRef.current(new Set([ec.lineIndex]))
+          return
+        }
+        if (inEditorInput && !ctrlNow && e.key === 'Insert') {
+          // 编辑态 Insert = 当前编辑行下插入新行并进入其编辑（insertLine 按 lastFocusedLine 定位）
+          e.preventDefault()
+          suppressBlurCommitUntilRef.current = Date.now() + 300
+          lastFocusedLine.current = ec.lineIndex
+          setEditCell(null)
+          applyEditorContextActionRef.current('insertLine')
+          return
+        }
+      }
+
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
 
       // 检查焦点是否在本编辑器区域内
@@ -1615,6 +1700,29 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           setEditCell(null)
           return
         }
+      }
+
+      // Ctrl+K 屏蔽 / Ctrl+M 解除屏蔽（易语言快捷键，与右键菜单 G.屏蔽/B.解除屏蔽 同一路径：
+      // 有行选中作用于选区、否则作用于焦点行）。单元格/行输入态不劫持（handler 开头 INPUT 已早退）。
+      if (ctrl && (e.key === 'k' || e.key === 'm') && inEditor) {
+        e.preventDefault()
+        applyLineCommentStateRef.current(e.key === 'k' ? 'block' : 'unblock')
+        return
+      }
+
+      // Insert = 插入新行（非编辑态；菜单 I.插入新行 的快捷键，此前只有标注没有绑定）
+      if (!ctrl && e.key === 'Insert' && inEditor) {
+        e.preventDefault()
+        applyEditorContextActionRef.current('insertLine')
+        return
+      }
+
+      // Ctrl+N:声明表格文档分派到对应「新建」——否则冒泡到 App 全局(insert:sub 新建子程序),
+      // 子程序表格会被插进资源表/常量表等(用户截图实锤:资源表里 Ctrl+N 出了子程序表格)
+      if (ctrl && !e.altKey && !e.shiftKey && e.key === 'n' && inEditor && (localRouteLanguage || isResourceTableDoc)) {
+        e.preventDefault()
+        applyEditorContextActionRef.current(docLanguage === 'ell' ? 'newDllCommand' : docLanguage === 'ecs' ? 'newConstant' : docLanguage === 'egv' ? 'newGlobalVar' : docLanguage === 'edt' ? 'newDataType' : 'newResource')
+        return
       }
 
       // Ctrl+A：全选所有行（只要焦点在编辑器区域）
@@ -1706,7 +1814,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           acc.push(forceBlank.has(i) ? '' : line)
           return acc
         }, []))
-        const nl = ensureMinimalFlowBodies(repairBrokenFlowAfterDelete(deletedLines, cutFlowEndKws))
+        const nl = ensureDeclTableSkeleton(ensureMinimalFlowBodies(repairBrokenFlowAfterDelete(deletedLines, cutFlowEndKws)))
         const nt = nl.join('\n')
         setCurrentText(nt); prevRef.current = nt; onChange(nt)
         setSelectedLines(new Set())
@@ -1715,7 +1823,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       // 空格 = 删除：易语言代码里没有空格语义，行多选状态下按空格等同 Delete（同一套
       // 最小结构保护/溶解逻辑）。仅在有行选区时劫持空格；输入框内的空格不受影响（本
       // 监听器开头已对 INPUT/TEXTAREA 提前返回，正常文本编辑照常输入空格）。
-      if (e.key === 'Delete' || e.key === 'Backspace' || (e.key === ' ' && !ctrl && selectedLines.size > 0)) {
+      // F10 = 删除行（易语言快捷键，与右键菜单标注一致）：仅在有行选中时消费（handler 开头已保证），
+      // 无选中时不劫持——调试「逐过程」的 F10 照常；运行到光标已挪 Ctrl+F8 不打架。
+      if (e.key === 'Delete' || e.key === 'Backspace' || ((e.key === ' ' || e.key === 'F10') && !ctrl && selectedLines.size > 0)) {
         e.preventDefault()
         const ls = currentText.split('\n')
         const { deletable: rawDeletable, sorted: sortedSel } = getDeletableSelection(ls, selectedLines)
@@ -1740,7 +1850,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           acc.push(forceBlank.has(i) ? '' : line)
           return acc
         }, []))
-        const nl = ensureMinimalFlowBodies(repairBrokenFlowAfterDelete(deletedLines, delFlowEndKws))
+        const nl = ensureDeclTableSkeleton(ensureMinimalFlowBodies(repairBrokenFlowAfterDelete(deletedLines, delFlowEndKws)))
         const nt = nl.join('\n')
         setCurrentText(nt); prevRef.current = nt; onChange(nt)
         setSelectedLines(new Set())
@@ -1749,7 +1859,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo, localRouteLanguage, expandSelectionWithCollapsedSubs])
+  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo, localRouteLanguage, expandSelectionWithCollapsedSubs, ensureDeclTableSkeleton, isResourceTableDoc, docLanguage])
 
   // ===== 自动补全状态 =====
   const [acItems, setAcItems] = useState<AcDisplayItem[]>([])
@@ -2557,6 +2667,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   useEffect(() => {
     const normalizedValue = normalizeNonFlowCommandIndent(value)
     if (normalizedValue !== prevRef.current) {
+      // 外部替换了整份文本（切换文档标签复用同一编辑器实例 / 全局撤销等外部写入）：挂着的
+      // 单元格/行编辑态必须丢弃并抑制其 blur 提交——否则旧文档的编辑值会按旧行号、旧字段
+      // commit 进新文本（实测：常量值单元格编辑中切到全局变量文档，「全局变量2, 整数型」被
+      // 写成「全局变量2, 6」）。编辑自身提交的 value 回流不走这里（commit 已同步 prevRef）。
+      if (editCellRef.current) {
+        suppressBlurCommitUntilRef.current = Date.now() + 300
+        setEditCell(null)
+      }
       setCurrentText(normalizedValue)
       prevRef.current = normalizedValue
     }
@@ -6446,14 +6564,15 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     // 删除结构性结束/起始行不再拒绝：统一按"溶解"语义处理。
     pushUndo(currentText)
-    const repaired = applyFlowAwareDeletion(ls, deletable)
+    const repaired = ensureDeclTableSkeleton(applyFlowAwareDeletion(ls, deletable))
     const nt = repaired.join('\n')
     setCurrentText(nt)
     prevRef.current = nt
     onChange(nt)
     setSelectedLines(new Set())
     return true
-  }, [currentText, onChange, pushUndo, applyFlowAwareDeletion, expandSelectionWithCollapsedSubs])
+  }, [currentText, onChange, pushUndo, applyFlowAwareDeletion, expandSelectionWithCollapsedSubs, ensureDeclTableSkeleton])
+  deleteLineSelectionRef.current = deleteLineSelection
 
   const handleWrapperContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -6513,7 +6632,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const body = line.slice(indent.length)
 
       if (mode === 'block') {
-        if (!body || body.startsWith("'")) continue
+        if (!body || body.startsWith("'") || isNonCommentableDeclLine(body)) continue
         ls[idx] = `${indent}' ${body}`
         changed = true
         continue
@@ -6540,7 +6659,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setEditorContextMenu(null)
   }, [onChange, pushUndo, resolveContextLineIndex, selectedLines])
 
+  applyLineCommentStateRef.current = applyLineCommentState
+
   const pasteFromClipboardAtContext = useCallback(() => {
+
     if (shouldUseNativeInputPaste(editCellRef.current)) return
     void navigator.clipboard.readText().then(clipText => {
       if (!clipText) return
@@ -6574,12 +6696,55 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })
   }, [editorContextMenu?.lineIndex, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted, onChange, onRouteDeclarationPaste, pushUndo, sanitizePastedTextForCurrent, shouldUseNativeInputPaste, localRouteLanguage])
 
-  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
+  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'newConstant' | 'newGlobalVar' | 'newDataType' | 'newResource' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
     if (action === 'newSubprogram') {
       setEditorContextMenu(null)
       if (ref && typeof ref !== 'function') {
         ref.current?.insertSubroutine?.()
       }
+      return
+    }
+    if (action === 'newConstant' || action === 'newGlobalVar' || action === 'newDataType' || action === 'newResource') {
+      // 常量表（ecs）/全局变量表（egv）/数据类型表（edt）/资源表（erc）：追加新声明并滚动高亮（对齐易语言右键「N.新×××」）
+      setEditorContextMenu(null)
+      // 防御纵深:挂着的单元格/行编辑态先丢弃并抑制其 blur 提交——追加行后行号平移,残留编辑态的
+      // 迟到提交会把旧值写回到错误的行上(与菜单 mousedown 拦截双保险)
+      if (editCellRef.current) {
+        suppressBlurCommitUntilRef.current = Date.now() + 300
+        setEditCell(null)
+      }
+      const declPrefix = action === 'newConstant' ? '.常量 ' : action === 'newGlobalVar' ? '.全局变量 ' : action === 'newResource' ? '.资源 ' : '.数据类型 '
+      const baseName = action === 'newConstant' ? '常量' : action === 'newGlobalVar' ? '全局变量' : action === 'newResource' ? '资源' : '数据类型'
+      const baseText = prevRef.current
+      const curLines = baseText.split('\n')
+      const existingNames = new Set<string>()
+      for (const ln of curLines) {
+        const t = ln.replace(/[\r\t]/g, '').trim()
+        if (t.startsWith(declPrefix)) {
+          const name = (splitCSV(t.slice(declPrefix.length))[0] || '').trim()
+          if (name) existingNames.add(name)
+        }
+      }
+      let num = 1
+      while (existingNames.has(baseName + num)) num++
+      // 数据类型是两行块（声明+首个成员，与项目树新建格式一致）；常量/全局变量是单行
+      const newDeclLines = action === 'newDataType'
+        ? [`.数据类型 数据类型${num}`, '    .成员 成员1, 整数型']
+        : [`${declPrefix}${baseName}${num}${action === 'newConstant' ? ', ""' : action === 'newResource' ? ', "", 其它' : ', 整数型'}`]
+      let end = curLines.length
+      while (end > 0 && curLines[end - 1].replace(/[\r\t]/g, '').trim() === '') end--
+      const nl = [...curLines.slice(0, end), ...newDeclLines, '']
+      pushUndo(baseText)
+      applyTextChange(nl.join('\n'))
+      const newLineIndex = nl.length - 1 - newDeclLines.length
+      lastFocusedLine.current = newLineIndex
+      window.setTimeout(() => {
+        const row = wrapperRef.current?.querySelector<HTMLElement>(`tr.eyc-data-row[data-line-index="${newLineIndex}"]`)
+        if (!row) return
+        row.scrollIntoView({ block: 'center' })
+        row.classList.add('highlight-flash')
+        window.setTimeout(() => row.classList.remove('highlight-flash'), 900)
+      }, 80)
       return
     }
     if (action === 'newDllCommand' || action === 'newPtrCommand') {
@@ -6653,12 +6818,23 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return
     }
     if (action === 'delete') {
-      if (selectedLines.size > 0) {
-        deleteLineSelection(selectedLines)
+      // 删除目标按「右键落点行」优先——不能无条件用 selectedLines：单元格点击不更新行选区
+      // (td mousedown stopPropagation)，右键落在表头/空白时(无 data-line-index)也不重置选区，
+      // 旧选中行残留会让「删除行」删到别的行(用户报障)。语义：
+      // ①右键落在明确行上：该行在选区内→删整个选区(多选删除)；不在→只删该行(残留选区不牵连)
+      // ②右键无行上下文但正在编辑单元格→删编辑行 ③其余按选区/焦点行兜底。
+      const ctxLine = editorContextMenu?.lineIndex
+      let target: Set<number>
+      if (ctxLine !== null && ctxLine !== undefined) {
+        target = selectedLines.has(ctxLine) ? selectedLines : new Set([ctxLine])
+      } else if (editCellRef.current) {
+        target = new Set([editCellRef.current.lineIndex])
+      } else if (selectedLines.size > 0) {
+        target = selectedLines
       } else {
-        const line = resolveContextLineIndex()
-        deleteLineSelection(new Set([line]))
+        target = new Set([Math.max(lastFocusedLine.current, 0)])
       }
+      deleteLineSelection(target)
       setEditorContextMenu(null)
       return
     }
@@ -6666,7 +6842,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const line = resolveContextLineIndex()
       const latestLines = prevRef.current.split('\n')
       const insertAt = Math.min(Math.max(line + 1, 0), latestLines.length)
-      latestLines.splice(insertAt, 0, '')
+      // 常量/全局变量表：插入的是「空声明行」（表格里的空行，名称/类型待填）而非纯空白行——
+      // 裸 `.全局变量`/`.常量` 在 parseLines 里按 `t === kw` 判为对应表格行、字段全空，用户点单元格填写。
+      const declTableEmptyLine = docLanguage === 'ecs' ? '.常量' : docLanguage === 'egv' ? '.全局变量' : isResourceTableDoc ? '.资源' : null
+      latestLines.splice(insertAt, 0, declTableEmptyLine ?? '')
       const nextText = latestLines.join('\n')
       pushUndo(prevRef.current)
       setCurrentText(nextText)
@@ -6674,7 +6853,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       onChange(nextText)
       lastFocusedLine.current = insertAt
       setEditorContextMenu(null)
-      window.setTimeout(() => startEditLine(insertAt, undefined, undefined, undefined, true), 0)
+      // 表格空行不进代码行编辑（单元格点击编辑）；代码文档保持原进编辑行为
+      if (!declTableEmptyLine) {
+        window.setTimeout(() => startEditLine(insertAt, undefined, undefined, undefined, true), 0)
+      }
       return
     }
     if (action === 'compileLine') {
@@ -6698,7 +6880,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     setSelectedLines(all)
     dragAnchor.current = 0
     setEditorContextMenu(null)
-  }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine, onGlobalUndo, onGlobalRedo])
+  }, [applyLineCommentState, applyTextChange, copySelectionToClipboard, deleteLineSelection, getSelectedSourceText, onChange, pasteFromClipboardAtContext, pushUndo, ref, resolveContextLineIndex, selectedLines, startEditLine, onGlobalUndo, onGlobalRedo, docLanguage, editorContextMenu?.lineIndex])
+  applyEditorContextActionRef.current = applyEditorContextAction
 
   // 撤销/重做统一走外层全局撤销栈：只要外层接了全局处理器就允许点击，
   // 是否真有可撤销/重做项由全局栈在点击时决定（无项则空操作）。
@@ -6716,7 +6899,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       const key = (event.key || '').toLowerCase()
       if (key === 'n') {
         event.preventDefault()
-        applyEditorContextAction(docLanguage === 'ell' ? 'newDllCommand' : 'newSubprogram')
+        applyEditorContextAction(docLanguage === 'ell' ? 'newDllCommand' : docLanguage === 'ecs' ? 'newConstant' : docLanguage === 'egv' ? 'newGlobalVar' : docLanguage === 'edt' ? 'newDataType' : isResourceTableDoc ? 'newResource' : 'newSubprogram')
         return
       }
       if (key === 'z' && docLanguage === 'ell') {
@@ -9021,11 +9204,29 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       {editorContextMenu && (
         <div
           className="eyc-editor-context-menu"
-          ref={(element) => setCssVars(element, {
-            '--eyc-context-menu-left': `${editorContextMenu.x}px`,
-            '--eyc-context-menu-top': `${editorContextMenu.y}px`,
-          })}
+          ref={(element) => {
+            if (!element) return
+            // 视口边缘自适应：挂载后测菜单实际尺寸，下/右不够放就往反方向弹（贴不下再夹回 0）。
+            // 坐标系注意：编辑器根有 zoom 缩放，写入的 fixed 坐标渲染时被 ×eycScale——
+            // 故可用空间按写入坐标系折算为 innerWidth/Height ÷ scale；offsetWidth/Height 本就是 zoom 前值，同系可比。
+            const menuScale = Math.max(eycScale, 0.01)
+            const vw = window.innerWidth / menuScale
+            const vh = window.innerHeight / menuScale
+            let left = editorContextMenu.x
+            let top = editorContextMenu.y
+            if (left + element.offsetWidth > vw) left = Math.max(0, left - element.offsetWidth)
+            if (top + element.offsetHeight > vh) top = Math.max(0, top - element.offsetHeight)
+            setCssVars(element, {
+              '--eyc-context-menu-left': `${left}px`,
+              '--eyc-context-menu-top': `${top}px`,
+            })
+          }}
           onClick={(e) => e.stopPropagation()}
+          // mousedown 必须拦——否则菜单按钮的按下会穿到 wrapper 的 handleWrapperMouseDown:
+          // 提交挂着的编辑态(commitActiveEditor)+按菜单坐标下的行乐观进入编辑。追加行后行号平移,
+          // 下一次菜单点击会把旧编辑值写回到已变成资源/常量行的行号上,刚建的行被抹掉再重建同号
+          // (用户日志实锤:「新建资源要两次、第二次才出资源2」的根因)。
+          onMouseDown={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
           {docLanguage === 'ell' ? (
@@ -9037,6 +9238,32 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                 <span className="eyc-editor-context-menu-item-label">Z.新指针命令</span>
               </button>
             </>
+          ) : docLanguage === 'ecs' ? (
+            // 常量表：对齐易语言常量编辑器右键菜单（新长文本常量/跳回先前位置为易语言项，功能暂未接、先禁用占位）
+            <>
+              <button type="button" className="eyc-editor-context-menu-item" disabled>
+                <span className="eyc-editor-context-menu-item-label">X.新长文本常量</span>
+              </button>
+              <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newConstant')}>
+                <span className="eyc-editor-context-menu-item-label">N.新常量</span>
+                <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
+              </button>
+            </>
+          ) : docLanguage === 'egv' ? (
+            <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newGlobalVar')}>
+              <span className="eyc-editor-context-menu-item-label">N.新全局变量</span>
+              <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
+            </button>
+          ) : docLanguage === 'edt' ? (
+            <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newDataType')}>
+              <span className="eyc-editor-context-menu-item-label">N.新数据类型</span>
+              <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
+            </button>
+          ) : isResourceTableDoc ? (
+            <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newResource')}>
+              <span className="eyc-editor-context-menu-item-label">N.新建资源</span>
+              <span className="eyc-editor-context-menu-item-shortcut">Ctrl+N</span>
+            </button>
           ) : (
             <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newSubprogram')}>
               <span className="eyc-editor-context-menu-item-label">N.新子程序</span>
@@ -9078,19 +9305,36 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             <span className="eyc-editor-context-menu-item-label">I.插入新行</span>
             <span className="eyc-editor-context-menu-item-shortcut">Ins</span>
           </button>
-          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('compileLine')}>
-            <span className="eyc-editor-context-menu-item-label">K.编译当前行</span>
-            <span className="eyc-editor-context-menu-item-shortcut">Shift+Enter</span>
-          </button>
-          <div className="eyc-editor-context-menu-sep" />
-          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('block')}>
-            <span className="eyc-editor-context-menu-item-label">G.屏蔽</span>
-            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+K</span>
-          </button>
-          <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('unblock')}>
-            <span className="eyc-editor-context-menu-item-label">B.解除屏蔽</span>
-            <span className="eyc-editor-context-menu-item-shortcut">Ctrl+M</span>
-          </button>
+          {/* 编译当前行/屏蔽/解除屏蔽只属于代码文档——声明表格文档(ecs/egv/edt/ell=localRouteLanguage 非空,及资源表 erc)一律隐藏 */}
+          {!localRouteLanguage && !isResourceTableDoc && (
+            <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('compileLine')}>
+              <span className="eyc-editor-context-menu-item-label">K.编译当前行</span>
+              <span className="eyc-editor-context-menu-item-shortcut">Shift+Enter</span>
+            </button>
+          )}
+          {!localRouteLanguage && !isResourceTableDoc && (
+            <>
+              <div className="eyc-editor-context-menu-sep" />
+              <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('block')}>
+                <span className="eyc-editor-context-menu-item-label">G.屏蔽</span>
+                <span className="eyc-editor-context-menu-item-shortcut">Ctrl+K</span>
+              </button>
+              <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('unblock')}>
+                <span className="eyc-editor-context-menu-item-label">B.解除屏蔽</span>
+                <span className="eyc-editor-context-menu-item-shortcut">Ctrl+M</span>
+              </button>
+            </>
+          )}
+          {docLanguage === 'ecs' && (
+            // 仅常量表有此项（易语言参照）；全局变量表菜单没有
+            <>
+              <div className="eyc-editor-context-menu-sep" />
+              <button type="button" className="eyc-editor-context-menu-item" disabled>
+                <span className="eyc-editor-context-menu-item-label">Z.跳回先前位置</span>
+                <span className="eyc-editor-context-menu-item-shortcut">Ctrl+J</span>
+              </button>
+            </>
+          )}
         </div>
       )}
       {debugHover && (
