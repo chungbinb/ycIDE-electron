@@ -2,9 +2,11 @@ import { Fragment, memo, useState, useCallback, useEffect, useLayoutEffect, useR
 import { flushSync } from 'react-dom'
 import { eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
 import {
+  escapeLongTextValue,
   inferResourceTypeByFileName,
   parseLines,
   splitCSV,
+  unescapeLongTextValue,
   unquote,
 } from './eycBlocks'
 import { getBlocksFlowModelCached } from './editorBlocksModelShared'
@@ -252,7 +254,7 @@ const TABLE_MODE_HIDDEN_FLOW_COMMANDS = new Set(['否则', '如果结束', '默�
 // 屏蔽(注释)不作用于表格声明行——注释掉 .子程序/.局部变量 等会破坏表格结构(易语言同语义:
 // 屏蔽只针对代码行;.如果/.计次循环首 等流程命令是代码行、不在此列可正常屏蔽)。解除屏蔽不设限
 // (允许修复历史上已被注释的声明行)。裸关键字(空框架行,如 .全局变量)同样不可屏蔽。
-const NON_COMMENTABLE_DECL_PREFIXES = ['.版本 ', '.程序集 ', '.程序集变量 ', '.子程序 ', '.局部变量 ', '.参数 ', '.全局变量 ', '.常量 ', '.资源 ', '.数据类型 ', '.成员 ', '.DLL命令 ', '.指针命令 ', '.图片 ', '.声音 ']
+const NON_COMMENTABLE_DECL_PREFIXES = ['.版本 ', '.程序集 ', '.程序集变量 ', '.子程序 ', '.局部变量 ', '.参数 ', '.全局变量 ', '.常量 ', '.长文本常量 ', '.资源 ', '.数据类型 ', '.成员 ', '.DLL命令 ', '.指针命令 ', '.图片 ', '.声音 ']
 function isNonCommentableDeclLine(body: string): boolean {
   const t = body.replace(/[\r\t]/g, '')
   return NON_COMMENTABLE_DECL_PREFIXES.some(p => t === p.trim() || t.startsWith(p))
@@ -360,6 +362,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const suppressBlurCommitUntilRef = useRef(0) // 键盘切行时临时屏蔽 blur->commit，避免编辑态被抢占清空
   // 行级快捷键(Ctrl+K/M 屏蔽、F10 删除行、Insert 插入新行)用：这些函数定义在键盘 handler 之后，
   // 经 ref 转发（deps 数组直引会 TS2454）。菜单标注的行级快捷键须在编辑态与非编辑态都生效。
+  // 长文本常量编辑弹窗（对齐易语言：值格显示 `<文本长度: N>`，点击弹「请输入文本」多行框）
+  const [longTextEditor, setLongTextEditor] = useState<{ lineIndex: number; name: string } | null>(null)
+  const [longTextValue, setLongTextValue] = useState('')
+  const longTextAreaRef = useRef<HTMLTextAreaElement | null>(null)
+
   const applyLineCommentStateRef = useRef<(mode: 'block' | 'unblock') => void>(() => {})
   const deleteLineSelectionRef = useRef<(selection: Set<number>) => boolean>(() => false)
   const applyEditorContextActionRef = useRef<(action: 'insertLine' | 'newConstant' | 'newGlobalVar' | 'newDataType' | 'newResource' | 'newDllCommand') => void>(() => {})
@@ -6661,6 +6668,42 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   applyLineCommentStateRef.current = applyLineCommentState
 
+  /** 打开长文本常量编辑弹窗：把行内转义值还原成真实多行文本 */
+  const openLongTextEditor = useCallback((lineIndex: number) => {
+    const raw = (prevRef.current.split('\n')[lineIndex] || '').replace(/[\r\t]/g, '').trim()
+    if (!raw.startsWith('.长文本常量 ')) return
+    const parts = splitCSV(raw.slice('.长文本常量 '.length))
+    setLongTextEditor({ lineIndex, name: (parts[0] || '').trim() })
+    setLongTextValue(unescapeLongTextValue(unquote((parts[1] || '').trim())))
+    setEditCell(null)
+    window.setTimeout(() => longTextAreaRef.current?.focus(), 0)
+  }, [])
+
+  /** 确认：真实多行文本转义回单行存储（其余字段保持不变） */
+  const commitLongTextEditor = useCallback(() => {
+    if (!longTextEditor) return
+    const { lineIndex } = longTextEditor
+    const ls = prevRef.current.split('\n')
+    const raw = ls[lineIndex]
+    if (raw === undefined) { setLongTextEditor(null); return }
+    const next = rebuildLineField(raw, 1, `"${escapeLongTextValue(longTextValue)}"`, false)
+    if (next !== raw) {
+      pushUndo(prevRef.current)
+      const nl = [...ls]; nl[lineIndex] = next
+      applyTextChange(nl.join('\n'))
+    }
+    setLongTextEditor(null)
+  }, [longTextEditor, longTextValue, pushUndo, applyTextChange])
+
+  /** 导入文本：选文件读入替换编辑框内容（不直接落盘，仍需「确认」） */
+  const importLongTextFromFile = useCallback(async () => {
+    const filePath = await window.api?.file?.openDialog?.()
+    if (!filePath) return
+    const content = await window.api?.project?.readFile?.(filePath)
+    if (typeof content === 'string') setLongTextValue(content)
+    longTextAreaRef.current?.focus()
+  }, [])
+
   const pasteFromClipboardAtContext = useCallback(() => {
 
     if (shouldUseNativeInputPaste(editCellRef.current)) return
@@ -6696,7 +6739,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })
   }, [editorContextMenu?.lineIndex, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted, onChange, onRouteDeclarationPaste, pushUndo, sanitizePastedTextForCurrent, shouldUseNativeInputPaste, localRouteLanguage])
 
-  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'newConstant' | 'newGlobalVar' | 'newDataType' | 'newResource' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
+  const applyEditorContextAction = useCallback((action: 'newSubprogram' | 'newDllCommand' | 'newPtrCommand' | 'newConstant' | 'newGlobalVar' | 'newDataType' | 'newResource' | 'newLongConstant' | 'undo' | 'redo' | 'copy' | 'cut' | 'paste' | 'delete' | 'insertLine' | 'compileLine' | 'block' | 'unblock' | 'selectAll') => {
     if (action === 'newSubprogram') {
       setEditorContextMenu(null)
       if (ref && typeof ref !== 'function') {
@@ -6704,7 +6747,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       }
       return
     }
-    if (action === 'newConstant' || action === 'newGlobalVar' || action === 'newDataType' || action === 'newResource') {
+    if (action === 'newConstant' || action === 'newGlobalVar' || action === 'newDataType' || action === 'newResource' || action === 'newLongConstant') {
       // 常量表（ecs）/全局变量表（egv）/数据类型表（edt）/资源表（erc）：追加新声明并滚动高亮（对齐易语言右键「N.新×××」）
       setEditorContextMenu(null)
       // 防御纵深:挂着的单元格/行编辑态先丢弃并抑制其 blur 提交——追加行后行号平移,残留编辑态的
@@ -6713,8 +6756,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         suppressBlurCommitUntilRef.current = Date.now() + 300
         setEditCell(null)
       }
-      const declPrefix = action === 'newConstant' ? '.常量 ' : action === 'newGlobalVar' ? '.全局变量 ' : action === 'newResource' ? '.资源 ' : '.数据类型 '
-      const baseName = action === 'newConstant' ? '常量' : action === 'newGlobalVar' ? '全局变量' : action === 'newResource' ? '资源' : '数据类型'
+      const declPrefix = action === 'newConstant' ? '.常量 ' : action === 'newGlobalVar' ? '.全局变量 ' : action === 'newResource' ? '.资源 ' : action === 'newLongConstant' ? '.长文本常量 ' : '.数据类型 '
+      const baseName = action === 'newConstant' ? '常量' : action === 'newGlobalVar' ? '全局变量' : action === 'newResource' ? '资源' : action === 'newLongConstant' ? '长文本常量' : '数据类型'
       const baseText = prevRef.current
       const curLines = baseText.split('\n')
       const existingNames = new Set<string>()
@@ -6730,7 +6773,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       // 数据类型是两行块（声明+首个成员，与项目树新建格式一致）；常量/全局变量是单行
       const newDeclLines = action === 'newDataType'
         ? [`.数据类型 数据类型${num}`, '    .成员 成员1, 整数型']
-        : [`${declPrefix}${baseName}${num}${action === 'newConstant' ? ', ""' : action === 'newResource' ? ', "", 其它' : ', 整数型'}`]
+        : [`${declPrefix}${baseName}${num}${action === 'newConstant' || action === 'newLongConstant' ? ', ""' : action === 'newResource' ? ', "", 其它' : ', 整数型'}`]
       let end = curLines.length
       while (end > 0 && curLines[end - 1].replace(/[\r\t]/g, '').trim() === '') end--
       const nl = [...curLines.slice(0, end), ...newDeclLines, '']
@@ -8198,16 +8241,25 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                 className={`${cell.cls} Rowheight${cell.align ? ' eyc-cell-align-center' : ''}${isInvalidVarNameCell ? ' eyc-cell-invalid' : ''}${editCell && editCell.booleanCell && editCell.lineIndex === row.lineIndex && editCell.cellIndex === ci ? ' eyc-cell-bool-focus' : ''}`}
                                 colSpan={cell.colSpan}
                                 onMouseDown={handleTableCellMouseDown}
-                                onClick={(e) => handleTableCellClick(e, {
-                                  rowIsHeader: !!row.isHeader,
-                                  tableType: blk.tableType,
-                                  lineIndex: row.lineIndex,
-                                  cellIndex: ci,
-                                  fieldIdx: cell.fieldIdx,
-                                  text: cell.text,
-                                  sliceField: cell.sliceField,
-                                })}
-                                onDoubleClick={(e) => handleTableCellDoubleClick(e, {
+                                onClick={(e) => {
+                                  // 长文本常量的值格：弹多行文本编辑框，绝不进行内编辑
+                                  //（占位文本 `<文本长度: N>` 若被行内编辑写回，真值就没了）
+                                  if (cell.longText && !row.isHeader) {
+                                    e.stopPropagation()
+                                    openLongTextEditor(row.lineIndex)
+                                    return
+                                  }
+                                  handleTableCellClick(e, {
+                                    rowIsHeader: !!row.isHeader,
+                                    tableType: blk.tableType,
+                                    lineIndex: row.lineIndex,
+                                    cellIndex: ci,
+                                    fieldIdx: cell.fieldIdx,
+                                    text: cell.text,
+                                    sliceField: cell.sliceField,
+                                  })
+                                }}
+                                onDoubleClick={(e) => cell.longText && !row.isHeader ? e.stopPropagation() : handleTableCellDoubleClick(e, {
                                   rowIsHeader: !!row.isHeader,
                                   tableType: blk.tableType,
                                   lineIndex: row.lineIndex,
@@ -9241,7 +9293,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           ) : docLanguage === 'ecs' ? (
             // 常量表：对齐易语言常量编辑器右键菜单（新长文本常量/跳回先前位置为易语言项，功能暂未接、先禁用占位）
             <>
-              <button type="button" className="eyc-editor-context-menu-item" disabled>
+              <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newLongConstant')}>
                 <span className="eyc-editor-context-menu-item-label">X.新长文本常量</span>
               </button>
               <button type="button" className="eyc-editor-context-menu-item" onClick={() => applyEditorContextAction('newConstant')}>
@@ -9335,6 +9387,33 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
               </button>
             </>
           )}
+        </div>
+      )}
+      {longTextEditor && (
+        <div
+          className="eyc-longtext-mask"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setLongTextEditor(null) }}
+        >
+          <div className="eyc-longtext-dialog" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="eyc-longtext-title">请输入文本：</div>
+            <textarea
+              ref={longTextAreaRef}
+              className="eyc-longtext-area"
+              value={longTextValue}
+              spellCheck={false}
+              onChange={(e) => setLongTextValue(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation()   // 文本框内的按键不外泄给编辑器行级快捷键（F10/Ins/Ctrl+K…）
+                if (e.key === 'Escape') { e.preventDefault(); setLongTextEditor(null) }
+              }}
+            />
+            <div className="eyc-longtext-buttons">
+              <button type="button" className="eyc-longtext-btn" onClick={() => { void importLongTextFromFile() }}>导入文本(I)</button>
+              <span className="eyc-longtext-spacer" />
+              <button type="button" className="eyc-longtext-btn" onClick={commitLongTextEditor}>确认(O)</button>
+              <button type="button" className="eyc-longtext-btn" onClick={() => setLongTextEditor(null)}>取消(C)</button>
+            </div>
+          </div>
         </div>
       )}
       {debugHover && (

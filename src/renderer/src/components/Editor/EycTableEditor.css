@@ -2500,3 +2500,69 @@ tr.eyc-data-row.eyc-diff-highlight > td.Remarkscolor {
   background-clip: border-box !important;
   -webkit-text-fill-color: currentColor !important;
 }
+
+/* ===== 长文本常量编辑弹窗（对齐易语言「请输入文本：」对话框）===== */
+.eyc-longtext-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+.eyc-longtext-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(760px, 82vw);
+  height: min(560px, 76vh);
+  padding: 12px;
+  border: 1px solid var(--border-color, #555);
+  border-radius: 4px;
+  background: var(--bg-secondary, #252526);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+.eyc-longtext-title {
+  font-size: 13px;
+  color: var(--text-primary, #ddd);
+  flex-shrink: 0;
+}
+.eyc-longtext-area {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color, #555);
+  border-radius: 2px;
+  background: var(--bg-primary, #1e1e1e);
+  color: var(--text-primary, #ddd);
+  font-family: var(--eyc-editor-font-family, Consolas, monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+}
+.eyc-longtext-area:focus {
+  outline: 1px solid var(--accent-color, #0a84ff);
+}
+.eyc-longtext-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.eyc-longtext-spacer { flex: 1; }
+.eyc-longtext-btn {
+  min-width: 92px;
+  padding: 5px 14px;
+  border: 1px solid var(--border-color, #555);
+  border-radius: 2px;
+  background: var(--bg-tertiary, #333);
+  color: var(--text-primary, #ddd);
+  font-size: 12px;
+  cursor: pointer;
+}
+.eyc-longtext-btn:hover {
+  background: var(--bg-hover, #3a3a3a);
+}
