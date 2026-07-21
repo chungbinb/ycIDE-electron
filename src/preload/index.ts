@@ -45,6 +45,11 @@ const api = {
     forceClose: () => ipcRenderer.send('window:forceClose')
   },
   // 文件操作
+  clipboard: {
+    /** 易语言私有剪贴板格式：把粘贴文本里的 `<文本长度: N>` 占位还原成真实长文本常量（无则返回 null） */
+    restoreEycLongTexts: (pastedText: string) =>
+      ipcRenderer.invoke('clipboard:restoreEycLongTexts', pastedText) as Promise<{ text: string; restored: number } | null>,
+  },
   file: {
     openDialog: () => ipcRenderer.invoke('file:openDialog') as Promise<string | null>,
     saveDialog: (defaultPath?: string) => ipcRenderer.invoke('file:saveDialog', defaultPath) as Promise<string | null>,
