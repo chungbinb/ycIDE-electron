@@ -1026,12 +1026,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (!wrapper) return
     const rect = wrapper.getBoundingClientRect()
     const EDGE = 24            // 距边界 24px 内即开始滚动（不必真的拖出窗口）
-    const MAX_SPEED = 24       // 每帧最大滚动像素
+    const MAX_SPEED = 120      // 每帧最大滚动像素（60fps ≈ 7200px/s ≈ 每秒 320 行）
+    // 速度曲线：近边界慢速可精调，越界越远越快（平方增长），远拖时迅速到顶速
+    const speedOf = (over: number): number => Math.min(MAX_SPEED, Math.ceil(3 + over * 0.9 + over * over / 90))
     let speed = 0
     if (clientY > rect.bottom - EDGE) {
-      speed = Math.min(MAX_SPEED, Math.ceil((clientY - (rect.bottom - EDGE)) / 3) + 2)
+      speed = speedOf(clientY - (rect.bottom - EDGE))
     } else if (clientY < rect.top + EDGE) {
-      speed = -Math.min(MAX_SPEED, Math.ceil(((rect.top + EDGE) - clientY) / 3) + 2)
+      speed = -speedOf((rect.top + EDGE) - clientY)
     }
     autoScrollSpeedRef.current = speed
     autoScrollClientXRef.current = clientX
