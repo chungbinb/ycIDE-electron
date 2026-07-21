@@ -1002,6 +1002,55 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return closest
   }, [])
 
+  // ===== 拖选到边界自动滚动 =====
+  // 鼠标按住多选拖到编辑器上/下边界外时持续滚动并继续扩选（用户报：往下划超出编辑器没有自动滚动）。
+  // 用 rAF 循环而非 setInterval：与渲染同频、松手即停；速度按越界距离线性增长（最快 ~24px/帧）。
+  const lastDragClientYRef = useRef(0)   // 自动滚动每帧扩选时用的最新鼠标 Y
+  const autoScrollRafRef = useRef(0)
+  const autoScrollSpeedRef = useRef(0)
+  const autoScrollClientXRef = useRef(0)
+  /** 拖选中每帧：滚动一步并按当前鼠标 Y 继续扩选 */
+  const dragAutoScrollStepRef = useRef<(() => void) | null>(null)
+
+  const stopDragAutoScroll = useCallback(() => {
+    if (autoScrollRafRef.current) {
+      cancelAnimationFrame(autoScrollRafRef.current)
+      autoScrollRafRef.current = 0
+    }
+    autoScrollSpeedRef.current = 0
+  }, [])
+
+  /** 按鼠标位置更新自动滚动速度（越界越快；回到可视区内即停） */
+  const updateDragAutoScroll = useCallback((clientX: number, clientY: number) => {
+    const wrapper = wrapperRef.current
+    if (!wrapper) return
+    const rect = wrapper.getBoundingClientRect()
+    const EDGE = 24            // 距边界 24px 内即开始滚动（不必真的拖出窗口）
+    const MAX_SPEED = 24       // 每帧最大滚动像素
+    let speed = 0
+    if (clientY > rect.bottom - EDGE) {
+      speed = Math.min(MAX_SPEED, Math.ceil((clientY - (rect.bottom - EDGE)) / 3) + 2)
+    } else if (clientY < rect.top + EDGE) {
+      speed = -Math.min(MAX_SPEED, Math.ceil(((rect.top + EDGE) - clientY) / 3) + 2)
+    }
+    autoScrollSpeedRef.current = speed
+    autoScrollClientXRef.current = clientX
+    if (speed === 0) { stopDragAutoScroll(); return }
+    if (autoScrollRafRef.current) return
+    const tick = (): void => {
+      const w = wrapperRef.current
+      const sp = autoScrollSpeedRef.current
+      if (!w || sp === 0) { autoScrollRafRef.current = 0; return }
+      const before = w.scrollTop
+      w.scrollTop = before + sp
+      if (w.scrollTop !== before) dragAutoScrollStepRef.current?.()   // 滚动到位后按新布局继续扩选
+      autoScrollRafRef.current = requestAnimationFrame(tick)
+    }
+    autoScrollRafRef.current = requestAnimationFrame(tick)
+  }, [stopDragAutoScroll])
+
+  useEffect(() => () => stopDragAutoScroll(), [stopDragAutoScroll])
+
   /** 计算 anchor 到 end 之间的行集合 */
   const rangeSet = useCallback((a: number, b: number): Set<number> => {
     const lo = Math.min(a, b), hi = Math.max(a, b)
@@ -1496,6 +1545,15 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         // 确保锚点行也被选中（首次拖入超过阈值时）
         setSelectedLines(rangeSet(dragAnchor.current, li))
       }
+      // 拖到编辑器上/下边界附近：持续滚动并随滚动继续扩选
+      dragAutoScrollStepRef.current = () => {
+        const anchor = dragAnchor.current
+        if (anchor === null) return
+        const liNow = findLineAtY(lastDragClientYRef.current)
+        if (liNow >= 0) setSelectedLines(rangeSet(anchor, liNow))
+      }
+      lastDragClientYRef.current = e.clientY
+      updateDragAutoScroll(e.clientX, e.clientY)
     }
     const onUp = (e: MouseEvent): void => {
       pendingParamDragRef.current = null  // 没拖出输入框就松手＝普通点击/框选文字，待定作废
@@ -1527,6 +1585,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       lineTextDragCandidateRef.current = null
       isDragging.current = false
       pendingInputDragRef.current = null
+      stopDragAutoScroll()   // 松手立即停止边界自动滚动
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
