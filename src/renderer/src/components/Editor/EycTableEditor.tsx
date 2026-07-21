@@ -67,7 +67,7 @@ import {
   renderFlowSegsLine,
 } from './editorFlowRenderUtils'
 import { buildMultiLinePasteResult, relocateMisplacedLocalVarLines } from './editorPasteUtils'
-import { useEditorInteractionHandlers } from './useEditorInteractionHandlers'
+import { useEditorInteractionHandlers, EYC_LONG_TEXT_PLACEHOLDER_RE } from './useEditorInteractionHandlers'
 import {
   getCmdIconClass,
   getCmdIconLabel,
@@ -362,6 +362,19 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const suppressBlurCommitUntilRef = useRef(0) // 键盘切行时临时屏蔽 blur->commit，避免编辑态被抢占清空
   // 行级快捷键(Ctrl+K/M 屏蔽、F10 删除行、Insert 插入新行)用：这些函数定义在键盘 handler 之后，
   // 经 ref 转发（deps 数组直引会 TS2454）。菜单标注的行级快捷键须在编辑态与非编辑态都生效。
+  // 从易语言复制的长文本常量，文本形态只有占位 `.常量 名, "<文本长度: N>"`（真值在私有剪贴板格式
+  // EClipFormat 里）。**所有**粘贴入口（wrapper onPaste / 键盘 Ctrl+V / 右键菜单粘贴 / 快捷键分派）
+  // 都要过这一层，否则不同入口行为不一致（用户报：右键粘贴与非编辑态 Ctrl+V 没效果）。
+  const restoreEycLongTextsIfAny = useCallback(async (clipText: string): Promise<string> => {
+    if (!clipText || !EYC_LONG_TEXT_PLACEHOLDER_RE.test(clipText)) return clipText
+    try {
+      const restored = await window.api?.clipboard?.restoreEycLongTexts?.(clipText)
+      return restored?.text || clipText
+    } catch {
+      return clipText   // 还原失败按原文粘贴，绝不阻断
+    }
+  }, [])
+
   // 长文本常量编辑弹窗（对齐易语言：值格显示 `<文本长度: N>`，点击弹「请输入文本」多行框）
   const [longTextEditor, setLongTextEditor] = useState<{ lineIndex: number; name: string } | null>(null)
   const [longTextValue, setLongTextValue] = useState('')
@@ -1754,7 +1767,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         if (state && state.cellIndex === -1 && state.paramIdx === undefined) return
         if (shouldUseNativeInputPaste(editCellRef.current)) return
         e.preventDefault()
-        navigator.clipboard.readText().then(clipText => {
+        navigator.clipboard.readText().then(restoreEycLongTextsIfAny).then(clipText => {
           const latestText = prevRef.current
           const cursorLine = editCellRef.current?.lineIndex ?? lastFocusedLine.current
           const pasteResult = buildMultiLinePasteResult({
@@ -6000,7 +6013,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     if (shouldUseNativeInputPaste(editCell)) return false
 
     setAcVisible(false)
-    navigator.clipboard.readText().then(clipText => {
+    navigator.clipboard.readText().then(restoreEycLongTextsIfAny).then(clipText => {
       const cursorLine = editCell?.lineIndex ?? lastFocusedLine.current
       debugFlowPaste('paste-shortcut:input', {
         cursorLine,
@@ -6707,7 +6720,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   const pasteFromClipboardAtContext = useCallback(() => {
 
     if (shouldUseNativeInputPaste(editCellRef.current)) return
-    void navigator.clipboard.readText().then(clipText => {
+    void navigator.clipboard.readText().then(restoreEycLongTextsIfAny).then(clipText => {
       if (!clipText) return
       const latestText = prevRef.current
       const cursorLine = editCellRef.current?.lineIndex

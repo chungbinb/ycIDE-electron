@@ -2,7 +2,7 @@ import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction 
 import { buildMultiLinePasteResult } from './editorPasteUtils'
 
 // 易语言长文本常量在文本形态里的占位：`.常量 名, "<文本长度: N>"`（真值在私有剪贴板格式 EClipFormat 里）
-const EYC_LONG_TEXT_PLACEHOLDER_RE = /\.常量\s+[^,，\n]+[,，]\s*["“]<文本长度:\s*\d+>["”]/
+export const EYC_LONG_TEXT_PLACEHOLDER_RE = /\.常量\s+[^,，\n]+[,，]\s*["“]<文本长度:\s*\d+>["”]/
 
 export interface TableCellActionParams {
   rowIsHeader: boolean
