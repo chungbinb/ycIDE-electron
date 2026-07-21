@@ -2898,6 +2898,13 @@ function toCLibraryConstantValue(c: LibraryConstantDef): string {
 
 // data:image/...;base64,XXXX → 原始文件字节（PNG/JPG 等编码字节，运行时由 GDI+ 解码）
 function decodeImageDataUrl(dataUrl: string): Buffer | null {
+  // 运行时用 GDI+ 解码，它**不支持 SVG**（只认 BMP/JPEG/PNG/GIF/TIFF/WMF/EMF）。
+  // 新选的图在设计器侧已自动光栅化成 PNG；这里兜住历史工程里存量的 svg+xml——
+  // 直接嵌进去运行期必然解码失败（表现为「设计器有图、运行后没图」），给出可行动的告警。
+  if (/^data:image\/svg\+xml/i.test(dataUrl)) {
+    sendMessage({ type: 'warning', text: '警告: 检测到 SVG 图片，运行时(GDI+)不支持 SVG，该图将不显示。请在属性面板重新选择一次该图片（会自动转为 PNG），或改用 PNG/JPG。' })
+    return null
+  }
   const m = /^data:[^;]*;base64,([\s\S]*)$/.exec(dataUrl)
   if (!m) return null
   try {
