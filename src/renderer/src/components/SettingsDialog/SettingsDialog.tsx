@@ -1,5 +1,5 @@
 import './SettingsDialog.css'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { DEFAULT_IDE_SETTINGS, type IDESettings } from '../../../../shared/settings'
 import type { AISupportedModel } from '../../../../shared/ai'
 
@@ -8,6 +8,8 @@ interface SettingsDialogProps {
   onClose: () => void
   onSave: (settings: IDESettings) => void
   onChange: (settings: IDESettings) => void
+  /** 由「未检测到编译器」自动弹出时置真：滚到编译分组并聚焦路径输入框，附一句引导 */
+  focusCompiler?: boolean
 }
 
 const UI_FONT_OPTIONS: Array<{ label: string; value: string }> = [
@@ -45,9 +47,20 @@ const ANDROID_EMULATOR_OPTIONS: Array<{ label: string; value: IDESettings['andro
   { label: '自定义', value: 'custom' },
 ]
 
-function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogProps): React.JSX.Element {
+function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = false }: SettingsDialogProps): React.JSX.Element {
   const [draft, setDraft] = useState<IDESettings>({ ...settings })
   const [baseline] = useState<IDESettings>({ ...settings })
+  const compilerPathRef = useRef<HTMLInputElement | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  // 因缺编译器自动弹出时，直接把用户送到那一格，省得在长列表里找
+  useEffect(() => {
+    if (!focusCompiler) return
+    const input = compilerPathRef.current
+    if (!input) return
+    input.scrollIntoView({ block: 'center' })
+    input.focus()
+  }, [focusCompiler])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
@@ -56,8 +69,16 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
         onClose()
       }
     }
+    // 本组件通过 portal 渲染进 window.open 出来的独立设置窗，但组件逻辑跑在主窗口的 JS 上下文里：
+    // 只绑主窗口 window 的话，用户在设置窗里按 Escape 事件根本传不过来（实测关不掉，得切回主窗口按）。
+    // 所以同时绑到自身所属 document 的 window 上。
+    const ownWindow = rootRef.current?.ownerDocument?.defaultView
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    if (ownWindow && ownWindow !== window) ownWindow.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      if (ownWindow && ownWindow !== window) ownWindow.removeEventListener('keydown', handleKeyDown)
+    }
   }, [baseline, onChange, onClose])
 
   const updateDraft = useCallback(<K extends keyof IDESettings>(key: K, value: IDESettings[K]) => {
@@ -96,7 +117,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
   }
 
   return (
-    <div className="settings-dialog">
+    <div className="settings-dialog" ref={rootRef}>
       <header className="settings-header settings-drag-region">
         <span className="settings-title">系统设置</span>
         <button type="button" className="settings-close" onClick={handleCancel}>×</button>
@@ -330,9 +351,15 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
         </div>
         <div className="settings-group">
           <h4 className="settings-group-title">编译</h4>
+          {focusCompiler && (
+            <p className="settings-hint settings-hint-warning">
+              未检测到编译器。请指定 Zig 编译器路径（zig.exe 或其所在目录），设置后会自动在后台准备编译环境。
+            </p>
+          )}
           <div className="settings-row">
             <span className="settings-label">编译器路径</span>
             <input
+              ref={compilerPathRef}
               type="text"
               className="settings-input"
               title="Zig 编译器路径（zig.exe 或其所在目录）"

@@ -210,3 +210,14 @@
 .settings-browse-btn:hover {
   background: var(--bg-hover, #3a3a3a);
 }
+
+/* 分组内引导提示（如「未检测到编译器」） */
+.settings-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.settings-hint-warning {
+  color: var(--warning, var(--error));
+}

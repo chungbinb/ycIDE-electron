@@ -11,6 +11,8 @@ interface StatusBarProps {
   fileEncodingLabel?: string
   encodingOptions?: string[]
   onReopenWithEncoding?: (encoding: string) => void
+  /** 编译环境预热状态（checking/warming 显示进度，failed/no-compiler 显示告警） */
+  compilerWarmup?: { phase: string; message: string; elapsedMs?: number }
 }
 
 // 光标行列独立小组件：只订阅 cursorPosStore，光标移动时仅本组件重渲染，
@@ -30,6 +32,7 @@ function StatusBar({
   fileEncodingLabel,
   encodingOptions = [],
   onReopenWithEncoding,
+  compilerWarmup,
 }: StatusBarProps): React.JSX.Element {
   const [showEncodingMenu, setShowEncodingMenu] = useState(false)
   const encodingMenuRef = useRef<HTMLDivElement | null>(null)
@@ -61,6 +64,20 @@ function StatusBar({
         <button className="statusbar-item" onClick={onToggleOutput}>
           <span aria-hidden="true">⚡</span> 就绪
         </button>
+        {/* 编译环境预热：首次使用要构建 zig 缓存（约一分钟），期间运行/编译按钮禁用，这里显示进度 */}
+        {compilerWarmup && (compilerWarmup.phase === 'checking' || compilerWarmup.phase === 'warming') && (
+          <span className="statusbar-item statusbar-warmup" title={compilerWarmup.message}>
+            <span aria-hidden="true">⏳</span> {compilerWarmup.message}
+            {compilerWarmup.phase === 'warming' && compilerWarmup.elapsedMs
+              ? ` ${Math.floor(compilerWarmup.elapsedMs / 1000)}s`
+              : ''}
+          </span>
+        )}
+        {compilerWarmup && (compilerWarmup.phase === 'failed' || compilerWarmup.phase === 'no-compiler') && (
+          <span className="statusbar-item statusbar-error" title={compilerWarmup.message}>
+            <span aria-hidden="true">⚠</span> {compilerWarmup.message}
+          </span>
+        )}
         <span className={`statusbar-item${errorCount > 0 ? ' statusbar-error' : ''}`}>
           <span aria-hidden="true">⚠</span> {errorCount} 错误, {warningCount} 警告
         </span>

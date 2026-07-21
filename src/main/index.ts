@@ -5,8 +5,9 @@ import { readFile as readFileAsync, writeFile as writeFileAsync, readdir as read
 import { spawn as spawnPty, type IPty } from 'node-pty'
 import iconv from 'iconv-lite'
 import { parseEClipLongTextConstants, restoreLongTextConstantsInPastedText } from './eclipClipboard'
+import { ensureCompilerWarm, getWarmupState, invalidateWarmup, onWarmupStateChange } from './compilerWarmup'
 import { libraryManager } from './libraryManager'
-import { runExecutable, stopExecutable, isRunning, continueDebugExecutable, setCompilerHost } from './compiler'
+import { runExecutable, stopExecutable, isRunning, continueDebugExecutable, setCompilerHost, findZigCompiler } from './compiler'
 import { compileViaWorker, notifyWorkerLibrariesChanged, setWorkerCompilerSettingsReader } from './compileWorkerClient'
 import { setRuntimeEnv } from './runtimeEnv'
 import { buildAndRunAndroidProject, shouldRunAsAndroid } from './android-runner'
@@ -1163,6 +1164,11 @@ app.whenReady().then(() => {
     return { zigPath: s.compilerZigPath || '', optimizeLevel: s.compilerOptimizeLevel }
   })
 
+  // 预热状态推送给渲染进程（禁用运行/编译按钮 + 状态栏进度）
+  onWarmupStateChange((state) => {
+    BrowserWindow.getAllWindows().forEach(w => w.webContents.send('compiler:warmupState', state))
+  })
+
   setCompilerHost({
     // 编译器路径与优化级别取自用户设置（每次读取，改设置后无需重启）
     readCompilerSettings: () => {
@@ -2247,8 +2253,17 @@ app.whenReady().then(() => {
     const current = readIDESettings()
     const merged = resolveIDESettings({ ...current, ...partial })
     writeIDESettings(merged)
+    // 换了编译器路径：作废预热就绪态并对新编译器重新检测/预热
+    if (merged.compilerZigPath !== current.compilerZigPath) {
+      invalidateWarmup()
+      void ensureCompilerWarm(findZigCompiler())
+    }
     return merged
   })
+
+  // 编译环境预热：状态查询 + 主动触发（渲染进程据此禁用运行/编译按钮并显示进度）
+  ipcMain.handle('compiler:warmupState', () => getWarmupState())
+  ipcMain.handle('compiler:ensureWarm', () => ensureCompilerWarm(findZigCompiler()))
 
   ipcMain.handle('ai:chat', (_event, request: AIChatRequest) => {
     const settings = readIDESettings()
@@ -3008,6 +3023,10 @@ app.whenReady().then(() => {
   libraryManager.scanAndAutoLoad()
 
   createWindow()
+
+  // 启动即在后台检查/预热编译环境：热则 1 秒内就绪，冷则边预热边由状态栏提示、
+  // 期间运行/编译按钮禁用（详见 compilerWarmup.ts）。不阻塞窗口创建。
+  setTimeout(() => { void ensureCompilerWarm(findZigCompiler()) }, 1200)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
