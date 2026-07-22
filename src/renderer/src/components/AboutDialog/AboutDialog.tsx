@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import './AboutDialog.css'
+import ycideLogo from '../../assets/icons/YcideLogo.png'
+import { COMPONENT_LOGOS } from './componentLogos'
 
 type AboutInfo = {
   appVersion: string
@@ -47,6 +49,7 @@ function ComponentRow({ metaKey, version }: { metaKey: string; version: string }
       title={`访问 ${meta.name} 官网`}
       onClick={() => openExternal(meta.url)}
     >
+      <span className="about-comp-icon" aria-hidden="true">{COMPONENT_LOGOS[metaKey]}</span>
       <span className="about-comp-name">{meta.name}</span>
       <span className="about-comp-ver">{version || '—'}</span>
       <span className="about-comp-link" aria-hidden="true">↗</span>
@@ -102,7 +105,7 @@ function AboutDialog({ open, onClose }: AboutDialogProps): React.JSX.Element | n
         <div className="about-body">
           {/* 品牌区 */}
           <div className="about-brand">
-            <div className="about-logo" aria-hidden="true">yc</div>
+            <img className="about-logo" src={ycideLogo} alt="ycIDE" draggable={false} />
             <div className="about-brand-text">
               <div className="about-name">ycIDE <span className="about-version">v{info?.appVersion ?? '…'}</span></div>
               <div className="about-tagline">易承语言集成开发环境 · 将易语言/易承语言转译为 C++ 再用 Zig 编译</div>

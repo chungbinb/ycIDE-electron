@@ -1,7 +1,7 @@
 ﻿import { useState, useRef, useEffect, useCallback, memo } from 'react'
 import './TitleBar.css'
 import { getPrimaryModifierLabel, getQuitShortcutLabel, getRedoShortcutLabel, isMacOSPlatform, type RuntimePlatform } from '../../utils/shortcuts'
-import ycideLogo from '../../assets/icons/YcideLogo.svg'
+import ycideLogo from '../../assets/icons/YcideLogo.png'
 
 interface MenuItem {
   label: string
