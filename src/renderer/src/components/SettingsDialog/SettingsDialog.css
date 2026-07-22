@@ -194,3 +194,30 @@
 .settings-btn-primary:hover {
   background: var(--accent-hover);
 }
+
+/* 路径类设置的「浏览…」按钮（编译器路径等） */
+.settings-browse-btn {
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border-color, #555);
+  border-radius: 3px;
+  background: var(--bg-tertiary, #333);
+  color: var(--text-primary, #ddd);
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings-browse-btn:hover {
+  background: var(--bg-hover, #3a3a3a);
+}
+
+/* 分组内引导提示（如「未检测到编译器」） */
+.settings-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.settings-hint-warning {
+  color: var(--warning, var(--error));
+}

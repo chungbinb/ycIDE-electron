@@ -18,6 +18,19 @@ import type {
 
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
 void THEME_CONFIG_VERSION
+type CompilerWarmupState = {
+  phase: 'idle' | 'checking' | 'warming' | 'ready' | 'failed' | 'no-compiler'
+  message: string
+  elapsedMs?: number
+}
+type AboutInfo = {
+  appVersion: string
+  author: string
+  license: string
+  runtime: { electron: string; chromium: string; node: string; v8: string }
+  zig: string
+  libs: { react: string; monaco: string; xterm: string; nodePty: string; vite: string; typescript: string }
+}
 type RecentOpenedItem = { type: 'project' | 'file'; path: string; label: string }
 type ThemeMenuState = { themes: string[]; currentTheme: string }
 type ThemeLifecycleSyncPayload = {
@@ -45,10 +58,26 @@ const api = {
     forceClose: () => ipcRenderer.send('window:forceClose')
   },
   // 文件操作
+  compilerEnv: {
+    /** 编译环境预热状态（未就绪时渲染进程禁用运行/编译按钮并在状态栏提示） */
+    getWarmupState: () => ipcRenderer.invoke('compiler:warmupState') as Promise<CompilerWarmupState>,
+    ensureWarm: () => ipcRenderer.invoke('compiler:ensureWarm') as Promise<CompilerWarmupState>,
+    onWarmupState: (cb: (state: CompilerWarmupState) => void) => {
+      const h = (_e: unknown, state: CompilerWarmupState): void => cb(state)
+      ipcRenderer.on('compiler:warmupState', h)
+      return () => { ipcRenderer.removeListener('compiler:warmupState', h) }
+    },
+  },
   clipboard: {
     /** 易语言私有剪贴板格式：把粘贴文本里的 `<文本长度: N>` 占位还原成真实长文本常量（无则返回 null） */
     restoreEycLongTexts: (pastedText: string) =>
       ipcRenderer.invoke('clipboard:restoreEycLongTexts', pastedText) as Promise<{ text: string; restored: number } | null>,
+  },
+  about: {
+    /** 关于窗口的版本信息（ycIDE / 运行时 / 编译器 / 框架库） */
+    getInfo: () => ipcRenderer.invoke('about:getInfo') as Promise<AboutInfo>,
+    /** 用系统默认浏览器打开外部链接（主进程只放行 http/https） */
+    openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url) as Promise<boolean>,
   },
   file: {
     openDialog: () => ipcRenderer.invoke('file:openDialog') as Promise<string | null>,

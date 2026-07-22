@@ -15,6 +15,7 @@ import EProjectImportDialog, { type EProjectImportDialogSubmit } from './compone
 import ThemeSettingsDialog from './components/ThemeSettingsDialog/ThemeSettingsDialog'
 import ThemeManager from './components/ThemeManager/ThemeManager'
 import SettingsDialog from './components/SettingsDialog/SettingsDialog'
+import AboutDialog from './components/AboutDialog/AboutDialog'
 import AIAssistantPanel from './components/AIAssistantPanel/AIAssistantPanel'
 import type { SelectionTarget, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
@@ -859,8 +860,28 @@ function App(): React.JSX.Element {
   const cursorRef = useRef<{ line?: number; sourceLine?: number; column?: number }>({})
   const [docType, setDocType] = useState('')
   const [isCompiling, setIsCompiling] = useState(false)
+  // 编译环境预热状态：未就绪时禁用运行/编译按钮（首次使用需构建 zig 缓存，详见 compilerWarmup.ts）
+  const [warmupState, setWarmupState] = useState<{ phase: string; message: string; elapsedMs?: number }>({ phase: 'idle', message: '' })
+  const [settingsFocusCompiler, setSettingsFocusCompiler] = useState(false)
+  const noCompilerPromptedRef = useRef(false)
+  const [showAbout, setShowAbout] = useState(false)
   const isCompilingRef = useRef(false)
   useEffect(() => { isCompilingRef.current = isCompiling }, [isCompiling])
+  // 订阅编译环境预热状态（主进程启动即在后台检查/预热）
+  useEffect(() => {
+    type WarmState = { phase: string; message: string; elapsedMs?: number }
+    // 绿色版解压即用，编译器目录因人而异：首次没找到就把设置窗推到用户面前（只推一次，可关闭）
+    const apply = (s: WarmState): void => {
+      setWarmupState(s)
+      if (s.phase === 'no-compiler' && !noCompilerPromptedRef.current) {
+        noCompilerPromptedRef.current = true
+        setSettingsFocusCompiler(true)
+        setShowSettings(true)
+      }
+    }
+    void window.api?.compilerEnv?.getWarmupState?.().then((s: WarmState) => { if (s) apply(s) }).catch(() => {})
+    return window.api?.compilerEnv?.onWarmupState?.(apply)
+  }, [setShowSettings])
   const [isRunning, setIsRunning] = useState(false)
   const [forceOutputTab, setForceOutputTab] = useState<'compile' | 'hint' | 'problems' | 'debug' | null>(null)
   const [breakpointsByFile, setBreakpointsByFile] = useState<Record<string, number[]>>({})
@@ -3679,6 +3700,9 @@ function App(): React.JSX.Element {
       case 'tools:themeManager':
         setShowThemeManager(true)
         break
+      case 'help:about':
+        setShowAbout(true)
+        break
 
       // 插入菜单
       case 'insert:sub':
@@ -5662,6 +5686,7 @@ function App(): React.JSX.Element {
         onDebugStepOut={handleDebugStepOut}
         onDebugRunToCursor={handleDebugRunToCursor}
         isCompiling={isCompiling}
+        compilerWarmup={warmupState}
         isRunning={isRunning}
         isDebugPaused={!!debugPause && !debugResumePending}
         platform={targetPlatform}
@@ -5857,12 +5882,14 @@ function App(): React.JSX.Element {
         fileEncodingLabel={activeFileEncodingLabel}
         encodingOptions={FILE_ENCODING_OPTIONS}
         onReopenWithEncoding={handleReopenWithEncodingClick}
+        compilerWarmup={warmupState}
       />
       {showLibrary && libraryPortalRoot && createPortal(
         <LibraryDialog open={showLibrary} onClose={() => setShowLibrary(false)} targetPlatform={targetPlatform} detachedWindow={true} />,
         libraryPortalRoot,
       )}
       <NewProjectDialog open={showNewProject} onClose={() => setShowNewProject(false)} onConfirm={handleNewProjectConfirm} />
+      <AboutDialog open={showAbout} onClose={() => setShowAbout(false)} />
       <EProjectImportDialog
         open={!!eProjectImportDialog}
         projectName={eProjectImportDialog?.projectName || ''}
@@ -5879,9 +5906,10 @@ function App(): React.JSX.Element {
       {showSettings && settingsPortalRoot && createPortal(
         <SettingsDialog
           settings={ideSettings}
-          onClose={handleSettingsCancel}
-          onSave={(s) => { void handleSettingsSaveAndClose(s) }}
+          onClose={() => { setSettingsFocusCompiler(false); handleSettingsCancel() }}
+          onSave={(s) => { setSettingsFocusCompiler(false); void handleSettingsSaveAndClose(s) }}
           onChange={handleSettingsPreviewChange}
+          focusCompiler={settingsFocusCompiler}
         />,
         settingsPortalRoot,
       )}

@@ -55,6 +55,8 @@ interface ToolbarProps {
   hasProject?: boolean
   canCompileRun?: boolean
   isCompiling?: boolean
+  /** 编译环境预热状态：未就绪时禁用运行/编译并在 tooltip 说明原因 */
+  compilerWarmup?: { phase: string; message: string; elapsedMs?: number }
   isRunning?: boolean
   isDebugPaused?: boolean
   platform?: string
@@ -84,6 +86,7 @@ function Toolbar({
   hasProject = false,
   canCompileRun,
   isCompiling = false,
+  compilerWarmup,
   isRunning = false,
   isDebugPaused = false,
   platform = 'windows',
@@ -100,10 +103,17 @@ function Toolbar({
   const mod = getPrimaryModifierLabel(runtimePlatform)
   const redoShortcut = getRedoShortcutLabel(runtimePlatform)
   const runToCursorShortcut = `${mod}+F8`
-  const canStartOrContinue = (canCompileRun ?? !!hasProject) && !isCompiling && (!isRunning || isDebugPaused)
+  // 编译环境未就绪（首次使用要构建 zig 缓存，约一分钟）时禁用运行/编译，
+  // 并把原因写进 tooltip——否则用户只看到按钮灰着不知为何。
+  const warmupPhase = compilerWarmup?.phase
+  const compilerBlocked = warmupPhase === 'checking' || warmupPhase === 'warming' || warmupPhase === 'failed' || warmupPhase === 'no-compiler'
+  const blockedReason = compilerBlocked ? (compilerWarmup?.message || '编译环境未就绪') : ''
+  const withReason = (base: string): string => (blockedReason ? `${base}（${blockedReason}）` : base)
+
+  const canStartOrContinue = (canCompileRun ?? !!hasProject) && !isCompiling && !compilerBlocked && (!isRunning || isDebugPaused)
   const canStop = !!isRunning
   const canStep = !!hasProject && !!isDebugPaused
-  const canRunToCursor = !!hasProject && !isCompiling && !isRunning
+  const canRunToCursor = !!hasProject && !isCompiling && !compilerBlocked && !isRunning
   const archOptions = platform === 'macos' || platform === 'android' || platform === 'ios' || platform === 'harmony'
     ? [{ value: 'arm64', label: 'arm64' }]
     : [
@@ -182,7 +192,7 @@ function Toolbar({
         <ToolbarButton
           className="toolbar-btn toolbar-btn-run"
           aria-label={isDebugPaused ? '继续运行' : '编译运行'}
-          title={isDebugPaused ? '继续运行 (F5)' : '编译运行 (F5)'}
+          title={withReason(isDebugPaused ? '继续运行 (F5)' : '编译运行 (F5)')}
           onAction={onCompileRun}
           disabled={!canStartOrContinue}
         >

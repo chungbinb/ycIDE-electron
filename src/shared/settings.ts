@@ -44,6 +44,16 @@ export interface IDESettings {
   aiCustomModels: AICustomModelConfig[]
   /** 支持库在线索引地址 */
   libraryStoreIndexUrl: string
+  /**
+   * Zig 编译器可执行文件路径（绿色版解压后手动指定）。
+   * 空 = 按内置目录（IDE 目录下 compiler/zig 等）自动查找。
+   */
+  compilerZigPath: string
+  /**
+   * 编译（生成可执行文件）时的优化级别。
+   * 「运行/调试」始终用 O0 保证响应速度，不受此项影响。
+   */
+  compilerOptimizeLevel: 'O0' | 'O1' | 'O2' | 'Os'
   androidSdkPath: string
   androidGradlePath: string
   androidAdbPath: string
@@ -81,6 +91,8 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   aiGlmApiKey: '',
   aiCustomModels: [],
   libraryStoreIndexUrl: DEFAULT_LIBRARY_STORE_INDEX_URL,
+  compilerZigPath: '',
+  compilerOptimizeLevel: 'O2',
   androidSdkPath: '',
   androidGradlePath: '',
   androidAdbPath: '',
@@ -137,6 +149,8 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
     aiGlmApiKey: resolveSecret(raw.aiGlmApiKey, d.aiGlmApiKey),
     aiCustomModels: resolveCustomModels(raw.aiCustomModels),
     libraryStoreIndexUrl: resolveUrl(raw.libraryStoreIndexUrl, d.libraryStoreIndexUrl),
+    compilerZigPath: resolvePath(raw.compilerZigPath, d.compilerZigPath),
+    compilerOptimizeLevel: resolveOptimizeLevel(raw.compilerOptimizeLevel, d.compilerOptimizeLevel),
     androidSdkPath: resolvePath(raw.androidSdkPath, d.androidSdkPath),
     androidGradlePath: resolvePath(raw.androidGradlePath, d.androidGradlePath),
     androidAdbPath: resolvePath(raw.androidAdbPath, d.androidAdbPath),
@@ -219,4 +233,9 @@ function resolveCustomModels(value: unknown): AICustomModelConfig[] {
     out.push({ id, label, endpoint, modelName, apiKey })
   }
   return out
+}
+
+/** 优化级别：只认白名单，非法值回落默认（避免脏配置把非法参数传给编译器） */
+function resolveOptimizeLevel(value: unknown, fallback: IDESettings['compilerOptimizeLevel']): IDESettings['compilerOptimizeLevel'] {
+  return (value === 'O0' || value === 'O1' || value === 'O2' || value === 'Os') ? value : fallback
 }

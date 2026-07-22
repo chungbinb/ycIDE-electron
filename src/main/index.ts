@@ -3,11 +3,13 @@ import { join, dirname, basename, extname } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, appendFileSync, copyFileSync, statSync, unlinkSync, rmSync } from 'fs'
 import { readFile as readFileAsync, writeFile as writeFileAsync, readdir as readdirAsync, stat as statAsync } from 'fs/promises'
 import { spawn as spawnPty, type IPty } from 'node-pty'
+import { execFile } from 'child_process'
 import iconv from 'iconv-lite'
 import { parseEClipLongTextConstants, restoreLongTextConstantsInPastedText } from './eclipClipboard'
+import { ensureCompilerWarm, getWarmupState, invalidateWarmup, onWarmupStateChange } from './compilerWarmup'
 import { libraryManager } from './libraryManager'
-import { runExecutable, stopExecutable, isRunning, continueDebugExecutable, setCompilerHost } from './compiler'
-import { compileViaWorker, notifyWorkerLibrariesChanged } from './compileWorkerClient'
+import { runExecutable, stopExecutable, isRunning, continueDebugExecutable, setCompilerHost, findZigCompiler } from './compiler'
+import { compileViaWorker, notifyWorkerLibrariesChanged, setWorkerCompilerSettingsReader } from './compileWorkerClient'
 import { setRuntimeEnv } from './runtimeEnv'
 import { buildAndRunAndroidProject, shouldRunAsAndroid } from './android-runner'
 import { normalizeRuntimePlatform } from '../shared/platform'
@@ -45,9 +47,70 @@ import { runAIChat, runAIChatStream, runAIChatWithTools, runAIEdit, runAIEditStr
 import type { EProjectImportRequest, OpenProjectSelectionResult, OpenWorkspaceFolderSelectionResult } from '../shared/eprojectImport'
 import { getEProjectImportTarget, importEProjectFile } from './eproject/importService'
 import { initPathGuard, authorizeRoot, validatePath } from './security/pathGuard'
+import { isSafeExternalUrl } from '../shared/urlSafety'
 
 const isDev = !app.isPackaged
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
+
+// ── 关于窗口的版本信息收集 ──
+export interface AboutInfo {
+  appVersion: string
+  author: string
+  license: string
+  runtime: { electron: string; chromium: string; node: string; v8: string }
+  zig: string
+  libs: { react: string; monaco: string; xterm: string; nodePty: string; vite: string; typescript: string }
+}
+
+/** 去掉 npm 版本号前的范围符（^ ~ >= 等），只留纯版本 */
+function cleanSemver(v?: string): string {
+  return v ? v.replace(/^[\^~>=<\s]+/, '').trim() : ''
+}
+
+/** 读取打包内的 package.json（asar 也可 readFileSync）。失败返回空对象，不影响关于窗其它信息 */
+function readPackageJson(): { author?: string; license?: string; dependencies?: Record<string, string>; devDependencies?: Record<string, string> } {
+  try {
+    return JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf-8'))
+  } catch {
+    return {}
+  }
+}
+
+/** 跑一次 `zig version` 拿编译器版本；找不到编译器或超时返回空串 */
+function readZigVersionForAbout(): Promise<string> {
+  const zig = findZigCompiler()
+  if (!zig) return Promise.resolve('')
+  return new Promise<string>((resolve) => {
+    execFile(zig, ['version'], { timeout: 5000 }, (err, stdout) => resolve(err ? '' : String(stdout || '').trim()))
+  })
+}
+
+async function buildAboutInfo(): Promise<AboutInfo> {
+  const pkg = readPackageJson()
+  const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) }
+  const zig = await readZigVersionForAbout()
+  return {
+    appVersion: app.getVersion(),
+    author: typeof pkg.author === 'string' && pkg.author ? pkg.author : 'chungbinb',
+    license: pkg.license || 'MIT',
+    // 运行时取真实版本（比 package.json 声明更准）
+    runtime: {
+      electron: process.versions.electron || '',
+      chromium: process.versions.chrome || '',
+      node: process.versions.node || '',
+      v8: process.versions.v8 || '',
+    },
+    zig,
+    libs: {
+      react: cleanSemver(deps['react']),
+      monaco: cleanSemver(deps['monaco-editor']),
+      xterm: cleanSemver(deps['@xterm/xterm']),
+      nodePty: cleanSemver(deps['node-pty']),
+      vite: cleanSemver(deps['vite']),
+      typescript: cleanSemver(deps['typescript']),
+    },
+  }
+}
 const APP_DISPLAY_NAME = 'ycIDE'
 const BUILTIN_LIGHT_THEME_ID: ThemeId = '默认浅色'
 const ENABLE_RENDERER_FILE_LOG = process.env.YCIDE_ENABLE_RENDERER_FILE_LOG === '1'
@@ -1158,7 +1221,22 @@ app.whenReady().then(() => {
     userDataPath: app.getPath('userData'),
     appVersion: app.getVersion(),
   })
+  setWorkerCompilerSettingsReader(() => {
+    const s = readIDESettings()
+    return { zigPath: s.compilerZigPath || '', optimizeLevel: s.compilerOptimizeLevel }
+  })
+
+  // 预热状态推送给渲染进程（禁用运行/编译按钮 + 状态栏进度）
+  onWarmupStateChange((state) => {
+    BrowserWindow.getAllWindows().forEach(w => w.webContents.send('compiler:warmupState', state))
+  })
+
   setCompilerHost({
+    // 编译器路径与优化级别取自用户设置（每次读取，改设置后无需重启）
+    readCompilerSettings: () => {
+      const s = readIDESettings()
+      return { zigPath: s.compilerZigPath || '', optimizeLevel: s.compilerOptimizeLevel }
+    },
     emitOutput: (msg) => {
       BrowserWindow.getAllWindows().forEach(w => w.webContents.send('compiler:output', msg))
     },
@@ -2237,8 +2315,17 @@ app.whenReady().then(() => {
     const current = readIDESettings()
     const merged = resolveIDESettings({ ...current, ...partial })
     writeIDESettings(merged)
+    // 换了编译器路径：作废预热就绪态并对新编译器重新检测/预热
+    if (merged.compilerZigPath !== current.compilerZigPath) {
+      invalidateWarmup()
+      void ensureCompilerWarm(findZigCompiler())
+    }
     return merged
   })
+
+  // 编译环境预热：状态查询 + 主动触发（渲染进程据此禁用运行/编译按钮并显示进度）
+  ipcMain.handle('compiler:warmupState', () => getWarmupState())
+  ipcMain.handle('compiler:ensureWarm', () => ensureCompilerWarm(findZigCompiler()))
 
   ipcMain.handle('ai:chat', (_event, request: AIChatRequest) => {
     const settings = readIDESettings()
@@ -2928,7 +3015,22 @@ app.whenReady().then(() => {
   // 编译器 IPC
   ipcMain.handle('compiler:compile', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string) => {
     // 编译走工作线程，避免阻塞主进程导致 IDE「停止响应」。
-    return compileViaWorker({ projectDir, debug: true, arch, mode: 'compile' }, editorFilesObj)
+    // 普通编译 = 发布编译：debug=false → 关掉断点/逐行调试输出（YC_DEBUG_BUILD=0），
+    // 并让编译走用户在设置里选的优化级别（运行 F5 才强制 O0 保证响应速度）。
+    const result = await compileViaWorker({ projectDir, debug: false, arch, mode: 'compile' }, editorFilesObj)
+    // 编译成功后在资源管理器里打开输出目录并选中产物，方便用户直接取用 exe
+    if (result.success && result.outputFile) {
+      try { shell.showItemInFolder(result.outputFile) } catch { /* 打开资源管理器失败无害，不影响编译结果 */ }
+    }
+    return result
+  })
+
+  // 关于窗口：版本信息 + 打开外部链接
+  ipcMain.handle('about:getInfo', async () => buildAboutInfo())
+  ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+    // 安全：只放行 http/https，杜绝被诱导打开 file:// 或自定义协议
+    if (!isSafeExternalUrl(url)) return false
+    try { await shell.openExternal(url); return true } catch { return false }
   })
 
   ipcMain.handle('compiler:run', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string, debugOptions?: { breakpoints?: Record<string, number[]>; previewWindow?: string }) => {
@@ -2998,6 +3100,10 @@ app.whenReady().then(() => {
   libraryManager.scanAndAutoLoad()
 
   createWindow()
+
+  // 启动即在后台检查/预热编译环境：热则 1 秒内就绪，冷则边预热边由状态栏提示、
+  // 期间运行/编译按钮禁用（详见 compilerWarmup.ts）。不阻塞窗口创建。
+  setTimeout(() => { void ensureCompilerWarm(findZigCompiler()) }, 1200)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

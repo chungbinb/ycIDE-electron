@@ -1,5 +1,5 @@
 import './SettingsDialog.css'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { DEFAULT_IDE_SETTINGS, type IDESettings } from '../../../../shared/settings'
 import type { AISupportedModel } from '../../../../shared/ai'
 
@@ -8,6 +8,8 @@ interface SettingsDialogProps {
   onClose: () => void
   onSave: (settings: IDESettings) => void
   onChange: (settings: IDESettings) => void
+  /** 由「未检测到编译器」自动弹出时置真：滚到编译分组并聚焦路径输入框，附一句引导 */
+  focusCompiler?: boolean
 }
 
 const UI_FONT_OPTIONS: Array<{ label: string; value: string }> = [
@@ -45,9 +47,20 @@ const ANDROID_EMULATOR_OPTIONS: Array<{ label: string; value: IDESettings['andro
   { label: '自定义', value: 'custom' },
 ]
 
-function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogProps): React.JSX.Element {
+function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = false }: SettingsDialogProps): React.JSX.Element {
   const [draft, setDraft] = useState<IDESettings>({ ...settings })
   const [baseline] = useState<IDESettings>({ ...settings })
+  const compilerPathRef = useRef<HTMLInputElement | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  // 因缺编译器自动弹出时，直接把用户送到那一格，省得在长列表里找
+  useEffect(() => {
+    if (!focusCompiler) return
+    const input = compilerPathRef.current
+    if (!input) return
+    input.scrollIntoView({ block: 'center' })
+    input.focus()
+  }, [focusCompiler])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
@@ -56,8 +69,16 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
         onClose()
       }
     }
+    // 本组件通过 portal 渲染进 window.open 出来的独立设置窗，但组件逻辑跑在主窗口的 JS 上下文里：
+    // 只绑主窗口 window 的话，用户在设置窗里按 Escape 事件根本传不过来（实测关不掉，得切回主窗口按）。
+    // 所以同时绑到自身所属 document 的 window 上。
+    const ownWindow = rootRef.current?.ownerDocument?.defaultView
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    if (ownWindow && ownWindow !== window) ownWindow.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      if (ownWindow && ownWindow !== window) ownWindow.removeEventListener('keydown', handleKeyDown)
+    }
   }, [baseline, onChange, onClose])
 
   const updateDraft = useCallback(<K extends keyof IDESettings>(key: K, value: IDESettings[K]) => {
@@ -67,6 +88,12 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
       return next
     })
   }, [onChange])
+
+  /** 浏览选择 zig 可执行文件（绿色版解压到任意目录，手填路径易错） */
+  const pickCompilerPath = useCallback(async () => {
+    const picked = await window.api?.file?.openDialog?.()
+    if (picked) updateDraft('compilerZigPath', picked)
+  }, [updateDraft])
 
   const handleNumberChange = (key: keyof IDESettings, raw: string): void => {
     const n = parseInt(raw, 10)
@@ -90,7 +117,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
   }
 
   return (
-    <div className="settings-dialog">
+    <div className="settings-dialog" ref={rootRef}>
       <header className="settings-header settings-drag-region">
         <span className="settings-title">系统设置</span>
         <button type="button" className="settings-close" onClick={handleCancel}>×</button>
@@ -322,6 +349,48 @@ function SettingsDialog({ settings, onClose, onSave, onChange }: SettingsDialogP
             <span className="settings-unit" />
           </div>
         </div>
+        <div className="settings-group">
+          <h4 className="settings-group-title">编译</h4>
+          {focusCompiler && (
+            <p className="settings-hint settings-hint-warning">
+              未检测到编译器。请指定 Zig 编译器路径（zig.exe 或其所在目录），设置后会自动在后台准备编译环境。
+            </p>
+          )}
+          <div className="settings-row">
+            <span className="settings-label">编译器路径</span>
+            <input
+              ref={compilerPathRef}
+              type="text"
+              className="settings-input"
+              title="Zig 编译器路径（zig.exe 或其所在目录）"
+              value={draft.compilerZigPath}
+              onChange={(e) => updateDraft('compilerZigPath', e.target.value)}
+              placeholder="留空自动查找 IDE 目录下 compiler\zig"
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              className="settings-browse-btn"
+              onClick={() => { void pickCompilerPath() }}
+            >浏览…</button>
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">优化级别</span>
+            <select
+              className="settings-input"
+              title="编译（生成可执行文件）时的优化级别；运行/调试始终用 O0 保证响应速度"
+              value={draft.compilerOptimizeLevel}
+              onChange={(e) => updateDraft('compilerOptimizeLevel', e.target.value as IDESettings['compilerOptimizeLevel'])}
+            >
+              <option value="O0">O0（不优化，编译最快）</option>
+              <option value="O1">O1（轻度优化）</option>
+              <option value="O2">O2（发布推荐）</option>
+              <option value="Os">Os（优化体积）</option>
+            </select>
+            <span className="settings-unit" />
+          </div>
+        </div>
+
         <div className="settings-group">
           <h4 className="settings-group-title">Android 运行</h4>
           <div className="settings-row">

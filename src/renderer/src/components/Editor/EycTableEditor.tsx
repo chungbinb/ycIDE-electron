@@ -88,6 +88,7 @@ import {
   isValidVariableLikeName,
   normalizeMemberTypeName,
   rebuildLineField,
+  textPosForRelativeX,
   rebuildLineFlagField,
   splitDebugRenderableText,
   findControlMethodCompletion,
@@ -1350,28 +1351,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const input = inputRef.current
     if (!input) return
     const rect = input.getBoundingClientRect()
-    const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.font = getComputedStyle(input).font || '13px "Consolas", "Cascadia Mono", "MS Gothic", "NSimSun", "Microsoft YaHei UI", monospace'
+    const cs = getComputedStyle(input)
     const text = input.value
-    const posForClientX = (cx: number): number => {
-      let relX = cx - rect.left
-      if (relX < 0) relX = 0
-      const fullWidth = ctx.measureText(text).width
-      let pos = text.length
-      if (relX < fullWidth) {
-        for (let i = 1; i <= text.length; i++) {
-          const w = ctx.measureText(text.slice(0, i)).width
-          if (w > relX) {
-            const wPrev = ctx.measureText(text.slice(0, i - 1)).width
-            pos = (relX - wPrev < w - relX) ? i - 1 : i
-            break
-          }
-        }
-      }
-      return pos
-    }
+
+    // 按输入框真实字体换算 + 计入水平滚动（详见 textPosForRelativeX 的注释）
+    const contentLeft = rect.left + parseFloat(cs.paddingLeft || '0') + parseFloat(cs.borderLeftWidth || '0')
+    const posForClientX = (cx: number): number =>
+      textPosForRelativeX(input, text, cx - contentLeft + input.scrollLeft)
     const anchorPos = posForClientX(anchorX)
     const headPos = posForClientX(headX)
     input.setSelectionRange(Math.min(anchorPos, headPos), Math.max(anchorPos, headPos), headPos < anchorPos ? 'backward' : 'forward')
@@ -5380,26 +5366,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             segWidth = ctx2.measureText('    '.repeat(lineMaxDepth2)).width
           }
         }
-        const canvas = document.createElement('canvas')
-        const ctx = canvas.getContext('2d')
-        if (ctx) {
-          ctx.font = '13px "Consolas", "Cascadia Mono", "MS Gothic", "NSimSun", "Microsoft YaHei UI", monospace'
+        {
+          // 按输入框**真实字体**换算（原先硬编码 13px Consolas，用户改了编辑器字体/字号就整体漂移），
+          // 并计入水平滚动：长行滚动后可视 x 与文本起点差了一整段。
+          const inputEl = inputRef.current
           const posForClientX = (cx: number): number => {
-            let relX = cx - containerLeft - segWidth // 相对于代码行内容区域
-            if (relX < 0) relX = 0
-            const fullWidth = ctx.measureText(text).width
-            let pos = text.length
-            if (relX < fullWidth) {
-              for (let i = 1; i <= text.length; i++) {
-                const w = ctx.measureText(text.slice(0, i)).width
-                if (w > relX) {
-                  const wPrev = ctx.measureText(text.slice(0, i - 1)).width
-                  pos = (relX - wPrev < w - relX) ? i - 1 : i
-                  break
-                }
-              }
-            }
-            return pos
+            const relX = cx - containerLeft - segWidth + (inputEl?.scrollLeft || 0)
+            return textPosForRelativeX(inputEl!, text, relX)
           }
           const headPos = posForClientX(clientX)
           if (selectAnchorClientX !== undefined) {
@@ -7654,25 +7627,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         input.focus()
       }
       if (clickX === undefined || valueLeft === undefined) return
-      const canvas = document.createElement('canvas')
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-      ctx.font = getComputedStyle(input).font || '12px Consolas, "Microsoft YaHei", monospace'
-      const text = input.value
-      let relX = clickX - valueLeft
-      if (relX < 0) relX = 0
-      let pos = text.length
-      const fullWidth = ctx.measureText(text).width
-      if (relX < fullWidth) {
-        for (let i = 1; i <= text.length; i++) {
-          const w = ctx.measureText(text.slice(0, i)).width
-          if (w > relX) {
-            const wPrev = ctx.measureText(text.slice(0, i - 1)).width
-            pos = (relX - wPrev < w - relX) ? i - 1 : i
-            break
-          }
-        }
-      }
+      // 同上：按真实字体换算 + 计入水平滚动
+      const pos = textPosForRelativeX(input, input.value, clickX - valueLeft + input.scrollLeft)
       input.setSelectionRange(pos, pos)
     }, 0)
   }, [])

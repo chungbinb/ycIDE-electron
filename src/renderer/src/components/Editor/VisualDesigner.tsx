@@ -520,6 +520,28 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const formBackImage = typeof form.properties?.['底图'] === 'string' && (form.properties['底图'] as string).startsWith('data:image')
     ? (form.properties['底图'] as string)
     : ''
+  // 底图 data URL 可达数 MB。若把它直接塞进 inline style 的 CSS 变量，每次重渲染都要把整串
+  // 序列化进 DOM 反复解析——大图 + 频繁重渲染时浏览器忙于处理巨型 style，背景图迟迟画不出来
+  // （设计器画布看似空白）。改成一次性转 Blob URL（短字符串 blob:…），inline style 永远轻量。
+  const formBackImageUrl = useMemo(() => {
+    if (!formBackImage) return ''
+    const comma = formBackImage.indexOf(',')
+    if (comma < 0) return formBackImage
+    try {
+      const semi = formBackImage.indexOf(';')
+      const mime = formBackImage.slice(5, semi > 0 && semi < comma ? semi : comma) || 'image/png'
+      const bin = atob(formBackImage.slice(comma + 1))
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      return URL.createObjectURL(new Blob([bytes], { type: mime }))
+    } catch {
+      return formBackImage // 解码失败退回 data URL（至少能显示，只是重些）
+    }
+  }, [formBackImage])
+  useEffect(() => {
+    if (!formBackImageUrl.startsWith('blob:')) return
+    return () => URL.revokeObjectURL(formBackImageUrl)
+  }, [formBackImageUrl])
   // 底图方式 0平铺 / 1居左上 / 2居中 / 3居右下 / 4缩放
   const formBackImageModeRaw = form.properties?.['底图方式']
   const formBackImageMode = typeof formBackImageModeRaw === 'number' && formBackImageModeRaw >= 0 && formBackImageModeRaw <= 4 ? formBackImageModeRaw : 0
@@ -984,18 +1006,22 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     }
   }, [externalSelectedId])
 
-  // 通知父组件选中状态变化
+  // 通知父组件选中状态变化。
+  // 只在「选中目标」真正变化时通知，不依赖 form——否则 form 每次引用变化（如设底图后）
+  // 都会重发 onSelectControl，而它 setSelection 又触发重渲染，在 StrictMode 下被放大成大量
+  // 重渲染。属性面板要的最新 form 由 updateFormProperty 自身的 onSelectControl 保证，这里用
+  // formRef.current 取最新即可，无需把 form 列入依赖。
   useEffect(() => {
     if (selectedId === '__form__') {
-      onSelectControl({ kind: 'form', form })
+      onSelectControl({ kind: 'form', form: formRef.current })
     } else if (selectedControl) {
       pendingNewIdRef.current = null
-      onSelectControl({ kind: 'control', control: selectedControl, form })
+      onSelectControl({ kind: 'control', control: selectedControl, form: formRef.current })
     } else if (!pendingNewIdRef.current) {
       // 仅在非新建控件等待期间才发送 null（避免 addControl 后渲染间隙闪烁）
       onSelectControl(null)
     }
-  }, [selectedId, selectedControl, form, onSelectControl])
+  }, [selectedId, selectedControl, onSelectControl])
 
   const updateControl = useCallback((id: string, patch: Partial<DesignControl>) => {
     const latestForm = formRef.current
@@ -2880,7 +2906,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               setCssVars(element, {
                 '--vd-form-width': `${visualFormWidth}px`,
                 '--vd-form-height': `${visualFormHeight}px`,
-                '--vd-form-bg-image': formBackImage ? `url("${formBackImage}")` : 'none',
+                '--vd-form-bg-image': formBackImageUrl ? `url("${formBackImageUrl}")` : 'none',
                 '--vd-form-bg-size': backImageCss.size,
                 '--vd-form-bg-repeat': backImageCss.repeat,
                 '--vd-form-bg-position': backImageCss.position,

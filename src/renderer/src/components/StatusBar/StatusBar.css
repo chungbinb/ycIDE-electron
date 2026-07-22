@@ -41,6 +41,11 @@ button.statusbar-item:focus-visible {
   color: var(--error);
 }
 
+/* 编译环境预热进度：用强调色区别于普通状态项，让用户注意到「按钮为什么灰着」 */
+.statusbar-warmup {
+  color: var(--accent, var(--text-muted));
+}
+
 .statusbar-mode {
   color: var(--text-muted);
 }
