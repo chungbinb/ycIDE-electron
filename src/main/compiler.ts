@@ -10941,15 +10941,13 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     args.push('-finput-charset=utf-8', '-fexec-charset=utf-8')
 
     // 调试/优化选项
+    // 两种场景由 options.debug 区分（调用方：运行 F5 传 true、普通编译传 false）：
+    //   运行/调试 → 带调试符号 + O0，优先响应速度与可调试性（断点、逐行输出）
+    //   普通编译  → 应用用户设置的优化级别（默认 O2），即发布编译
     if (options.debug) {
       args.push('-g', '-O0')
       sendMessage({ type: 'info', text: '优化级别: O0 (调试优先)' })
-    } else if (buildMode === 'run') {
-      // 运行按钮优先响应速度，避免每次测试都走 O2 的慢编译路径。
-      args.push('-O0', '-fno-ident')
-      sendMessage({ type: 'info', text: '优化级别: O0 (快速运行)' })
     } else {
-      // 「编译」走用户设置的优化级别（运行/调试上面两条分支仍强制 O0 保证响应速度）
       const level = compilerHost?.readCompilerSettings?.()?.optimizeLevel || 'O2'
       args.push(`-${level}`, '-fno-ident', '-ffunction-sections', '-fdata-sections')
       args.push('-Wl,--gc-sections')

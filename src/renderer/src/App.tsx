@@ -15,6 +15,7 @@ import EProjectImportDialog, { type EProjectImportDialogSubmit } from './compone
 import ThemeSettingsDialog from './components/ThemeSettingsDialog/ThemeSettingsDialog'
 import ThemeManager from './components/ThemeManager/ThemeManager'
 import SettingsDialog from './components/SettingsDialog/SettingsDialog'
+import AboutDialog from './components/AboutDialog/AboutDialog'
 import AIAssistantPanel from './components/AIAssistantPanel/AIAssistantPanel'
 import type { SelectionTarget, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
@@ -863,6 +864,7 @@ function App(): React.JSX.Element {
   const [warmupState, setWarmupState] = useState<{ phase: string; message: string; elapsedMs?: number }>({ phase: 'idle', message: '' })
   const [settingsFocusCompiler, setSettingsFocusCompiler] = useState(false)
   const noCompilerPromptedRef = useRef(false)
+  const [showAbout, setShowAbout] = useState(false)
   const isCompilingRef = useRef(false)
   useEffect(() => { isCompilingRef.current = isCompiling }, [isCompiling])
   // 订阅编译环境预热状态（主进程启动即在后台检查/预热）
@@ -3698,6 +3700,9 @@ function App(): React.JSX.Element {
       case 'tools:themeManager':
         setShowThemeManager(true)
         break
+      case 'help:about':
+        setShowAbout(true)
+        break
 
       // 插入菜单
       case 'insert:sub':
@@ -5884,6 +5889,7 @@ function App(): React.JSX.Element {
         libraryPortalRoot,
       )}
       <NewProjectDialog open={showNewProject} onClose={() => setShowNewProject(false)} onConfirm={handleNewProjectConfirm} />
+      <AboutDialog open={showAbout} onClose={() => setShowAbout(false)} />
       <EProjectImportDialog
         open={!!eProjectImportDialog}
         projectName={eProjectImportDialog?.projectName || ''}
