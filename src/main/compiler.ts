@@ -1968,17 +1968,20 @@ function resolveControlStyle(ctrlType: string, unit: LibWindowUnit | undefined, 
   return getWin32Style(ctrlType)
 }
 
-// 控件初始文本：编辑框类的空内容不能回退到控件名（空编辑框应显示为空），
-// 浏览框的窗口文本承载初始地址；按钮/标签等标题类控件保留回退控件名的行为
+// 控件初始文本：标题/内容字段只要在工程中明确存在，就必须保留其空字符串。
+// 只有旧工程完全缺失这些字段时，按钮/标签等标题类控件才回退到控件名。
 function resolveControlInitialText(
   c: { type?: string; text?: string; name?: string },
   props: Record<string, unknown>,
 ): string {
-  const fromProps = props['标题'] || props['内容'] || props['文本'] || props['地址'] || props['title'] || props['text']
+  const textKeys = ['标题', '内容', '文本', '地址', 'title', 'text']
+  const propKey = textKeys.find(key => Object.prototype.hasOwnProperty.call(props, key))
   const noNameFallback = c.type === '编辑框' || c.type === '超级编辑框' || c.type === '文本框' || c.type === 'Edit' || c.type === 'TextBox'
     || c.type === '浏览框' || c.type === 'WebView' || c.type === '网页编辑框' || c.type === 'WebEdit'
   const fallbackName = noNameFallback ? '' : (c.name || '')
-  return String(fromProps || c.text || fallbackName || '')
+  if (propKey) return String(props[propKey] ?? '')
+  if (Object.prototype.hasOwnProperty.call(c, 'text')) return typeof c.text === 'string' ? c.text : ''
+  return fallbackName
 }
 
 // 设计器属性值容错读取：属性面板存布尔/数字，但手工编辑的 .efw 可能是 '真'/'假'/数字字符串
@@ -9101,8 +9104,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         || className === 'msctls_progress32' || className === 'msctls_trackbar32' || className === 'SCROLLBAR'
       // 超级链接框(SysLink)：标题包 <a>…</a> 标记才渲染为可点击链接（点击经 WM_NOTIFY NM_CLICK 打开）。
       const isStdHyperLink = ctrl.type === '超级链接框' || ctrl.type === 'HyperLinker'
-      const text = isStdHyperLink ? `<a>${ctrl.text || ctrl.name}</a>`
-        : isEditLike ? (ctrl.text || '') : (ctrl.text || ctrl.name)
+      const text = isStdHyperLink ? `<a>${ctrl.text}</a>`
+        : isEditLike ? (ctrl.text || '') : ctrl.text
       mainCode += `    hCtrl = CreateWindowExW(${exStyle}, L"${className}", L"${escapeCString(text)}",\n`
       mainCode += `        ${style},\n`
       mainCode += `        ${ctrl.x}, ${ctrl.y}, ${ctrl.width}, ${ctrl.height},\n`
@@ -10025,7 +10028,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
             const isEditLike = isStdEdit || comboCodegen !== null || listBoxCodegen !== null || datePickerCodegen !== null || monthCalCodegen !== null
               || progressCodegen !== null || sliderCodegen !== null || scrollBarCodegen !== null
             const isStdHyperLink = ctrl.type === '超级链接框' || ctrl.type === 'HyperLinker'
-            const text = isStdHyperLink ? `<a>${ctrl.text || ctrl.name}</a>` : isEditLike ? (ctrl.text || '') : (ctrl.text || ctrl.name)
+            const text = isStdHyperLink ? `<a>${ctrl.text}</a>` : isEditLike ? (ctrl.text || '') : ctrl.text
             mainCode += `    hCtrl = CreateWindowExW(${exStyle}, L"${className}", L"${escapeCString(text)}",\n`
             mainCode += `        ${baseStyle}${visFlag}${disFlag},\n`
             mainCode += `        ${ctrl.x}, ${ctrl.y}, ${ctrl.width}, ${ctrl.height},\n`
