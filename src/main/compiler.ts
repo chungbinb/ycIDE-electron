@@ -8656,6 +8656,101 @@ function generateMainC(
       mainCode += '}\n\n'
     }
 
+    // 标签「纵向对齐方式=2(底)」自绘：Win32 STATIC 没有底对齐样式位（SS_CENTERIMAGE 只能垂直居中，
+    // 且会强制水平居中），设计器预览用 flex-end 能底对齐、编译后却回到顶部。这里为底对齐标签挂
+    // YcLblAlignProc 子类接管 WM_PAINT：背景（底图/渐变由 YcLblBgProc 的 WM_ERASEBKGND 绘制，
+    // 其余按底色/透明）→ 文字按横/纵对齐 DrawTextW(DT_BOTTOM)。
+    const labelAlignEntries: Array<{ idMacro: string; textColor: number; backColor: number; transparent: number; hasBg: boolean; hAlign: number; vAlign: number; wrap: boolean }> = []
+    for (let ci = 0; ci < winInfo.controls.length; ci++) {
+      const ctrl = winInfo.controls[ci]
+      if (!(ctrl.type === '标签' || ctrl.type === 'Label')) continue
+      const vAlign = readIntProp(ctrl.extraProps?.['纵向对齐方式'], 0)  // 0顶 1中 2底
+      if (vAlign !== 2) continue
+      const lc = buildStdLabelCodegen(ctrl.extraProps)
+      const hAlign = readIntProp(ctrl.extraProps?.['横向对齐方式'], 0)  // 0左 1中 2右
+      labelAlignEntries.push({
+        idMacro: `IDC_${ctrl.name.toUpperCase()}`,
+        textColor: lc.colorEntry?.textColor ?? 0,
+        backColor: lc.colorEntry?.backColor ?? -1,  // -1 兼容旧工程=融入窗体底色
+        transparent: lc.transparent ? 1 : 0,
+        hasBg: labelBgEntries.some(e => e.imgIdx === ci),
+        hAlign,
+        vAlign,
+        wrap: readBoolProp(ctrl.extraProps?.['是否自动折行'], false) || hAlign !== 0,  // 居中/右总是折行（与 buildStdLabelCodegen 一致）
+      })
+    }
+    // 辅助窗底对齐标签并入同一张表（控件 ID 全局唯一；辅助窗标签底图/渐变 v1 未支持）
+    for (const swx of secondaryWindows) {
+      swx.info.controls.forEach((ctrl, ci) => {
+        if (!(ctrl.type === '标签' || ctrl.type === 'Label')) return
+        const vAlign = readIntProp(ctrl.extraProps?.['纵向对齐方式'], 0)
+        if (vAlign !== 2) return
+        const lc = buildStdLabelCodegen(ctrl.extraProps)
+        const hAlign = readIntProp(ctrl.extraProps?.['横向对齐方式'], 0)
+        labelAlignEntries.push({
+          idMacro: String(swx.ctrlIds[ci]),
+          textColor: lc.colorEntry?.textColor ?? 0,
+          backColor: lc.colorEntry?.backColor ?? -1,
+          transparent: lc.transparent ? 1 : 0,
+          hasBg: false,
+          hAlign,
+          vAlign,
+          wrap: readBoolProp(ctrl.extraProps?.['是否自动折行'], false) || hAlign !== 0,
+        })
+      })
+    }
+    if (labelAlignEntries.length > 0) {
+      mainCode += '/* 标签底对齐自绘表：纵向对齐方式=2(底) 时由 YcLblAlignProc 接管 WM_PAINT，\n'
+      mainCode += '   背景（底图/渐变/底色/透明）与文字按设计期属性自绘，文字用 DrawTextW(DT_BOTTOM)。*/\n'
+      mainCode += 'typedef struct { int id; COLORREF textColor; LONG backColor; int transparent; int hasBg; int hAlign; int vAlign; int wrap; } YcLblAlignEntry;\n'
+      mainCode += 'static YcLblAlignEntry g_ycLblAligns[] = {\n'
+      for (const e of labelAlignEntries) {
+        mainCode += `    { ${e.idMacro}, (COLORREF)${e.textColor}, ${e.backColor}, ${e.transparent}, ${e.hasBg ? 1 : 0}, ${e.hAlign}, ${e.vAlign}, ${e.wrap ? 1 : 0} },\n`
+      }
+      mainCode += '};\n'
+      mainCode += 'static LRESULT CALLBACK YcLblAlignProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR ref) {\n'
+      mainCode += '    if (m == WM_NCDESTROY) { RemoveWindowSubclass(h, YcLblAlignProc, 2); return DefSubclassProc(h, m, w, l); }\n'
+      mainCode += '    if (m == WM_PAINT) {\n'
+      mainCode += '        YcLblAlignEntry* e = (YcLblAlignEntry*)ref;\n'
+      mainCode += '        PAINTSTRUCT ps; HDC hdc = BeginPaint(h, &ps);\n'
+      mainCode += '        RECT rc; GetClientRect(h, &rc);\n'
+      mainCode += '        if (e->hasBg) {\n'
+      mainCode += '            SendMessageW(h, WM_ERASEBKGND, (WPARAM)hdc, 0);  // 底图/渐变由 YcLblBgProc 的 WM_ERASEBKGND 绘制\n'
+      mainCode += '        } else if (!e->transparent) {\n'
+      mainCode += '            HBRUSH hbr;\n'
+      mainCode += '            if (e->backColor < 0) hbr = g_hFormBgBrush ? g_hFormBgBrush : GetSysColorBrush(COLOR_BTNFACE);\n'
+      mainCode += '            else { hbr = CreateSolidBrush((COLORREF)e->backColor); }\n'
+      mainCode += '            FillRect(hdc, &rc, hbr);\n'
+      mainCode += '            if (e->backColor >= 0) DeleteObject(hbr);\n'
+      mainCode += '        }\n'
+      mainCode += '        HFONT hf = (HFONT)SendMessageW(h, WM_GETFONT, 0, 0);\n'
+      mainCode += '        HGDIOBJ oldF = hf ? SelectObject(hdc, hf) : NULL;\n'
+      mainCode += '        SetBkMode(hdc, TRANSPARENT);\n'
+      mainCode += '        std::map<HWND,COLORREF>::iterator ov = g_ycTextColorOverride.find(h);\n'
+      mainCode += '        SetTextColor(hdc, ov != g_ycTextColorOverride.end() ? ov->second : e->textColor);\n'
+      mainCode += '        wchar_t ltxt[1024] = L""; GetWindowTextW(h, ltxt, 1024);\n'
+      mainCode += '        UINT baseFmt = e->wrap ? DT_WORDBREAK : DT_SINGLELINE;\n'
+      mainCode += '        UINT hFmt = (e->hAlign == 0) ? DT_LEFT : (e->hAlign == 2) ? DT_RIGHT : DT_CENTER;\n'
+      mainCode += '        if (e->wrap && e->vAlign != 0) {\n'
+      mainCode += '            // DT_BOTTOM/DT_VCENTER 只对 DT_SINGLELINE 生效（MSDN）；折行时先量文本块，再整体贴底/居中\n'
+      mainCode += '            RECT tr = rc; DrawTextW(hdc, ltxt, -1, &tr, DT_CALCRECT | baseFmt | hFmt);\n'
+      mainCode += '            int th = tr.bottom - tr.top, ch = rc.bottom - rc.top;\n'
+      mainCode += '            if (th > ch) th = ch;\n'
+      mainCode += '            int ty = (e->vAlign == 2) ? (rc.bottom - th) : (rc.top + (ch - th) / 2);\n'
+      mainCode += '            RECT dr = { rc.left, ty, rc.right, ty + th };\n'
+      mainCode += '            DrawTextW(hdc, ltxt, -1, &dr, baseFmt | hFmt);\n'
+      mainCode += '        } else {\n'
+      mainCode += '            UINT vFmt = (e->vAlign == 0) ? DT_TOP : (e->vAlign == 2) ? DT_BOTTOM : DT_VCENTER;\n'
+      mainCode += '            DrawTextW(hdc, ltxt, -1, &rc, baseFmt | hFmt | vFmt);\n'
+      mainCode += '        }\n'
+      mainCode += '        if (oldF) SelectObject(hdc, oldF);\n'
+      mainCode += '        EndPaint(h, &ps);\n'
+      mainCode += '        return 0;\n'
+      mainCode += '    }\n'
+      mainCode += '    return DefSubclassProc(h, m, w, l);\n'
+      mainCode += '}\n\n'
+    }
+
     // 超级链接框表：SysLink 控件，点击(NM_CLICK)或调用「跳转」方法时按类型 ShellExecute 打开邮件/网址。
     const hyperLinkEntries: Array<{ idMacro: string; type: number; email: string; url: string }> = []
     for (const ctrl of winInfo.controls) {
@@ -9127,6 +9222,12 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         mainCode += '    }\n'
       } else if (!isStdDrawPanel) {
         mainCode += '    SendMessage(hCtrl, WM_SETFONT, (WPARAM)hFont, TRUE);\n'
+      }
+      // 标签底对齐：纵向对齐方式=2(底) 时挂 YcLblAlignProc 接管 WM_PAINT（自绘文字 DT_BOTTOM），
+      // 须在 YcLblBgProc 之后安装以便 WM_ERASEBKGND 继续走链上底图/渐变绘制。
+      const labelAlignEntryIdx = labelAlignEntries.findIndex(e => e.idMacro === `IDC_${ctrl.name.toUpperCase()}`)
+      if (labelAlignEntryIdx >= 0) {
+        mainCode += `    SetWindowSubclass(hCtrl, YcLblAlignProc, 2, (DWORD_PTR)&g_ycLblAligns[${labelAlignEntryIdx}]);\n`
       }
       if (editCodegen) {
         // 标准 EDIT：属性已落成创建样式，动态属性用 EM_* 消息补齐，不走 WCM_SETPROP
@@ -10044,6 +10145,11 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
               mainCode += '    }\n'
             } else {
               mainCode += '    SendMessage(hCtrl, WM_SETFONT, (WPARAM)hFont, TRUE);\n'
+            }
+            // 标签底对齐：与主窗同路径，YcLblAlignProc 接管 WM_PAINT（自绘文字 DT_BOTTOM）
+            const labelAlignEntryIdx = labelAlignEntries.findIndex(e => e.idMacro === String(cid))
+            if (labelAlignEntryIdx >= 0) {
+              mainCode += `    SetWindowSubclass(hCtrl, YcLblAlignProc, 2, (DWORD_PTR)&g_ycLblAligns[${labelAlignEntryIdx}]);\n`
             }
             if (checkableCodegen?.checked) {
               mainCode += '    SendMessage(hCtrl, BM_SETCHECK, BST_CHECKED, 0);\n'
