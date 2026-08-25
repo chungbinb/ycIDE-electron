@@ -23,6 +23,9 @@ test-fne.mjs
 !.github/workflows/*.yml
 .planning/
 .vscode/
+/.idea/
+/.npmrc
+UsersAdministratorAppDataLocalTempycide-test-rc/
 resources/Visual Studio 2022 Image Library/
 
 # Compiler toolchains are local assets and should not be versioned

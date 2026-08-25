@@ -876,11 +876,21 @@ function getHostExecutableCandidates(baseName: string): string[] {
 export function findZigCompiler(): string | null {
   const configured = compilerHost?.readCompilerSettings?.()?.zigPath?.trim()
   if (configured) {
-    if (existsSync(configured)) return configured
+    // `existsSync` 对文件和目录都返回 true。目录配置必须继续向下查找，
+    // 否则会把目录直接交给 execFile，导致 Zig 无法启动、后台预热也失效。
+    try {
+      if (statSync(configured).isFile()) return configured
+    } catch {
+      // 配置路径不存在或当前进程无权读取时，继续尝试内置目录兜底。
+    }
     // 允许用户填目录而非可执行文件本身
     for (const fileName of getHostExecutableCandidates('zig')) {
       const inDir = join(configured, fileName)
-      if (existsSync(inDir)) return inDir
+      try {
+        if (statSync(inDir).isFile()) return inDir
+      } catch {
+        // 单个候选不存在时继续尝试其它候选名。
+      }
     }
   }
   const appDir = getAppDirectory()
