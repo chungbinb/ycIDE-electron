@@ -10,6 +10,9 @@ import { generateDebugRuntimeCode } from './debug-runtime'
 import { createCommandResolvers } from './compilerCommandResolvers'
 import { ycmdCommandIdToNativeSymbol } from './ycmd-registry'
 import { parseColorLiteralToColorref } from '../shared/colorNames'
+import { parseExpr as astParseExpr, exprToC as astExprToC, type TranspileContext as AstTranspileContext } from './transpiler/parser'
+import { parseStmtFromLine, emitStmt, type EycStmt } from './transpiler/stmtAst'
+import { parseVarDeclFromLine, type EycVarDecl } from './transpiler/varDeclAst'
 
 // 编译消息类型
 export interface CompileMessage {
@@ -386,7 +389,8 @@ interface TranspileCacheFile {
 // 38: 真/假/且/或 裸词替换改为引号感知——旧产物字符串字面量里的 真/假 被改写成 1/0
 // 39: 多窗口（载入/销毁）——prelude 新增 yc_win_load/yc_win_destroy 声明
 // 40: 图形按钮（PicBtn）——prelude 新增 yc_picbtn_get/set_checked 声明
-const TRANSPILE_CACHE_VERSION = 56
+// 57: parser.ts 补全角运算符转换（÷/＝/－/＋/×/＜/＞/≤/≥/≠/<>/％/＼/？=），否则 AST 路径会把全角运算符原样带过产生 undefined
+const TRANSPILE_CACHE_VERSION = 57
 
 interface BuildArtifactCacheFile {
   version: number
@@ -4075,7 +4079,7 @@ function isBigExpression(expr: string): boolean {
   return /^YC_BIG\(/.test(trimmed)
 }
 
-type VariableTypeResolver = (name: string) => string | undefined
+export type VariableTypeResolver = (name: string) => string | undefined
 
 function getExprSimpleIdentifierType(expr: string, variableTypeResolver?: VariableTypeResolver): string {
   // \u5f62\u53c2\u4f18\u5148\uff1b\u7a7f\u4e0d\u4e0b\u6765\u65f6\u9000\u5230\u6587\u4ef6\u7ea7\u515c\u5e95\uff08\u547d\u4ee4\u5b9e\u53c2\u90a3\u6761\u8def\u2014\u2014\u89c1 currentVariableTypeResolver\uff09
@@ -4317,6 +4321,37 @@ function matchEnclosingParens(expr: string): string | null {
 }
 
 function translateExpressionToC(
+  expr: string,
+  commandMap?: Map<string, ResolvedCommand>,
+  directCallables?: DirectCallableNames,
+  variableTypeResolver?: VariableTypeResolver,
+  preferBigIntLiteral = false,
+): string {
+  // AST 路径：先尝试解析为 AST，再发射为 C 字符串
+  const astCtx: AstTranspileContext = {
+    commandMap,
+    directCallables,
+    variableTypeResolver,
+    preferBigIntLiteral,
+  }
+  try {
+    const ast = astParseExpr(expr, astCtx)
+    if (typeof ast !== 'string') {
+      return astExprToC(ast, astCtx)
+    }
+  } catch {
+    // AST 解析失败，回退到原始字符串逻辑
+  }
+  return ''
+  // 原始字符串转译逻辑（fallback）
+  //return translateExpressionToCStringFallback(expr, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+}
+
+/**
+ * 原始字符串转译逻辑 —— 从原 translateExpressionToC 迁移而来
+ * 作为 AST 路径的 fallback，保证字节等价性
+ */
+function translateExpressionToCStringFallback(
   expr: string,
   commandMap?: Map<string, ResolvedCommand>,
   directCallables?: DirectCallableNames,
@@ -4719,8 +4754,8 @@ function splitArguments(argsStr: string): string[] {
 }
 
 // 将易语言参数格式化为C语言参数
-type ResolvedCommand = LibCommand & { libraryName: string; libraryFileName: string }
-type DirectCallableNames = Set<string>
+export type ResolvedCommand = LibCommand & { libraryName: string; libraryFileName: string }
+export type DirectCallableNames = Set<string>
 
 function getYcmdNativeSymbol(cmd: ResolvedCommand): string {
   return cmd.nativeSymbol || ycmdCommandIdToNativeSymbol(cmd.englishName || cmd.name || '')
