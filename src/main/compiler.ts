@@ -10,7 +10,6 @@ import { generateDebugRuntimeCode } from './debug-runtime'
 import { createCommandResolvers } from './compilerCommandResolvers'
 import { ycmdCommandIdToNativeSymbol } from './ycmd-registry'
 import { parseColorLiteralToColorref } from '../shared/colorNames'
-import { parseExpr as astParseExpr, exprToC as astExprToC, type TranspileContext as AstTranspileContext } from './transpiler/parser'
 import { parseStmtFromLine, emitStmt, type EycStmt } from './transpiler/stmtAst'
 import { parseVarDeclFromLine, type EycVarDecl } from './transpiler/varDeclAst'
 
@@ -4327,24 +4326,10 @@ function translateExpressionToC(
   variableTypeResolver?: VariableTypeResolver,
   preferBigIntLiteral = false,
 ): string {
-  // AST 路径：先尝试解析为 AST，再发射为 C 字符串
-  const astCtx: AstTranspileContext = {
-    commandMap,
-    directCallables,
-    variableTypeResolver,
-    preferBigIntLiteral,
-  }
-  try {
-    const ast = astParseExpr(expr, astCtx)
-    if (typeof ast !== 'string') {
-      return astExprToC(ast, astCtx)
-    }
-  } catch {
-    // AST 解析失败，回退到原始字符串逻辑
-  }
-  return ''
-  // 原始字符串转译逻辑（fallback）
-  //return translateExpressionToCStringFallback(expr, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+  // AST 模块仍保留并由其专属测试覆盖；在完整的字节等价覆盖前，
+  // 编译主路径以经过生产验证的字符串转译器为准，避免未覆盖的命令
+  // 和数组表达式在 AST 发射阶段产生不兼容的 C++。
+  return translateExpressionToCStringFallback(expr, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
 }
 
 /**

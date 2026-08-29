@@ -288,7 +288,7 @@ export function parseExpr(
 ): Expr | string {
   const { commandMap, directCallables, variableTypeResolver, preferBigIntLiteral = false } = ctx
   // 全角运算符 → C 运算符（字符串字面量内不改写，与 fallback 逻辑一致）
-  let expr = convertFullWidthOps(raw || '').trim()
+  const expr = convertFullWidthOps(raw || '').trim()
   // 空表达式返回字面量 0（string 形式，保持与原始逻辑一致）
   if (!expr) return '0'
 
