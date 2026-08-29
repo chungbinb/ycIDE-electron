@@ -1,0 +1,106 @@
+name: Stable Release
+
+# 只在目标为 main 的 PR 实际合并后运行；普通 push、关闭未合并的 PR 都不会发布。
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+# 构建阶段不能写入仓库或 Release。
+permissions:
+  contents: read
+
+concurrency:
+  group: stable-release-main-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  package-windows:
+    name: 构建 Windows 稳定版
+    if: github.event.pull_request.merged == true
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出已合并的提交
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      # compiler/ 是不入库的本地工具链；稳定包沿用当前分发规则，不包含该目录。
+      - name: 准备编译器目录占位
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force compiler | Out-Null
+
+      - name: 打包 Windows 稳定版
+        run: npm run package:win:zip
+
+      - name: 暂存稳定包供发布任务使用
+        uses: actions/upload-artifact@v4
+        with:
+          name: stable-package-${{ github.event.pull_request.number }}
+          path: |
+            dist/ycIDE-win-unpacked-v*.7z
+            dist/ycIDE-win-unpacked-v*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  publish-release:
+    name: 发布正式稳定版到 Releases
+    needs: package-windows
+    runs-on: windows-latest
+    # 发布任务不检出、安装或执行项目代码；只上传上一个只读任务产生的压缩包。
+    permissions:
+      contents: write
+
+    steps:
+      - name: 下载稳定包
+        uses: actions/download-artifact@v4
+        with:
+          name: stable-package-${{ github.event.pull_request.number }}
+          path: release-package
+
+      - name: 创建正式稳定版
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          $sha = $env:MERGE_SHA
+          $shortSha = $sha.Substring(0, 7)
+          $packages = @(Get-ChildItem 'release-package/ycIDE-win-unpacked-v*.7z', 'release-package/ycIDE-win-unpacked-v*.zip' -ErrorAction SilentlyContinue)
+          if ($packages.Count -ne 1) {
+            throw "预期找到 1 个稳定包，实际找到 $($packages.Count) 个。"
+          }
+
+          $version = if ($packages[0].Name -match '-v(.+)\.(7z|zip)$') { $Matches[1] } else { 'unknown' }
+          $tag = "v${version}-stable-${shortSha}"
+          $prBody = if ([string]::IsNullOrWhiteSpace($env:PR_BODY)) { '（此 PR 未填写说明。）' } else { $env:PR_BODY }
+          @"
+          ## 合并的 Pull Request
+
+          #$env:PR_NUMBER：$env:PR_TITLE
+          $env:PR_URL
+
+          ## PR 说明
+
+          $prBody
+
+          合并提交：$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/commit/$sha
+
+          > 这是自动构建的正式稳定版，不包含 compiler/ 工具链。
+          "@ | Set-Content -NoNewline release-notes.md
+
+          gh release create $tag $packages[0].FullName --target $sha --title "ycIDE v$version 稳定版 · $shortSha" --notes-file release-notes.md --latest
