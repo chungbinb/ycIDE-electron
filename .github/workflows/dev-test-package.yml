@@ -3,7 +3,6 @@ name: Dev Test Package
 on:
   push:
     branches: [dev]
-  workflow_dispatch:
 
 # 测试员只需要最新一次 dev 构建；新的提交到达时取消仍在排队或运行的旧构建。
 concurrency:
@@ -11,7 +10,8 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  # 创建带下载附件的 Release，以及自动生成对应的开发测试标签。
+  contents: write
 
 jobs:
   package-windows:
@@ -38,14 +38,28 @@ jobs:
       - name: 打包 Windows 开发测试包
         run: npm run package:win:zip
 
-      - name: 上传开发测试包
-        uses: actions/upload-artifact@v4
-        with:
-          name: ycIDE-dev-${{ github.sha }}
-          path: |
-            dist/ycIDE-win-unpacked-v*.7z
-            dist/ycIDE-win-unpacked-v*.zip
-          if-no-files-found: error
-          # 压缩包已在上一环节压缩，上传时不再重复压缩以缩短构建时间。
-          compression-level: 0
-          retention-days: 14
+      - name: 发布开发测试版到 Releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          COMMIT_URL: ${{ github.event.head_commit.url }}
+        run: |
+          $shortSha = $env:GITHUB_SHA.Substring(0, 7)
+          $tag = "dev-$shortSha"
+          $packages = @(Get-ChildItem 'dist/ycIDE-win-unpacked-v*.7z', 'dist/ycIDE-win-unpacked-v*.zip' -ErrorAction SilentlyContinue)
+          if ($packages.Count -ne 1) {
+            throw "预期生成 1 个测试包，实际找到 $($packages.Count) 个。"
+          }
+
+          @"
+          ## 本次推送说明
+
+          $env:COMMIT_MESSAGE
+
+          提交：$env:COMMIT_URL
+
+          > 这是自动构建的开发测试包，不包含 compiler/ 工具链。
+          "@ | Set-Content -NoNewline release-notes.md
+
+          gh release create $tag $packages[0].FullName --target $env:GITHUB_SHA --title "开发测试包 · $shortSha" --notes-file release-notes.md --prerelease --latest=false
