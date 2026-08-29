@@ -1,0 +1,51 @@
+name: Dev Test Package
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+# 测试员只需要最新一次 dev 构建；新的提交到达时取消仍在排队或运行的旧构建。
+concurrency:
+  group: dev-test-package-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  package-windows:
+    name: 构建 Windows 开发测试包
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      # compiler/ 是不入库的本地工具链；测试包本来也会排除它，
+      # 这里只创建占位目录以满足 electron-builder 的 extraFiles 配置。
+      - name: 准备编译器目录占位
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force compiler | Out-Null
+
+      - name: 打包 Windows 开发测试包
+        run: npm run package:win:zip
+
+      - name: 上传开发测试包
+        uses: actions/upload-artifact@v4
+        with:
+          name: ycIDE-dev-${{ github.sha }}
+          path: |
+            dist/ycIDE-win-unpacked-v*.7z
+            dist/ycIDE-win-unpacked-v*.zip
+          if-no-files-found: error
+          # 压缩包已在上一环节压缩，上传时不再重复压缩以缩短构建时间。
+          compression-level: 0
+          retention-days: 14
