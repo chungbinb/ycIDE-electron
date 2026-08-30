@@ -2023,7 +2023,22 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           </div>
         )
       }
-      case '选择列表框':
+      case '选择列表框': {
+        const props = ctrl.properties || {}
+        const items = String(props['列表项目'] ?? '').split('\n').filter(Boolean)
+        const rows = items.length ? items : ['选择项 1', '选择项 2', '选择项 3']
+        const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 16777215
+        const textNum = typeof props['文本颜色'] === 'number' ? (props['文本颜色'] as number) : 0
+        return (
+          <div className="vd-preview vd-preview-listbox" ref={(el) => setCssVars(el, {
+            '--vd-preview-bg': bgNum === 16777215 ? '#ffffff' : (colorFromNumber(bgNum) || '#ffffff'),
+            '--vd-preview-text': colorFromNumber(textNum) || controlColors.text,
+            '--vd-preview-border': controlColors.border,
+          })}>
+            {rows.slice(0, 6).map((row, index) => <span key={index} className="vd-preview-listbox-item"><span className="vd-preview-checkbox" />{row}</span>)}
+          </div>
+        )
+      }
       case '超级列表框':
         return (
           <div className="vd-preview vd-preview-list" />

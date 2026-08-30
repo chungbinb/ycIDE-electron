@@ -4,6 +4,7 @@ import type { DesignControl, DesignForm, SelectionTarget, LibWindowUnit, LibUnit
 import { parseFontSpec, stringifyFontSpec, formatFontSummary, fontSpecToCss, colorrefToHex, hexToColorref, COMMON_FONT_FAMILIES, DEFAULT_FONT_NAME, DEFAULT_FONT_SIZE, type FontSpec } from '../Editor/fontSpec'
 import Icon, { resolveUnitIconName } from '../Icon/Icon'
 import ChildTabEditorDialog from '../Editor/ChildTabEditorDialog'
+import ListItemEditorDialog from '../Editor/ListItemEditorDialog'
 import '../Icon/Icon.css'
 import './Sidebar.css'
 
@@ -1611,6 +1612,20 @@ function EditableTabListCell({ value, onChange }: { value: string; onChange: (v:
   )
 }
 
+/** 选择列表框的列表项目与项目数值：分别弹窗编辑，互不改写。 */
+function EditableListItemCell({ mode, value, controlName, controlType, onChange }: { mode: 'items' | 'values'; value: string; controlName: string; controlType: string; onChange: (value: string) => void }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const texts = String(value || '').split('\n').map(text => text.trim()).filter(Boolean)
+  const label = mode === 'values' ? '项目数值' : '列表项目'
+  const summary = texts.length ? `${texts.length} 项：${texts.slice(0, 5).join('/').slice(0, 24)}` : '（无）'
+  return (
+    <span className="prop-font-cell">
+      <button type="button" className="prop-font-btn" aria-label={label} onClick={() => setOpen(true)}>{summary} · 编辑…</button>
+      {open && <ListItemEditorDialog mode={mode} value={String(value || '')} controlName={controlName} controlType={controlType} onSave={(next) => { onChange(next); setOpen(false) }} onClose={() => setOpen(false)} />}
+    </span>
+  )
+}
+
 /** 可编辑字体属性单元格（点击弹出可拖动的浮动字体对话框，避免被侧栏裁剪；值以 JSON 字符串存） */
 function EditableFontCell({ value, onChange, ariaLabel = '字体' }: { value: string; onChange: (v: string) => void; ariaLabel?: string }): React.JSX.Element {
   const [open, setOpen] = useState(false)
@@ -1958,6 +1973,15 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
               const gradBgMode = resolveByName('渐变背景方式')
               const gradBorderOn = resolveByName('边框') === 6  // 6=渐变镜框
               return unit.properties.filter(p => !p.isReadOnly).map(p => {
+                if (typeName === '选择列表框' && (p.name === '列表项目' || p.name === '项目数值')) {
+                  const mode: 'items' | 'values' = p.name === '项目数值' ? 'values' : 'items'
+                  return (
+                    <tr key={p.name} className="prop-row">
+                      <th className="prop-name" scope="row" title={p.description}>{p.name}</th>
+                      <td className="prop-value"><EditableListItemCell mode={mode} value={String(control.properties?.[p.name] ?? '')} controlName={control.name} controlType={control.type} onChange={(value) => onPropertyChange?.('control', control.id, p.name, value)} /></td>
+                    </tr>
+                  )
+                }
                 const val = resolveControlPropValue(p, control)
                 const isTabOrder = p.name === '停留顺序'
                 const isSpinLimit = p.name === '调节器上限值' || p.name === '调节器底限值'

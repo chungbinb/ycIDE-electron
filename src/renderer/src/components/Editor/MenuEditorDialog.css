@@ -180,3 +180,17 @@
   color: #e11d48;
   font-size: 12px;
 }
+
+/* 选择列表框的项目编辑器 */
+.menued-dialog-list { width: min(540px, 92vw); }
+.menued-main { display: flex; gap: 10px; padding: 10px 12px; min-height: 0; }
+.menued-main .menued-list { flex: 1 1 auto; min-width: 0; min-height: 150px; margin: 0; }
+.menued-sidebtns { flex: 0 0 148px; display: flex; flex-direction: column; gap: 6px; }
+.menued-sidebtn { appearance: none; height: 26px; padding: 0 10px; border: 1px solid var(--border-color, #3c3c3c); border-radius: 3px; background: var(--bg-primary, #1e1e1e); color: var(--text-primary, #d4d4d4); cursor: pointer; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menued-sidebtn:hover:not(:disabled) { border-color: var(--accent, #4f8cff); }
+.menued-sidebtn:disabled { opacity: 0.4; cursor: default; }
+.menued-sidebtns-gap { height: 10px; }
+.menued-listedit { border-bottom: none; }
+.menued-listedit .menued-field > span { flex: 0 0 auto; min-width: 148px; }
+.menued-listinput { flex: 1 1 auto; min-width: 0; height: 24px; padding: 0 6px; border: 1px solid var(--border-color, #3c3c3c); border-radius: 3px; background: var(--bg-primary, #1e1e1e); color: var(--text-primary, #d4d4d4); font-size: 12px; font-family: var(--font-family, monospace); }
+.menued-listinput:disabled { opacity: 0.5; }
