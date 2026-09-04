@@ -29,31 +29,28 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
-      # package.json 保留产品基线版本；每次开发构建在 CI 中临时递增 beta 编号，
-      # 不回写仓库，避免为每次测试包制造一次无意义的版本提交。
-      - name: 生成开发构建版本
-        id: version
+      # 版本与更新说明均由提交者在项目中维护；CI 只校验并读取，绝不自行递增或改写版本。
+      - name: 校验项目版本并读取更新说明
+        id: release
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          $sourceVersion = (node -p "require('./package.json').version").Trim()
-          $source = [regex]::Match($sourceVersion, '^(?<base>\d+\.\d+\.\d+)(?:-beta\.(?<number>\d+))?$')
-          if (!$source.Success) {
-            throw "package.json 中的版本号必须为 X.Y.Z 或 X.Y.Z-beta.N，当前为：$sourceVersion"
+          $version = (node -p "require('./package.json').version").Trim()
+          if ([string]::IsNullOrWhiteSpace($version)) { throw 'package.json 缺少 version。' }
+          $lockVersion = (node -e "const p=require('./package-lock.json'); process.stdout.write(p.packages?.['']?.version || '')").Trim()
+          if ($lockVersion -ne $version) {
+            throw "package-lock.json 版本（$lockVersion）与 package.json 版本（$version）不一致；请使用 npm version 更新版本。"
           }
 
-          $base = $source.Groups['base'].Value
-          $highest = if ($source.Groups['number'].Success) { [int]$source.Groups['number'].Value } else { 0 }
-          $escapedBase = [regex]::Escape($base)
-          $releases = gh release list --limit 100 --json tagName | ConvertFrom-Json
-          foreach ($release in $releases) {
-            $match = [regex]::Match($release.tagName, "^dev-v$escapedBase-beta\.(?<number>\d+)$")
-            if ($match.Success) { $highest = [Math]::Max($highest, [int]$match.Groups['number'].Value) }
+          $updateFile = '版本更新说明.md'
+          if (!(Test-Path -LiteralPath $updateFile)) { throw "找不到更新说明文件：$updateFile" }
+          $escapedVersion = [regex]::Escape($version)
+          $updates = Get-Content -LiteralPath $updateFile -Raw
+          $section = [regex]::Match($updates, "(?ms)^##[^\r\n]*v$escapedVersion[^\r\n]*\r?\n.*?(?=^## |\z)")
+          if (!$section.Success) {
+            throw "版本更新说明.md 中找不到 v$version 的二级标题和说明；请先补齐更新说明再推送。"
           }
 
-          $version = "$base-beta.$($highest + 1)"
-          npm version $version --no-git-tag-version
+          @($section.Value.Trim(), '', '> 这是自动构建的开发测试包，不包含 compiler/ 工具链。') | Set-Content -LiteralPath release-notes.md
           "version=$version" >> $env:GITHUB_OUTPUT
 
       # compiler/ 是不入库的本地工具链；测试包本来也会排除它，
@@ -69,8 +66,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-          COMMITS_JSON: ${{ toJson(github.event.commits) }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
           $shortSha = $env:GITHUB_SHA.Substring(0, 7)
           $tag = "dev-v$env:VERSION"
@@ -78,29 +74,5 @@ jobs:
           if ($packages.Count -ne 1) {
             throw "预期生成 1 个测试包，实际找到 $($packages.Count) 个。"
           }
-
-          $commits = @($env:COMMITS_JSON | ConvertFrom-Json)
-          $commitNotes = if ($commits.Count -gt 0) {
-            ($commits | ForEach-Object {
-              $title = (($_.message -split "`r?`n")[0]).Trim()
-              "- $title ($($_.id.Substring(0, 7)))"
-            }) -join "`n"
-          } else {
-            '- 未取得推送提交详情。'
-          }
-
-          @"
-          ## 构建版本
-
-          v$env:VERSION（提交 $shortSha）
-
-          ## 本次推送提交
-
-          $commitNotes
-
-          提交详情：$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA
-
-          > 这是自动构建的开发测试包，不包含 compiler/ 工具链。
-          "@ | Set-Content -NoNewline release-notes.md
 
           gh release create $tag $packages[0].FullName --target $env:GITHUB_SHA --title "开发测试包 · v$env:VERSION · $shortSha" --notes-file release-notes.md --prerelease --latest=false

@@ -34,35 +34,28 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
-      # 正式版从 package.json 的基础版本起算；若该版本已发布，则自动递增补丁号。
-      # 版本仅用于本次 CI 打包，不向合并后的 main 额外写入机器人提交。
-      - name: 生成正式构建版本
-        id: version
+      # 版本与更新说明均由合入 main 的项目提交维护；CI 只校验并读取。
+      - name: 校验项目版本并读取更新说明
+        id: release
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          $sourceVersion = (node -p "require('./package.json').version").Trim()
-          $source = [regex]::Match($sourceVersion, '^(?<base>\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$')
-          if (!$source.Success) {
-            throw "package.json 中的版本号必须以 X.Y.Z 开头，当前为：$sourceVersion"
+          $version = (node -p "require('./package.json').version").Trim()
+          if ([string]::IsNullOrWhiteSpace($version)) { throw 'package.json 缺少 version。' }
+          $lockVersion = (node -e "const p=require('./package-lock.json'); process.stdout.write(p.packages?.['']?.version || '')").Trim()
+          if ($lockVersion -ne $version) {
+            throw "package-lock.json 版本（$lockVersion）与 package.json 版本（$version）不一致；请使用 npm version 更新版本。"
           }
 
-          $candidate = [Version]$source.Groups['base'].Value
-          $released = @()
-          $releases = gh release list --limit 100 --json tagName | ConvertFrom-Json
-          foreach ($release in $releases) {
-            if ($release.tagName -match '^v(?<version>\d+\.\d+\.\d+)$') {
-              $released += [Version]$Matches['version']
-            }
-          }
-          $latest = $released | Sort-Object -Descending | Select-Object -First 1
-          if ($latest -and $latest -ge $candidate) {
-            $candidate = [Version]::new($latest.Major, $latest.Minor, $latest.Build + 1)
+          $updateFile = '版本更新说明.md'
+          if (!(Test-Path -LiteralPath $updateFile)) { throw "找不到更新说明文件：$updateFile" }
+          $escapedVersion = [regex]::Escape($version)
+          $updates = Get-Content -LiteralPath $updateFile -Raw
+          $section = [regex]::Match($updates, "(?ms)^##[^\r\n]*v$escapedVersion[^\r\n]*\r?\n.*?(?=^## |\z)")
+          if (!$section.Success) {
+            throw "版本更新说明.md 中找不到 v$version 的二级标题和说明；请先补齐更新说明再合并。"
           }
 
-          $version = $candidate.ToString()
-          npm version $version --no-git-tag-version
+          @($section.Value.Trim(), '', '> 这是自动构建的正式稳定版，不包含 compiler/ 工具链。') | Set-Content -LiteralPath release-notes.md
           "version=$version" >> $env:GITHUB_OUTPUT
 
       # compiler/ 是不入库的本地工具链；稳定包沿用当前分发规则，不包含该目录。
@@ -80,12 +73,13 @@ jobs:
           path: |
             dist/ycIDE-win-unpacked-v*.7z
             dist/ycIDE-win-unpacked-v*.zip
+            release-notes.md
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
 
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.release.outputs.version }}
 
   publish-release:
     name: 发布正式稳定版到 Releases
@@ -107,10 +101,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
           VERSION: ${{ needs.package-windows.outputs.version }}
         run: |
           $sha = $env:MERGE_SHA
@@ -123,24 +113,7 @@ jobs:
           $version = $env:VERSION
           if ([string]::IsNullOrWhiteSpace($version)) { throw '未收到构建版本号。' }
           $tag = "v$version"
-          $prBody = if ([string]::IsNullOrWhiteSpace($env:PR_BODY)) { '（此 PR 未填写说明。）' } else { $env:PR_BODY }
-          @"
-          ## 构建版本
+          $notesPath = 'release-package/release-notes.md'
+          if (!(Test-Path -LiteralPath $notesPath)) { throw '构建任务未提供项目更新说明。' }
 
-          v$version（合并提交 $shortSha）
-
-          ## 合并的 Pull Request
-
-          #$env:PR_NUMBER：$env:PR_TITLE
-          $env:PR_URL
-
-          ## PR 说明
-
-          $prBody
-
-          合并提交：$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/commit/$sha
-
-          > 这是自动构建的正式稳定版，不包含 compiler/ 工具链。
-          "@ | Set-Content -NoNewline release-notes.md
-
-          gh release create $tag $packages[0].FullName --target $sha --title "ycIDE v$version 稳定版 · $shortSha" --notes-file release-notes.md --latest
+          gh release create $tag $packages[0].FullName --target $sha --title "ycIDE v$version 稳定版 · $shortSha" --notes-file $notesPath --latest
