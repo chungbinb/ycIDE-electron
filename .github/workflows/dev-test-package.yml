@@ -29,6 +29,33 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      # package.json 保留产品基线版本；每次开发构建在 CI 中临时递增 beta 编号，
+      # 不回写仓库，避免为每次测试包制造一次无意义的版本提交。
+      - name: 生成开发构建版本
+        id: version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $sourceVersion = (node -p "require('./package.json').version").Trim()
+          $source = [regex]::Match($sourceVersion, '^(?<base>\d+\.\d+\.\d+)(?:-beta\.(?<number>\d+))?$')
+          if (!$source.Success) {
+            throw "package.json 中的版本号必须为 X.Y.Z 或 X.Y.Z-beta.N，当前为：$sourceVersion"
+          }
+
+          $base = $source.Groups['base'].Value
+          $highest = if ($source.Groups['number'].Success) { [int]$source.Groups['number'].Value } else { 0 }
+          $escapedBase = [regex]::Escape($base)
+          $releases = gh release list --limit 100 --json tagName | ConvertFrom-Json
+          foreach ($release in $releases) {
+            $match = [regex]::Match($release.tagName, "^dev-v$escapedBase-beta\.(?<number>\d+)$")
+            if ($match.Success) { $highest = [Math]::Max($highest, [int]$match.Groups['number'].Value) }
+          }
+
+          $version = "$base-beta.$($highest + 1)"
+          npm version $version --no-git-tag-version
+          "version=$version" >> $env:GITHUB_OUTPUT
+
       # compiler/ 是不入库的本地工具链；测试包本来也会排除它，
       # 这里只创建占位目录以满足 electron-builder 的 extraFiles 配置。
       - name: 准备编译器目录占位
@@ -42,24 +69,38 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-          COMMIT_URL: ${{ github.event.head_commit.url }}
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMITS_JSON: ${{ toJson(github.event.commits) }}
         run: |
           $shortSha = $env:GITHUB_SHA.Substring(0, 7)
-          $tag = "dev-$shortSha"
+          $tag = "dev-v$env:VERSION"
           $packages = @(Get-ChildItem 'dist/ycIDE-win-unpacked-v*.7z', 'dist/ycIDE-win-unpacked-v*.zip' -ErrorAction SilentlyContinue)
           if ($packages.Count -ne 1) {
             throw "预期生成 1 个测试包，实际找到 $($packages.Count) 个。"
           }
 
+          $commits = @($env:COMMITS_JSON | ConvertFrom-Json)
+          $commitNotes = if ($commits.Count -gt 0) {
+            ($commits | ForEach-Object {
+              $title = (($_.message -split "`r?`n")[0]).Trim()
+              "- $title ($($_.id.Substring(0, 7)))"
+            }) -join "`n"
+          } else {
+            '- 未取得推送提交详情。'
+          }
+
           @"
-          ## 本次推送说明
+          ## 构建版本
 
-          $env:COMMIT_MESSAGE
+          v$env:VERSION（提交 $shortSha）
 
-          提交：$env:COMMIT_URL
+          ## 本次推送提交
+
+          $commitNotes
+
+          提交详情：$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA
 
           > 这是自动构建的开发测试包，不包含 compiler/ 工具链。
           "@ | Set-Content -NoNewline release-notes.md
 
-          gh release create $tag $packages[0].FullName --target $env:GITHUB_SHA --title "开发测试包 · $shortSha" --notes-file release-notes.md --prerelease --latest=false
+          gh release create $tag $packages[0].FullName --target $env:GITHUB_SHA --title "开发测试包 · v$env:VERSION · $shortSha" --notes-file release-notes.md --prerelease --latest=false

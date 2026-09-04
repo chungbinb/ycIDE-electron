@@ -34,6 +34,37 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      # 正式版从 package.json 的基础版本起算；若该版本已发布，则自动递增补丁号。
+      # 版本仅用于本次 CI 打包，不向合并后的 main 额外写入机器人提交。
+      - name: 生成正式构建版本
+        id: version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $sourceVersion = (node -p "require('./package.json').version").Trim()
+          $source = [regex]::Match($sourceVersion, '^(?<base>\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$')
+          if (!$source.Success) {
+            throw "package.json 中的版本号必须以 X.Y.Z 开头，当前为：$sourceVersion"
+          }
+
+          $candidate = [Version]$source.Groups['base'].Value
+          $released = @()
+          $releases = gh release list --limit 100 --json tagName | ConvertFrom-Json
+          foreach ($release in $releases) {
+            if ($release.tagName -match '^v(?<version>\d+\.\d+\.\d+)$') {
+              $released += [Version]$Matches['version']
+            }
+          }
+          $latest = $released | Sort-Object -Descending | Select-Object -First 1
+          if ($latest -and $latest -ge $candidate) {
+            $candidate = [Version]::new($latest.Major, $latest.Minor, $latest.Build + 1)
+          }
+
+          $version = $candidate.ToString()
+          npm version $version --no-git-tag-version
+          "version=$version" >> $env:GITHUB_OUTPUT
+
       # compiler/ 是不入库的本地工具链；稳定包沿用当前分发规则，不包含该目录。
       - name: 准备编译器目录占位
         shell: pwsh
@@ -52,6 +83,9 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
   publish-release:
     name: 发布正式稳定版到 Releases
@@ -77,6 +111,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_URL: ${{ github.event.pull_request.html_url }}
+          VERSION: ${{ needs.package-windows.outputs.version }}
         run: |
           $sha = $env:MERGE_SHA
           $shortSha = $sha.Substring(0, 7)
@@ -85,10 +120,15 @@ jobs:
             throw "预期找到 1 个稳定包，实际找到 $($packages.Count) 个。"
           }
 
-          $version = if ($packages[0].Name -match '-v(.+)\.(7z|zip)$') { $Matches[1] } else { 'unknown' }
-          $tag = "v${version}-stable-${shortSha}"
+          $version = $env:VERSION
+          if ([string]::IsNullOrWhiteSpace($version)) { throw '未收到构建版本号。' }
+          $tag = "v$version"
           $prBody = if ([string]::IsNullOrWhiteSpace($env:PR_BODY)) { '（此 PR 未填写说明。）' } else { $env:PR_BODY }
           @"
+          ## 构建版本
+
+          v$version（合并提交 $shortSha）
+
           ## 合并的 Pull Request
 
           #$env:PR_NUMBER：$env:PR_TITLE
