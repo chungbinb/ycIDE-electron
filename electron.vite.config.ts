@@ -15,10 +15,11 @@ export default defineConfig({
       sourcemap: 'hidden',
       rollupOptions: {
         external: ['fsevents'],
-        // 主进程入口 + 编译工作线程入口，各自打包到 out/main/<name>.js
+        // 主进程入口 + 编译工作线程入口 + 独立 CLI 入口，各自打包到 out/main/<name>.js
         input: {
           index: resolve('src/main/index.ts'),
-          'compile-worker': resolve('src/main/compile-worker.ts')
+          'compile-worker': resolve('src/main/compile-worker.ts'),
+          cli: resolve('src/main/cli.ts')
         }
       }
     }

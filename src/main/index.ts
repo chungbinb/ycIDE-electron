@@ -48,9 +48,15 @@ import type { EProjectImportRequest, OpenProjectSelectionResult, OpenWorkspaceFo
 import { getEProjectImportTarget, importEProjectFile } from './eproject/importService'
 import { initPathGuard, authorizeRoot, validatePath } from './security/pathGuard'
 import { isSafeExternalUrl } from '../shared/urlSafety'
+import { AutoBuild, defaultAutoBuildLogPath } from './autoBuild'
 
 const isDev = !app.isPackaged
 const runtimePlatform = normalizeRuntimePlatform(process.platform)
+
+// CLI 模式：把 ycIDE 本体当作命令行程序用（自动编译 / 编译并运行）。
+// 只认显式开关（--autobuild / --auto-build / --ycide-build），不会干扰正常 GUI 启动。
+// 命中时不创建窗口，编译完直接退出——详见 src/main/autoBuild.ts。
+const cliInvocation = AutoBuild.detectFromElectronArgv(process.argv)
 
 // ── 关于窗口的版本信息收集 ──
 export interface AboutInfo {
@@ -1196,7 +1202,36 @@ function setupNativeMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // ── CLI 模式：不建窗口，编译（可选运行）后退出 ──
+  // Windows 上 Electron 属 GUI 子系统，stdout 未必可见，故额外落一份日志文件兜底。
+  if (cliInvocation) {
+    if (cliInvocation.help) {
+      process.stdout.write(AutoBuild.helpText() + '\n')
+      app.exit(0)
+      return
+    }
+    if (cliInvocation.error || !cliInvocation.request) {
+      process.stderr.write(`[autobuild] ${cliInvocation.error || '未识别到自动编译命令'}\n\n${AutoBuild.helpText()}\n`)
+      app.exit(2)
+      return
+    }
+    const ideRoot = app.isPackaged ? dirname(process.execPath) : app.getAppPath()
+    const request = {
+      ...cliInvocation.request,
+      logFile: cliInvocation.request.logFile ?? defaultAutoBuildLogPath(ideRoot),
+    }
+    const code = await new AutoBuild(request, {
+      appPath: ideRoot,
+      isPackaged: app.isPackaged,
+      userDataPath: app.getPath('userData'),
+      appVersion: app.getVersion(),
+    }).execute()
+    process.stdout.write(`完整日志: ${request.logFile}\n`)
+    app.exit(code)
+    return
+  }
+
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.ycide.app')
   }

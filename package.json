@@ -47,7 +47,9 @@
     "package:win:signed": "node scripts/security/package-win-signed.mjs",
     "package:mac": "electron-vite build && electron-builder --mac",
     "package:linux": "electron-vite build && electron-builder --linux",
-    "security:av:report": "node scripts/security/collect-antivirus-report.mjs"
+    "security:av:report": "node scripts/security/collect-antivirus-report.mjs",
+    "cli": "electron-vite build && node out/main/cli.js",
+    "cli:run": "node out/main/cli.js"
   },
   "build": {
     "appId": "com.ycide.app",
