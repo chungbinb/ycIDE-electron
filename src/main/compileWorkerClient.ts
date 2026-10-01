@@ -119,7 +119,7 @@ export function notifyWorkerLibrariesChanged(): void {
  * 编译设置读取器：由主进程注入（worker 侧没有设置模块）。
  * 每次派发编译时读一次，用户改完设置立即生效、无需重启 worker。
  */
-let compilerSettingsReader: (() => { zigPath: string; optimizeLevel: 'O0' | 'O1' | 'O2' | 'Os' }) | null = null
+let compilerSettingsReader: (() => { zigPath: string; optimizeLevel: 'O0' | 'O1' | 'O2' | 'Os'; vc6Style?: boolean }) | null = null
 export function setWorkerCompilerSettingsReader(reader: typeof compilerSettingsReader): void {
   compilerSettingsReader = reader
 }

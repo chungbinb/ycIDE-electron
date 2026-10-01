@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import closeIcon from '../../assets/icons/Close.svg'
 import { formatDateTime, formatDuration, formatFileSize } from './editorResourceFormatUtils'
+import { sanitizeImageDisplaySrc } from '../../utils/imageDisplay'
 
 export interface ResourcePreviewState {
   visible: boolean
@@ -94,7 +95,7 @@ export default function EycResourcePreview({
           <div className="eyc-resource-preview-path">资源路径：{previewMeta?.filePath || (projectDir ? `${projectDir}\\${preview.resourceFile}` : preview.resourceFile)}</div>
         </div>
         <div className="eyc-resource-preview-body">
-          {!!previewSrc && isImage && <img className="eyc-resource-preview-image" src={previewSrc} alt={preview.resourceFile} onLoad={(e) => {
+          {!!previewSrc && isImage && <img className="eyc-resource-preview-image" src={sanitizeImageDisplaySrc(previewSrc)} alt={preview.resourceFile} onLoad={(e) => {
             onImageLoaded(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)
           }} />}
           {!!previewSrc && isAudio && <audio className="eyc-resource-preview-audio" src={previewSrc} controls onLoadedMetadata={(e) => {

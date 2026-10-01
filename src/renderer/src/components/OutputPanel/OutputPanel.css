@@ -166,6 +166,54 @@
   color: var(--warning);
 }
 
+/* 最左列时间轴/类型/用时：inline-block 定宽列，保证跨行对齐，且不改变整行 pre 的文本流。
+   字体/字号跟随系统设置：--font-family（界面字体）+ --font-size-small（界面字号 × 0.88），
+   列宽用 ch 随字号等比缩放；数字对齐靠 tabular-nums */
+.output-line-meta {
+  display: inline-block;
+  margin-right: 10px;
+  font-family: var(--font-family, inherit);
+  font-size: var(--font-size-small, 11px);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.output-line-time {
+  display: inline-block;
+  min-width: 12ch;
+  margin-right: 8px;
+}
+
+.output-line-tag {
+  display: inline-block;
+  min-width: 4ch;
+  margin-right: 8px;
+  text-align: center;
+}
+
+.output-line-tag-error {
+  color: var(--error);
+}
+
+.output-line-tag-warning {
+  color: var(--warning);
+}
+
+.output-line-tag-success {
+  color: var(--success);
+}
+
+.output-line-tag-info {
+  color: var(--info);
+}
+
+.output-line-elapsed {
+  display: inline-block;
+  min-width: 8ch;
+  margin-right: 8px;
+  text-align: right;
+}
+
 /* 编译报错里可点击跳转的“文件:行号”/“第N行”链接（继承所在行的颜色，仅加下划线与手型） */
 .output-line-loc-link {
   color: inherit;

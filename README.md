@@ -7,14 +7,24 @@
 ## 技术栈
 
 - **前端**：React 19 + TypeScript + Vite
-- **桌面框架**：Electron 34
+- **桌面框架**：Electron 43
 - **编辑器**：Monaco Editor（文本文件）+ 自研表格式代码编辑器（.eyc 源码）
 - **编译器**：内置 Zig（Windows GNU 目标）
 - **构建工具**：electron-vite + electron-builder
 
 📋 [版本更新说明](版本更新说明.md)
 
-🔧 编译器说明：仓库不包含 `compiler/zig/` 二进制文件，请先按 [compiler/README.md](compiler/README.md) 下载并放置 Zig。
+## 编译器环境准备（首次拉取后必读）
+
+编译链路使用 `Zig (windows-gnu)`：不需要 MinGW，也不依赖本地 MSVC/Windows SDK。仓库**不包含** `compiler/zig/` 二进制文件（体积超过 GitHub 单文件 100MB 限制），首次使用请自行下载放置：
+
+1. 从 [Zig 官方下载页](https://ziglang.org/download/) 按宿主平台下载：
+   - Windows x64：`zig-windows-x86_64-*.zip`
+   - macOS（Apple Silicon）：`zig-macos-aarch64-*.tar.xz`
+   - Linux：`zig-linux-*.tar.xz`
+2. 在项目根目录创建 `compiler/zig/`，解压后确保可执行文件位于 `compiler/zig/zig.exe`（Windows）或 `compiler/zig/zig`（macOS / Linux）。
+3. 运行 `compiler/zig/zig version` 验证安装。
+4. 也可以不解压到项目内：在 设置 →「编译」→ 编译器路径 中指定任意位置的 `zig.exe`（或其所在目录）。
 
 ---
 

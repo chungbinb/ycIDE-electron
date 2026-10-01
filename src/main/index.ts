@@ -1223,7 +1223,7 @@ app.whenReady().then(() => {
   })
   setWorkerCompilerSettingsReader(() => {
     const s = readIDESettings()
-    return { zigPath: s.compilerZigPath || '', optimizeLevel: s.compilerOptimizeLevel }
+    return { zigPath: s.compilerZigPath || '', optimizeLevel: s.compilerOptimizeLevel, vc6Style: s.designerVc6Style }
   })
 
   // 预热状态推送给渲染进程（禁用运行/编译按钮 + 状态栏进度）
@@ -1235,7 +1235,7 @@ app.whenReady().then(() => {
     // 编译器路径与优化级别取自用户设置（每次读取，改设置后无需重启）
     readCompilerSettings: () => {
       const s = readIDESettings()
-      return { zigPath: s.compilerZigPath || '', optimizeLevel: s.compilerOptimizeLevel }
+      return { zigPath: s.compilerZigPath || '', optimizeLevel: s.compilerOptimizeLevel, vc6Style: s.designerVc6Style }
     },
     emitOutput: (msg) => {
       BrowserWindow.getAllWindows().forEach(w => w.webContents.send('compiler:output', msg))

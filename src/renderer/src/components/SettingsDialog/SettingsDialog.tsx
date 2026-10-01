@@ -280,6 +280,36 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
           </div>
         </div>
         <div className="settings-group">
+          <h4 className="settings-group-title">可视化设计器</h4>
+          <div className="settings-row">
+            <span className="settings-label">画布模式</span>
+            <select
+              className="settings-input"
+              title="可视化设计器画布模式"
+              value={draft.designerCanvasMode}
+              onChange={(e) => updateDraft('designerCanvasMode', e.target.value as IDESettings['designerCanvasMode'])}
+            >
+              <option value="center">居中显示（中心点缩放，按住空格可平移）</option>
+              <option value="topleft">左上角固定（易语言风格，缩放以左上角为基准）</option>
+            </select>
+            <span className="settings-unit" />
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">VC6 现代样式</span>
+            <label className="settings-switch" aria-label="VC6 现代样式">
+              <input
+                type="checkbox"
+                className="settings-switch-input"
+                title="启用后编译出的 Windows 程序使用现代控件主题（comctl32 v6）；关闭则使用经典 Win32 灰样式"
+                checked={draft.designerVc6Style}
+                onChange={(e) => updateDraft('designerVc6Style', e.target.checked)}
+              />
+              <span className="settings-switch-track" aria-hidden="true" />
+            </label>
+            <span className="settings-unit" />
+          </div>
+        </div>
+        <div className="settings-group">
           <h4 className="settings-group-title">AI 助手</h4>
           <div className="settings-row">
             <span className="settings-label">AI 助手字体</span>

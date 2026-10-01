@@ -306,6 +306,8 @@
     {"unit": "编辑框", "member": "加入文本", "memberEnglishName": "AppendText", "callEach": "krnln_ctrl_append_text({h}, {arg})"}
   ],
   "controlMemberBindings": [
+    {"unit": "窗口", "member": "底图", "memberEnglishName": "backImage", "set": "yc_win_set_back_image({n}, {vbin})"},
+    {"unit": "窗口", "member": "底图方式", "memberEnglishName": "backImageMode", "set": "yc_win_set_back_image_mode({n}, (long long)({v}))"},
     {"unit": "图形按钮", "member": "选中", "memberEnglishName": "Checked", "get": "yc_picbtn_get_checked({h})", "set": "yc_picbtn_set_checked({h}, {v})"},
     {"unit": "*", "member": "标题", "memberEnglishName": "caption", "get": "yc_ctrl_get_text({h})", "set": "krnln_ctrl_set_text({h}, {vtext})"},
     {"unit": "*", "member": "内容", "memberEnglishName": "content", "get": "yc_ctrl_get_text({h})", "set": "krnln_ctrl_set_text({h}, {vtext})"},
@@ -552,11 +554,10 @@
           "typeName": "选择整数",
           "isReadOnly": false,
           "pickOptions": [
-            "0.图片平铺",
-            "1.图片居左上",
+            "0.图片居左上",
+            "1.图片平铺",
             "2.图片居中",
-            "3.图片居右下",
-            "4.缩放图片"
+            "3.缩放图片"
           ],
           "defaultValue": 0
         },

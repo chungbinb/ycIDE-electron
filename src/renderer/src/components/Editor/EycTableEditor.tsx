@@ -92,6 +92,7 @@ import {
   rebuildLineFlagField,
   splitDebugRenderableText,
   findControlMethodCompletion,
+  resolveMemberPropertyHintTarget,
 } from './editorCoreUtils'
 import type { CompletionItem, CompletionParam } from './editorCoreUtils'
 import { buildCompletionCatalog } from './editorCompletionCatalogUtils'
@@ -5414,11 +5415,18 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     // 命令提示联动必须在 mousedown 做：进入编辑态后 input 覆盖该行，
     // click 事件的 target 变成 INPUT，handleCodeLineClick 会提前返回拿不到原始 token
     const rawCode = isVirtual ? '' : ((prevRef.current.split('\n')[li] || '').replace(FLOW_AUTO_TAG, ''))
-    const cmdName = findCommandNameFromClickTarget(target, rawCode)
-    if (cmdName) {
-      const ownerAssembly = findOwnerAssemblyName(li)
-      const hintName = userSubNamesRef.current.has(cmdName) ? `__SUB__:${cmdName}:${ownerAssembly}` : cmdName
-      onCommandClick?.(hintName)
+    // 含点的成员属性 token（赋值左值 / 表达式里的 `控件.属性`）优先走属性详情；
+    // 方法调用（成员后紧跟括号）在 findMemberPropertyHintFromClickTarget 内返回 null 落回命令路径
+    const memberHint = findMemberPropertyHintFromClickTarget(target, rawCode)
+    if (memberHint) {
+      onCommandClick?.(memberHint)
+    } else {
+      const cmdName = findCommandNameFromClickTarget(target, rawCode)
+      if (cmdName) {
+        const ownerAssembly = findOwnerAssemblyName(li)
+        const hintName = userSubNamesRef.current.has(cmdName) ? `__SUB__:${cmdName}:${ownerAssembly}` : cmdName
+        onCommandClick?.(hintName)
+      }
     }
     startEditLine(li, clientX, lineEl.getBoundingClientRect().left, isVirtual)
   }
@@ -7749,6 +7757,24 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     return findFirstCommandName(codeLine)
   }, [findFirstCommandName])
+
+  // 成员属性点击（`窗口名.底图` / `编辑框.内容`）→ `__MEMBER__:类型:成员` 供提示面板显示属性详情。
+  // 赋值左值与表达式成员 token 分别染 Variablescolor / cometwolr（assignTarget 是另一转译路径的类，一并兼容）。
+  // 方法调用（成员后紧跟括号）不接管，走既有命令/方法提示。
+  const findMemberPropertyHintFromClickTarget = useCallback((target: EventTarget | null, codeLine: string): string | null => {
+    const el = target instanceof HTMLElement ? target : null
+    if (!el) return null
+    const tokenEl = el.closest<HTMLElement>('.Variablescolor, .cometwolr, .assignTarget')
+    const tokenText = (tokenEl?.textContent || '').replace(/\u00A0/g, '').trim()
+    if (!tokenText || !tokenText.includes('.')) return null
+    // token 后的第一个非空字符是括号 → 方法调用，交回命令提示路径
+    const at = codeLine.indexOf(tokenText)
+    if (at >= 0) {
+      const rest = codeLine.slice(at + tokenText.length).trimStart()
+      if (rest.startsWith('(') || rest.startsWith('（')) return null
+    }
+    return resolveMemberPropertyHintTarget(tokenText, windowControlTypeMap, projectWindowMemberMap.keys())
+  }, [windowControlTypeMap, projectWindowMemberMap])
 
   /** 格式化参数中的运算符：半角→全角 + 前后加空格 */
   const formatParamOperators = useCallback((val: string): string => {

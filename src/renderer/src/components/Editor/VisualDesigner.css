@@ -365,6 +365,12 @@
   box-shadow: 0 1px 5px color-mix(in srgb, var(--menu-shadow, rgba(0, 0, 0, 0.4)) 60%, transparent);
 }
 
+/* 左上角固定模式：窗体钉在画布左上角会与工具条重叠，对齐工具条改挂画布左下角 */
+.vd-align-bar-bottom {
+  top: auto;
+  bottom: 28px;
+}
+
 .vd-align-btn {
   display: inline-flex;
   align-items: center;

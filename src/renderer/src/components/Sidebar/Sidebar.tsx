@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { sanitizeImageDisplaySrc } from '../../utils/imageDisplay'
 import type { DesignControl, DesignForm, SelectionTarget, LibWindowUnit, LibUnitProperty, LibUnitEvent } from '../Editor/VisualDesigner'
 import { parseFontSpec, stringifyFontSpec, formatFontSummary, fontSpecToCss, colorrefToHex, hexToColorref, COMMON_FONT_FAMILIES, DEFAULT_FONT_NAME, DEFAULT_FONT_SIZE, type FontSpec } from '../Editor/fontSpec'
 import Icon, { resolveUnitIconName } from '../Icon/Icon'
@@ -1581,7 +1582,7 @@ function EditableImageCell({ value, onChange, ariaLabel = '图片' }: { value: s
         aria-label={buildEditableAriaLabel(ariaLabel)}
         onChange={pickFile}
       />
-      {hasImage && <img className="prop-image-thumb" src={value} alt="" />}
+      {hasImage && <img className="prop-image-thumb" src={sanitizeImageDisplaySrc(value)} alt="" />}
       <button type="button" className="prop-image-btn" onClick={() => inputRef.current?.click()}>
         {hasImage ? '更换' : '选择...'}
       </button>

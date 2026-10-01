@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-18T18:03:24.495Z",
+  "generatedAt": "2026-10-01T08:33:54.259Z",
   "abiSpecVersion": "v1",
   "abiContractRef": "docs/krnln-abi-contract.md",
   "summary": {
@@ -2881,7 +2881,7 @@
       "params": [
         {
           "name": "欲取其字符的字符代码",
-          "type": "字节型",
+          "type": "整数型",
           "optional": false,
           "description": "。"
         }

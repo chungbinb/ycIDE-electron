@@ -429,11 +429,11 @@ export interface CompilerHost {
   // 返回空字符串表示成功，否则返回错误描述（对应 shell.openPath 的语义）。
   openPathExternally: (targetPath: string) => Promise<string>
   /**
-   * 读取编译相关的用户设置（编译器路径、优化级别）。
+   * 读取编译相关的用户设置（编译器路径、优化级别、VC6 现代样式）。
    * 由宿主注入而非 compiler 直接读设置文件——worker 里没有主进程的设置模块。
-   * 未注入时返回 null，各处按内置默认行为兜底。
+   * 未注入时返回 null，各处按内置默认行为兜底（vc6Style 缺省视为启用）。
    */
-  readCompilerSettings?: () => { zigPath: string; optimizeLevel: 'O0' | 'O1' | 'O2' | 'Os' } | null
+  readCompilerSettings?: () => { zigPath: string; optimizeLevel: 'O0' | 'O1' | 'O2' | 'Os'; vc6Style?: boolean } | null
 }
 
 let compilerHost: CompilerHost | null = null
@@ -451,7 +451,18 @@ function focusIdeWindow(): void {
   compilerHost?.requestFocusIdeWindow()
 }
 
-function emitBufferedOutputChunk(
+/**
+ * 第三方注入噪音识别：QQ 拼音等 TSF 输入法模块自带一份 libpng（解码皮肤资源用），
+ * 系统会把它注入到每一个有文本输入的 GUI 进程——包括编译出的程序和 IDE 自身。
+ * 其 libpng 遇到色彩元数据不一致的图片时向宿主进程 stderr 打 `libpng warning: …`。
+ * 被运行程序本身不含 libpng（生成代码图片解码走 GDI+），这行输出与程序无关，纯环境噪音。
+ */
+export function isThirdPartyRuntimeNoiseLine(text: string): boolean {
+  return text.trimStart().startsWith('libpng warning: ')
+}
+
+/** @internal 供单测直测运行输出的通道过滤逻辑 */
+export function emitBufferedOutputChunk(
   chunk: string,
   buffer: string,
   type: CompileMessage['type']
@@ -460,6 +471,8 @@ function emitBufferedOutputChunk(
   const parts = merged.split('\n')
   const remainder = parts.pop() ?? ''
   for (const part of parts) {
+    // stderr 通道丢弃第三方输入法注入的 libpng 噪音行（stdout 是用户程序自己的输出，不过滤）
+    if (type === 'warning' && isThirdPartyRuntimeNoiseLine(part)) continue
     if (part === '__YCDBG_BREAK_END__') {
       focusIdeWindow()
     }
@@ -468,11 +481,13 @@ function emitBufferedOutputChunk(
   return remainder
 }
 
-function flushBufferedOutputRemainder(
+/** @internal 供单测直测运行输出的通道过滤逻辑 */
+export function flushBufferedOutputRemainder(
   buffer: string,
   type: CompileMessage['type']
 ): void {
   if (!buffer) return
+  if (type === 'warning' && isThirdPartyRuntimeNoiseLine(buffer)) return
   sendMessage({ type, text: buffer })
 }
 
@@ -1086,9 +1101,11 @@ async function compileProjectResources(
   tempDir: string,
   zigPath: string,
   editorFiles?: Map<string, string>,
+  vc6Style = true,
 ): Promise<{ success: boolean; objectFilePath: string | null }> {
   const entries = collectProjectResourceEntries(project, editorFiles)
-  const shouldEmbedManifest = project.outputType === 'WindowsApp'
+  // VC6 现代样式关闭时不嵌清单：产物走经典 Win32 控件样式
+  const shouldEmbedManifest = project.outputType === 'WindowsApp' && vc6Style
   if (entries.length === 0 && !shouldEmbedManifest) return { success: true, objectFilePath: null }
 
   if (targetPlatform !== 'windows') {
@@ -3586,6 +3603,9 @@ function replaceConstantRefs(expr: string): string {
 // \u5168\u4f53\u5df2\u77e5\u5e38\u91cf\u540d\uff08\u5e93\u5e38\u91cf + \u9879\u76ee\u5e38\u91cf\uff0c\u5747\u5265\u53bb\u524d\u5bfc #\uff09\u3002\u540d\u8272\u8f6c\u6362\u547d\u4e2d\u540c\u540d\u5e38\u91cf\u65f6\u8ba9\u5e38\u91cf\u4f18\u5148\uff0c
 // \u907f\u514d\u906e\u853d\u7528\u6237/\u5e93\u5e38\u91cf\u3002\u8f6c\u8bd1\u5f00\u59cb\u524d\u4e0e currentProjectControls \u540c\u5904\u704c\u4e00\u6b21\u3002
 let currentKnownConstantNames = new Set<string>()
+// 项目资源名（#资源名 引用）：转译开始前灌一次——`#名` 剥 # 后是资源宏标识符，
+// 标识符友好报错的已知名单须包含它，否则被误判「未定义的变量或标识符」。
+let currentProjectResourceNames = new Set<string>()
 
 // \u989c\u8272\u5b57\u9762\u91cf\u9884\u5904\u7406\uff1a\u628a #RRGGBB / #RGB / #RRGGBBAA(\u4e22 alpha) / #\u540d\u8272 \u5c31\u5730\u66ff\u6362\u4e3a\u5341\u8fdb\u5236 COLORREF\u3002
 // \u5fc5\u987b\u5728 replaceConstantRefs \u4e4b\u524d\u8dd1\u2014\u2014\u5426\u5219 #ffffff \u88ab\u5265\u6210\u672a\u5b9a\u4e49\u6807\u8bc6\u7b26\u3001#00ff00 \u6b8b\u7559\u88f8 # \u6210\u975e\u6cd5 C++\u3002
@@ -4609,6 +4629,7 @@ function translateExpressionToCStringFallback(
     && !commandMap?.has(translated)
     && !directCallables?.has(translated)
     && !currentKnownConstantNames.has(translated)
+    && !currentProjectResourceNames.has(translated)
     && !currentProjectControls.has(translated)
   ) {
     throw new Error(`未定义的变量或标识符“${translated}”（若这是一段文本，请用引号括起来，例如 "${translated}"）`)
@@ -5845,6 +5866,10 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   // 多窗口运行时（实现于生成的 main.cpp）：载入/销毁 与 窗口名.销毁() 方法绑定共用
   result += 'extern int yc_win_load(const wchar_t* name, const wchar_t* parentName, int dialogMode);\n'
   result += 'extern void yc_win_destroy(const wchar_t* name);\n'
+  // 窗口.底图 代码赋值（window-units.json 成员绑定引用；实现于生成的 main.cpp，仅窗口程序会定义）
+  result += 'extern void yc_win_set_back_image(const wchar_t* name, YC_BIN data);\n'
+  // 窗口.底图方式 代码赋值（同上）
+  result += 'extern void yc_win_set_back_image_mode(const wchar_t* name, long long mode);\n'
   // 图形按钮「选中」属性运行时读写（window-units.json 成员绑定引用；实现于生成的 main.cpp）
   result += 'extern int yc_picbtn_get_checked(HWND h);\n'
   result += 'extern void yc_picbtn_set_checked(HWND h, int v);\n\n'
@@ -8142,13 +8167,60 @@ function generateMainC(
     // 辅助窗背景图（v1 补齐）：每个有底图的辅助窗一份字节，运行时按窗序号查表画（同主窗 GDI+ 内存流解码）
     const subBackImageBytes = secondaryWindows.map(swx => swx.info.backImage ? decodeImageDataUrl(swx.info.backImage) : null)
     const hasAnySubBackImage = subBackImageBytes.some(Boolean)
-    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage || hasAnySubBackImage || hasAnySubPicBtnImage) {
+    // 代码赋值窗口底图（窗口名.底图 ＝ #资源/字节集）：预扫描全部 .eyc 源码——命中则
+    // 开启 GDI+、声明主窗底图状态与副窗底图表、生成绘制块和 yc_win_set_back_image。
+    // 不能依赖属性面板设过底图：工程可以完全无图、纯靠代码在创建完毕里赋值。
+    const windowImageCodeAssign = isWindowsApp && (() => {
+      const windowNames = [winInfo.formName, ...secondaryWindows.map(swx => swx.info.formName)]
+        .map(n => (n || '').trim())
+        .filter(Boolean)
+      if (windowNames.length === 0) return false
+      const escaped = windowNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      const assignRe = new RegExp(`^\\s*(?:${escaped.join('|')})\\s*\\.\\s*底图\\s*[＝=]`)
+      for (const f of project.files) {
+        if (f.type !== 'EYC' && f.type !== 'EGV' && f.type !== 'ECS' && f.type !== 'EDT' && f.type !== 'ELL') continue
+        const eycPath = join(project.projectDir, f.fileName)
+        const content = editorFiles?.get(f.fileName) || (existsSync(eycPath) ? readFileSync(eycPath, 'utf-8') : '')
+        if (!content) continue
+        for (const line of content.split('\n')) {
+          if (assignRe.test(line)) return true
+        }
+      }
+      return false
+    })()
+    // 代码赋值窗口底图方式（窗口名.底图方式 ＝ 0..4）：同款预扫描。方式赋值不需要图片字节，
+    // 但绘制块/主窗方式变量/副窗表/setter 都必须存在（次序无关：先设方式后设图也要生效）。
+    const windowImageModeCodeAssign = isWindowsApp && (() => {
+      const windowNames = [winInfo.formName, ...secondaryWindows.map(swx => swx.info.formName)]
+        .map(n => (n || '').trim())
+        .filter(Boolean)
+      if (windowNames.length === 0) return false
+      const escaped = windowNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      const assignRe = new RegExp(`^\\s*(?:${escaped.join('|')})\\s*\\.\\s*底图方式\\s*[＝=]`)
+      for (const f of project.files) {
+        if (f.type !== 'EYC' && f.type !== 'EGV' && f.type !== 'ECS' && f.type !== 'EDT' && f.type !== 'ELL') continue
+        const eycPath = join(project.projectDir, f.fileName)
+        const content = editorFiles?.get(f.fileName) || (existsSync(eycPath) ? readFileSync(eycPath, 'utf-8') : '')
+        if (!content) continue
+        for (const line of content.split('\n')) {
+          if (assignRe.test(line)) return true
+        }
+      }
+      return false
+    })()
+    // 底图/底图方式任一代码赋值：绘制块、主窗底图状态（图片指针+方式）、副窗底图表都要生成
+    const windowBackImageCodeAssign = windowImageCodeAssign || windowImageModeCodeAssign
+    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage || hasAnySubBackImage || hasAnySubPicBtnImage || windowBackImageCodeAssign) {
       mainCode += 'static ULONG_PTR g_gdiplusToken = 0;\n'
     }
-    if (backImageBytes) {
-      mainCode += `static const unsigned char g_backImageData[] = {\n${bytesToCArrayBody(backImageBytes)}};\n`
-      mainCode += `static const unsigned int g_backImageSize = ${backImageBytes.length}u;\n`
+    if (backImageBytes || windowBackImageCodeAssign) {
+      if (backImageBytes) {
+        mainCode += `static const unsigned char g_backImageData[] = {\n${bytesToCArrayBody(backImageBytes)}};\n`
+        mainCode += `static const unsigned int g_backImageSize = ${backImageBytes.length}u;\n`
+      }
       mainCode += 'static Gdiplus::Image* g_backImage = NULL;\n'
+      // 主窗底图方式：运行时变量（设计值作初值）——代码赋值可改，绘制块按它分派
+      mainCode += `static int g_backImageMode = ${winInfo.backImageMode};\n`
     }
     if (iconImageBytes) {
       mainCode += `static const unsigned char g_iconImageData[] = {\n${bytesToCArrayBody(iconImageBytes)}};\n`
@@ -8206,13 +8278,16 @@ function generateMainC(
         mainCode += `static const unsigned int g_subBackSize_${si} = ${bytes.length}u;\n`
       }
     })
-    if (hasAnySubBackImage) {
+    if (hasAnySubBackImage || windowBackImageCodeAssign) {
       mainCode += 'struct YcSubBackImg { const unsigned char* data; unsigned int size; Gdiplus::Image* img; int mode; };\n'
       mainCode += `static YcSubBackImg g_ycSubBackImages[${secWinCount}] = {\n`
       for (let si = 0; si < secWinCount; si++) {
         const bytes = subBackImageBytes[si]
-        if (bytes) mainCode += `    { g_subBackData_${si}, g_subBackSize_${si}, NULL, ${secondaryWindows[si].info.backImageMode} },\n`
-        else mainCode += '    { NULL, 0, NULL, 0 },\n'
+        // 无设计底图的窗保留该窗自己的底图方式——代码赋值的新图按它绘制。
+        // （secWinCount = max(1, 副窗数)：无副窗时占位 1 项，secondaryWindows[si] 可能越界 → mode 兜底 0）
+        const entryMode = secondaryWindows[si] ? secondaryWindows[si].info.backImageMode : 0
+        if (bytes) mainCode += `    { g_subBackData_${si}, g_subBackSize_${si}, NULL, ${entryMode} },\n`
+        else mainCode += `    { NULL, 0, NULL, ${entryMode} },\n`
       }
       mainCode += '};\n'
     }
@@ -8326,6 +8401,12 @@ function generateMainC(
     currentKnownConstantNames = new Set<string>()
     for (const c of libraryConstants) currentKnownConstantNames.add((c.name || '').replace(/^#/, ''))
     for (const c of projectConstants) currentKnownConstantNames.add((c.name || '').replace(/^#/, ''))
+    // 资源名进标识符白名单：`#资源名` 在表达式里剥 # 后是 C 宏（yc_load_resource_bin），不是未定义标识符
+    currentProjectResourceNames = new Set<string>()
+    for (const r of projectResources) {
+      const nm = (r.name || '').trim()
+      if (nm) currentProjectResourceNames.add(nm)
+    }
     for (const f of project.files) {
       if (f.type !== 'EFW' && !f.fileName.toLowerCase().endsWith('.efw')) continue
       const efwEditorContent = editorFiles?.get(f.fileName)
@@ -9824,27 +9905,33 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       mainCode += '        break;\n'
       mainCode += '    }\n'
     }
-    // 底图绘制块（要求作用域内已有 HDC hdc）——WM_PAINT 与 WM_PRINTCLIENT 共用
+    // 底图绘制块（要求作用域内已有 HDC hdc）——WM_PAINT 与 WM_PRINTCLIENT 共用。
+    // 代码赋值底图/底图方式的工程也发绘制块：g_backImage 运行时才有值，块内自带判空。
+    // 底图方式是运行时变量 g_backImageMode（设计值作初值、代码赋值可改），按它运行时分派。
     let backImageDrawBlock = ''
-    if (backImageBytes) {
+    if (backImageBytes || windowBackImageCodeAssign) {
       backImageDrawBlock += '        if (g_backImage) {\n'
       backImageDrawBlock += '            RECT crc; GetClientRect(hWnd, &crc);\n'
       backImageDrawBlock += '            int cw = (int)(crc.right - crc.left), ch = (int)(crc.bottom - crc.top);\n'
+      backImageDrawBlock += '            int iw = (int)g_backImage->GetWidth(), ih = (int)g_backImage->GetHeight();\n'
       backImageDrawBlock += '            Gdiplus::Graphics graphics(hdc);\n'
-      const biMode = winInfo.backImageMode
-      if (biMode === 4) {
-        backImageDrawBlock += '            graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);\n'
-        backImageDrawBlock += '            graphics.DrawImage(g_backImage, 0, 0, cw, ch);\n'
-      } else if (biMode === 0) {
-        backImageDrawBlock += '            Gdiplus::TextureBrush texBrush(g_backImage);\n'
-        backImageDrawBlock += '            graphics.FillRectangle(&texBrush, 0, 0, cw, ch);\n'
-      } else {
-        backImageDrawBlock += '            int iw = (int)g_backImage->GetWidth(), ih = (int)g_backImage->GetHeight();\n'
-        if (biMode === 1) backImageDrawBlock += '            int ix = 0, iy = 0;\n'
-        else if (biMode === 2) backImageDrawBlock += '            int ix = (cw - iw) / 2, iy = (ch - ih) / 2;\n'
-        else backImageDrawBlock += '            int ix = cw - iw, iy = ch - ih;\n'
-        backImageDrawBlock += '            graphics.DrawImage(g_backImage, ix, iy, iw, ih);\n'
-      }
+      backImageDrawBlock += '            switch (g_backImageMode) {\n'
+      backImageDrawBlock += '                case 1: {\n'
+      backImageDrawBlock += '                    Gdiplus::TextureBrush texBrush(g_backImage);\n'
+      backImageDrawBlock += '                    graphics.FillRectangle(&texBrush, 0, 0, cw, ch);\n'
+      backImageDrawBlock += '                    break;\n'
+      backImageDrawBlock += '                }\n'
+      backImageDrawBlock += '                case 2:\n'
+      backImageDrawBlock += '                    graphics.DrawImage(g_backImage, (cw - iw) / 2, (ch - ih) / 2, iw, ih);\n'
+      backImageDrawBlock += '                    break;\n'
+      backImageDrawBlock += '                case 3:\n'
+      backImageDrawBlock += '                    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);\n'
+      backImageDrawBlock += '                    graphics.DrawImage(g_backImage, 0, 0, cw, ch);\n'
+      backImageDrawBlock += '                    break;\n'
+      backImageDrawBlock += '                default:\n'
+      backImageDrawBlock += '                    graphics.DrawImage(g_backImage, 0, 0, iw, ih);\n'
+      backImageDrawBlock += '                    break;\n'
+      backImageDrawBlock += '            }\n'
       backImageDrawBlock += '        }\n'
     }
     // 主题化公共控件（滑块条等）经 DrawThemeParentBackground 向父窗要背景——DefWindowProc 不处理
@@ -10157,11 +10244,80 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         mainCode += '    if (h && IsWindow(h)) DestroyWindow(h);\n'
         mainCode += '}\n\n'
 
+        if (windowImageCodeAssign) {
+          // 窗口.底图 ＝ #资源/字节集：GDI+ 解码新图、替换主/副窗底图状态并重绘。
+          // 绘制块与主窗 g_backImage / 副窗 g_ycSubBackImages 已因 windowImageCodeAssign 而生成。
+          mainCode += 'static Gdiplus::Image* yc_decode_image_bytes(const unsigned char* data, unsigned int size) {\n'
+          mainCode += '    if (!data || size == 0) return NULL;\n'
+          mainCode += '    HGLOBAL hm = GlobalAlloc(GMEM_MOVEABLE, size);\n'
+          mainCode += '    if (!hm) return NULL;\n'
+          mainCode += '    void* pm = GlobalLock(hm);\n'
+          mainCode += '    if (!pm) { GlobalFree(hm); return NULL; }\n'
+          mainCode += '    memcpy(pm, data, size);\n'
+          mainCode += '    GlobalUnlock(hm);\n'
+          mainCode += '    IStream* pst = NULL;\n'
+          mainCode += '    Gdiplus::Image* img = NULL;\n'
+          mainCode += '    if (CreateStreamOnHGlobal(hm, TRUE, &pst) == S_OK && pst) {\n'
+          mainCode += '        img = Gdiplus::Image::FromStream(pst, FALSE);\n'
+          mainCode += '        pst->Release();\n'
+          mainCode += '        if (img && img->GetLastStatus() != Gdiplus::Ok) { delete img; img = NULL; }\n'
+          mainCode += '    } else {\n'
+          mainCode += '        GlobalFree(hm);\n'
+          mainCode += '    }\n'
+          mainCode += '    return img;\n'
+          mainCode += '}\n\n'
+          mainCode += 'void yc_win_set_back_image(const wchar_t* name, std::vector<unsigned char> data) {\n'
+          mainCode += '    if (!name || !name[0] || data.empty()) return;\n'
+          mainCode += '    /* 实参可能是临时字节集：拷到堆上再挂状态。被替换的旧图/旧字节与运行时其它\n'
+          mainCode += '     * 分配同策——全程序生命期、不回收（图片数量级小，无累积风险）。 */\n'
+          mainCode += '    unsigned char* copy = (unsigned char*)malloc(data.size());\n'
+          mainCode += '    if (!copy) return;\n'
+          mainCode += '    memcpy(copy, data.data(), data.size());\n'
+          mainCode += `    if (lstrcmpW(name, L"${escapeCString(winInfo.formName)}") == 0) {\n`
+          mainCode += '        if (g_backImage) { delete g_backImage; g_backImage = NULL; }\n'
+          mainCode += '        g_backImage = yc_decode_image_bytes(copy, (unsigned int)data.size());\n'
+          mainCode += '        if (g_hMainWnd && IsWindow(g_hMainWnd)) InvalidateRect(g_hMainWnd, NULL, TRUE);\n'
+          mainCode += '        return;\n'
+          mainCode += '    }\n'
+          mainCode += `    for (int i = 0; i < ${secondaryWindows.length}; i++) {\n`
+          mainCode += '        if (lstrcmpW(name, g_ycSubWinDefs[i].name) == 0) {\n'
+          mainCode += '            YcSubBackImg& e = g_ycSubBackImages[i];\n'
+          mainCode += '            if (e.img) { delete e.img; e.img = NULL; }\n'
+          mainCode += '            e.data = copy;\n'
+          mainCode += '            e.size = (unsigned int)data.size();\n'
+          mainCode += '            HWND h = g_ycSubWinHandles[i];\n'
+          mainCode += '            if (h && IsWindow(h)) InvalidateRect(h, NULL, TRUE);\n'
+          mainCode += '            return;\n'
+          mainCode += '        }\n'
+          mainCode += '    }\n'
+          mainCode += '}\n\n'
+        }
+
+        if (windowImageModeCodeAssign) {
+          // 窗口.底图方式 ＝ 0..4：改主/副窗底图方式并重绘（无图时仅记值，下次设图即按新方式绘制）
+          mainCode += 'void yc_win_set_back_image_mode(const wchar_t* name, long long mode) {\n'
+          mainCode += '    if (!name || !name[0]) return;\n'
+          mainCode += `    if (lstrcmpW(name, L"${escapeCString(winInfo.formName)}") == 0) {\n`
+          mainCode += '        g_backImageMode = (int)mode;\n'
+          mainCode += '        if (g_hMainWnd && IsWindow(g_hMainWnd)) InvalidateRect(g_hMainWnd, NULL, TRUE);\n'
+          mainCode += '        return;\n'
+          mainCode += '    }\n'
+          mainCode += `    for (int i = 0; i < ${secondaryWindows.length}; i++) {\n`
+          mainCode += '        if (lstrcmpW(name, g_ycSubWinDefs[i].name) == 0) {\n'
+          mainCode += '            g_ycSubBackImages[i].mode = (int)mode;\n'
+          mainCode += '            HWND h = g_ycSubWinHandles[i];\n'
+          mainCode += '            if (h && IsWindow(h)) InvalidateRect(h, NULL, TRUE);\n'
+          mainCode += '            return;\n'
+          mainCode += '        }\n'
+          mainCode += '    }\n'
+          mainCode += '}\n\n'
+        }
+
         // 通用子窗过程：事件分发前设 g_ycCurEventWin（控件跨窗重名时按名解析取本窗的）
         mainCode += 'static LRESULT CALLBACK YcSubWinProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {\n'
         mainCode += '    int wi = (int)GetWindowLongPtrW(hWnd, GWLP_USERDATA);\n'
         mainCode += '    switch (message) {\n'
-        if (hasAnySubBackImage) {
+        if (hasAnySubBackImage || windowBackImageCodeAssign) {
           // 辅助窗背景图：按窗序号(wi-1)查表，懒解码 GDI+ Image、按底图方式绘制（复用主窗逻辑；无底图窗走 break→DefWindowProc）
           mainCode += '    case WM_PAINT: {\n'
           mainCode += '        int bi = wi - 1;\n'
@@ -10178,10 +10334,12 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
           mainCode += '            }\n'
           mainCode += '            if (e.img) {\n'
           mainCode += '                RECT crc; GetClientRect(hWnd, &crc); int cw = crc.right - crc.left, ch = crc.bottom - crc.top;\n'
+          mainCode += '                int iw = (int)e.img->GetWidth(), ih = (int)e.img->GetHeight();\n'
           mainCode += '                Gdiplus::Graphics graphics(hdc);\n'
-          mainCode += '                if (e.mode == 4) { graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic); graphics.DrawImage(e.img, 0, 0, cw, ch); }\n'
-          mainCode += '                else if (e.mode == 0) { Gdiplus::TextureBrush tb(e.img); graphics.FillRectangle(&tb, 0, 0, cw, ch); }\n'
-          mainCode += '                else { int iw = (int)e.img->GetWidth(), ih = (int)e.img->GetHeight(); int ix, iy; if (e.mode == 1) { ix = 0; iy = 0; } else if (e.mode == 2) { ix = (cw - iw) / 2; iy = (ch - ih) / 2; } else { ix = cw - iw; iy = ch - ih; } graphics.DrawImage(e.img, ix, iy, iw, ih); }\n'
+          mainCode += '                if (e.mode == 1) { Gdiplus::TextureBrush tb(e.img); graphics.FillRectangle(&tb, 0, 0, cw, ch); }\n'
+          mainCode += '                else if (e.mode == 2) { graphics.DrawImage(e.img, (cw - iw) / 2, (ch - ih) / 2, iw, ih); }\n'
+          mainCode += '                else if (e.mode == 3) { graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic); graphics.DrawImage(e.img, 0, 0, cw, ch); }\n'
+          mainCode += '                else { graphics.DrawImage(e.img, 0, 0, iw, ih); }\n'
           mainCode += '            }\n'
           mainCode += '            EndPaint(hWnd, &ps);\n'
           mainCode += '            return 0;\n'
@@ -10377,6 +10535,52 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         mainCode += '    HWND h = yc_get_control_handle_by_name(name);\n'
         mainCode += '    if (h && IsWindow(h)) DestroyWindow(h);\n'
         mainCode += '}\n\n'
+        if (windowImageCodeAssign) {
+          // 窗口.底图 ＝ #资源/字节集（无辅助窗工程：只有主窗分支；g_backImage 已因 windowImageCodeAssign 生成）
+          mainCode += 'static Gdiplus::Image* yc_decode_image_bytes(const unsigned char* data, unsigned int size) {\n'
+          mainCode += '    if (!data || size == 0) return NULL;\n'
+          mainCode += '    HGLOBAL hm = GlobalAlloc(GMEM_MOVEABLE, size);\n'
+          mainCode += '    if (!hm) return NULL;\n'
+          mainCode += '    void* pm = GlobalLock(hm);\n'
+          mainCode += '    if (!pm) { GlobalFree(hm); return NULL; }\n'
+          mainCode += '    memcpy(pm, data, size);\n'
+          mainCode += '    GlobalUnlock(hm);\n'
+          mainCode += '    IStream* pst = NULL;\n'
+          mainCode += '    Gdiplus::Image* img = NULL;\n'
+          mainCode += '    if (CreateStreamOnHGlobal(hm, TRUE, &pst) == S_OK && pst) {\n'
+          mainCode += '        img = Gdiplus::Image::FromStream(pst, FALSE);\n'
+          mainCode += '        pst->Release();\n'
+          mainCode += '        if (img && img->GetLastStatus() != Gdiplus::Ok) { delete img; img = NULL; }\n'
+          mainCode += '    } else {\n'
+          mainCode += '        GlobalFree(hm);\n'
+          mainCode += '    }\n'
+          mainCode += '    return img;\n'
+          mainCode += '}\n\n'
+          mainCode += 'void yc_win_set_back_image(const wchar_t* name, std::vector<unsigned char> data) {\n'
+          mainCode += '    if (!name || !name[0] || data.empty()) return;\n'
+          mainCode += '    unsigned char* copy = (unsigned char*)malloc(data.size());\n'
+          mainCode += '    if (!copy) return;\n'
+          mainCode += '    memcpy(copy, data.data(), data.size());\n'
+          mainCode += `    if (lstrcmpW(name, L"${escapeCString(winInfo.formName)}") == 0) {\n`
+          mainCode += '        if (g_backImage) { delete g_backImage; g_backImage = NULL; }\n'
+          mainCode += '        g_backImage = yc_decode_image_bytes(copy, (unsigned int)data.size());\n'
+          mainCode += '        if (g_hMainWnd && IsWindow(g_hMainWnd)) InvalidateRect(g_hMainWnd, NULL, TRUE);\n'
+          mainCode += '        return;\n'
+          mainCode += '    }\n'
+          mainCode += '}\n\n'
+        }
+
+        if (windowImageModeCodeAssign) {
+          // 窗口.底图方式 ＝ 0..4（无辅助窗工程：只有主窗分支）
+          mainCode += 'void yc_win_set_back_image_mode(const wchar_t* name, long long mode) {\n'
+          mainCode += '    if (!name || !name[0]) return;\n'
+          mainCode += `    if (lstrcmpW(name, L"${escapeCString(winInfo.formName)}") == 0) {\n`
+          mainCode += '        g_backImageMode = (int)mode;\n'
+          mainCode += '        if (g_hMainWnd && IsWindow(g_hMainWnd)) InvalidateRect(g_hMainWnd, NULL, TRUE);\n'
+          mainCode += '        return;\n'
+          mainCode += '    }\n'
+          mainCode += '}\n\n'
+        }
       }
     }
 
@@ -10392,9 +10596,32 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       }
     }
 
+    // VC6 现代样式：显式建立激活上下文。清单已作为 RT_MANIFEST 资源嵌入，
+    // 但 mingw(gnu) 目标下加载器可能不自动应用它（实测 GetCurrentActCtx 为空、控件呈经典样式），
+    // 故在窗口创建前手动以自身资源为源建立并激活上下文；未启用(YC_VC6_STYLE 未定义)时整体编译剔除。
+    mainCode += 'static void ycActivateVisualStyle(void) {\n'
+    mainCode += '#ifdef YC_VC6_STYLE\n'
+    mainCode += '    char exePath[MAX_PATH];\n'
+    mainCode += '    GetModuleFileNameA(NULL, exePath, MAX_PATH);\n'
+    mainCode += '    ACTCTXA ac;\n'
+    mainCode += '    ZeroMemory(&ac, sizeof(ac));\n'
+    mainCode += '    ac.cbSize = sizeof(ac);\n'
+    mainCode += '    ac.lpSource = exePath;\n'
+    mainCode += '    ac.dwFlags = ACTCTX_FLAG_RESOURCE_NAME_VALID;\n'
+    mainCode += '    ac.lpResourceName = MAKEINTRESOURCEA(1);\n'
+    mainCode += '    HANDLE hCtx = CreateActCtxA(&ac);\n'
+    mainCode += '    if (hCtx != INVALID_HANDLE_VALUE) {\n'
+    mainCode += '        ULONG_PTR cookie = 0;\n'
+    mainCode += '        ActivateActCtx(hCtx, &cookie);\n'
+    mainCode += '    }\n'
+    mainCode += '#endif\n'
+    mainCode += '}\n\n'
+
     // WinMain
     mainCode += 'int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,\n'
     mainCode += '                   LPSTR lpCmdLine, int nCmdShow) {\n'
+    mainCode += '    /* VC6 现代样式：先建立激活上下文，再初始化通用控件与任何窗口 */\n'
+    mainCode += '    ycActivateVisualStyle();\n'
     mainCode += '    /* 重定向 stdout 到父进程管道（使调试输出可被 IDE 捕获） */\n'
     mainCode += '    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);\n'
     mainCode += '    if (hOut && hOut != INVALID_HANDLE_VALUE) {\n'
@@ -10407,8 +10634,8 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '    g_hInstance = hInstance;\n'
     mainCode += '    INITCOMMONCONTROLSEX icc = { sizeof(INITCOMMONCONTROLSEX), ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_BAR_CLASSES | ICC_LISTVIEW_CLASSES | ICC_TREEVIEW_CLASSES | ICC_TAB_CLASSES | ICC_DATE_CLASSES | ICC_LINK_CLASSES };\n'
     mainCode += '    InitCommonControlsEx(&icc);\n'
-    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage || hasAnySubBackImage || hasAnySubPicBtnImage) {
-      // 底图/图标/按钮图片/画板/辅助窗背景图/辅助窗图形按钮：启动 GDI+，从内嵌字节建内存流并解码
+    if (backImageBytes || iconImageBytes || hasAnyControlImage || hasDrawPanel || hasAnyPicBtnImage || hasAnySubBackImage || hasAnySubPicBtnImage || windowBackImageCodeAssign) {
+      // 底图/图标/按钮图片/画板/辅助窗背景图/辅助窗图形按钮/代码赋值窗口底图：启动 GDI+
       mainCode += '    { Gdiplus::GdiplusStartupInput gdiplusStartupInput;\n'
       mainCode += '      Gdiplus::GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, NULL);\n'
       mainCode += '    }\n'
@@ -10857,6 +11084,8 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       .map(collectContentStamp)
       .sort()
 
+    // VC6 现代样式设置（缺省启用）：影响清单嵌入与生成的激活上下文代码，变更需重建产物
+    const vc6Style = compilerHost?.readCompilerSettings?.()?.vc6Style !== false
     const buildFingerprint = createHash('sha1').update(JSON.stringify({
       mode: buildMode,
       debug: !!options.debug,
@@ -10869,6 +11098,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       staticLibStamps,
       platformImplStamps,
       resourceStamps,
+      vc6Style,
     })).digest('hex')
     compileLogMark(`计算产物指纹（哈希 ${sourceStamps.length} 个源文件 / ${staticLibStamps.length} 个静态库 / ${resourceStamps.length} 项资源）`)
     await yieldToEventLoop()
@@ -10904,7 +11134,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     }
     compileLogMark('读取上次产物缓存并比对指纹（未命中，需重新编译）')
 
-    const resourceBuild = await compileProjectResources(project, targetPlatform, targetArch, tempDir, zigPath, editorFiles)
+    const resourceBuild = await compileProjectResources(project, targetPlatform, targetArch, tempDir, zigPath, editorFiles, vc6Style)
     compileLogMark('编译资源(.erc/清单)')
     if (!resourceBuild.success) {
       result.errorCount++
@@ -10923,7 +11153,11 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
         sendMessage({ type: 'warning', text: `警告: 窗口程序当前仅支持 Windows 目标，已按 ${targetPlatform} 继续尝试编译` })
       }
       args.push('-Xlinker', '--subsystem', '-Xlinker', 'windows')
-      sendMessage({ type: 'info', text: '项目类型: Windows窗口程序' })
+      // VC6 现代样式：WinMain 里生成的激活上下文建立代码以该宏开启
+      if (vc6Style) {
+        args.push('-DYC_VC6_STYLE=1')
+      }
+      sendMessage({ type: 'info', text: `项目类型: Windows窗口程序` })
     } else if (project.outputType === 'DynamicLibrary') {
       args.push('-shared')
       sendMessage({ type: 'info', text: '项目类型: 动态链接库(DLL)' })

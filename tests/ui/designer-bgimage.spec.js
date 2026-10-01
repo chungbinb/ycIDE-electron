@@ -40,9 +40,11 @@ test('大图底图经属性面板选入后：画布显示底图，且用 Blob UR
     await win.waitForLoadState('domcontentloaded');
     await win.locator('.titlebar').waitFor();
 
-    await app.evaluate(async ({ dialog }, dir) => {
-      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [dir] });
-    }, projDir);
+    // project:openEpp 期望对话框返回 .epp 文件（返回目录会被当成 .e 导入而打不开项目）
+    await app.evaluate(async ({ dialog, BrowserWindow }, p) => {
+      BrowserWindow.getAllWindows()[0].focus();
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] });
+    }, path.join(projDir, 'windows窗口程序.epp'));
 
     // 打开项目 → 等窗口设计器画布出现
     await win.getByRole('menuitem', { name: '文件(F)', exact: true }).click();

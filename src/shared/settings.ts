@@ -30,6 +30,17 @@ export interface IDESettings {
   editorShowMinimapPreview: boolean
   /** 编辑器右侧变量汇总面板 */
   editorShowVarSummaryPanel: boolean
+  /**
+   * 可视化设计器画布模式。
+   * 'center'：窗体居中显示，缩放以中心/光标为基准，按住空格可任意平移（默认）。
+   * 'topleft'：易语言风格，窗体固定在画布左上角，缩放以窗体左上角为基准，不支持空格平移。
+   */
+  designerCanvasMode: 'center' | 'topleft'
+  /**
+   * VC6 现代样式（默认启用）：编译出的 Windows 程序使用 comctl32 v6 视觉主题
+   * （嵌入清单 + 启动时显式建立激活上下文）。关闭则不嵌清单，控件呈经典 Win32 灰样式。
+   */
+  designerVc6Style: boolean
   /** AI 助手字体 */
   aiFontFamily: string
   /** AI 助手字号 (px) */
@@ -84,6 +95,8 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   editorFreezeSubTableHeader: false,
   editorShowMinimapPreview: true,
   editorShowVarSummaryPanel: true,
+  designerCanvasMode: 'center',
+  designerVc6Style: true,
   aiFontFamily: '"Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif',
   aiFontSize: 13,
   aiModel: 'deepseek',
@@ -140,6 +153,8 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
     editorShowVarSummaryPanel: typeof raw.editorShowVarSummaryPanel === 'boolean'
       ? raw.editorShowVarSummaryPanel
       : d.editorShowVarSummaryPanel,
+    designerCanvasMode: resolveDesignerCanvasMode(raw.designerCanvasMode, d.designerCanvasMode),
+    designerVc6Style: typeof raw.designerVc6Style === 'boolean' ? raw.designerVc6Style : d.designerVc6Style,
     aiFontFamily: typeof raw.aiFontFamily === 'string' && raw.aiFontFamily.trim()
       ? raw.aiFontFamily.trim()
       : d.aiFontFamily,
@@ -238,4 +253,9 @@ function resolveCustomModels(value: unknown): AICustomModelConfig[] {
 /** 优化级别：只认白名单，非法值回落默认（避免脏配置把非法参数传给编译器） */
 function resolveOptimizeLevel(value: unknown, fallback: IDESettings['compilerOptimizeLevel']): IDESettings['compilerOptimizeLevel'] {
   return (value === 'O0' || value === 'O1' || value === 'O2' || value === 'Os') ? value : fallback
+}
+
+/** 设计器画布模式：只认 'center' / 'topleft'，非法值回落默认 */
+function resolveDesignerCanvasMode(value: unknown, fallback: IDESettings['designerCanvasMode']): IDESettings['designerCanvasMode'] {
+  return (value === 'center' || value === 'topleft') ? value : fallback
 }

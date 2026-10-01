@@ -11,6 +11,8 @@ const path = require('node:path');
 const { test, expect, _electron: electron } = require('@playwright/test');
 
 const appRoot = path.resolve(__dirname, '..', '..');
+// 版本号从 package.json 动态读取，避免每次发版都要改断言
+const APP_VERSION = require(path.join(appRoot, 'package.json')).version;
 
 async function launch() {
   return electron.launch({ args: [appRoot], cwd: appRoot, env: { ...process.env, CI: '1' } });
@@ -44,7 +46,7 @@ test.describe('关于窗口', () => {
 
       // 品牌区：名称 + 版本
       await expect(win.locator('.about-name')).toContainText('ycIDE');
-      await expect(win.locator('.about-version')).toContainText('v0.0.5-beta.25');
+      await expect(win.locator('.about-version')).toContainText(`v${APP_VERSION}`);
 
       // 运行时四项都在，且 Electron / Chromium / Node 版本是真实版本号（形如 43.x.y）
       const grids = win.locator('.about-comp-grid').first();
@@ -75,19 +77,25 @@ test.describe('关于窗口', () => {
       await openAbout(win);
       await installExternalSpy(app);
 
+      // 点组件行用系统浏览器打开对应官网
       // 点 Electron 行 → electronjs.org（aria name 前缀锚定，排除 V8 行）
       await win.getByRole('button', { name: /^Electron\b/ }).click();
       // 点 Zig 行 → ziglang.org
       await win.getByRole('button', { name: /^Zig\b/ }).click();
       // 点开源地址 GDI 版 → github.com/chungbinb/ycIDE
       await win.locator('.about-link', { hasText: 'GDI 版' }).click();
+      // 点引用的开源项目行 → 各自上游仓库
+      await win.locator('.about-link', { hasText: 'e-packager' }).click();
+      await win.locator('.about-link', { hasText: 'EProjectFile' }).click();
 
-      // IPC 异步，轮询到三个 url 都到位
+      // IPC 异步，轮询到五个 url 都到位
       await expect.poll(async () => app.evaluate(() => globalThis.__openedUrls || []), { timeout: 10000 })
         .toEqual(expect.arrayContaining([
           'https://www.electronjs.org',
           'https://ziglang.org',
           'https://github.com/chungbinb/ycIDE',
+          'https://github.com/aiqinxuancai/e-packager',
+          'https://github.com/OpenEpl/EProjectFile',
         ]));
     } finally {
       await app.close();
@@ -112,6 +120,51 @@ test.describe('关于窗口', () => {
       await expect(win.locator('.about-dialog')).toBeVisible();
       await win.locator('.about-overlay').click({ position: { x: 5, y: 5 } });
       await expect(win.locator('.about-dialog')).toHaveCount(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('拖标题栏可移动窗口，且不会被拖出主窗口', async () => {
+    const app = await launch();
+    try {
+      const win = await app.firstWindow();
+      await win.waitForLoadState('domcontentloaded');
+      await expect(win.locator('.titlebar')).toBeVisible();
+      await openAbout(win);
+
+      const dialog = win.locator('.about-dialog');
+      const header = win.locator('.about-header');
+      const before = await dialog.boundingBox();
+
+      // 按住标题栏拖动 → 对话框跟随移动相同距离
+      // 位移量按窗口剩余空间动态取值（对话框较高时垂直余量可能不足 80px，会被边缘钳制截断）
+      const preDragViewport = await win.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+      const dragX = 120;
+      const dragY = Math.min(80, Math.floor((preDragViewport.height - before.y - before.height) / 2));
+      const headerBox = await header.boundingBox();
+      const startX = headerBox.x + headerBox.width / 2;
+      const startY = headerBox.y + headerBox.height / 2;
+      await win.mouse.move(startX, startY);
+      await win.mouse.down();
+      await win.mouse.move(startX + dragX, startY + dragY, { steps: 5 });
+      await win.mouse.up();
+      const after = await dialog.boundingBox();
+      expect(after.x).toBeCloseTo(before.x + dragX, 0);
+      expect(after.y).toBeCloseTo(before.y + dragY, 0);
+
+      // 朝右下角极限拖拽 → 仍完全在窗口可视范围内
+      await win.mouse.move(startX + dragX, startY + dragY);
+      await win.mouse.down();
+      await win.mouse.move(startX + 4000, startY + 4000, { steps: 5 });
+      await win.mouse.up();
+      const clamped = await dialog.boundingBox();
+      // Electron 下 page.viewportSize() 返回 null，改用页面真实内容尺寸
+      const viewport = await win.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+      expect(clamped.x).toBeGreaterThanOrEqual(0);
+      expect(clamped.y).toBeGreaterThanOrEqual(0);
+      expect(clamped.x + clamped.width).toBeLessThanOrEqual(viewport.width);
+      expect(clamped.y + clamped.height).toBeLessThanOrEqual(viewport.height);
     } finally {
       await app.close();
     }

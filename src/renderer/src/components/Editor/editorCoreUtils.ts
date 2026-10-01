@@ -678,3 +678,37 @@ export function textPosForRelativeX(styleSource: Element, text: string, relX: nu
     mirror.remove()
   }
 }
+
+/**
+ * 成员属性点击 → 提示面板目标（`__MEMBER__:类型:成员`）。
+ *
+ * 点击 `_启动窗口.底图` / `编辑框.内容` 这类成员属性 token（赋值左值 assignTarget、
+ * 表达式里的 cometwolr）时，解析「对象.成员」：对象是本项目控件 → 其控件类型，
+ * 是项目窗口名 → '窗口'；返回提示目标串供 App 查窗口单元协议显示属性详情。
+ *
+ * 不接管的情形（返回 null，走既有命令提示路径）：
+ * - token 不含 '.'（普通命令）；成员段带 `(`（`编辑框.加入文本(...)` 方法调用）；
+ * - 对象既非控件也非窗口名（同名局部变量等，交给表达式自身语义）。
+ */
+export function resolveMemberPropertyHintTarget(
+  tokenText: string,
+  controlTypeMap: Map<string, string>,
+  windowNames: Iterable<string>,
+): string | null {
+  const raw = (tokenText || '').replace(/\u00A0/g, '').trim()
+  if (!raw || !raw.includes('.')) return null
+  const dot = raw.indexOf('.')
+  const obj = raw.slice(0, dot).trim()
+  const member = raw.slice(dot + 1).trim()
+  if (!obj || !member) return null
+  // 方法调用形式（成员后紧跟括号在 token 内不会出现，但 token 可能带尾括号如 `甲.乙()`）→ 方法提示路径
+  if (/[((\uff08]/.test(member)) return null
+  const memberIdent = member.replace(/[((\uff08].*$/, '').trim()
+  if (!/^[\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z_][\u4e00-\u9fa5\u3400-\u4dbf\uac00-\ud7a3\u3040-\u30ffA-Za-z0-9_]*$/.test(memberIdent)) return null
+  const type = controlTypeMap.get(obj) || ''
+  if (type) return `__MEMBER__:${type}:${memberIdent}`
+  for (const w of windowNames) {
+    if ((w || '').trim() === obj) return `__MEMBER__:窗口:${memberIdent}`
+  }
+  return null
+}

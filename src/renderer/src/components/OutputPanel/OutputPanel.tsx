@@ -3,6 +3,7 @@ import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
+import { formatClockTime, formatElapsedMs, OUTPUT_TYPE_LABELS, type OutputLineType } from '../../utils/outputFormat'
 import './OutputPanel.css'
 
 export interface OutputMessage {
@@ -11,6 +12,10 @@ export interface OutputMessage {
   /** 带位置的编译报错：file=相对项目文件名，line=文本行号，raw=text 中代表位置/行号的子串。
    *  输出面板据此把 raw 中的行号就地改写为「表格行(文本行)」（已打开的文件）并可点击跳转。 */
   location?: { file: string; line: number; raw: string }
+  /** 消息到达时刻（App 在 compiler:output 事件里打点）。有值时该行最左列显示时间轴/类型/用时。 */
+  ts?: number
+  /** 距时间轴锚点的用时（毫秒）：编译阶段自本次编译/运行开始，运行阶段自「程序已启动」。 */
+  elapsedMs?: number
 }
 
 /** 命令详细信息（用于提示面板展示） */
@@ -637,7 +642,15 @@ function OutputPanel({ height, onResize, onClose, messages = [], commandDetail, 
         <div id="output-panel-compile" className="output-content" ref={contentRef} role="tabpanel" aria-labelledby="output-tab-compile" tabIndex={0} onKeyDown={handlePanelSelectAllKeyDown}>
           <div role="log" aria-live="polite" aria-atomic="false">
           {messages.map((msg, i) => (
-            <div key={i} className={`output-line ${msg.type}`}>{renderCompileLine(msg)}</div>
+            <div key={i} className={`output-line ${msg.type}`}>
+              {msg.ts != null && (
+                <span className="output-line-meta">
+                  <span className="output-line-time">{formatClockTime(msg.ts)}</span>
+                  <span className={`output-line-tag output-line-tag-${msg.type as OutputLineType}`}>{OUTPUT_TYPE_LABELS[msg.type as OutputLineType]}</span>
+                  <span className="output-line-elapsed">{msg.elapsedMs != null ? `+${formatElapsedMs(msg.elapsedMs)}` : '—'}</span>
+                </span>
+              )}<span className="output-line-text">{renderCompileLine(msg)}</span>
+            </div>
           ))}
           </div>
         </div>

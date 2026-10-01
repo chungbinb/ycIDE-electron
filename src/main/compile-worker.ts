@@ -20,7 +20,7 @@ if (workerData && workerData.env) {
 
 // 编译设置（编译器路径/优化级别）：worker 里没有主进程的设置模块，
 // 由主进程在每次派发编译时随 workerData/请求注入，缺省则回落内置行为。
-let workerCompilerSettings: { zigPath: string; optimizeLevel: 'O0' | 'O1' | 'O2' | 'Os' } | null =
+let workerCompilerSettings: { zigPath: string; optimizeLevel: 'O0' | 'O1' | 'O2' | 'Os'; vc6Style?: boolean } | null =
   (workerData && workerData.compilerSettings) || null
 
 // 编译副作用经消息转发：输出广播、聚焦窗口、进程退出（编译阶段一般只用到输出）。
@@ -43,7 +43,7 @@ interface CompileRequestMessage {
   options: CompileOptions
   editorFiles?: Record<string, string>
   /** 主进程随每次请求下发最新编译设置——用户改了设置立即生效，无需重启 worker */
-  compilerSettings?: { zigPath: string; optimizeLevel: 'O0' | 'O1' | 'O2' | 'Os' } | null
+  compilerSettings?: { zigPath: string; optimizeLevel: 'O0' | 'O1' | 'O2' | 'Os'; vc6Style?: boolean } | null
 }
 
 interface ReloadLibrariesMessage {

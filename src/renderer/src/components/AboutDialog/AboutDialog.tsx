@@ -35,6 +35,37 @@ const COMPONENT_META: Record<string, { name: string; url: string }> = {
 const REPO_GDI = 'https://github.com/chungbinb/ycIDE'
 const REPO_HTML = 'https://github.com/chungbinb/ycIDE-electron'
 
+/** 随仓库附带/引用的开源项目（关于页致谢用） */
+const REFERENCED_PROJECTS: Array<{ name: string; desc: string; url: string }> = [
+  { name: 'e-packager', desc: '易语言 .e/.ec 解包 / 回包工具（MIT · aiqinxuancai）', url: 'https://github.com/aiqinxuancai/e-packager' },
+  { name: 'EProjectFile', desc: '易语言项目文件读写库（公共领域 · QIQI/OpenEpl）', url: 'https://github.com/OpenEpl/EProjectFile' },
+]
+
+type DragOffset = { x: number; y: number }
+
+/** 计算未位移时的对话框盒模型（getBoundingClientRect 含 transform，需扣除当前偏移） */
+function getBaseBox(el: HTMLElement, offset: DragOffset): { left: number; top: number; right: number; bottom: number } {
+  const rect = el.getBoundingClientRect()
+  return {
+    left: rect.left - offset.x,
+    top: rect.top - offset.y,
+    right: rect.right - offset.x,
+    bottom: rect.bottom - offset.y,
+  }
+}
+
+/** 把偏移钳制在「对话框完全位于窗口内」的范围内 */
+function clampOffset(box: { left: number; top: number; right: number; bottom: number }, offset: DragOffset): DragOffset {
+  return {
+    x: Math.min(Math.max(offset.x, -box.left), window.innerWidth - box.right),
+    y: Math.min(Math.max(offset.y, -box.top), window.innerHeight - box.bottom),
+  }
+}
+
+function applyDragTransform(el: HTMLElement, offset: DragOffset): void {
+  el.style.transform = offset.x === 0 && offset.y === 0 ? '' : `translate(${offset.x}px, ${offset.y}px)`
+}
+
 function openExternal(url: string): void {
   void window.api?.about?.openExternal?.(url)
 }
@@ -60,11 +91,14 @@ function ComponentRow({ metaKey, version }: { metaKey: string; version: string }
 function AboutDialog({ open, onClose }: AboutDialogProps): React.JSX.Element | null {
   const [info, setInfo] = useState<AboutInfo | null>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const dragOffsetRef = useRef<DragOffset>({ x: 0, y: 0 })
   const lastFocusedRef = useRef<HTMLElement | null>(null)
   const titleId = useId()
 
   useEffect(() => {
     if (!open) return
+    // 每次打开都从居中位置开始，不保留上次的拖拽偏移
+    dragOffsetRef.current = { x: 0, y: 0 }
     let alive = true
     void window.api?.about?.getInfo?.().then((data: AboutInfo) => { if (alive && data) setInfo(data) }).catch(() => {})
     lastFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -77,7 +111,52 @@ function AboutDialog({ open, onClose }: AboutDialogProps): React.JSX.Element | n
     }
   }, [open])
 
+  // 主窗口尺寸变化时，把已移出的对话框拉回可视范围
+  useEffect(() => {
+    if (!open) return
+    const handleResize = (): void => {
+      const el = dialogRef.current
+      if (!el) return
+      const clamped = clampOffset(getBaseBox(el, dragOffsetRef.current), dragOffsetRef.current)
+      dragOffsetRef.current = clamped
+      applyDragTransform(el, clamped)
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [open])
+
   if (!open) return null
+
+  const handleHeaderPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0) return
+    // 标题栏上的关闭按钮不作为拖拽把手
+    if (event.target instanceof Element && event.target.closest('button')) return
+    const el = dialogRef.current
+    if (!el) return
+    event.preventDefault()
+    el.setPointerCapture(event.pointerId)
+    const startPointerX = event.clientX
+    const startPointerY = event.clientY
+    const startOffset = { ...dragOffsetRef.current }
+    const baseBox = getBaseBox(el, startOffset)
+
+    const handleMove = (moveEvent: PointerEvent): void => {
+      const next = clampOffset(baseBox, {
+        x: startOffset.x + moveEvent.clientX - startPointerX,
+        y: startOffset.y + moveEvent.clientY - startPointerY,
+      })
+      dragOffsetRef.current = next
+      applyDragTransform(el, next)
+    }
+    const stopDrag = (): void => {
+      el.removeEventListener('pointermove', handleMove)
+      el.removeEventListener('pointerup', stopDrag)
+      el.removeEventListener('pointercancel', stopDrag)
+    }
+    el.addEventListener('pointermove', handleMove)
+    el.addEventListener('pointerup', stopDrag)
+    el.addEventListener('pointercancel', stopDrag)
+  }
 
   const handleKeyDown = (event: React.KeyboardEvent): void => {
     if (event.key === 'Escape') {
@@ -97,7 +176,7 @@ function AboutDialog({ open, onClose }: AboutDialogProps): React.JSX.Element | n
         onMouseDown={(event) => event.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
-        <div className="about-header">
+        <div className="about-header" onPointerDown={handleHeaderPointerDown}>
           <span id={titleId} className="about-title">关于 ycIDE</span>
           <button type="button" className="about-close" onClick={onClose} aria-label="关闭">&times;</button>
         </div>
@@ -152,6 +231,27 @@ function AboutDialog({ open, onClose }: AboutDialogProps): React.JSX.Element | n
               <button type="button" className="about-link" onClick={() => openExternal(REPO_HTML)} title={REPO_HTML}>
                 GitHub · html 版（当前）<span className="about-comp-link" aria-hidden="true">↗</span>
               </button>
+            </div>
+          </div>
+
+          {/* 引用的开源项目 */}
+          <div className="about-section">
+            <div className="about-section-title">引用的开源项目</div>
+            <div className="about-links">
+              {REFERENCED_PROJECTS.map((project) => (
+                <button
+                  key={project.name}
+                  type="button"
+                  className="about-link about-link-project"
+                  onClick={() => openExternal(project.url)}
+                  title={project.url}
+                >
+                  <span className="about-link-main">
+                    {project.name} <span className="about-comp-link" aria-hidden="true">↗</span>
+                  </span>
+                  <span className="about-link-sub">{project.desc}</span>
+                </button>
+              ))}
             </div>
           </div>
 

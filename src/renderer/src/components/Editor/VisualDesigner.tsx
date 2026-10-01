@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { parseFontSpec, fontSpecToCss } from './fontSpec'
+import { sanitizeImageDisplaySrc, stripPngProfileChunks } from '../../utils/imageDisplay'
 import Icon, { resolveUnitIconName } from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './VisualDesigner.css'
@@ -122,6 +123,8 @@ interface VisualDesignerProps {
   onPreviewWindow?: () => void          // 「预览」→ 编译运行该窗口(不编译源代码)
   onMenuItemActivate?: (itemName: string) => void  // 单击设计器菜单栏的菜单项 → 生成/跳转 _名_被选择 事件
   onMenuItemRenames?: (renames: Array<{ oldName: string; newName: string }>) => void  // 菜单项改名 → 同步源代码引用
+  /** 画布模式：'center' 窗体居中、中心点缩放、按住空格平移（默认）；'topleft' 易语言风格左上角固定 */
+  canvasMode?: 'center' | 'topleft'
 }
 
 // ========== 内置默认尺寸 ==========
@@ -147,13 +150,14 @@ const TOOL_TITLEBAR_HEIGHT = 22
 // 客户区坐标↔工作区/标尺坐标的换算必须把它与标题栏高度一并计入，否则纵向标尺高亮/游标上移一条菜单栏
 const FORM_MENUBAR_HEIGHT = 22
 
-// 底图方式 → 画布背景图 CSS（图片层，网格层恒定）
+// 底图方式 → 画布背景图 CSS（图片层，网格层恒定）。
+// 语义对齐易语言「窗口.底图方式」：0.图片居左上 / 1.图片平铺 / 2.图片居中 / 3.缩放图片
+//（与标签/画板的底图方式同语义；旧实现 0平铺/1居左上/2居中/3居右下/4缩放 已废弃）
 const BACK_IMAGE_MODE_CSS: Record<number, { size: string; repeat: string; position: string }> = {
-  0: { size: 'auto', repeat: 'repeat', position: '0 0' },          // 平铺
-  1: { size: 'auto', repeat: 'no-repeat', position: 'left top' },  // 居左上
+  0: { size: 'auto', repeat: 'no-repeat', position: 'left top' },  // 居左上
+  1: { size: 'auto', repeat: 'repeat', position: '0 0' },          // 平铺
   2: { size: 'auto', repeat: 'no-repeat', position: 'center' },    // 居中
-  3: { size: 'auto', repeat: 'no-repeat', position: 'right bottom' }, // 居右下
-  4: { size: '100% 100%', repeat: 'no-repeat', position: '0 0' },  // 缩放
+  3: { size: '100% 100%', repeat: 'no-repeat', position: '0 0' },  // 缩放
 }
 const FORM_MIN_WIDTH = 180
 const FORM_MIN_HEIGHT = 80
@@ -162,6 +166,8 @@ const MAX_ZOOM = 10
 const ZOOM_STEP = 0.1
 const RULER_SIZE = 24
 const WORKSPACE_MARGIN = 640
+// 左上角固定模式：窗体距工作区左上角的留白
+const TOPLEFT_FORM_MARGIN = 16
 const TOOLBOX_DOCK_LIST_MIN_WIDTH = 130
 const TOOLBOX_ICON_MIN_WIDTH = 86
 const TOOLBOX_DOCK_MAX_WIDTH = 420
@@ -384,7 +390,7 @@ let vdControlClipboard: DesignControl[] = []
 // 记住上次选中的 id（跨重渲染保持）
 let lastSelectedId: string = '__form__'
 
-function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], externalSelectedId, onMultiSelectChange, onControlDoubleClick, onFormDoubleClick, onUndo, onOpenWindowSource, onNavigateBack, onCanNavigateBack, onPreviewWindow, onMenuItemActivate, onMenuItemRenames }: VisualDesignerProps): React.JSX.Element {
+function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], externalSelectedId, onMultiSelectChange, onControlDoubleClick, onFormDoubleClick, onUndo, onOpenWindowSource, onNavigateBack, onCanNavigateBack, onPreviewWindow, onMenuItemActivate, onMenuItemRenames, canvasMode = 'center' }: VisualDesignerProps): React.JSX.Element {
   // '__form__' 表示选中窗口自身，null 表示无选中
   const [selectedId, setSelectedId] = useState<string | null>(lastSelectedId)
   // 多选支持
@@ -468,6 +474,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const canvasAreaRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const zoomRef = useRef(zoom)
+  // 画布模式镜像到 ref：缩放/平移回调是 useCallback，闭包里读 ref 拿最新模式
+  const canvasModeRef = useRef<'center' | 'topleft'>(canvasMode)
+  canvasModeRef.current = canvasMode
   const isSpacePressedRef = useRef(false)
   const pendingScrollRef = useRef<{ left: number; top: number } | null>(null)
   const initializedCenterRef = useRef(false)
@@ -533,7 +542,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       const bin = atob(formBackImage.slice(comma + 1))
       const bytes = new Uint8Array(bin.length)
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-      return URL.createObjectURL(new Blob([bytes], { type: mime }))
+      // 清洗显示副本：去掉 iCCP/cHRM 冲突块，避免 Chromium libpng 往 stderr 打警告（不动存储数据）
+      const cleaned = stripPngProfileChunks(bytes)
+      return URL.createObjectURL(new Blob([new Uint8Array(cleaned)], { type: mime }))
     } catch {
       return formBackImage // 解码失败退回 data URL（至少能显示，只是重些）
     }
@@ -542,9 +553,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     if (!formBackImageUrl.startsWith('blob:')) return
     return () => URL.revokeObjectURL(formBackImageUrl)
   }, [formBackImageUrl])
-  // 底图方式 0平铺 / 1居左上 / 2居中 / 3居右下 / 4缩放
+  // 底图方式 0居左上 / 1平铺 / 2居中 / 3缩放（易语言语义，见 BACK_IMAGE_MODE_CSS 注释）
   const formBackImageModeRaw = form.properties?.['底图方式']
-  const formBackImageMode = typeof formBackImageModeRaw === 'number' && formBackImageModeRaw >= 0 && formBackImageModeRaw <= 4 ? formBackImageModeRaw : 0
+  const formBackImageMode = typeof formBackImageModeRaw === 'number' && formBackImageModeRaw >= 0 && formBackImageModeRaw <= 3 ? formBackImageModeRaw : 0
   const backImageCss = BACK_IMAGE_MODE_CSS[formBackImageMode] || BACK_IMAGE_MODE_CSS[0]
   // 图标（base64 data URL）：标题栏左上角图标
   const formIcon = typeof form.properties?.['图标'] === 'string' && (form.properties['图标'] as string).startsWith('data:image')
@@ -559,8 +570,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const scaledFormHeight = (visualFormHeight + formChromeHeight) * zoom
   const workspaceWidth = computeWorkspaceSpan(scaledFormWidth, viewportSize.width)
   const workspaceHeight = computeWorkspaceSpan(scaledFormHeight, viewportSize.height)
-  const formOffsetLeft = (workspaceWidth - scaledFormWidth) / 2
-  const formOffsetTop = (workspaceHeight - scaledFormHeight) / 2
+  // 居中模式：窗体居中于工作区；左上角固定模式：窗体带留白钉在左上角（易语言风格）
+  const formOffsetLeft = canvasMode === 'topleft' ? TOPLEFT_FORM_MARGIN : (workspaceWidth - scaledFormWidth) / 2
+  const formOffsetTop = canvasMode === 'topleft' ? TOPLEFT_FORM_MARGIN : (workspaceHeight - scaledFormHeight) / 2
   const rulerMinorStep = useMemo(() => computeNiceIntegerStep(12 / Math.max(zoom, 0.01)), [zoom])
   const rulerMidStep = rulerMinorStep * 5
   const rulerMajorStep = rulerMinorStep * 10
@@ -663,7 +675,8 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       // Ignore corrupt local view-state payloads.
     }
 
-    pendingScrollRef.current = restoredScroll
+    // 左上角固定模式不恢复旧滚动（可能是居中模式的遗留值），直接从 0,0 露出窗体左上角
+    pendingScrollRef.current = canvasModeRef.current === 'topleft' ? null : restoredScroll
     setZoom(restoredZoom)
     setScrollPos({ left: 0, top: 0 })
   }, [viewStateStorageKey])
@@ -750,11 +763,12 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     }
 
     if (!initializedCenterRef.current) {
-      const centerLeft = (workspaceWidth - host.clientWidth) / 2
-      const centerTop = (workspaceHeight - host.clientHeight) / 2
-      host.scrollLeft = centerLeft
-      host.scrollTop = centerTop
-      setScrollPos({ left: centerLeft, top: centerTop })
+      // 左上角固定模式：初始视图对准工作区左上角（窗体带留白钉在角上），不做居中
+      const initLeft = canvasModeRef.current === 'topleft' ? 0 : (workspaceWidth - host.clientWidth) / 2
+      const initTop = canvasModeRef.current === 'topleft' ? 0 : (workspaceHeight - host.clientHeight) / 2
+      host.scrollLeft = initLeft
+      host.scrollTop = initTop
+      setScrollPos({ left: initLeft, top: initTop })
       initializedCenterRef.current = true
       viewStateHydratedRef.current = true
     }
@@ -805,33 +819,47 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const targetZoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM)
     if (!host || Math.abs(targetZoom - currentZoom) < 1e-6) return
 
+    // 窗体在工作区中的偏移随模式不同：居中模式按工作区居中，左上角固定模式恒为留白值
+    const offsetFor = (scaledW: number, scaledH: number, workspaceW: number, workspaceH: number): { x: number; y: number } =>
+      canvasModeRef.current === 'topleft'
+        ? { x: TOPLEFT_FORM_MARGIN, y: TOPLEFT_FORM_MARGIN }
+        : { x: (workspaceW - scaledW) / 2, y: (workspaceH - scaledH) / 2 }
+
     const rect = host.getBoundingClientRect()
     const hasAnchor = !!anchorClientPoint && isPointWithinRect(anchorClientPoint.x, anchorClientPoint.y, rect)
-    const anchorX = hasAnchor ? anchorClientPoint!.x : rect.left + rect.width / 2
-    const anchorY = hasAnchor ? anchorClientPoint!.y : rect.top + rect.height / 2
-    const viewportX = anchorX - rect.left
-    const viewportY = anchorY - rect.top
 
     const oldScaledW = visualFormWidth * currentZoom
     const oldScaledH = (visualFormHeight + formChromeHeight) * currentZoom
     const oldWorkspaceW = computeWorkspaceSpan(oldScaledW, host.clientWidth)
     const oldWorkspaceH = computeWorkspaceSpan(oldScaledH, host.clientHeight)
-    const oldOffsetX = (oldWorkspaceW - oldScaledW) / 2
-    const oldOffsetY = (oldWorkspaceH - oldScaledH) / 2
+    const oldOffset = offsetFor(oldScaledW, oldScaledH, oldWorkspaceW, oldWorkspaceH)
+
+    // 锚点的视口坐标：显式锚点用光标位置；左上角固定模式无锚点时钉住窗体左上角；否则视口中心
+    let viewportX: number
+    let viewportY: number
+    if (hasAnchor) {
+      viewportX = anchorClientPoint!.x - rect.left
+      viewportY = anchorClientPoint!.y - rect.top
+    } else if (canvasModeRef.current === 'topleft') {
+      viewportX = oldOffset.x - host.scrollLeft
+      viewportY = oldOffset.y - host.scrollTop
+    } else {
+      viewportX = rect.width / 2
+      viewportY = rect.height / 2
+    }
 
     const worldX = host.scrollLeft + viewportX
     const worldY = host.scrollTop + viewportY
-    const formX = (worldX - oldOffsetX) / currentZoom
-    const formY = (worldY - oldOffsetY) / currentZoom
+    const formX = (worldX - oldOffset.x) / currentZoom
+    const formY = (worldY - oldOffset.y) / currentZoom
 
     const newScaledW = visualFormWidth * targetZoom
     const newScaledH = (visualFormHeight + formChromeHeight) * targetZoom
     const newWorkspaceW = computeWorkspaceSpan(newScaledW, host.clientWidth)
     const newWorkspaceH = computeWorkspaceSpan(newScaledH, host.clientHeight)
-    const newOffsetX = (newWorkspaceW - newScaledW) / 2
-    const newOffsetY = (newWorkspaceH - newScaledH) / 2
-    const newWorldX = newOffsetX + formX * targetZoom
-    const newWorldY = newOffsetY + formY * targetZoom
+    const newOffset = offsetFor(newScaledW, newScaledH, newWorkspaceW, newWorkspaceH)
+    const newWorldX = newOffset.x + formX * targetZoom
+    const newWorldY = newOffset.y + formY * targetZoom
 
     pendingScrollRef.current = {
       left: newWorldX - viewportX,
@@ -865,15 +893,17 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     const targetZoom = clamp(targetZoomRaw, MIN_ZOOM, MAX_ZOOM)
     const currentZoom = zoomRef.current || 1
 
-    // 窗体居中于工作区，滚动到工作区中心即窗体居中
+    // 窗体居中于工作区，滚动到工作区中心即窗体居中；左上角固定模式则对准左上角（0,0）
     const scaledW = visualFormWidth * targetZoom
     const scaledH = (visualFormHeight + formChromeHeight) * targetZoom
     const targetWorkspaceW = computeWorkspaceSpan(scaledW, host.clientWidth)
     const targetWorkspaceH = computeWorkspaceSpan(scaledH, host.clientHeight)
-    const centerScroll = {
-      left: Math.max(0, (targetWorkspaceW - host.clientWidth) / 2),
-      top: Math.max(0, (targetWorkspaceH - host.clientHeight) / 2),
-    }
+    const centerScroll = canvasModeRef.current === 'topleft'
+      ? { left: 0, top: 0 }
+      : {
+          left: Math.max(0, (targetWorkspaceW - host.clientWidth) / 2),
+          top: Math.max(0, (targetWorkspaceH - host.clientHeight) / 2),
+        }
 
     if (Math.abs(targetZoom - currentZoom) < 1e-6) {
       // 倍率不变：直接居中滚动
@@ -912,6 +942,21 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     zoomToCentered(fit)
   }, [visualFormWidth, visualFormHeight, formChromeHeight, zoomToCentered])
 
+  // 画布模式切换时把视图重置到该模式的基准位置：左上角固定 → 对准左上角；居中 → 窗体居中。
+  // 不把 zoomToCentered 列入依赖：窗体尺寸变化会新建它，但不该触发视图重置。
+  useEffect(() => {
+    const host = canvasAreaRef.current
+    if (!host) return
+    if (canvasMode === 'topleft') {
+      host.scrollLeft = 0
+      host.scrollTop = 0
+      setScrollPos({ left: 0, top: 0 })
+    } else {
+      zoomToCentered(zoomRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasMode])
+
   // 倍率预设：首项为实际最小倍率，其余固定档位（超出范围的剔除）
   const zoomPresetPercents = (() => {
     const minPercent = Math.round(MIN_ZOOM * 100)
@@ -933,6 +978,8 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     }
 
     if (e.button !== 0) return
+    // 左上角固定模式不支持空格平移（易语言风格：视图固定，缩放以左上角为基准）
+    if (canvasModeRef.current === 'topleft') return
     if (!isSpacePressedRef.current) return
     const host = canvasAreaRef.current
     if (!host) return
@@ -1831,7 +1878,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const hAlign = Number(props['横向对齐方式'] ?? 1)   // 0左 1中 2右
         const vAlign = Number(props['纵向对齐方式'] ?? 1)   // 0顶 1中 2底
         const btnImage = typeof props['图片'] === 'string' && (props['图片'] as string).startsWith('data:image')
-          ? (props['图片'] as string)
+          ? sanitizeImageDisplaySrc(props['图片'] as string)
           : ''
         const toFlex = (n: number): string => n === 1 ? 'center' : n === 2 ? 'flex-end' : 'flex-start'
         // 底色（COLORREF，0=默认）
@@ -1922,7 +1969,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const border = Number(props['边框'] ?? 0)          // 0无 1凹入 2凸出 3浅凹 4镜框 5单线 6渐变镜框
         const transparent = Number(props['效果'] ?? 0) === 4
         // 底图（data URL）+ 底图方式（0居左上/1平铺/2居中/3缩放）——与运行时 YcLblBgProc 绘制一致
-        const lblBgImg = typeof props['底图'] === 'string' && (props['底图'] as string).startsWith('data:image') ? (props['底图'] as string) : ''
+        const lblBgImg = typeof props['底图'] === 'string' && (props['底图'] as string).startsWith('data:image') ? sanitizeImageDisplaySrc(props['底图'] as string) : ''
         const lblBgMode = Number(props['底图方式'] ?? 0)
         // 渐变背景（未设底图时生效，与运行时 LinearGradientBrush 3 色一致）：方式 0无/1上下/2左右/3-4-7-8对角/5-6反向
         const lblGradMode = Number(props['渐变背景方式'] ?? 0)
@@ -1965,7 +2012,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const props = ctrl.properties || {}
         const checked = props['选中'] === true || props['选中'] === '真'
         const picKey = checked && typeof props['按下图片'] === 'string' && (props['按下图片'] as string).startsWith('data:image') ? '按下图片' : '正常图片'
-        const pic = typeof props[picKey] === 'string' && (props[picKey] as string).startsWith('data:image') ? (props[picKey] as string) : ''
+        const pic = typeof props[picKey] === 'string' && (props[picKey] as string).startsWith('data:image') ? sanitizeImageDisplaySrc(props[picKey] as string) : ''
         return (
           <div className="vd-preview vd-preview-image" ref={(element) => setCssVars(element, { '--vd-preview-bg': pic ? 'transparent' : '#e1e1e1' })}>
             {pic
@@ -1977,7 +2024,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       case '图片框':
       case '影像框': {
         const props = ctrl.properties || {}
-        const pic = typeof props['图片'] === 'string' && (props['图片'] as string).startsWith('data:image') ? (props['图片'] as string) : ''
+        const pic = typeof props['图片'] === 'string' && (props['图片'] as string).startsWith('data:image') ? sanitizeImageDisplaySrc(props['图片'] as string) : ''
         const border = Number(props['边框'] ?? 0)
         const drawMode = Number(props['显示方式'] ?? 0)  // 0居左上 1缩放 2居中
         const bgNum = typeof props['背景颜色'] === 'number' ? (props['背景颜色'] as number) : 16777215
@@ -2002,7 +2049,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         const props = ctrl.properties || {}
         const border = Number(props['边框'] ?? 0)
         const bgNum = typeof props['画板背景色'] === 'number' ? (props['画板背景色'] as number) : 16777215
-        const pic = typeof props['底图'] === 'string' && (props['底图'] as string).startsWith('data:image') ? (props['底图'] as string) : ''
+        const pic = typeof props['底图'] === 'string' && (props['底图'] as string).startsWith('data:image') ? sanitizeImageDisplaySrc(props['底图'] as string) : ''
         const picMode = Number(props['底图方式'] ?? 0) // 0居左上 1平铺 2居中 3缩放
         const borderCls = border === 1 || border === 3 ? ' vd-preview-label-sunken'
           : border === 2 ? ' vd-preview-label-raised'
@@ -2835,8 +2882,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           ))}
         </div>
 
-        {/* 对齐工具条：独立于顶部工具栏，只在可视化设计器内、标尺下方显示；选中 ≥2 个控件时可用 */}
-        <div className="vd-align-bar" role="toolbar" aria-label="对齐">
+        {/* 对齐工具条：独立于顶部工具栏，只在可视化设计器内、标尺下方显示；选中 ≥2 个控件时可用。
+            左上角固定模式下窗体钉在左上角会与它重叠，改放画布左下角 */}
+        <div className={`vd-align-bar ${canvasMode === 'topleft' ? 'vd-align-bar-bottom' : ''}`} role="toolbar" aria-label="对齐">
           {VD_ALIGN_BUTTONS.map(b => (
             <button
               key={b.action}
@@ -2853,7 +2901,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         </div>
 
         <div
-          className={`vd-canvas-scroll ${isSpacePressed ? 'vd-canvas-scroll-pan-ready' : ''} ${isPanningView ? 'vd-canvas-scroll-pan-active' : ''}`}
+          className={`vd-canvas-scroll ${canvasMode !== 'topleft' && isSpacePressed ? 'vd-canvas-scroll-pan-ready' : ''} ${canvasMode !== 'topleft' && isPanningView ? 'vd-canvas-scroll-pan-active' : ''}`}
           ref={canvasAreaRef}
           onScroll={handleCanvasScroll}
           onWheel={handleCanvasAreaWheel}
@@ -2893,7 +2941,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           <div className={`vd-form-body vd-form-shape-${formShape}`}>
           {formChrome.hasTitlebar && (
             <div className={`vd-form-titlebar${formChrome.isToolWindow ? ' vd-form-titlebar-tool' : ''}`} onMouseDown={handleFormTitleClick} onDoubleClick={handleFormDblClick}>
-              {!formChrome.isToolWindow && <span className="vd-form-titlebar-icon">{formIcon ? <img className="vd-form-titlebar-icon-img" src={formIcon} alt="" /> : <Icon name="windows-form" size={14} />}</span>}
+              {!formChrome.isToolWindow && <span className="vd-form-titlebar-icon">{formIcon ? <img className="vd-form-titlebar-icon-img" src={sanitizeImageDisplaySrc(formIcon)} alt="" /> : <Icon name="windows-form" size={14} />}</span>}
               <span className="vd-form-titlebar-text">{form.title || form.name}</span>
               {formControlBox && (
                 <span className="vd-form-titlebar-btns">

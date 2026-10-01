@@ -1091,6 +1091,9 @@ function App(): React.JSX.Element {
   const locatedErrorsRef = useRef<Record<string, Set<number>>>({})
   // 表格行号解析的延迟重试计时器（basename → 计时器 id 列表），用于合并重复调度。
   const resolveTimersRef = useRef<Record<string, number[]>>({})
+  // 输出面板时间轴锚点：每条输出的「用时」= 到达时刻 - 锚点。编译/运行开始（resetOutputMessages）
+  // 时重置；收到「程序已启动」后重锚为程序启动时刻，运行期调试输出的用时即“距程序启动”。
+  const outputEpochRef = useRef(Date.now())
   const flushOutputBuffer = useCallback(() => {
     outputFlushRafRef.current = null
     const buffered = outputBufferRef.current
@@ -1115,6 +1118,7 @@ function App(): React.JSX.Element {
     didJumpToBuildErrorRef.current = false
     locatedErrorsRef.current = {}
     setErrorTableLines({})
+    outputEpochRef.current = Date.now()
     setOutputMessages([])
   }, [])
 
@@ -1251,7 +1255,13 @@ function App(): React.JSX.Element {
           openErrorLocation(loc.file, loc.line)
         }
       }
-      appendOutputMessage(loc ? { ...msg, location: loc } : msg)
+      // 时间轴打点：ts=IPC 到达时刻，用时按当前锚点折算；「程序已启动」自身仍按上一锚点
+      // 计（显示编译+链接总耗时），随后把锚点重锚为程序启动时刻，其后的调试输出按“距程序启动”计。
+      const arrivedAt = Date.now()
+      const elapsedMs = Math.max(0, arrivedAt - outputEpochRef.current)
+      if (text.startsWith('程序已启动')) outputEpochRef.current = arrivedAt
+      const stamped: OutputMessage = { ...msg, ts: arrivedAt, elapsedMs }
+      appendOutputMessage(loc ? { ...stamped, location: loc } : stamped)
     }
     const dispose = window.api.on('compiler:output', handleOutput)
     return () => { dispose() }
@@ -1626,6 +1636,52 @@ function App(): React.JSX.Element {
         params: [],
       })
       setShowOutput(true)
+      return
+    }
+
+    if (commandName.startsWith('__MEMBER__:')) {
+      // 成员属性提示（`窗口名.底图` / `编辑框.内容` 点击）：查窗口单元协议的属性定义，
+      // 按易语言样式显示「成员属性 … 所在数据类型为 …」。未命中（如方法调用误入）静默返回。
+      const payload = commandName.slice('__MEMBER__:'.length)
+      const sep = payload.indexOf(':')
+      const unitType = (sep >= 0 ? payload.slice(0, sep) : '').trim()
+      const member = (sep >= 0 ? payload.slice(sep + 1) : '').trim()
+      if (!unitType || !member) return
+      setHighlightParamIndex(undefined)
+      try {
+        const units = await window.api.library.getWindowUnits(targetPlatform) as Array<{
+          name: string
+          englishName?: string
+          properties?: Array<{ name: string; englishName?: string; typeName?: string; description?: string; pickOptions?: string[] }>
+        }>
+        const unit = units.find(u => u.name === unitType)
+        const prop = unit?.properties?.find(p => p.name === member || (p.englishName || '') === member)
+        if (unit && prop) {
+          const lines = [
+            `所在数据类型为“${unit.name}”，英文名称为“${prop.englishName || '—'}”，类型为“${prop.typeName || '—'}”。`,
+          ]
+          if (prop.description) lines.push(prop.description)
+          // 选择整数型属性：逐行列出可选值（易语言风格，如 0.图片平铺 / 1.图片居左上 …）
+          for (const option of prop.pickOptions || []) {
+            const text = (option || '').trim()
+            if (text) lines.push(text)
+          }
+          setCommandDetail({
+            name: prop.name,
+            englishName: prop.englishName || '',
+            description: prop.description || '',
+            returnType: prop.typeName || '',
+            category: '成员属性',
+            libraryName: unit.name,
+            customTitle: `成员属性“${prop.name}”`,
+            customLines: lines,
+            params: [],
+          })
+          setShowOutput(true)
+        }
+      } catch {
+        // 协议查询失败静默——不覆盖既有提示内容
+      }
       return
     }
 
@@ -5814,6 +5870,7 @@ function App(): React.JSX.Element {
                   editorFontSize={ideSettings.editorFontSize}
                   editorLineHeight={ideSettings.editorLineHeight}
                   editorFreezeSubTableHeader={ideSettings.editorFreezeSubTableHeader}
+                  designerCanvasMode={ideSettings.designerCanvasMode}
                   editorShowMinimapPreview={ideSettings.editorShowMinimapPreview}
                   editorShowVarSummaryPanel={ideSettings.editorShowVarSummaryPanel}
                   targetPlatform={targetPlatform}
