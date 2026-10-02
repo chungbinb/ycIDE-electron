@@ -289,9 +289,12 @@ export class AutoBuild {
   constructor(request: AutoBuildRequest, options: AutoBuildOptions) {
     this.request = request
     this.options = options
-    this.print = options.print ?? ((line: string) => { process.stdout.write(line + '\n') })
-    this.writeRaw = options.writeRaw ?? ((text: string) => { process.stdout.write(text) })
     this.logFile = request.logFile ? resolve(request.logFile) : null
+    const writeLine = options.print ?? ((line: string) => { process.stdout.write(line + '\n') })
+    // print 统一落盘，日志才是「完整记录」（banner / 清单 / 汇总都进日志），
+    // 而不是只剩编译消息。Windows 上 Electron 属 GUI 子系统、stdout 可能不可见，日志是兜底。
+    this.print = (line: string) => { writeLine(line); this.appendLog(line) }
+    this.writeRaw = options.writeRaw ?? ((text: string) => { process.stdout.write(text) })
     this.exitProcess = options.exitProcess ?? ((code: number) => { process.exit(code) })
     this.watchdogMinutes = request.watchdogMinutes ?? DEFAULT_WATCHDOG_MINUTES
     this.watchdog = new AutoBuildWatchdog(this.watchdogMinutes * 60_000, () => this.onWatchdogFire())
@@ -900,9 +903,9 @@ export class AutoBuild {
     const typePrefix = msg.type === 'error' ? '[错误] ' : msg.type === 'warning' ? '[警告] ' : msg.type === 'success' ? '[成功] ' : ''
     const labelPrefix = this.currentLabel ? `[${this.currentLabel}] ` : ''
     // 统一走 stdout，保证与运行输出的时序不错乱；失败语义由退出码承载（见 cli.ts）。
+    // print 内部已同步落盘，这里不再重复 appendLog。
     const line = labelPrefix + typePrefix + msg.text
     this.print(line)
-    this.appendLog(line)
   }
 
   /** 运行产物时的原始输出（不额外加前缀、不补换行） */
