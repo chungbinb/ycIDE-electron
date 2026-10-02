@@ -1226,6 +1226,8 @@ app.whenReady().then(async () => {
       isPackaged: app.isPackaged,
       userDataPath: app.getPath('userData'),
       appVersion: app.getVersion(),
+      // 看门狗触发时走 Electron 的退出通道（比 process.exit 更干净：会触发正常退出流程）。
+      exitProcess: (exitCode: number) => app.exit(exitCode),
     }).execute()
     process.stdout.write(`完整日志: ${request.logFile}\n`)
     app.exit(code)

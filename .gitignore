@@ -39,3 +39,12 @@ compiler/
 
 # 主题管理器损坏自动备份（本地留存即可，不入库）
 themes/*.corrupted.*
+
+# AutoBuild 批量编译演练目录（本地测试用，含 .epp 与编译产物，不入库）
+autobuildtest/
+
+# AutoBuild CLI 模式落盘的运行日志目录
+debug_logs/
+
+# AI 工作记忆（对话上下文 / 开发日志），属个人辅助资料，不入库
+.workbuddy-ai/

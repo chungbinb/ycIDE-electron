@@ -62,16 +62,31 @@ describe('AutoBuild.parse', () => {
     expectPath(AutoBuild.parse(['build', '-p', 'D:/proj']).request?.projectDir)
   })
 
-  it('缺少项目路径时报错', () => {
+  it('缺少目录路径时报错', () => {
     const parsed = AutoBuild.parse(['build'])
     expect(parsed.request).toBeNull()
-    expect(parsed.error).toMatch(/缺少项目路径/)
+    expect(parsed.error).toMatch(/缺少目录路径/)
   })
 
-  it('多个项目路径时报错', () => {
+  it('多个目录路径时报错', () => {
     const parsed = AutoBuild.parse(['build', 'D:/a', 'D:/b'])
     expect(parsed.request).toBeNull()
-    expect(parsed.error).toMatch(/只能指定一个项目路径/)
+    expect(parsed.error).toMatch(/只能指定一个目录/)
+  })
+
+  it('解析批量扫描相关开关 --depth / --list / --fail-fast', () => {
+    const parsed = AutoBuild.parse(['build', 'D:/root', '--depth', '3', '--fail-fast'])
+    expect(parsed.request?.maxDepth).toBe(3)
+    expect(parsed.request?.failFast).toBe(true)
+    expect(parsed.request?.listOnly).toBe(false)
+
+    expect(AutoBuild.parse(['build', 'D:/root', '--list']).request?.listOnly).toBe(true)
+    expect(AutoBuild.parse(['build', 'D:/root', '--dry-run']).request?.listOnly).toBe(true)
+  })
+
+  it('--depth 非数字时报错', () => {
+    expect(AutoBuild.parse(['build', 'D:/root', '--depth', '-1']).error).toMatch(/--depth/)
+    expect(AutoBuild.parse(['build', 'D:/root', '--depth', 'abc']).error).toMatch(/--depth/)
   })
 
   it('未知参数报错', () => {

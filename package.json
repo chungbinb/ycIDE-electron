@@ -19,6 +19,7 @@
     "typecheck": "tsc -p tsconfig.typecheck.node.json && tsc -p tsconfig.typecheck.web.json",
     "lint": "eslint .",
     "test:unit": "vitest run",
+    "test:unit:fast": "node scripts/test-unit-fast.mjs",
     "test": "npm run typecheck && npm run lint && npm run test:unit && npm run test:contract:editor:all",
     "inventory:baseline": "node scripts/migration/inventory-baseline.mjs --regenerate",
     "inventory:check": "node scripts/migration/inventory-baseline.mjs --check-manifest",
