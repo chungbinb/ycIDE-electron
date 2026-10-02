@@ -1,0 +1,121 @@
+name: Release
+
+# CD：把 tag 变成可下载的 Windows 发行包。
+# 质量门禁在 ci.yml（push 到 main/dev 时跑）；tag push 不会触发 ci.yml，
+# 所以这里自带一个 verify job 作为发布前闸门。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: '创建 GitHub Release（否则只上传 Artifact）'
+        type: boolean
+        default: false
+      sign:
+        description: '使用代码签名打包（需先配置 YCIDE_WIN_CERT_* Secrets）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: 发布前质量门禁
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 单元测试
+        run: npm run test:unit
+
+  package-windows:
+    name: 打包 Windows 发行版
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # generate_release_notes 需要历史提交来推断变更
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      # compiler/ 被 .gitignore 排除（Zig 工具链体积过大，单独分发），
+      # 但 package.json 的 build.extraFiles 里声明了它——目录缺失会让
+      # electron-builder 直接打包失败。压缩脚本本来就会排除 compiler/，
+      # 因此这里补一个空目录占位即可，发行包里不含编译器。
+      - name: 补 compiler/ 占位目录
+        run: New-Item -ItemType Directory -Force -Path compiler | Out-Null
+
+      - name: 打包（未签名）
+        if: ${{ !inputs.sign }}
+        run: npm run package:win
+
+      - name: 打包（代码签名）
+        if: ${{ inputs.sign }}
+        run: npm run package:win:signed
+        env:
+          YCIDE_WIN_CERT_FILE: ${{ secrets.YCIDE_WIN_CERT_FILE }}
+          YCIDE_WIN_CERT_PASSWORD: ${{ secrets.YCIDE_WIN_CERT_PASSWORD }}
+          YCIDE_WIN_TIMESTAMP_URL: ${{ secrets.YCIDE_WIN_TIMESTAMP_URL }}
+          YCIDE_WIN_PUBLISHER_NAME: ${{ secrets.YCIDE_WIN_PUBLISHER_NAME }}
+          YCIDE_REQUIRE_WIN_SIGN: '1'
+
+      # 优先 7z 极限压缩，runner 上没有 7-Zip 时脚本会自动回退 zip
+      - name: 压缩发行包
+        run: node scripts/package-win-zip.mjs
+
+      - name: 上传 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ycIDE-windows-${{ github.ref_name }}
+          path: |
+            dist/ycIDE-win-unpacked-v*.7z
+            dist/ycIDE-win-unpacked-v*.zip
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: 创建 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ycIDE ${{ github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: |
+            dist/ycIDE-win-unpacked-v*.7z
+            dist/ycIDE-win-unpacked-v*.zip
+          body: |
+            ## 安装说明
+
+            1. 解压 `ycIDE-win-unpacked-v*.7z` 到任意目录
+               （Win10 需 7-Zip / WinRAR；Win11 23H2+ 资源管理器可直接解压）
+            2. **编译器不随包分发**：请自行下载 Zig 放到 `compiler/zig/zig.exe`，
+               详见 README 的「编译器说明」
+            3. 双击 `ycIDE.exe` 启动
+
+            > 首次运行若被杀软拦截，请参考 README 的「杀毒软件误报排查与发布建议」。

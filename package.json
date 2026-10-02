@@ -19,6 +19,7 @@
     "typecheck": "tsc -p tsconfig.typecheck.node.json && tsc -p tsconfig.typecheck.web.json",
     "lint": "eslint .",
     "test:unit": "vitest run",
+    "test:unit:fast": "node scripts/test-unit-fast.mjs",
     "test": "npm run typecheck && npm run lint && npm run test:unit && npm run test:contract:editor:all",
     "inventory:baseline": "node scripts/migration/inventory-baseline.mjs --regenerate",
     "inventory:check": "node scripts/migration/inventory-baseline.mjs --check-manifest",
@@ -47,7 +48,9 @@
     "package:win:signed": "node scripts/security/package-win-signed.mjs",
     "package:mac": "electron-vite build && electron-builder --mac",
     "package:linux": "electron-vite build && electron-builder --linux",
-    "security:av:report": "node scripts/security/collect-antivirus-report.mjs"
+    "security:av:report": "node scripts/security/collect-antivirus-report.mjs",
+    "cli": "electron-vite build && node out/main/cli.js",
+    "cli:run": "node out/main/cli.js"
   },
   "build": {
     "appId": "com.ycide.app",
