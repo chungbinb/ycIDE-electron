@@ -12,5 +12,5 @@
     "rootDir": ".",
     "resolveJsonModule": true
   },
-  "include": ["src/renderer/src/**/*", "src/shared/**/*", "src/plugins/**/*.json"]
+  "include": ["src/renderer/src/**/*", "src/shared/**/*", "plugins/*/plugin.json"]
 }

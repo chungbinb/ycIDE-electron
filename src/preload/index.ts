@@ -243,6 +243,8 @@ const api = {
   // 主题管理
   theme: {
     getList: () => ipcRenderer.invoke('theme:getList') as Promise<ThemeId[]>,
+    /** 每个主题的来源：builtin 内置 / plugin 插件提供 / custom 用户自定义；前两者只读 */
+    getSources: () => ipcRenderer.invoke('theme:getSources') as Promise<Record<ThemeId, 'builtin' | 'plugin' | 'custom'>>,
     load: (name: ThemeId) => ipcRenderer.invoke('theme:load', name) as Promise<ThemeDefinition | null>,
     getCurrent: () => ipcRenderer.invoke('theme:getCurrent') as Promise<ThemeResolutionResult>,
     saveCurrent: (name: ThemeId, themePayload?: ThemeTokenPayload) =>

@@ -1,7 +1,8 @@
 import './SettingsDialog.css'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { DEFAULT_IDE_SETTINGS, type IDESettings } from '../../../../shared/settings'
-import type { AISupportedModel } from '../../../../shared/ai'
+import { collectAIModels, collectProviderKeySlots } from '../../../../shared/plugin/aiContributions'
+import { useEnabledManifests } from '../../workbench/commands'
 
 interface SettingsDialogProps {
   settings: IDESettings
@@ -37,10 +38,6 @@ const AI_FONT_OPTIONS: Array<{ label: string; value: string }> = [
   { label: 'Consolas', value: 'Consolas, "Cascadia Code", "JetBrains Mono", "Courier New", monospace' },
 ]
 const AI_FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24]
-const AI_MODEL_OPTIONS: Array<{ label: string; value: AISupportedModel }> = [
-  { label: 'DeepSeek', value: 'deepseek' },
-  { label: 'GLM', value: 'glm' },
-]
 const ANDROID_EMULATOR_OPTIONS: Array<{ label: string; value: IDESettings['androidEmulatorKind'] }> = [
   { label: '雷电模拟器', value: 'ldplayer' },
   { label: 'Android Studio Emulator', value: 'android-studio' },
@@ -80,6 +77,14 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
       if (ownWindow && ownWindow !== window) ownWindow.removeEventListener('keydown', handleKeyDown)
     }
   }, [baseline, onChange, onClose])
+
+  // 模型列表来自插件贡献的 aiProviders + 用户自定义模型
+  const manifests = useEnabledManifests()
+  const aiModelOptions = [
+    ...collectAIModels(manifests).map(m => ({ label: m.label, value: m.id })),
+    ...draft.aiCustomModels.map(m => ({ label: m.label, value: m.id })),
+  ]
+  const providerKeySlots = collectProviderKeySlots(manifests)
 
   const updateDraft = useCallback(<K extends keyof IDESettings>(key: K, value: IDESettings[K]) => {
     setDraft(prev => {
@@ -346,7 +351,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
               value={draft.aiModel}
               onChange={(e) => updateDraft('aiModel', e.target.value as IDESettings['aiModel'])}
             >
-              {AI_MODEL_OPTIONS.map((item) => (
+              {aiModelOptions.map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
               ))}
             </select>
@@ -378,6 +383,21 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
             />
             <span className="settings-unit" />
           </div>
+          {/* 插件提供的模型提供方：各自一个 API Key */}
+          {providerKeySlots.map(slot => (
+            <div className="settings-row" key={slot.key}>
+              <span className="settings-label">{slot.label} API Key</span>
+              <input
+                type="password"
+                className="settings-input"
+                title={`${slot.label} API Key（插件 ${slot.pluginId}${slot.envKey ? `，未填写时读取环境变量 ${slot.envKey}` : ''}）`}
+                value={draft.aiProviderApiKeys[slot.key] ?? ''}
+                onChange={(e) => updateDraft('aiProviderApiKeys', { ...draft.aiProviderApiKeys, [slot.key]: e.target.value })}
+                autoComplete="off"
+              />
+              <span className="settings-unit" />
+            </div>
+          ))}
         </div>
         <div className="settings-group">
           <h4 className="settings-group-title">编译</h4>

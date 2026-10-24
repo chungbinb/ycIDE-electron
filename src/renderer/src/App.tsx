@@ -21,7 +21,9 @@ import type { SelectionTarget, DesignForm, DesignControl } from './components/Ed
 import { parseLines } from './components/Editor/eycBlocks'
 import { resolveControlMethodDetail } from './components/Editor/editorCoreUtils'
 import { type RuntimePlatform } from './utils/shortcuts'
-import { useCommandHandlers, executeCommand, executeLegacyAction, dispatchKeybinding, onPluginMessage } from './workbench/commands'
+import { useCommandHandlers, executeCommand, executeLegacyAction, dispatchKeybinding, onPluginMessage, getEnabledManifests } from './workbench/commands'
+import { runAgentTask, createProjectPathHelpers, collectEditableFiles, type AgentTaskResult, type AgentToolTrace, type AgentToolContext } from './workbench/aiAgent'
+import { collectAITools } from '../../shared/plugin/aiContributions'
 import { mountIdeActionLogger } from './utils/ideActionLogger'
 import {
   BUILTIN_DARK_THEME_ID,
@@ -130,47 +132,6 @@ type TargetPlatform = 'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'harmo
 type TargetArch = 'x64' | 'x86' | 'arm64'
 type ActivityBarSide = 'left' | 'right'
 
-type AgentToolName =
-  | 'list_files'
-  | 'read_file'
-  | 'edit_file'
-  | 'open_file'
-  | 'terminal_send'
-  | 'terminal_read'
-  | 'terminal_last_command'
-type AgentToolCall = {
-  tool: AgentToolName
-  path?: string
-  pattern?: string
-  instruction?: string
-  reason?: string
-  command?: string
-  limit?: number
-}
-type AgentToolPlan = {
-  plan?: string
-  toolCalls?: AgentToolCall[]
-  finalMessage?: string
-}
-type AgentTaskResult = {
-  ok: boolean
-  logs: string[]
-  finalMessage?: string
-  error?: string
-  primaryEdit?: {
-    filePath: string
-    addedLines: number
-    deletedLines: number
-  }
-}
-
-type AgentToolTrace = {
-  id: string
-  tool: AgentToolName
-  ok: boolean
-  args: string
-  result: string
-}
 
 function normalizeTargetPlatform(value?: string | null): TargetPlatform {
   const normalized = (value || '').trim().toLowerCase()
@@ -820,6 +781,11 @@ function App(): React.JSX.Element {
   const currentProjectDirRef = useRef('')
   const editorRef = useRef<EditorHandle>(null)
   const [themeList, setThemeList] = useState<string[]>([])
+  // 主题来源（内置 / 插件 / 自定义）：插件提供的主题与内置主题一样只读，修改时自动复制
+  const [themeSources, setThemeSources] = useState<Record<string, 'builtin' | 'plugin' | 'custom'>>({})
+  const themeSourcesRef = useRef(themeSources)
+  const isReadonlyTheme = useCallback((themeId: string): boolean =>
+    isBuiltinThemeId(themeId) || themeSourcesRef.current[themeId] === 'plugin', [])
   const [currentTheme, setCurrentTheme] = useState<string>('')
   const [themeManagerCommittedThemeId, setThemeManagerCommittedThemeId] = useState<string | null>(null)
   const [themeTokenValues, setThemeTokenValues] = useState<Record<string, string>>({ ...DEFAULT_THEME_TOKEN_PAYLOAD.tokenValues })
@@ -1894,7 +1860,7 @@ function App(): React.JSX.Element {
       try {
         await window.api?.theme?.setCurrent(name)
         const current = await window.api?.theme?.getCurrent()
-        if (current?.effectiveThemeId === name && !isBuiltinThemeId(name)) {
+        if (current?.effectiveThemeId === name && !isReadonlyTheme(name)) {
           payload = resolveThemeTokenPayload(current.themePayload, theme.colors)
         }
       } catch {
@@ -1911,8 +1877,8 @@ function App(): React.JSX.Element {
       } catch { /* ignore */ }
     }
 
-    // 内置主题始终以主题文件色值为准，避免历史 payload 覆盖标题栏等关键令牌。
-    if (isBuiltinThemeId(name)) {
+    // 内置主题与插件主题始终以主题文件色值为准，避免历史 payload 覆盖标题栏等关键令牌。
+    if (isReadonlyTheme(name)) {
       payload = resolveThemeTokenPayload({ tokenValues: theme.colors, flowLine: payload.flowLine, icon: payload.icon, gradients: payload.gradients }, theme.colors)
     }
 
@@ -1958,7 +1924,7 @@ function App(): React.JSX.Element {
     }
     if (themeRepairMessage) setThemeRepairMessage(null)
     return payload
-  }, [applyFlowLineConfigToRoot, applyThemeGradientsToRoot, applyThemeTokenValuesToRoot, persistCurrentThemePayload, pushThemeNotice, themeRepairMessage])
+  }, [applyFlowLineConfigToRoot, applyThemeGradientsToRoot, applyThemeTokenValuesToRoot, isReadonlyTheme, persistCurrentThemePayload, pushThemeNotice, themeRepairMessage])
 
   const syncThemeLifecycleState = useCallback(async (
     payload: ThemeLifecycleSyncPayload,
@@ -2017,7 +1983,7 @@ function App(): React.JSX.Element {
 
   const ensureEditableThemeId = useCallback(async (): Promise<string | null> => {
     if (!currentTheme) return null
-    if (!isBuiltinThemeId(currentTheme)) return currentTheme
+    if (!isReadonlyTheme(currentTheme)) return currentTheme
 
     const autoThemeName = buildAutoCopiedThemeName(currentTheme)
     const saveResult = await window.api?.theme?.saveAsCustom({
@@ -2044,7 +2010,7 @@ function App(): React.JSX.Element {
     setThemeDraftSession(createThemeDraftSession(saveResult.themeId, payload))
     setThemeSaveFeedback(`已自动基于“${currentTheme}”创建可编辑副本“${saveResult.themeId}”。`)
     return saveResult.themeId
-  }, [applyTheme, buildAutoCopiedThemeName, currentTheme, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
+  }, [applyTheme, buildAutoCopiedThemeName, currentTheme, isReadonlyTheme, themeFlowLine, themeGradients, themeIconConfig, themeTokenValues])
 
   const canUndoThemeDraft = (themeDraftSession?.historyCursor ?? 0) > 0
 
@@ -2562,6 +2528,21 @@ function App(): React.JSX.Element {
     }
     return true
   }, [handleThemeManagerSaveTheme, handleThemeSettingsClose, themeDraftSession])
+
+  // 主题列表变化时同步主题来源；插件启停可能增减插件提供的主题，届时重新获取列表
+  useEffect(() => {
+    let cancelled = false
+    void window.api?.theme?.getSources?.().then(sources => {
+      if (cancelled || !sources) return
+      themeSourcesRef.current = sources
+      setThemeSources(sources)
+    })
+    return () => { cancelled = true }
+  }, [themeList])
+
+  useEffect(() => window.api?.on?.('plugins:changed', () => {
+    void window.api?.theme?.getList().then(list => { if (list) setThemeList(list) })
+  }), [])
 
   useEffect(() => {
     (async () => {
@@ -3558,7 +3539,7 @@ function App(): React.JSX.Element {
     openFileByPathRef.current = openFileByPath
   }, [openFileByPath])
 
-  // 命令处理函数。命令本身（标题、所在菜单、快捷键）由 src/plugins/*/plugin.json 声明，这里只负责实现；
+  // 命令处理函数。命令本身（标题、所在菜单、快捷键）由 plugins/*/plugin.json 声明，这里只负责实现；
   // 阶段 0 先集中留在 App.tsx，后续阶段再迁进各自的插件（见 docs/插件架构设计稿.md §11）。
   useCommandHandlers({
     'file:openRecent': async (rawPayload: unknown) => {
@@ -5075,6 +5056,10 @@ function App(): React.JSX.Element {
     editorRef.current?.clearDiffHighlight()
   }, [])
 
+  // AI Agent：循环在 workbench/aiAgent.ts，工具来自插件的 aiTools 贡献点（内置工具见下方 aiTool:* 命令）
+  const agentRunSeqRef = useRef(0)
+  const agentFileCacheRef = useRef<{ runId: number; files: string[] } | null>(null)
+
   const handleAIAgentTask = useCallback(async (
     goal: string,
     onLog?: (line: string) => void,
@@ -5088,543 +5073,203 @@ function App(): React.JSX.Element {
         error: '请先打开项目后再执行 Agent。',
       }
     }
+    return runAgentTask(goal, {
+      projectDir,
+      runId: ++agentRunSeqRef.current,
+      runtimePlatform,
+      tools: collectAITools(getEnabledManifests()),
+      chatWithTools: handleAIChatWithTools,
+      executeCommand,
+      confirmTool: async (tool, args) => window.confirm(
+        `插件 ${tool.pluginId} 提供的 AI 工具「${tool.name}」要${tool.risk === 'exec' ? '执行命令' : '修改文件'}：\n\n${JSON.stringify(args, null, 2)}\n\n是否允许？`,
+      ),
+      onLog,
+      onToolTrace,
+    })
+  }, [handleAIChatWithTools, runtimePlatform])
 
-    const logs: string[] = []
-    const reportLog = (line: string): void => {
-      if (!line) return
-      logs.push(line)
-      onLog?.(line)
-    }
-    const toPrettyJson = (value: unknown): string => {
-      try {
-        return JSON.stringify(value, null, 2)
-      } catch {
-        return String(value)
+  // 内置 AI 工具（声明见 plugins/ycide.workbench、plugins/ycide.terminal 的 aiTools）：
+  // 以 (参数对象, 运行上下文) 调用，返回 AgentToolResult
+  useCommandHandlers({
+    'aiTool:listFiles': async (rawArgs: unknown, rawCtx: unknown) => {
+      const args = (rawArgs ?? {}) as { pattern?: unknown; limit?: unknown; forPrompt?: unknown }
+      const ctx = rawCtx as AgentToolContext
+      const paths = createProjectPathHelpers(ctx.projectDir, joinPath, pathSeparator)
+      let files = agentFileCacheRef.current?.runId === ctx.runId ? agentFileCacheRef.current.files : null
+      if (!files) {
+        const absolute = await collectEditableFiles(
+          ctx.projectDir,
+          async dir => await window.api?.file?.readDir(dir) as string[] | undefined,
+          joinPath,
+          name => !!inferAIEditableLanguage(name),
+        )
+        files = absolute.map(paths.toRelative)
+        agentFileCacheRef.current = { runId: ctx.runId, files }
       }
-    }
-    const toTraceText = (value: unknown): string => {
-      const raw = typeof value === 'string' ? value : toPrettyJson(value)
-      if (raw.length <= 4000) return raw
-      return `${raw.slice(0, 4000)}\n...(已截断)`
-    }
-    const wait = (ms: number): Promise<void> => new Promise(resolve => window.setTimeout(resolve, ms))
-    const normalizedGoal = (goal || '').toLowerCase()
-    const isNetworkDiagnosisGoal = /网络|联网|连通|连接|ping|internet|connectivity|dns|丢包/.test(normalizedGoal)
-    const normalizedProjectDir = projectDir.replace(/\//g, '\\').replace(/[\\]+$/, '')
-    const projectDirLower = normalizedProjectDir.toLowerCase()
-    const editableFiles: string[] = []
-    const skipDirs = new Set(['node_modules', '.git', 'dist', 'out', 'test-results'])
-
-    const toRelative = (absolutePath: string): string => {
-      const normalized = (absolutePath || '').replace(/\//g, '\\')
-      if (normalized.toLowerCase().startsWith(projectDirLower)) {
-        const sliced = normalized.slice(normalizedProjectDir.length).replace(/^[\\/]+/, '')
-        return sliced.replace(/\\/g, '/')
+      if (args.forPrompt) return { ok: true, data: { ok: true, files } }
+      const pattern = (typeof args.pattern === 'string' ? args.pattern : '').trim().toLowerCase()
+      const matched = pattern ? files.filter(item => item.toLowerCase().includes(pattern)) : files
+      const maxLimit = Number.isFinite(args.limit) ? Math.max(1, Math.min(200, Number(args.limit))) : 30
+      const preview = matched.slice(0, 30)
+      const logs = [`工具 list_files：匹配 ${matched.length} 个文件${pattern ? `（pattern=${pattern}）` : ''}。`]
+      if (preview.length > 0) logs.push(`文件预览：${preview.join('、')}${matched.length > preview.length ? ' ...' : ''}`)
+      return { ok: true, logs, data: { ok: true, count: matched.length, files: matched.slice(0, maxLimit) } }
+    },
+    'aiTool:readFile': async (rawArgs: unknown, rawCtx: unknown) => {
+      const args = (rawArgs ?? {}) as { path?: unknown }
+      const paths = createProjectPathHelpers((rawCtx as AgentToolContext).projectDir, joinPath, pathSeparator)
+      const rawPath = typeof args.path === 'string' ? args.path : ''
+      const absolutePath = paths.resolveProjectPath(rawPath)
+      if (!absolutePath) {
+        return { ok: false, logs: [`工具 read_file 失败：路径无效 ${rawPath}`], data: { ok: false, error: `路径无效: ${rawPath}` } }
       }
-      return normalized.replace(/\\/g, '/')
-    }
-
-    const resolveProjectPath = (rawPath?: string): string | null => {
-      const candidate = (rawPath || '').trim()
-      if (!candidate) return null
-      const isAbsolute = /^[a-zA-Z]:[\\/]/.test(candidate) || candidate.startsWith('\\\\') || candidate.startsWith('/')
-      const absolute = isAbsolute
-        ? candidate.replace(/\//g, '\\')
-        : joinPath(projectDir, candidate.replace(/\//g, pathSeparator))
-      const normalized = absolute.replace(/\//g, '\\')
-      const lower = normalized.toLowerCase()
-      if (lower === projectDirLower) return normalized
-      if (!lower.startsWith(`${projectDirLower}\\`)) return null
-      return normalized
-    }
-
-    const collectEditableFiles = async (dir: string, depth: number): Promise<void> => {
-      if (depth > 8 || editableFiles.length >= 500) return
-      let entries: string[] | undefined
-      try {
-        entries = await window.api?.file?.readDir(dir) as string[] | undefined
-      } catch {
-        return
+      const content = await window.api?.project?.readFile(absolutePath)
+      if (typeof content !== 'string') {
+        return { ok: false, logs: [`工具 read_file 失败：无法读取 ${paths.toRelative(absolutePath)}`], data: { ok: false, error: `无法读取: ${paths.toRelative(absolutePath)}` } }
       }
-      if (!entries || entries.length === 0) return
-
-      for (const name of entries) {
-        if (!name || editableFiles.length >= 500) break
-        const full = joinPath(dir, name)
-        const ext = inferAIEditableLanguage(name)
-        if (ext) {
-          editableFiles.push(full)
-          continue
-        }
-
-        if (skipDirs.has(name.toLowerCase())) continue
-        let childEntries: string[] | undefined
-        try {
-          childEntries = await window.api?.file?.readDir(full) as string[] | undefined
-        } catch {
-          childEntries = undefined
-        }
-        if (Array.isArray(childEntries)) {
-          await collectEditableFiles(full, depth + 1)
-        }
+      return {
+        ok: true,
+        logs: [`工具 read_file：已读取 ${paths.toRelative(absolutePath)}（${content.length} 字符）`],
+        data: { ok: true, path: paths.toRelative(absolutePath), content },
+        trace: { ok: true, path: paths.toRelative(absolutePath), contentLength: content.length },
       }
-    }
-
-    if (isNetworkDiagnosisGoal) {
-      reportLog('检测到网络连通性意图，优先使用终端命令进行诊断。')
-      const command = runtimePlatform === 'windows' ? 'ping -n 4 8.8.8.8' : 'ping -c 4 8.8.8.8'
+    },
+    'aiTool:openFile': async (rawArgs: unknown, rawCtx: unknown) => {
+      const args = (rawArgs ?? {}) as { path?: unknown }
+      const paths = createProjectPathHelpers((rawCtx as AgentToolContext).projectDir, joinPath, pathSeparator)
+      const rawPath = typeof args.path === 'string' ? args.path : ''
+      const absolutePath = paths.resolveProjectPath(rawPath)
+      if (!absolutePath) {
+        return { ok: false, logs: [`工具 open_file 失败：路径无效 ${rawPath}`], data: { ok: false, error: `路径无效: ${rawPath}` } }
+      }
+      const opened = await openFileByPath(absolutePath)
+      return {
+        ok: opened,
+        logs: [opened ? `工具 open_file：已打开 ${paths.toRelative(absolutePath)}` : `工具 open_file 失败：无法打开 ${paths.toRelative(absolutePath)}`],
+        data: { ok: opened, path: paths.toRelative(absolutePath) },
+      }
+    },
+    'aiTool:editFile': async (rawArgs: unknown, rawCtx: unknown) => {
+      const args = (rawArgs ?? {}) as { path?: unknown; instruction?: unknown }
+      const paths = createProjectPathHelpers((rawCtx as AgentToolContext).projectDir, joinPath, pathSeparator)
+      const absolutePath = paths.resolveProjectPath(typeof args.path === 'string' ? args.path : '')
+      const instruction = (typeof args.instruction === 'string' ? args.instruction : '').trim()
+      if (!absolutePath || !instruction) {
+        return { ok: false, logs: ['工具 edit_file 失败：缺少 path 或 instruction。'], data: { ok: false, error: '缺少 path 或 instruction。' } }
+      }
+      const rel = paths.toRelative(absolutePath)
+      if (!inferAIEditableLanguage(absolutePath)) {
+        return { ok: false, logs: [`工具 edit_file 跳过：文件类型不支持 ${rel}`], data: { ok: false, error: `文件类型不支持: ${rel}` } }
+      }
+      const logs = [`工具 edit_file：正在编辑 ${rel}…`]
+      const editResult = await handleAIRequestEdit(instruction, absolutePath)
+      if (!editResult.ok) {
+        logs.push(`工具 edit_file 失败：${rel} - ${editResult.error || '未知错误'}`)
+        return { ok: false, logs, data: { ok: false, error: editResult.error || '未知错误' } }
+      }
+      if (!(await handleAIApplyEdit(editResult))) {
+        logs.push(`工具 edit_file 失败：${rel} 自动应用失败`)
+        return { ok: false, logs, data: { ok: false, error: '自动应用失败。' } }
+      }
+      let addedLines = 0
+      let deletedLines = 0
+      for (const line of (editResult.diff || '').replace(/\r\n/g, '\n').split('\n')) {
+        if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) continue
+        if (line.startsWith('+')) addedLines++
+        else if (line.startsWith('-')) deletedLines++
+      }
+      logs.push(`工具 edit_file：已修改 ${rel}（+${addedLines} / -${deletedLines}）`)
+      return {
+        ok: true,
+        logs,
+        data: { ok: true, path: rel, addedLines, deletedLines },
+        edit: { filePath: absolutePath, addedLines, deletedLines },
+      }
+    },
+    'aiTool:terminalSend': async (rawArgs: unknown) => {
+      const args = (rawArgs ?? {}) as { command?: unknown; instruction?: unknown; pollAttempts?: unknown; pollIntervalMs?: unknown; outputLimit?: unknown }
+      const command = (typeof args.command === 'string' ? args.command : typeof args.instruction === 'string' ? args.instruction : '').trim()
+      if (!command) {
+        return { ok: false, logs: ['工具 terminal_send 失败：缺少 command。'], data: { ok: false, error: '缺少 command。' } }
+      }
+      const pollAttempts = typeof args.pollAttempts === 'number' ? args.pollAttempts : 6
+      const pollIntervalMs = typeof args.pollIntervalMs === 'number' ? args.pollIntervalMs : 250
+      const outputLimit = typeof args.outputLimit === 'number' ? args.outputLimit : 1200
       const beforeSnapshot = await window.api?.terminal?.getSnapshot()
       const beforeCount = Array.isArray(beforeSnapshot?.output) ? beforeSnapshot!.output.length : 0
       const sent = await handleTerminalSend(command)
       if (!sent.ok) {
-        reportLog(`工具 terminal_send 失败：${sent.error || '未知错误'}`)
-        return {
-          ok: false,
-          logs,
-          error: sent.error || '网络诊断命令执行失败。',
-        }
+        return { ok: false, logs: [`工具 terminal_send 失败：${sent.error || '未知错误'}`], data: { ok: false, error: sent.error || '未知错误' } }
       }
-      reportLog(`工具 terminal_send：已执行命令 ${command}`)
-
+      const logs = [`工具 terminal_send：已执行命令 ${command}`]
       let emittedCount = beforeCount
       let capturedOutput = ''
-      for (let attempt = 0; attempt < 8; attempt++) {
-        await wait(300)
+      for (let attempt = 0; attempt < pollAttempts; attempt++) {
+        await new Promise(resolve => window.setTimeout(resolve, pollIntervalMs))
         const snapshot = await window.api?.terminal?.getSnapshot()
         const output = Array.isArray(snapshot?.output) ? snapshot!.output : []
         if (output.length <= emittedCount) continue
         const deltaText = output.slice(emittedCount).join('')
         emittedCount = output.length
-        if (!deltaText.trim()) continue
-        capturedOutput += deltaText
+        if (deltaText.trim()) capturedOutput += deltaText
       }
-
       const trimmed = capturedOutput.trim()
-      if (trimmed) {
-        const clipped = trimmed.length > 1800 ? trimmed.slice(-1800) : trimmed
-        reportLog(`工具 terminal_send 输出：\n${clipped}`)
-      } else {
-        reportLog('工具 terminal_send 输出：暂未捕获到新输出。')
+      if (!trimmed) {
+        logs.push('工具 terminal_send 输出：暂未捕获到新输出。')
+        return { ok: true, logs, data: { ok: true, command, output: '' } }
       }
-
-      return {
+      const clipped = trimmed.length > outputLimit ? trimmed.slice(-outputLimit) : trimmed
+      logs.push(`工具 terminal_send 输出：\n${clipped}`)
+      return { ok: true, logs, data: { ok: true, command, output: clipped } }
+    },
+    'aiTool:terminalRead': async (rawArgs: unknown) => {
+      const args = (rawArgs ?? {}) as { limit?: unknown }
+      const snapshot = await window.api?.terminal?.getSnapshot()
+      const limit = Number.isFinite(args.limit) ? Math.max(1, Math.min(200, Number(args.limit))) : 40
+      const lines = (snapshot?.output || []).slice(-limit)
+      const logs = [`工具 terminal_read：读取最近 ${lines.length} 行终端输出。`]
+      if (lines.length > 0) logs.push(lines.join(''))
+      return { ok: true, logs, data: { ok: true, lines: lines.join('') } }
+    },
+    // 文档服务（设计稿 §5.1 的阶段 1 子集）：插件经 ycide.documents.* 读取、修改文档。
+    // 修改走与 AI 编辑相同的路径：更新编辑器内容（未保存）并高亮差异，用户可在编辑器里撤销。
+    'documents:getText': async (rawPath: unknown) => {
+      const filePath = typeof rawPath === 'string' ? rawPath : ''
+      if (!filePath) throw new Error('缺少文件路径')
+      const tab = getTextTabByPath(filePath)
+      if (tab) return tab.value
+      const disk = await window.api?.project?.readFile(filePath)
+      if (typeof disk !== 'string') throw new Error(`无法读取：${filePath}`)
+      return disk
+    },
+    'documents:applyEdit': async (rawRequest: unknown) => {
+      const request = (rawRequest ?? {}) as { path?: unknown; text?: unknown; baseText?: unknown }
+      const filePath = typeof request.path === 'string' ? request.path : ''
+      if (!filePath || typeof request.text !== 'string') throw new Error('需要 path 和 text')
+      if (!inferAIEditableLanguage(filePath)) throw new Error(`文件类型不支持：${filePath}`)
+      const tab = getTextTabByPath(filePath)
+      const current = tab ? tab.value : await window.api?.project?.readFile(filePath)
+      if (typeof current !== 'string') throw new Error(`无法读取：${filePath}`)
+      // 乐观并发：调用方传了 baseText 而文档已被改动时拒绝，避免覆盖用户的修改（对应设计稿的版本过期错误）
+      if (typeof request.baseText === 'string' && request.baseText !== current) {
+        throw new Error('文档内容已变化，请重新读取后再修改')
+      }
+      const applied = await handleAIApplyEdit({
         ok: true,
-        logs,
-        finalMessage: '网络连通性检查已完成，结果见上方终端输出。',
-      }
-    }
-
-    await collectEditableFiles(projectDir, 0)
-    const relFiles = editableFiles.map(toRelative)
-    if (relFiles.length === 0) {
-      reportLog('未索引到可编辑源码文件。')
-    }
-
-    const agentTools: AIChatTool[] = [
-      {
-        type: 'function',
-        function: {
-          name: 'list_files',
-          description: '列出项目内源码文件，可按 pattern 过滤。',
-          parameters: {
-            type: 'object',
-            properties: {
-              pattern: { type: 'string' },
-              limit: { type: 'integer' },
-            },
-            additionalProperties: false,
-          },
-        },
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'read_file',
-          description: '读取项目内文件内容。',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: { type: 'string' },
-            },
-            required: ['path'],
-            additionalProperties: false,
-          },
-        },
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'open_file',
-          description: '在编辑器中打开项目内文件。',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: { type: 'string' },
-            },
-            required: ['path'],
-            additionalProperties: false,
-          },
-        },
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'edit_file',
-          description: '按 instruction 修改项目文件。',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: { type: 'string' },
-              instruction: { type: 'string' },
-            },
-            required: ['path', 'instruction'],
-            additionalProperties: false,
-          },
-        },
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'terminal_send',
-          description: '向终端发送命令并执行。',
-          parameters: {
-            type: 'object',
-            properties: {
-              command: { type: 'string' },
-            },
-            required: ['command'],
-            additionalProperties: false,
-          },
-        },
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'terminal_read',
-          description: '读取最近终端输出。',
-          parameters: {
-            type: 'object',
-            properties: {
-              limit: { type: 'integer' },
-            },
-            additionalProperties: false,
-          },
-        },
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'terminal_last_command',
-          description: '读取最近执行的终端命令。',
-          parameters: {
-            type: 'object',
-            properties: {},
-            additionalProperties: false,
-          },
-        },
-      },
-    ]
-
-    const agentMessages: AIChatMessage[] = [
-      {
-        role: 'system',
-        content: [
-          '你是 ycIDE 的项目级 Agent。',
-          '你必须优先通过 function calling 使用工具完成任务，只有在任务完成时再给简短最终结论。',
-          '当目标涉及网络检查（网络、联网、连通、ping、dns）时，优先使用 terminal_send 执行 ping。',
-          '文件路径必须使用项目根目录下的相对路径。',
-          `项目根目录：${projectDir}`,
-          `可用文件清单（相对路径）:\n${relFiles.join('\n')}`,
-        ].join('\n'),
-      },
-      { role: 'user', content: goal },
-    ]
-
-    let primaryEdit: AgentTaskResult['primaryEdit']
-    for (let round = 0; round < 8; round++) {
-      const response = await handleAIChatWithTools(agentMessages, agentTools)
-      if (!response.ok) {
-        return {
-          ok: false,
-          logs,
-          error: response.error || 'Agent 执行失败。',
-        }
-      }
-
-      const assistantMessage: AIChatMessage = {
-        role: 'assistant',
-        content: response.message || '',
-        tool_calls: response.toolCalls,
-      }
-      agentMessages.push(assistantMessage)
-
-      const toolCalls = Array.isArray(response.toolCalls) ? response.toolCalls : []
-      if (toolCalls.length === 0) {
-        return {
-          ok: true,
-          logs,
-          finalMessage: response.message || 'Agent 执行完成。',
-          primaryEdit,
-        }
-      }
-
-      for (const toolCall of toolCalls) {
-        const tool = toolCall?.function?.name as AgentToolName | undefined
-        let args: Record<string, unknown> = {}
-        try {
-          const raw = toolCall?.function?.arguments || '{}'
-          const parsed = JSON.parse(raw) as unknown
-          if (parsed && typeof parsed === 'object') {
-            args = parsed as Record<string, unknown>
-          }
-        } catch {
-          args = {}
-        }
-
-        const call: AgentToolCall = {
-          tool: (tool || 'list_files'),
-          path: typeof args.path === 'string' ? args.path : undefined,
-          pattern: typeof args.pattern === 'string' ? args.pattern : undefined,
-          instruction: typeof args.instruction === 'string' ? args.instruction : undefined,
-          reason: typeof args.reason === 'string' ? args.reason : undefined,
-          command: typeof args.command === 'string' ? args.command : undefined,
-          limit: typeof args.limit === 'number' ? args.limit : undefined,
-        }
-        const emitToolTrace = (ok: boolean, result: unknown): void => {
-          const resolvedTool = (tool || 'list_files')
-          onToolTrace?.({
-            id: toolCall.id,
-            tool: resolvedTool,
-            ok,
-            args: toTraceText(args),
-            result: toTraceText(result),
-          })
-        }
-
-        let toolResultText = ''
-      if (tool === 'list_files') {
-        const pattern = (call.pattern || '').trim().toLowerCase()
-        const matched = pattern
-          ? relFiles.filter(item => item.toLowerCase().includes(pattern))
-          : relFiles
-        const maxLimit = Number.isFinite(call.limit) ? Math.max(1, Math.min(200, Number(call.limit))) : 30
-        const preview = matched.slice(0, 30)
-        reportLog(`工具 list_files：匹配 ${matched.length} 个文件${pattern ? `（pattern=${pattern}）` : ''}。`)
-        if (preview.length > 0) {
-          reportLog(`文件预览：${preview.join('、')}${matched.length > preview.length ? ' ...' : ''}`)
-        }
-        toolResultText = JSON.stringify({
-          ok: true,
-          count: matched.length,
-          files: matched.slice(0, maxLimit),
-        }, null, 2)
-        agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'list_files', content: toolResultText })
-        emitToolTrace(true, JSON.parse(toolResultText))
-        continue
-      }
-
-      if (tool === 'read_file') {
-        const absolutePath = resolveProjectPath(call.path)
-        if (!absolutePath) {
-          reportLog(`工具 read_file 失败：路径无效 ${call.path || ''}`)
-          toolResultText = JSON.stringify({ ok: false, error: `路径无效: ${call.path || ''}` })
-          agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'read_file', content: toolResultText })
-          emitToolTrace(false, JSON.parse(toolResultText))
-          continue
-        }
-        const content = await window.api?.project?.readFile(absolutePath)
-        if (typeof content !== 'string') {
-          reportLog(`工具 read_file 失败：无法读取 ${toRelative(absolutePath)}`)
-          toolResultText = JSON.stringify({ ok: false, error: `无法读取: ${toRelative(absolutePath)}` })
-          agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'read_file', content: toolResultText })
-          emitToolTrace(false, JSON.parse(toolResultText))
-          continue
-        }
-        reportLog(`工具 read_file：已读取 ${toRelative(absolutePath)}（${content.length} 字符）`)
-        toolResultText = JSON.stringify({ ok: true, path: toRelative(absolutePath), content })
-        agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'read_file', content: toolResultText })
-        emitToolTrace(true, { ok: true, path: toRelative(absolutePath), contentLength: content.length })
-        continue
-      }
-
-      if (tool === 'open_file') {
-        const absolutePath = resolveProjectPath(call.path)
-        if (!absolutePath) {
-          reportLog(`工具 open_file 失败：路径无效 ${call.path || ''}`)
-          toolResultText = JSON.stringify({ ok: false, error: `路径无效: ${call.path || ''}` })
-          agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'open_file', content: toolResultText })
-          emitToolTrace(false, JSON.parse(toolResultText))
-          continue
-        }
-        const opened = await openFileByPath(absolutePath)
-        reportLog(opened
-          ? `工具 open_file：已打开 ${toRelative(absolutePath)}`
-          : `工具 open_file 失败：无法打开 ${toRelative(absolutePath)}`)
-        toolResultText = JSON.stringify({ ok: opened, path: toRelative(absolutePath) })
-        agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'open_file', content: toolResultText })
-        emitToolTrace(opened, JSON.parse(toolResultText))
-        continue
-      }
-
-      if (tool === 'edit_file') {
-        const absolutePath = resolveProjectPath(call.path)
-        const instruction = (call.instruction || '').trim()
-        if (!absolutePath || !instruction) {
-          reportLog('工具 edit_file 失败：缺少 path 或 instruction。')
-          toolResultText = JSON.stringify({ ok: false, error: '缺少 path 或 instruction。' })
-          agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'edit_file', content: toolResultText })
-          emitToolTrace(false, JSON.parse(toolResultText))
-          continue
-        }
-        if (!inferAIEditableLanguage(absolutePath)) {
-          reportLog(`工具 edit_file 跳过：文件类型不支持 ${toRelative(absolutePath)}`)
-          toolResultText = JSON.stringify({ ok: false, error: `文件类型不支持: ${toRelative(absolutePath)}` })
-          agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'edit_file', content: toolResultText })
-          emitToolTrace(false, JSON.parse(toolResultText))
-          continue
-        }
-
-        // 编辑是最耗时的工具调用（要再走一轮模型生成改动）——先播报目标文件，
-        // 面板据此显示「正在编辑 xx」进行中状态，而不是等完成才冒出 +N/-N。
-        reportLog(`工具 edit_file：正在编辑 ${toRelative(absolutePath)}…`)
-        const editResult = await handleAIRequestEdit(instruction, absolutePath)
-        if (!editResult.ok) {
-          reportLog(`工具 edit_file 失败：${toRelative(absolutePath)} - ${editResult.error || '未知错误'}`)
-          toolResultText = JSON.stringify({ ok: false, error: editResult.error || '未知错误' })
-          agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'edit_file', content: toolResultText })
-          emitToolTrace(false, JSON.parse(toolResultText))
-          continue
-        }
-
-        const applied = await handleAIApplyEdit(editResult)
-        if (!applied) {
-          reportLog(`工具 edit_file 失败：${toRelative(absolutePath)} 自动应用失败`)
-          toolResultText = JSON.stringify({ ok: false, error: '自动应用失败。' })
-          agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'edit_file', content: toolResultText })
-          emitToolTrace(false, JSON.parse(toolResultText))
-          continue
-        }
-
-        const diffLines = (editResult.diff || '').replace(/\r\n/g, '\n').split('\n')
-        let addedLines = 0
-        let deletedLines = 0
-        for (const line of diffLines) {
-          if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) continue
-          if (line.startsWith('+')) addedLines++
-          else if (line.startsWith('-')) deletedLines++
-        }
-        if (!primaryEdit) {
-          primaryEdit = {
-            filePath: absolutePath,
-            addedLines,
-            deletedLines,
-          }
-        }
-        reportLog(`工具 edit_file：已修改 ${toRelative(absolutePath)}（+${addedLines} / -${deletedLines}）`)
-        toolResultText = JSON.stringify({ ok: true, path: toRelative(absolutePath), addedLines, deletedLines })
-        agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'edit_file', content: toolResultText })
-        emitToolTrace(true, JSON.parse(toolResultText))
-        continue
-      }
-
-      if (tool === 'terminal_send') {
-        const command = (call.command || call.instruction || '').trim()
-        if (!command) {
-          reportLog('工具 terminal_send 失败：缺少 command。')
-          toolResultText = JSON.stringify({ ok: false, error: '缺少 command。' })
-          agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'terminal_send', content: toolResultText })
-          emitToolTrace(false, JSON.parse(toolResultText))
-          continue
-        }
-        const beforeSnapshot = await window.api?.terminal?.getSnapshot()
-        const beforeCount = Array.isArray(beforeSnapshot?.output) ? beforeSnapshot!.output.length : 0
-        const sent = await handleTerminalSend(command)
-        if (!sent.ok) {
-          reportLog(`工具 terminal_send 失败：${sent.error || '未知错误'}`)
-          toolResultText = JSON.stringify({ ok: false, error: sent.error || '未知错误' })
-          agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'terminal_send', content: toolResultText })
-          emitToolTrace(false, JSON.parse(toolResultText))
-          continue
-        }
-        reportLog(`工具 terminal_send：已执行命令 ${command}`)
-
-        let emittedCount = beforeCount
-        let capturedOutput = ''
-        for (let attempt = 0; attempt < 6; attempt++) {
-          await wait(250)
-          const snapshot = await window.api?.terminal?.getSnapshot()
-          const output = Array.isArray(snapshot?.output) ? snapshot!.output : []
-          if (output.length <= emittedCount) continue
-
-          const deltaText = output.slice(emittedCount).join('')
-          emittedCount = output.length
-          if (!deltaText.trim()) continue
-          capturedOutput += deltaText
-        }
-
-        const trimmed = capturedOutput.trim()
-        if (trimmed) {
-          const clipped = trimmed.length > 1200 ? `${trimmed.slice(-1200)}` : trimmed
-          reportLog(`工具 terminal_send 输出：\n${clipped}`)
-          toolResultText = JSON.stringify({ ok: true, command, output: clipped })
-          emitToolTrace(true, { ok: true, command, output: clipped })
-        } else {
-          reportLog('工具 terminal_send 输出：暂未捕获到新输出。')
-          toolResultText = JSON.stringify({ ok: true, command, output: '' })
-          emitToolTrace(true, { ok: true, command, output: '' })
-        }
-        agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'terminal_send', content: toolResultText })
-        continue
-      }
-
-      if (tool === 'terminal_read') {
-        const snapshot = await window.api?.terminal?.getSnapshot()
-        const limit = Number.isFinite(call.limit) ? Math.max(1, Math.min(200, Number(call.limit))) : 40
-        const lines = (snapshot?.output || []).slice(-limit)
-        reportLog(`工具 terminal_read：读取最近 ${lines.length} 行终端输出。`)
-        if (lines.length > 0) {
-          reportLog(lines.join(''))
-        }
-        toolResultText = JSON.stringify({ ok: true, lines: lines.join('') })
-        agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'terminal_read', content: toolResultText })
-        emitToolTrace(true, JSON.parse(toolResultText))
-        continue
-      }
-
-      if (tool === 'terminal_last_command') {
-        const last = await window.api?.terminal?.getLastCommand()
-        reportLog(`工具 terminal_last_command：${last || '（空）'}`)
-        toolResultText = JSON.stringify({ ok: true, lastCommand: last || '' })
-        agentMessages.push({ role: 'tool', tool_call_id: toolCall.id, name: 'terminal_last_command', content: toolResultText })
-        emitToolTrace(true, JSON.parse(toolResultText))
-        continue
-      }
-
-      reportLog(`工具调用失败：不支持的工具 ${tool || 'unknown'}`)
-      agentMessages.push({
-        role: 'tool',
-        tool_call_id: toolCall.id,
-        name: tool || 'unknown',
-        content: JSON.stringify({ ok: false, error: `不支持的工具: ${tool || 'unknown'}` }),
+        filePath,
+        summary: '插件修改',
+        diff: '',
+        originalContent: current,
+        proposedContent: request.text,
       })
-      emitToolTrace(false, { ok: false, error: `不支持的工具: ${tool || 'unknown'}` })
-    }
-
-      return {
-        ok: true,
-        logs,
-        finalMessage: 'Agent 已执行工具链，但未生成最终总结。',
-        primaryEdit,
-      }
-    }
-
-    return {
-      ok: true,
-      logs,
-      finalMessage: 'Agent 达到调用轮次上限，已停止。',
-      primaryEdit,
-    }
-  }, [handleAIApplyEdit, handleAIChatWithTools, handleAIRequestEdit, handleTerminalSend, joinPath, openFileByPath, pathSeparator, runtimePlatform])
+      if (!applied) throw new Error(`修改失败：${filePath}`)
+      return { ok: true }
+    },
+    'aiTool:terminalLastCommand': async () => {
+      const last = await window.api?.terminal?.getLastCommand()
+      return { ok: true, logs: [`工具 terminal_last_command：${last || '（空）'}`], data: { ok: true, lastCommand: last || '' } }
+    },
+  })
 
   const toggleSidebarCollapse = useCallback(() => {
     setSidebarCollapsed(prev => !prev)
@@ -5956,6 +5601,7 @@ function App(): React.JSX.Element {
         open={showThemeManager}
         detachedWindow={true}
         themes={themeList}
+        themeSources={themeSources}
         currentTheme={themeManagerCommittedThemeId || currentTheme}
         draftThemeId={themeDraftSession?.workingThemeId || null}
         hasUnsavedDraft={!!themeDraftSession?.dirty}

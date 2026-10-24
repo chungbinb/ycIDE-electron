@@ -9,6 +9,15 @@ export interface AICustomModelConfig {
   apiKey: string
 }
 
+/** 一个可请求的模型：插件贡献的模型与用户自定义模型都转成这个形状交给主进程 */
+export interface AIModelEndpoint {
+  id: string
+  endpoint: string
+  modelName: string
+  /** 设置里没有 Key 时读取的环境变量 */
+  envKey?: string
+}
+
 export interface AIChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string

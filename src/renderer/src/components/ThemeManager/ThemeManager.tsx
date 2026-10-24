@@ -1,5 +1,5 @@
 import './ThemeManager.css'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ThrottledColorInput from './ThrottledColorInput'
 import type {
   ThemeDefinition,
@@ -28,6 +28,8 @@ interface ThemeManagerProps {
   open: boolean
   detachedWindow?: boolean
   themes: string[]
+  /** 主题来源：builtin 内置 / plugin 插件提供 / custom 自定义；内置与插件主题只读 */
+  themeSources?: Record<string, 'builtin' | 'plugin' | 'custom'>
   currentTheme: string
   draftThemeId?: string | null
   hasUnsavedDraft?: boolean
@@ -69,6 +71,7 @@ interface ThemeManagerProps {
 }
 
 const BUILTIN_THEME_IDS = ['默认深色', '默认浅色']
+const THEME_SOURCE_LABELS = { builtin: '内置', plugin: '插件', custom: '自定义' } as const
 
 function ThemePreviewChip({ color }: { color: string }): React.JSX.Element {
   const chipRef = useRef<HTMLSpanElement>(null)
@@ -85,6 +88,7 @@ function ThemeManager({
   open,
   detachedWindow = false,
   themes,
+  themeSources = {},
   currentTheme,
   draftThemeId = null,
   hasUnsavedDraft = false,
@@ -224,14 +228,24 @@ function ThemeManager({
     }
   }, [currentTheme, open, selectedThemeId, themes])
 
-  const isBuiltinSelected = useMemo(() => BUILTIN_THEME_IDS.includes(selectedThemeId), [selectedThemeId])
+  const themeSourceOf = useCallback(
+    (themeId: string): 'builtin' | 'plugin' | 'custom' =>
+      BUILTIN_THEME_IDS.includes(themeId) ? 'builtin' : (themeSources[themeId] ?? 'custom'),
+    [themeSources]
+  )
+  const isReadonlyTheme = useCallback((themeId: string) => themeSourceOf(themeId) !== 'custom', [themeSourceOf])
+  const isBuiltinSelected = useMemo(() => isReadonlyTheme(selectedThemeId), [isReadonlyTheme, selectedThemeId])
+  // 只读主题（内置在前、插件主题在后）排在上面，自定义主题在分隔线下面
   const builtinThemes = useMemo(
-    () => BUILTIN_THEME_IDS.filter(themeId => themes.includes(themeId)),
-    [themes]
+    () => [
+      ...BUILTIN_THEME_IDS.filter(themeId => themes.includes(themeId)),
+      ...themes.filter(themeId => themeSourceOf(themeId) === 'plugin'),
+    ],
+    [themeSourceOf, themes]
   )
   const customThemes = useMemo(
-    () => themes.filter(themeId => !BUILTIN_THEME_IDS.includes(themeId)),
-    [themes]
+    () => themes.filter(themeId => !isReadonlyTheme(themeId)),
+    [isReadonlyTheme, themes]
   )
   const orderedThemes = useMemo(
     () => [...builtinThemes, ...customThemes],
@@ -413,7 +427,7 @@ function ThemeManager({
       setFeedback('请先选择主题。')
       return
     }
-    if (BUILTIN_THEME_IDS.includes(selectedThemeId)) {
+    if (isReadonlyTheme(selectedThemeId)) {
       openNameDialog('save')
       return
     }
@@ -431,7 +445,7 @@ function ThemeManager({
   }
 
   const openRenameEditor = (themeId: string) => {
-    if (BUILTIN_THEME_IDS.includes(themeId)) {
+    if (isReadonlyTheme(themeId)) {
       setFeedback('内置主题不可重命名。')
       setThemeContextMenu(null)
       return
@@ -457,7 +471,7 @@ function ThemeManager({
     if (!themeContextMenu?.themeId) return
     const targetThemeId = themeContextMenu.themeId
     setThemeContextMenu(null)
-    if (BUILTIN_THEME_IDS.includes(targetThemeId)) {
+    if (isReadonlyTheme(targetThemeId)) {
       setFeedback('内置主题不可删除。')
       return
     }
@@ -488,7 +502,7 @@ function ThemeManager({
       cancelRenameEditor()
       return
     }
-    if (BUILTIN_THEME_IDS.includes(sourceThemeId)) {
+    if (isReadonlyTheme(sourceThemeId)) {
       setFeedback('内置主题不可重命名。')
       cancelRenameEditor()
       return
@@ -539,7 +553,7 @@ function ThemeManager({
           <section className="theme-manager-list" aria-label="主题列表" onContextMenu={(event) => { if (event.target === event.currentTarget) handleThemeContextMenu(event, '') }}>
             {orderedThemes.map((themeId, index) => {
               const isActive = themeId === currentTheme
-              const isBuiltin = BUILTIN_THEME_IDS.includes(themeId)
+              const sourceLabel = THEME_SOURCE_LABELS[themeSourceOf(themeId)]
               const isDraft = draftVisible && themeId === draftThemeId
               const isEditing = editingThemeId === themeId
               const showDivider = index === builtinThemes.length && customThemes.length > 0
@@ -573,7 +587,7 @@ function ThemeManager({
                       />
                       <span className="theme-manager-list-tags">
                         {isActive && <span className="theme-manager-tag">当前</span>}
-                        <span className="theme-manager-tag">{isBuiltin ? '内置' : '自定义'}</span>
+                        <span className="theme-manager-tag">{sourceLabel}</span>
                         {isDraft && <span className="theme-manager-tag theme-manager-tag-warning">未保存草稿</span>}
                       </span>
                     </div>
@@ -596,7 +610,7 @@ function ThemeManager({
                     <span className="theme-manager-list-name">{themeId}</span>
                     <span className="theme-manager-list-tags">
                       {isActive && <span className="theme-manager-tag">当前</span>}
-                      <span className="theme-manager-tag">{isBuiltin ? '内置' : '自定义'}</span>
+                      <span className="theme-manager-tag">{sourceLabel}</span>
                       {isDraft && <span className="theme-manager-tag theme-manager-tag-warning">未保存草稿</span>}
                     </span>
                   </button>
@@ -629,7 +643,7 @@ function ThemeManager({
                   type="button"
                   className="theme-manager-context-menu-item"
                   onClick={() => openRenameEditor(themeContextMenu.themeId)}
-                  disabled={!themeContextMenu.themeId || BUILTIN_THEME_IDS.includes(themeContextMenu.themeId) || submitting}
+                  disabled={!themeContextMenu.themeId || isReadonlyTheme(themeContextMenu.themeId) || submitting}
                 >
                   重命名
                 </button>
@@ -637,7 +651,7 @@ function ThemeManager({
                   type="button"
                   className="theme-manager-context-menu-item"
                   onClick={() => { void handleContextDeleteTheme() }}
-                  disabled={!themeContextMenu.themeId || BUILTIN_THEME_IDS.includes(themeContextMenu.themeId) || submitting}
+                  disabled={!themeContextMenu.themeId || isReadonlyTheme(themeContextMenu.themeId) || submitting}
                 >
                   删除主题
                 </button>
@@ -651,7 +665,7 @@ function ThemeManager({
             </div>
             <div className="theme-manager-detail-row">
               <span className="theme-manager-detail-label">主题类型</span>
-              <span>{isBuiltinSelected ? '内置主题（修改时自动复制）' : '自定义主题'}</span>
+              <span>{isBuiltinSelected ? `${THEME_SOURCE_LABELS[themeSourceOf(selectedThemeId)]}主题（修改时自动复制）` : '自定义主题'}</span>
             </div>
             {draftVisible && selectedThemeId === draftThemeId && (
               <div className="theme-manager-detail-draft" role="status">

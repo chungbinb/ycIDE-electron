@@ -8,7 +8,7 @@ import type {
   AIChatWithToolsResult,
   AIEditRequest,
   AIEditResult,
-  AICustomModelConfig,
+  AIModelEndpoint,
   AISupportedModel,
 } from '../shared/ai'
 
@@ -60,44 +60,14 @@ type OpenAIStreamChunk = {
   }
 }
 
-function resolveProvider(model: AISupportedModel, customModels: AICustomModelConfig[] = []): ProviderConfig | null {
-  if (model === 'glm') {
-    return {
-      endpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
-      model: 'glm-4-flash',
-      envKey: 'GLM_API_KEY',
-    }
-  }
-
-  if (model === 'deepseek') {
-    return {
-      endpoint: 'https://api.deepseek.com/chat/completions',
-      model: 'deepseek-v4-pro',
-      envKey: 'DEEPSEEK_API_KEY',
-    }
-  }
-
-  if (model === 'deepseek-v4-flash') {
-    return {
-      endpoint: 'https://api.deepseek.com/chat/completions',
-      model: 'deepseek-v4-flash',
-      envKey: 'DEEPSEEK_API_KEY',
-    }
-  }
-
-  if (model === 'deepseek-v3.2') {
-    return {
-      endpoint: 'https://api.deepseek.com/chat/completions',
-      model: 'deepseek-v3.2',
-      envKey: 'DEEPSEEK_API_KEY',
-    }
-  }
-
-  const custom = customModels.find(item => item.id === model)
-  if (!custom) return null
+// 模型请求地址来自插件贡献的 aiProviders（内置 DeepSeek / GLM 也是插件）与用户自定义模型，这里不再写死
+function resolveProvider(model: AISupportedModel, models: AIModelEndpoint[] = []): ProviderConfig | null {
+  const entry = models.find(item => item.id === model)
+  if (!entry) return null
   return {
-    endpoint: custom.endpoint,
-    model: custom.modelName,
+    endpoint: entry.endpoint,
+    model: entry.modelName,
+    envKey: entry.envKey,
   }
 }
 
@@ -140,7 +110,7 @@ async function requestCompletion(
   model: AISupportedModel,
   messages: OpenAIMessage[],
   apiKeyOverride?: string,
-  customModels: AICustomModelConfig[] = [],
+  customModels: AIModelEndpoint[] = [],
   tools?: AIChatTool[],
   toolChoice?: 'auto' | 'none',
 ): Promise<CompletionResult> {
@@ -219,7 +189,7 @@ async function requestCompletionStream(
   messages: OpenAIMessage[],
   onDelta: (delta: string) => void,
   apiKeyOverride?: string,
-  customModels: AICustomModelConfig[] = [],
+  customModels: AIModelEndpoint[] = [],
   onReasoning?: (delta: string) => void,
 ): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
   const provider = resolveProvider(model, customModels)
@@ -355,7 +325,7 @@ async function requestCompletionStream(
   }
 }
 
-export async function runAIChat(request: AIChatRequest, apiKeyOverride?: string, customModels: AICustomModelConfig[] = []): Promise<AIChatResult> {
+export async function runAIChat(request: AIChatRequest, apiKeyOverride?: string, customModels: AIModelEndpoint[] = []): Promise<AIChatResult> {
   const messages = request.messages
     .map(item => ({
       role: item.role,
@@ -392,7 +362,7 @@ export async function runAIChat(request: AIChatRequest, apiKeyOverride?: string,
 export async function runAIChatWithTools(
   request: AIChatWithToolsRequest,
   apiKeyOverride?: string,
-  customModels: AICustomModelConfig[] = [],
+  customModels: AIModelEndpoint[] = [],
 ): Promise<AIChatWithToolsResult> {
   const messages = request.messages
     .map(item => ({
@@ -439,7 +409,7 @@ export async function runAIChatStream(
   request: AIChatRequest,
   onDelta: (delta: string) => void,
   apiKeyOverride?: string,
-  customModels: AICustomModelConfig[] = [],
+  customModels: AIModelEndpoint[] = [],
 ): Promise<AIChatResult> {
   const messages = request.messages
     .map(item => ({ role: item.role, content: (item.content || '').trim() }))
@@ -468,7 +438,7 @@ export async function runAIChatStream(
   }
 }
 
-export async function runAIEdit(request: AIEditRequest, apiKeyOverride?: string, customModels: AICustomModelConfig[] = []): Promise<AIEditResult> {
+export async function runAIEdit(request: AIEditRequest, apiKeyOverride?: string, customModels: AIModelEndpoint[] = []): Promise<AIEditResult> {
   const instruction = (request.instruction || '').trim()
   if (!instruction) {
     return {
@@ -561,7 +531,7 @@ export async function runAIEditStream(
   request: AIEditRequest,
   onDelta: (delta: string) => void,
   apiKeyOverride?: string,
-  customModels: AICustomModelConfig[] = [],
+  customModels: AIModelEndpoint[] = [],
   onReasoning?: (delta: string) => void,
 ): Promise<AIEditResult> {
   const instruction = (request.instruction || '').trim()

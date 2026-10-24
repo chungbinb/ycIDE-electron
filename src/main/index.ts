@@ -45,7 +45,8 @@ import {
 import { THEME_TOKEN_GROUPS } from '../shared/theme-tokens'
 import { scanYcmdRegistry } from './ycmd-registry'
 import { resolveIDESettings, type IDESettings } from '../shared/settings'
-import type { AIChatRequest, AIChatWithToolsRequest, AIEditRequest } from '../shared/ai'
+import type { AIChatRequest, AIChatWithToolsRequest, AIEditRequest, AIModelEndpoint } from '../shared/ai'
+import { collectAIModels } from '../shared/plugin/aiContributions'
 import { runAIChat, runAIChatStream, runAIChatWithTools, runAIEdit, runAIEditStream } from './ai-assistant'
 import type { EProjectImportRequest, OpenProjectSelectionResult, OpenWorkspaceFolderSelectionResult } from '../shared/eprojectImport'
 import { getEProjectImportTarget, importEProjectFile } from './eproject/importService'
@@ -442,6 +443,11 @@ function readIDESettings(): IDESettings {
           m && typeof m === 'object' ? { ...m, apiKey: decryptSecret((m as { apiKey?: unknown }).apiKey) } : m,
         )
       }
+      if (raw.aiProviderApiKeys && typeof raw.aiProviderApiKeys === 'object') {
+        raw.aiProviderApiKeys = Object.fromEntries(
+          Object.entries(raw.aiProviderApiKeys).map(([key, value]) => [key, decryptSecret(value)]),
+        )
+      }
     }
     return resolveIDESettings(raw)
   } catch {
@@ -456,11 +462,14 @@ function writeIDESettings(settings: IDESettings): void {
     aiDeepseekApiKey: encryptSecret(settings.aiDeepseekApiKey),
     aiGlmApiKey: encryptSecret(settings.aiGlmApiKey),
     aiCustomModels: settings.aiCustomModels.map(m => ({ ...m, apiKey: encryptSecret(m.apiKey) })),
+    aiProviderApiKeys: Object.fromEntries(
+      Object.entries(settings.aiProviderApiKeys).map(([key, value]) => [key, encryptSecret(value)]),
+    ),
   }
   writeFileSync(getIDESettingsPath(), JSON.stringify(onDisk, null, 2), 'utf-8')
 }
 
-function listThemeIds(): ThemeId[] {
+function listLocalThemeIds(): ThemeId[] {
   const themesDir = getThemesDirPath()
   if (!existsSync(themesDir)) return []
   try {
@@ -472,9 +481,37 @@ function listThemeIds(): ThemeId[] {
   }
 }
 
+/** 插件贡献的主题（contributes.themes），ID → 文件路径 */
+function getPluginThemeFiles(): Map<ThemeId, string> {
+  const map = new Map<ThemeId, string>()
+  for (const theme of getPluginService()?.getContributedThemes() ?? []) map.set(theme.id, theme.file)
+  return map
+}
+
+/** 全部主题：themes 目录里的（内置与自定义）+ 插件贡献的；同名时 themes 目录里的优先 */
+function listThemeIds(): ThemeId[] {
+  const local = listLocalThemeIds()
+  const localSet = new Set(local)
+  return [...local, ...[...getPluginThemeFiles().keys()].filter(id => !localSet.has(id))]
+}
+
+type ThemeSource = 'builtin' | 'plugin' | 'custom'
+
+function getThemeSource(themeId: ThemeId): ThemeSource {
+  if (isBuiltinThemeId(themeId)) return 'builtin'
+  if (existsSync(join(getThemesDirPath(), `${themeId}.json`))) return 'custom'
+  return getPluginThemeFiles().has(themeId) ? 'plugin' : 'custom'
+}
+
+/** 只读主题：内置主题与插件提供的主题不能重命名、删除、被导入覆盖，修改时自动复制一份 */
+function isReadonlyThemeId(themeId: ThemeId): boolean {
+  return getThemeSource(themeId) !== 'custom'
+}
+
 function loadThemeDefinition(themeId: ThemeId): ThemeDefinition | null {
-  const filePath = join(getThemesDirPath(), `${themeId}.json`)
-  if (!existsSync(filePath)) return null
+  const localPath = join(getThemesDirPath(), `${themeId}.json`)
+  const filePath = existsSync(localPath) ? localPath : getPluginThemeFiles().get(themeId)
+  if (!filePath || !existsSync(filePath)) return null
   try {
     const data = JSON.parse(readFileSync(filePath, 'utf-8')) as ThemeDefinition
     if (!data || typeof data !== 'object' || typeof data.name !== 'string' || !data.colors || typeof data.colors !== 'object') {
@@ -1188,7 +1225,11 @@ app.whenReady().then(() => {
 
   ensureBuiltinThemeFiles()
   // 插件：解析内置与用户插件、激活 onStartup 插件；插件变化时重建 macOS 原生菜单
-  void initPluginHost(pluginHostPlatform, setupNativeMenu).start()
+  void initPluginHost(pluginHostPlatform, () => {
+    // 插件增删、启停可能改变主题列表（插件贡献的主题），同步主题子菜单
+    syncThemeMenuState(themeMenuState.currentTheme || readThemeConfigForWrite().currentThemeId)
+    setupNativeMenu()
+  }).start()
   setupNativeMenu()
 
   ipcMain.on('menu:updateRecentOpened', (_event, items: unknown) => {
@@ -2225,36 +2266,34 @@ app.whenReady().then(() => {
   ipcMain.handle('compiler:warmupState', () => getWarmupState())
   ipcMain.handle('compiler:ensureWarm', () => ensureCompilerWarm(findZigCompiler()))
 
-  ipcMain.handle('ai:chat', (_event, request: AIChatRequest) => {
+  // AI 请求：模型来自插件贡献的 aiProviders（内置 DeepSeek / GLM 也是插件）+ 用户自定义模型；
+  // API Key 按模型所属提供方取：内置提供方用原有设置字段，第三方提供方用 aiProviderApiKeys
+  const resolveAIRequest = (modelId: string): { apiKey: string; models: AIModelEndpoint[] } => {
     const settings = readIDESettings()
-    const custom = settings.aiCustomModels.find(item => item.id === request.model)
-    const apiKey = request.model === 'glm'
-      ? settings.aiGlmApiKey
-      : request.model === 'deepseek' || request.model === 'deepseek-v4-flash' || request.model === 'deepseek-v3.2'
-        ? settings.aiDeepseekApiKey
-        : (custom?.apiKey || '')
-    return runAIChat(request, apiKey, settings.aiCustomModels)
+    const pluginModels = collectAIModels(getPluginService()?.getState().manifests ?? [])
+    const models: AIModelEndpoint[] = [
+      ...pluginModels.map(m => ({ id: m.id, endpoint: m.endpoint, modelName: m.model, envKey: m.envKey })),
+      ...settings.aiCustomModels,
+    ]
+    const pluginModel = pluginModels.find(m => m.id === modelId)
+    const apiKey = pluginModel
+      ? (pluginModel.apiKey.kind === 'setting' ? settings[pluginModel.apiKey.setting] : settings.aiProviderApiKeys[pluginModel.apiKey.key] || '')
+      : (settings.aiCustomModels.find(item => item.id === modelId)?.apiKey || '')
+    return { apiKey, models }
+  }
+
+  ipcMain.handle('ai:chat', (_event, request: AIChatRequest) => {
+    const { apiKey, models } = resolveAIRequest(request.model)
+    return runAIChat(request, apiKey, models)
   })
 
   ipcMain.handle('ai:chatWithTools', (_event, request: AIChatWithToolsRequest) => {
-    const settings = readIDESettings()
-    const custom = settings.aiCustomModels.find(item => item.id === request.model)
-    const apiKey = request.model === 'glm'
-      ? settings.aiGlmApiKey
-      : request.model === 'deepseek' || request.model === 'deepseek-v4-flash' || request.model === 'deepseek-v3.2'
-        ? settings.aiDeepseekApiKey
-        : (custom?.apiKey || '')
-    return runAIChatWithTools(request, apiKey, settings.aiCustomModels)
+    const { apiKey, models } = resolveAIRequest(request.model)
+    return runAIChatWithTools(request, apiKey, models)
   })
 
   ipcMain.handle('ai:chatStream', (event, request: AIChatRequest, requestId: string) => {
-    const settings = readIDESettings()
-    const custom = settings.aiCustomModels.find(item => item.id === request.model)
-    const apiKey = request.model === 'glm'
-      ? settings.aiGlmApiKey
-      : request.model === 'deepseek' || request.model === 'deepseek-v4-flash' || request.model === 'deepseek-v3.2'
-        ? settings.aiDeepseekApiKey
-        : (custom?.apiKey || '')
+    const { apiKey, models } = resolveAIRequest(request.model)
 
     const sender = event.sender
     return runAIChatStream(
@@ -2263,7 +2302,7 @@ app.whenReady().then(() => {
         sender.send('ai:chatStream:chunk', { requestId, delta, done: false })
       },
       apiKey,
-      settings.aiCustomModels,
+      models,
     ).then((result) => {
       sender.send('ai:chatStream:chunk', { requestId, delta: '', done: true, error: result.ok ? '' : (result.error || '') })
       return result
@@ -2271,24 +2310,12 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('ai:proposeEdit', (_event, request: AIEditRequest) => {
-    const settings = readIDESettings()
-    const custom = settings.aiCustomModels.find(item => item.id === request.model)
-    const apiKey = request.model === 'glm'
-      ? settings.aiGlmApiKey
-      : request.model === 'deepseek' || request.model === 'deepseek-v4-flash' || request.model === 'deepseek-v3.2'
-        ? settings.aiDeepseekApiKey
-        : (custom?.apiKey || '')
-    return runAIEdit(request, apiKey, settings.aiCustomModels)
+    const { apiKey, models } = resolveAIRequest(request.model)
+    return runAIEdit(request, apiKey, models)
   })
 
   ipcMain.handle('ai:proposeEditStream', (event, request: AIEditRequest, requestId: string) => {
-    const settings = readIDESettings()
-    const custom = settings.aiCustomModels.find(item => item.id === request.model)
-    const apiKey = request.model === 'glm'
-      ? settings.aiGlmApiKey
-      : request.model === 'deepseek' || request.model === 'deepseek-v4-flash' || request.model === 'deepseek-v3.2'
-        ? settings.aiDeepseekApiKey
-        : (custom?.apiKey || '')
+    const { apiKey, models } = resolveAIRequest(request.model)
 
     const sender = event.sender
     return runAIEditStream(
@@ -2297,7 +2324,7 @@ app.whenReady().then(() => {
         sender.send('ai:proposeEditStream:chunk', { requestId, delta, type: 'content', done: false })
       },
       apiKey,
-      settings.aiCustomModels,
+      models,
       (delta) => {
         sender.send('ai:proposeEditStream:chunk', { requestId, delta, type: 'reasoning', done: false })
       },
@@ -2308,6 +2335,10 @@ app.whenReady().then(() => {
   })
 
   // 主题 IPC
+  // 每个主题的来源：builtin（内置）/ plugin（插件提供）/ custom（用户自定义）；前两者只读
+  ipcMain.handle('theme:getSources', (): Record<ThemeId, ThemeSource> =>
+    Object.fromEntries(listThemeIds().map(id => [id, getThemeSource(id)])))
+
   ipcMain.handle('theme:getList', () => {
     return listThemeIds()
   })
@@ -2528,11 +2559,11 @@ app.whenReady().then(() => {
 
   ipcMain.handle('theme:rename', (_event, request: { themeId: ThemeId; newName: string }): ThemeRenameResult => {
     const themeId = request?.themeId || ''
-    if (isBuiltinThemeId(themeId)) {
+    if (isReadonlyThemeId(themeId)) {
       return {
         success: false,
         code: 'builtin_readonly',
-        message: 'built-in 主题不可重命名。',
+        message: '内置主题和插件提供的主题不可重命名。',
       }
     }
     const sourceTheme = loadThemeDefinition(themeId)
@@ -2596,11 +2627,11 @@ app.whenReady().then(() => {
 
   ipcMain.handle('theme:delete', (_event, request: { themeId: ThemeId; confirmThemeName: string }): ThemeDeleteResult => {
     const themeId = request?.themeId || ''
-    if (isBuiltinThemeId(themeId)) {
+    if (isReadonlyThemeId(themeId)) {
       return {
         success: false,
         code: 'builtin_readonly',
-        message: 'built-in 主题不可删除。',
+        message: '内置主题和插件提供的主题不可删除。',
       }
     }
 
@@ -2763,7 +2794,7 @@ app.whenReady().then(() => {
     }
     const existingThemeId = findThemeIdCaseInsensitive(importedTheme.name, listThemeIds())
     if (existingThemeId) {
-      const allowedDecisions: ('rename-import' | 'overwrite')[] = isBuiltinThemeId(existingThemeId)
+      const allowedDecisions: ('rename-import' | 'overwrite')[] = isReadonlyThemeId(existingThemeId)
         ? ['rename-import']
         : ['rename-import', 'overwrite']
       return {
@@ -2848,11 +2879,11 @@ app.whenReady().then(() => {
             message: `覆盖目标“${decisionValidation.value.overwriteThemeId}”不存在。`,
           }
         }
-        if (isBuiltinThemeId(overwriteTarget)) {
+        if (isReadonlyThemeId(overwriteTarget)) {
           return {
             success: false,
             code: 'builtin_readonly',
-            message: '内置主题不可覆盖。',
+            message: '内置主题和插件提供的主题不可覆盖。',
           }
         }
         targetThemeId = overwriteTarget

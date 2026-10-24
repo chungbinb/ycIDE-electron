@@ -46,6 +46,13 @@ test.describe('插件贡献的菜单与快捷键', () => {
       await win.keyboard.press('Escape');
       await expect(win.locator('.about-dialog')).toHaveCount(0);
 
+      // 内置彩色主题包（数据插件）贡献的主题出现在 查看 → 主题 子菜单里
+      await win.getByRole('menuitem', { name: '查看(V)', exact: true }).click();
+      await win.locator('.titlebar-dropdown').getByRole('menuitem', { name: /^主题/ }).hover();
+      await expect(win.locator('.titlebar-submenu')).toContainText('抹茶绿');
+      await expect(win.locator('.titlebar-submenu')).toContainText('深海蓝-渐变');
+      await win.getByRole('menuitem', { name: '查看(V)', exact: true }).click();
+
       // 全局快捷键：Ctrl+Alt+N → file:newFile，新建未命名文本标签
       await win.locator('.titlebar-title').click();
       await win.keyboard.press('Control+Alt+N');

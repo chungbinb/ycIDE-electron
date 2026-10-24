@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { collectAIModels } from '../../../../shared/plugin/aiContributions'
+import { useEnabledManifests } from '../../workbench/commands'
 import type { AIChatMessage, AICustomModelConfig, AIEditResult, AISupportedModel } from '../../../../shared/ai'
 import { resolveIDESettings } from '../../../../shared/settings'
 import type { IDESettings } from '../../../../shared/settings'
@@ -388,16 +390,14 @@ function AIAssistantPanel({
   const activeRunIdRef = useRef<number | null>(null)
   const canceledRunIdsRef = useRef<Set<number>>(new Set())
 
+  // 模型列表：插件贡献的 aiProviders（内置 DeepSeek / GLM 也是插件）+ 用户自定义模型
+  const pluginManifests = useEnabledManifests()
+  const pluginModelIds = useMemo(() => collectAIModels(pluginManifests).map(m => m.id), [pluginManifests])
   const modelOptions: Array<{ value: AISupportedModel; label: string }> = useMemo(() => {
-    const builtins: Array<{ value: AISupportedModel; label: string }> = [
-      { value: 'deepseek', label: 'DeepSeek V4-Pro' },
-      { value: 'deepseek-v4-flash', label: 'DeepSeek V4-Flash' },
-      { value: 'deepseek-v3.2', label: 'DeepSeek V3.2' },
-      { value: 'glm', label: 'GLM' },
-    ]
+    const fromPlugins = collectAIModels(pluginManifests).map(m => ({ value: m.id, label: m.label }))
     const customs = (customModels || []).map((item) => ({ value: item.id, label: item.label }))
-    return [...builtins, ...customs]
-  }, [customModels])
+    return [...fromPlugins, ...customs]
+  }, [customModels, pluginManifests])
 
   const resolvedEditTarget = activeFilePath || ''
 
@@ -1138,13 +1138,9 @@ function AIAssistantPanel({
         .filter(item => item.label && item.endpoint && item.modelName)
 
       const currentModelIsCustom = !!sanitizedCustomModels.find(item => item.id === configModel)
-      const nextModel = configModel === 'deepseek'
-        || configModel === 'deepseek-v4-flash'
-        || configModel === 'deepseek-v3.2'
-        || configModel === 'glm'
-        || currentModelIsCustom
+      const nextModel = pluginModelIds.includes(configModel) || currentModelIsCustom
         ? configModel
-        : 'deepseek'
+        : (pluginModelIds[0] ?? 'deepseek')
 
       const saved = await window.api?.settings?.save({
         aiModel: nextModel,

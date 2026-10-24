@@ -108,10 +108,10 @@ export class PluginService {
         try {
           manifest = JSON.parse(readFileSync(manifestPath, 'utf-8').replace(/^﻿/, ''))
         } catch (err) {
-          candidates.push({ manifest: { id: name }, source: pluginDir, error: `plugin.json 不是合法 JSON：${(err as Error).message}` })
+          candidates.push({ manifest: { id: name }, source: pluginDir, dir: pluginDir, error: `plugin.json 不是合法 JSON：${(err as Error).message}` })
           continue
         }
-        candidates.push({ manifest, source: pluginDir, error: this.checkEntry(manifest, pluginDir) })
+        candidates.push({ manifest, source: pluginDir, dir: pluginDir, error: this.checkEntry(manifest, pluginDir) })
       }
     }
     return candidates
@@ -204,8 +204,31 @@ export class PluginService {
     return this.resolution.enabled.find(m => m.id === id)
   }
 
-  private sourceOf(id: string): string | undefined {
-    return this.resolution.plugins.find(p => p.id === id && p.status === 'enabled')?.source
+  private dirOf(id: string): string | undefined {
+    return this.resolution.plugins.find(p => p.id === id && p.status === 'enabled')?.dir
+  }
+
+  /**
+   * 已启用插件贡献的主题：同一 ID 只取第一个（插件按依赖拓扑序，内置插件在前）。
+   * 文件路径必须在插件目录内且存在，否则忽略并记录日志。
+   */
+  getContributedThemes(): Array<{ id: string; file: string; pluginId: string }> {
+    const seen = new Set<string>()
+    const themes: Array<{ id: string; file: string; pluginId: string }> = []
+    for (const manifest of this.resolution.enabled) {
+      const dir = this.dirOf(manifest.id)
+      for (const theme of manifest.contributes?.themes ?? []) {
+        if (seen.has(theme.id)) continue
+        const file = dir ? this.resolveMain(dir, theme.path) : null
+        if (!file || !existsSync(file)) {
+          this.log(`插件 ${manifest.id} 的主题「${theme.id}」文件不存在：${theme.path}`)
+          continue
+        }
+        seen.add(theme.id)
+        themes.push({ id: theme.id, file, pluginId: manifest.id })
+      }
+    }
+    return themes
   }
 
   private ensureHost(): HostProcess {
@@ -258,7 +281,7 @@ export class PluginService {
     const promise = (async () => {
       for (const depId of Object.keys(manifest.dependencies ?? {})) await this.activatePlugin(depId)
       if (manifest.runtime?.type !== 'node') return
-      const pluginDir = this.sourceOf(id)!
+      const pluginDir = this.dirOf(id)!
       const mainPath = this.resolveMain(pluginDir, String(manifest.runtime.main))!
       const host = this.ensureHost()
       await host.ready

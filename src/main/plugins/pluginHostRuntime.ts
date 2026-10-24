@@ -27,6 +27,15 @@ export interface YcideApi {
     /** 在 IDE 输出面板显示一条消息 */
     showMessage(message: string, type?: PluginMessageType): void
   }
+  documents: {
+    /** 读取文档当前内容：已在编辑器打开的取编辑器里（含未保存修改）的内容，否则读磁盘 */
+    getText(path: string): Promise<string>
+    /**
+     * 把文档改为 text：编辑器里显示差异，用户可撤销；不会自动保存。
+     * 传入 baseText 时，若文档已不是 baseText（被别人改过）则拒绝修改。
+     */
+    applyEdit(path: string, text: string, baseText?: string): Promise<void>
+  }
 }
 
 export interface PluginContext {
@@ -99,6 +108,12 @@ export class PluginHostRuntime {
       window: {
         showMessage: (message, type = 'info') => {
           this.rpc.notify('window/showMessage', { pluginId, type, message: String(message) })
+        },
+      },
+      documents: {
+        getText: async path => String(await this.rpc.request('commands/executeHost', { command: 'documents:getText', args: [path] }, 0)),
+        applyEdit: async (path, text, baseText) => {
+          await this.rpc.request('commands/executeHost', { command: 'documents:applyEdit', args: [{ path, text, baseText }] }, 0)
         },
       },
     }

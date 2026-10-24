@@ -9,7 +9,17 @@
   "contributes": {
     "commands": [
       { "id": "hello:greet", "title": "打招呼（示例插件）" },
-      { "id": "hello:openAbout", "title": "通过插件打开关于（示例插件）" }
+      { "id": "hello:openAbout", "title": "通过插件打开关于（示例插件）" },
+      { "id": "hello:countLines", "title": "统计文件行数（示例插件，AI 工具）" }
+    ],
+    "aiTools": [
+      {
+        "name": "count_lines",
+        "description": "统计项目内某个文件的行数。",
+        "parameters": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"], "additionalProperties": false },
+        "command": "hello:countLines",
+        "risk": "read"
+      }
     ],
     "menus": {
       "menubar/tools": [
