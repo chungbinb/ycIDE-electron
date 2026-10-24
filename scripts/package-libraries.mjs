@@ -97,6 +97,7 @@ for (const entry of readdirSync(sourceRoot, { withFileTypes: true })) {
 
   const meta = readManifestMeta(libraryDir, id)
   libraries.push({
+    kind: 'library',
     id,
     displayName: meta.displayName,
     version: meta.version,

@@ -10,6 +10,7 @@ import colorfulThemes from '../../../plugins/ycide.themes-colorful/plugin.json'
 import terminal from '../../../plugins/ycide.terminal/plugin.json'
 import aiDeepseek from '../../../plugins/ycide.ai-deepseek/plugin.json'
 import aiGlm from '../../../plugins/ycide.ai-glm/plugin.json'
+import compilerZig from '../../../plugins/ycide.compiler-zig/plugin.json'
 import { resolvePlugins, type PluginCandidate, type PluginResolution, type PluginResolveEnv } from './pluginResolver'
 import { buildContributionModel, type ContributionModel } from './contributions'
 
@@ -22,6 +23,7 @@ export const BUILTIN_PLUGIN_CANDIDATES: PluginCandidate[] = [
   { manifest: terminal, source: '内置:ycide.terminal' },
   { manifest: aiDeepseek, source: '内置:ycide.ai-deepseek' },
   { manifest: aiGlm, source: '内置:ycide.ai-glm' },
+  { manifest: compilerZig, source: '内置:ycide.compiler-zig' },
 ]
 
 export interface LoadedPlugins {

@@ -8,6 +8,7 @@ import AdmZip from 'adm-zip'
 import { dirname, isAbsolute, join, normalize, resolve } from 'path'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { getYcmdCommands, scanYcmdRegistry, invalidateYcmdRegistryCache, type YcmdResolvedCommand, type YcmdTargetPlatform } from './ycmd-registry'
+import { languageOfImplementation } from './compilers/compilerService'
 import {
   STORE_PLATFORM_ORDER,
   type InstalledLibraryState,
@@ -20,6 +21,7 @@ import {
   type LibraryRemoveResult,
   type Platform,
   type StoreLibraryCard,
+  type StorePackageKind,
 } from '../shared/library-store'
 
 export interface LibraryParam {
@@ -177,6 +179,16 @@ export interface LibraryItem {
   version?: string
   cmdCount?: number
   dtCount?: number
+}
+
+/** 支持库声明的控件特征（control-traits.json，合并所有已安装、未停用的支持库） */
+export interface ControlTraits {
+  /** 特征 → 组件名集合 */
+  traits: Record<string, Set<string>>
+  /** 特征 → 组件名列表（保持声明顺序） */
+  traitNames: Record<string, string[]>
+  win32ClassNames: Record<string, string>
+  win32Styles: Record<string, string>
 }
 
 export interface LoadResult {
@@ -344,8 +356,10 @@ function normalizeRemoteIndex(raw: unknown): LibraryRemoteIndex {
         const platforms = Array.isArray(item.supportedPlatforms)
           ? item.supportedPlatforms.filter((platform): platform is Platform => STORE_PLATFORM_ORDER.includes(platform as Platform))
           : []
+        const kind: StorePackageKind = item.kind === 'plugin' || item.kind === 'theme' ? item.kind : 'library'
         return {
           id,
+          kind,
           displayName: typeof item.displayName === 'string' && item.displayName.trim() ? item.displayName.trim() : id,
           version: typeof item.version === 'string' && item.version.trim() ? item.version.trim() : '-',
           packageFileName,
@@ -452,7 +466,7 @@ class LibraryManager {
     if (this.isCore(libraryId)) return { ok: false, error: '核心支持库随 ycIDE 版本发布，不支持从服务器安装' }
     const indexResult = await this.getRemoteIndex(indexUrl)
     if (!indexResult.ok) return indexResult
-    const entry = indexResult.index.libraries.find(item => item.id === libraryId)
+    const entry = indexResult.index.libraries.find(item => item.id === libraryId && (item.kind ?? 'library') === 'library')
     if (!entry) return { ok: false, error: `在线索引中未找到支持库 ${libraryId}` }
     return this.installPackage(entry)
   }
@@ -1033,6 +1047,70 @@ class LibraryManager {
     return join(dirname(process.execPath), 'lib')
   }
 
+  private controlTraitsCache: ControlTraits | null = null
+
+  /**
+   * 控件特征：各支持库目录下 control-traits.json 的合并结果（编译器据此判断组件该用哪种内置控件实现）。
+   * 取所有已安装且未停用的支持库（与是否勾选加载无关，保持改造前「按组件名判断」的行为）。
+   */
+  getControlTraits(): ControlTraits {
+    if (this.controlTraitsCache) return this.controlTraitsCache
+    if (this.libraries.length === 0) this.scan()
+    const merged: ControlTraits = { traits: {}, traitNames: {}, win32ClassNames: {}, win32Styles: {} }
+    for (const lib of this.libraries) {
+      const file = join(lib.filePath, 'control-traits.json')
+      if (!existsSync(file)) continue
+      try {
+        const data = JSON.parse(readFileSync(file, 'utf-8').replace(/^\uFEFF/, '')) as {
+          traits?: Record<string, unknown>
+          win32ClassNames?: Record<string, unknown>
+          win32Styles?: Record<string, unknown>
+        }
+        for (const [trait, names] of Object.entries(data.traits ?? {})) {
+          if (!Array.isArray(names)) continue
+          const list = merged.traitNames[trait] ?? (merged.traitNames[trait] = [])
+          const set = merged.traits[trait] ?? (merged.traits[trait] = new Set())
+          for (const name of names) {
+            if (typeof name !== 'string' || set.has(name)) continue
+            set.add(name)
+            list.push(name)
+          }
+        }
+        for (const [name, value] of Object.entries(data.win32ClassNames ?? {})) {
+          if (typeof value === 'string' && !(name in merged.win32ClassNames)) merged.win32ClassNames[name] = value
+        }
+        for (const [name, value] of Object.entries(data.win32Styles ?? {})) {
+          if (typeof value === 'string' && !(name in merged.win32Styles)) merged.win32Styles[name] = value
+        }
+      } catch {
+        // 文件损坏：忽略该库的特征声明（其组件按普通组件处理）
+      }
+    }
+    this.controlTraitsCache = merged
+    return merged
+  }
+
+  /** 插件被停用（或因依赖不可用）的支持库名：扫描时排除，相当于未安装（设计稿 §6.6） */
+  private disabledLibraries = new Set<string>()
+
+  /** 设置被停用的支持库；集合有变化时重扫并返回 true */
+  setDisabledLibraries(names: Iterable<string>): boolean {
+    const next = new Set(names)
+    if (next.size === this.disabledLibraries.size && [...next].every(n => this.disabledLibraries.has(n))) return false
+    this.disabledLibraries = next
+    this.scan()
+    return true
+  }
+
+  getDisabledLibraries(): string[] {
+    return [...this.disabledLibraries]
+  }
+
+  /** 用户安装的支持库目录（插件服务也扫描这里，带 plugin.json 的支持库包按插件管理） */
+  getInstalledLibrariesRoot(): string {
+    return this.getInstalledRootPath()
+  }
+
   scan(customFolder?: string): LibraryItem[] {
     const roots = customFolder ? [customFolder] : [this.getLibFolder(), this.getInstalledRootPath()]
     const previousLoaded = new Map(this.libraries.map(l => [l.name, l.loaded]))
@@ -1042,6 +1120,7 @@ class LibraryManager {
 
     this.metadataCache.clear()
     this.allCommandsCache.clear()
+    this.controlTraitsCache = null
     // 库集合发生重扫时，强制刷新 ycmd 注册表缓存，确保新增/移除/更新立即生效。
     invalidateYcmdRegistryCache()
 
@@ -1052,6 +1131,7 @@ class LibraryManager {
       const source: LibraryInstallSource = root === this.getInstalledRootPath() ? 'installed' : 'bundled'
       for (const lib of result.libraries) {
         if (source === 'installed' && this.isCore(lib.name)) continue
+        if (this.disabledLibraries.has(lib.name)) continue
         libraryMap.set(lib.name, {
           name: lib.name,
           filePath: lib.folderPath,
@@ -1193,7 +1273,8 @@ class LibraryManager {
     const remoteById = new Map<string, LibraryPackageEntry>()
 
     if (remoteIndex?.ok) {
-      for (const item of remoteIndex.index.libraries) remoteById.set(item.id, item)
+      // 统一索引里的插件、主题条目不在支持库窗口里显示
+      for (const item of remoteIndex.index.libraries) if ((item.kind ?? 'library') === 'library') remoteById.set(item.id, item)
     }
 
     for (const root of [this.getLibFolder(), this.getInstalledRootPath()]) {
@@ -1347,6 +1428,29 @@ class LibraryManager {
 
   findStaticLib(_name: string, _arch: string): string | null {
     return null
+  }
+
+  /** 已加载支持库在目标平台上的实现语言（编译器据此判断能否编译这些库，设计稿 §6.5） */
+  getLoadedImplementationLanguages(targetPlatform?: string): Array<{ library: string; languages: string[] }> {
+    const platform = normalizeTargetPlatform(targetPlatform)
+    if (this.libraries.length === 0) this.scan()
+    const result: Array<{ library: string; languages: string[] }> = []
+    for (const lib of this.getLoadedLibrariesForTarget(platform)) {
+      const registry = scanYcmdRegistry(dirname(lib.filePath))
+      const scanned = registry.libraries.find(item => item.name === lib.name)
+      if (!scanned) continue
+      const languages = new Set<string>()
+      for (const item of scanned.manifests) {
+        if (!item.valid || !item.manifest) continue
+        const impls = [item.manifest.implementations, ...((item.manifest.commands ?? []) as Array<{ implementations?: typeof item.manifest.implementations }>).map(c => c.implementations)]
+        for (const impl of impls) {
+          const target = platform ? impl?.[platform] : (impl?.windows ?? impl?.linux ?? impl?.macos)
+          if (target?.entry) languages.add(languageOfImplementation(target.entry, target.language))
+        }
+      }
+      result.push({ library: lib.name, languages: [...languages] })
+    }
+    return result
   }
 
   getLoadedLibraryFiles(targetPlatform?: string): Array<{ name: string; libraryPath: string; libName: string }> {

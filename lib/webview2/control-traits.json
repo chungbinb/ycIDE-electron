@@ -1,0 +1,19 @@
+{
+  "description": "WebView2 支持库的组件复用编译器内置控件实现的声明（见核心库 control-traits.json 的说明）。",
+  "traits": {
+    "textCaption": [
+      "浏览框",
+      "WebView",
+      "网页编辑框",
+      "WebEdit"
+    ],
+    "editLike": [
+      "浏览框",
+      "网页编辑框"
+    ],
+    "clickable": [
+      "网页按钮",
+      "WebButton"
+    ]
+  }
+}

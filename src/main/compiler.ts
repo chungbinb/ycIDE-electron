@@ -1213,66 +1213,28 @@ async function compileProjectResources(
   }
 }
 
+// ========== 控件特征（由支持库的 control-traits.json 提供，设计稿 §6.6） ==========
+// 编译器内置了一批 Win32 控件的代码生成（按钮、编辑框、滚动条……），以英文「特征」名标识；
+// 哪些窗口组件（按中英文组件名）属于哪个特征，由提供这些组件的支持库声明。
+// 编译器里因此不再写死任何支持库的组件名，第三方支持库也能让自己的组件复用这些内置实现。
+
+function isControl(ctrlType: string, trait: string): boolean {
+  return libraryManager.getControlTraits().traits[trait]?.has(ctrlType) ?? false
+}
+
+/** 窗口本身的组件类型名（核心库为「窗口」），用作窗口类型名与默认标题 */
+function windowTypeName(): string {
+  return libraryManager.getControlTraits().traitNames.window?.[0] ?? 'Window'
+}
+
 // 获取控件的 Win32 类名
 function getWin32ClassName(ctrlType: string): string {
-  const map: Record<string, string> = {
-    'Button': 'BUTTON', '按钮': 'BUTTON',
-    'Label': 'STATIC', '标签': 'STATIC',
-    'Edit': 'EDIT', '编辑框': 'EDIT',
-    'TextBox': 'EDIT', '文本框': 'EDIT',
-    'CheckBox': 'BUTTON', '复选框': 'BUTTON', '选择框': 'BUTTON',
-    'RadioButton': 'BUTTON', '单选框': 'BUTTON',
-    'ListBox': 'LISTBOX', '列表框': 'LISTBOX',
-    'ListView': 'SysListView32', '列表视图': 'SysListView32',
-    'TreeView': 'SysTreeView32', '树形框': 'SysTreeView32',
-    'TabControl': 'SysTabControl32', '标签页': 'SysTabControl32',
-    'ComboBox': 'COMBOBOX', '组合框': 'COMBOBOX',
-    'SliderBar': 'msctls_trackbar32', '滑块条': 'msctls_trackbar32',
-    'ScrollBar': 'SCROLLBAR', '滚动条': 'SCROLLBAR',
-    'ProgressBar': 'msctls_progress32', '进度条': 'msctls_progress32',
-    'GroupBox': 'BUTTON', '分组框': 'BUTTON',
-    '图片框': 'STATIC',
-    'ycUI按钮': 'ycButton',
-  }
-  return map[ctrlType] || 'STATIC'
+  return libraryManager.getControlTraits().win32ClassNames[ctrlType] || 'STATIC'
 }
 
 // 获取控件的 Win32 样式（不含 WS_VISIBLE，由外层 visFlag 控制）
 function getWin32Style(ctrlType: string): string {
-  const map: Record<string, string> = {
-    'Button': 'WS_CHILD | BS_PUSHBUTTON',
-    '按钮': 'WS_CHILD | BS_PUSHBUTTON',
-    'Label': 'WS_CHILD | SS_LEFT',
-    '标签': 'WS_CHILD | SS_LEFT',
-    'Edit': 'WS_CHILD | WS_BORDER | ES_AUTOHSCROLL',
-    '编辑框': 'WS_CHILD | WS_BORDER | ES_AUTOHSCROLL',
-    'TextBox': 'WS_CHILD | WS_BORDER | ES_AUTOHSCROLL',
-    '文本框': 'WS_CHILD | WS_BORDER | ES_AUTOHSCROLL',
-    'CheckBox': 'WS_CHILD | BS_AUTOCHECKBOX',
-    '复选框': 'WS_CHILD | BS_AUTOCHECKBOX',
-    '选择框': 'WS_CHILD | BS_AUTOCHECKBOX',
-    'ListBox': 'WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY',
-    '列表框': 'WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY',
-    'ListView': 'WS_CHILD | WS_BORDER | LVS_REPORT',
-    '列表视图': 'WS_CHILD | WS_BORDER | LVS_REPORT',
-    'TreeView': 'WS_CHILD | WS_BORDER | TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS',
-    '树形框': 'WS_CHILD | WS_BORDER | TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS',
-    'TabControl': 'WS_CHILD | WS_CLIPSIBLINGS',
-    '标签页': 'WS_CHILD | WS_CLIPSIBLINGS',
-    'ComboBox': 'WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL',
-    '组合框': 'WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL',
-    'SliderBar': 'WS_CHILD | TBS_AUTOTICKS',
-    '滑块条': 'WS_CHILD | TBS_AUTOTICKS',
-    'ScrollBar': 'WS_CHILD | SBS_HORZ',
-    '滚动条': 'WS_CHILD | SBS_HORZ',
-    'ProgressBar': 'WS_CHILD',
-    '进度条': 'WS_CHILD',
-    'GroupBox': 'WS_CHILD | BS_GROUPBOX',
-    '分组框': 'WS_CHILD | BS_GROUPBOX',
-    '图片框': 'WS_CHILD | SS_LEFT',
-    'ycUI按钮': 'WS_CHILD',
-  }
-  return map[ctrlType] || 'WS_CHILD | SS_LEFT'
+  return libraryManager.getControlTraits().win32Styles[ctrlType] || 'WS_CHILD | SS_LEFT'
 }
 
 function resolveCommandNotifyCode(className: string, eventName: string): string | null {
@@ -2005,8 +1967,7 @@ function resolveControlInitialText(
   props: Record<string, unknown>,
 ): string {
   const fromProps = props['标题'] || props['内容'] || props['文本'] || props['地址'] || props['title'] || props['text']
-  const noNameFallback = c.type === '编辑框' || c.type === '超级编辑框' || c.type === '文本框' || c.type === 'Edit' || c.type === 'TextBox'
-    || c.type === '浏览框' || c.type === 'WebView' || c.type === '网页编辑框' || c.type === 'WebEdit'
+  const noNameFallback = isControl(c.type ?? '', 'textCaption')
   const fallbackName = noNameFallback ? '' : (c.name || '')
   return String(fromProps || c.text || fallbackName || '')
 }
@@ -2442,14 +2403,14 @@ function buildStdButtonCodegen(extraProps: Record<string, unknown>, hasImage: bo
 // 解析窗口文件
 function parseWindowFile(efwPath: string): WindowFileInfo {
   const defaultFormName = basename(efwPath, '.efw') || '_启动窗口'
-  const info = createDefaultWindowFileInfo(defaultFormName, '窗口')
+  const info = createDefaultWindowFileInfo(defaultFormName, windowTypeName())
   if (!existsSync(efwPath)) return info
   try {
     const data = JSON.parse(readFileSync(efwPath, 'utf-8'))
     info.formName = (data.name || data.formName || defaultFormName || '_启动窗口')
     info.width = data.formWidth || data.width || 592
     info.height = data.formHeight || data.height || 384
-    info.title = data.formTitle || data.title || data.name || '窗口'
+    info.title = data.formTitle || data.title || data.name || windowTypeName()
     applyWindowProperties(info, data.properties || {})
     if (Array.isArray(data.controls)) {
       for (const c of data.controls) {
@@ -8139,14 +8100,14 @@ function generateMainC(
     // 按索引与 winInfo.controls 对齐（controls 已按停留顺序排序，两处循环同序）
     const controlImageBytes: Array<Buffer | null> = winInfo.controls.map(c => {
       // 图片框/按钮用「图片」，画板/标签用「底图」
-      const img = (c.type === '画板' || c.type === 'DrawPanel' || c.type === '标签' || c.type === 'Label') ? c.extraProps?.['底图'] : c.extraProps?.['图片']
+      const img = (isControl(c.type, 'drawPanel') || isControl(c.type, 'label')) ? c.extraProps?.['底图'] : c.extraProps?.['图片']
       return (typeof img === 'string' && img.startsWith('data:image')) ? decodeImageDataUrl(img) : null
     })
     const hasAnyControlImage = controlImageBytes.some(Boolean)
     // 图形按钮四态图片（正常/点燃/按下/禁止）：按控件索引对齐，每控件最多 4 张内嵌（懒解码为 GDI+ Image）
     const PICBTN_IMG_PROPS = ['正常图片', '点燃图片', '按下图片', '禁止图片'] as const
     const picBtnImageBytes: Array<Array<Buffer | null> | null> = winInfo.controls.map(c => {
-      if (!(c.type === '图形按钮' || c.type === 'PicBtn')) return null
+      if (!(isControl(c.type, 'picBtn'))) return null
       return PICBTN_IMG_PROPS.map(p => {
         const img = c.extraProps?.[p]
         return (typeof img === 'string' && img.startsWith('data:image')) ? decodeImageDataUrl(img) : null
@@ -8155,7 +8116,7 @@ function generateMainC(
     const hasAnyPicBtnImage = picBtnImageBytes.some(a => !!a && a.some(Boolean))
     // 辅助窗图形按钮四态图片（v1 补齐显示）：per-window per-control 收集，g_subPbImg_{si}_{ci}_{k} 内嵌、并入 g_ycPicBtns 表
     const subPicBtnImageBytes: Array<Array<Array<Buffer | null> | null>> = secondaryWindows.map(swx => swx.info.controls.map(c => {
-      if (!(c.type === '图形按钮' || c.type === 'PicBtn')) return null
+      if (!(isControl(c.type, 'picBtn'))) return null
       return PICBTN_IMG_PROPS.map(p => {
         const img = c.extraProps?.[p]
         return (typeof img === 'string' && img.startsWith('data:image')) ? decodeImageDataUrl(img) : null
@@ -8163,7 +8124,7 @@ function generateMainC(
     }))
     const hasAnySubPicBtnImage = subPicBtnImageBytes.some(w => w.some(a => !!a && a.some(Boolean)))
     // 画板即使无底图也用 GDI+（取图片 PNG 编码、画图片 字节集解码），故 GDI+ 门控含画板；图形按钮画图同样要 GDI+
-    const hasDrawPanel = winInfo.controls.some(c => c.type === '画板' || c.type === 'DrawPanel')
+    const hasDrawPanel = winInfo.controls.some(c => isControl(c.type, 'drawPanel'))
     // 辅助窗背景图（v1 补齐）：每个有底图的辅助窗一份字节，运行时按窗序号查表画（同主窗 GDI+ 内存流解码）
     const subBackImageBytes = secondaryWindows.map(swx => swx.info.backImage ? decodeImageDataUrl(swx.info.backImage) : null)
     const hasAnySubBackImage = subBackImageBytes.some(Boolean)
@@ -8431,7 +8392,7 @@ function generateMainC(
         formName = parsed.formName || ''
       }
       if (formName) {
-        currentProjectControls.set(formName, '窗口')
+        currentProjectControls.set(formName, windowTypeName())
         currentProjectWindowNames.add(formName)
         eycFileToWindowName.set(sourceFileName || `${basename(f.fileName, '.efw')}.eyc`, formName)
       }
@@ -8491,7 +8452,7 @@ function generateMainC(
             editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...editCodegenInfo.colorEntry, transparent: 0 })
           }
           if (editCodegenInfo.needsInputFilter) anyEditNeedsInputFilter = true
-        } else if (ctrl.type === '标签' || ctrl.type === 'Label') {
+        } else if (isControl(ctrl.type, 'label')) {
           const lc = buildStdLabelCodegen(ctrl.extraProps)
           // 有底图/渐变背景的标签：文字必须以透明背景模式画在图/渐变上（transparent 路径 = SetBkMode(TRANSPARENT)+NULL_BRUSH，
           // 擦除由 YcLblBgProc 子类的 WM_ERASEBKGND 负责画图/渐变），否则文字自带底色矩形会在其上打洞。
@@ -8505,22 +8466,22 @@ function generateMainC(
               transparent: (lc.transparent || lblHasBgImg || lblHasGrad) ? 1 : 0,
             })
           }
-        } else if (ctrl.type === '选择框' || ctrl.type === 'CheckBox' || ctrl.type === '单选框' || ctrl.type === 'RadioBox') {
-          const cc = buildStdCheckableCodegen(ctrl.extraProps, ctrl.type === '单选框' || ctrl.type === 'RadioBox')
+        } else if (isControl(ctrl.type, 'checkable')) {
+          const cc = buildStdCheckableCodegen(ctrl.extraProps, isControl(ctrl.type, 'radio'))
           if (cc.colorEntry) editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...cc.colorEntry, transparent: 0 })
-        } else if (ctrl.type === '分组框' || ctrl.type === 'GroupBox') {
+        } else if (isControl(ctrl.type, 'groupBox')) {
           const gc = buildStdGroupBoxCodegen(ctrl.extraProps)
           if (gc.colorEntry) editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...gc.colorEntry, transparent: 0 })
-        } else if (ctrl.type === '图片框' || ctrl.type === 'PicBox') {
+        } else if (isControl(ctrl.type, 'picBox')) {
           const img = ctrl.extraProps?.['图片']
           const hasImg = typeof img === 'string' && img.startsWith('data:image')
           const pc = buildStdPicBoxCodegen(ctrl.extraProps, hasImg)
           if (pc.colorEntry) editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...pc.colorEntry, transparent: 0 })
-        } else if (ctrl.type === '组合框' || ctrl.type === 'ComboBox') {
+        } else if (isControl(ctrl.type, 'comboBox')) {
           const cbc = buildStdComboBoxCodegen(ctrl.extraProps)
           if (cbc.colorEntry) editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...cbc.colorEntry, transparent: 0 })
         } else if (className === 'LISTBOX') {
-          const lbc = buildStdListBoxCodegen(ctrl.extraProps, ctrl.type === '选择列表框' || ctrl.type === 'ChkListBox')
+          const lbc = buildStdListBoxCodegen(ctrl.extraProps, isControl(ctrl.type, 'checklist'))
           if (lbc.colorEntry) editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...lbc.colorEntry, transparent: 0 })
         }
       }
@@ -8535,21 +8496,21 @@ function generateMainC(
             const ec = buildStdEditCodegen(ctrl.extraProps)
             if (ec.colorEntry) editColorEntries.push({ idMacro: idText, ...ec.colorEntry, transparent: 0 })
             if (ec.needsInputFilter) anyEditNeedsInputFilter = true
-          } else if (ctrl.type === '标签' || ctrl.type === 'Label') {
+          } else if (isControl(ctrl.type, 'label')) {
             const lc = buildStdLabelCodegen(ctrl.extraProps)
             if (lc.colorEntry || lc.transparent) {
               editColorEntries.push({ idMacro: idText, textColor: lc.colorEntry?.textColor ?? 0, backColor: lc.colorEntry?.backColor ?? 0xffffff, transparent: lc.transparent ? 1 : 0 })
             }
-          } else if (ctrl.type === '选择框' || ctrl.type === 'CheckBox' || ctrl.type === '单选框' || ctrl.type === 'RadioBox') {
-            const cc = buildStdCheckableCodegen(ctrl.extraProps, ctrl.type === '单选框' || ctrl.type === 'RadioBox')
+          } else if (isControl(ctrl.type, 'checkable')) {
+            const cc = buildStdCheckableCodegen(ctrl.extraProps, isControl(ctrl.type, 'radio'))
             if (cc.colorEntry) editColorEntries.push({ idMacro: idText, ...cc.colorEntry, transparent: 0 })
-          } else if (ctrl.type === '分组框' || ctrl.type === 'GroupBox') {
+          } else if (isControl(ctrl.type, 'groupBox')) {
             const gc = buildStdGroupBoxCodegen(ctrl.extraProps)
             if (gc.colorEntry) editColorEntries.push({ idMacro: idText, ...gc.colorEntry, transparent: 0 })
-          } else if (ctrl.type === '图片框' || ctrl.type === 'PicBox') {
+          } else if (isControl(ctrl.type, 'picBox')) {
             const pc = buildStdPicBoxCodegen(ctrl.extraProps, false)
             if (pc.colorEntry) editColorEntries.push({ idMacro: idText, ...pc.colorEntry, transparent: 0 })
-          } else if (ctrl.type === '组合框' || ctrl.type === 'ComboBox') {
+          } else if (isControl(ctrl.type, 'comboBox')) {
             const cbc = buildStdComboBoxCodegen(ctrl.extraProps)
             if (cbc.colorEntry) editColorEntries.push({ idMacro: idText, ...cbc.colorEntry, transparent: 0 })
           } else if (className === 'LISTBOX') {
@@ -8612,7 +8573,7 @@ function generateMainC(
     // hasCustomColor 决定是否自绘；textColor<0 表示用默认按钮文本色。
     const buttonDrawEntries: Array<{ idMacro: string; bgColor: number; textColor: number; hAlign: number; vAlign: number; isDefault: boolean }> = []
     for (const ctrl of winInfo.controls) {
-      if (!(ctrl.type === '按钮' || ctrl.type === 'Button')) continue
+      if (!(isControl(ctrl.type, 'button'))) continue
       const backColor = readIntProp(ctrl.extraProps?.['底色'], 0)
       const font = parseControlFont(ctrl.extraProps?.['字体'])
       const textColor = font && typeof font.color === 'number' ? font.color : -1
@@ -8629,7 +8590,7 @@ function generateMainC(
     // 辅助窗按钮的底色/文本色并入同一表（控件 ID 全局唯一，WM_DRAWITEM 按 ID 查天然共用；辅助窗用数字 ID）
     for (const swx of secondaryWindows) {
       swx.info.controls.forEach((ctrl, ci) => {
-        if (!(ctrl.type === '按钮' || ctrl.type === 'Button')) return
+        if (!(isControl(ctrl.type, 'button'))) return
         const backColor = readIntProp(ctrl.extraProps?.['底色'], 0)
         const font = parseControlFont(ctrl.extraProps?.['字体'])
         const textColor = font && typeof font.color === 'number' ? font.color : -1
@@ -8657,7 +8618,7 @@ function generateMainC(
     // 外形框自绘表：SS_OWNERDRAW 静态框，WM_DRAWITEM(ODT_STATIC) 按 ID 查表画形状/线条/填充。
     const shapeBoxEntries: Array<{ idMacro: string; shape: number; effect: number; lineStyle: number; lineWidth: number; lineColor: number; fillColor: number; backColor: number }> = []
     for (const ctrl of winInfo.controls) {
-      if (!(ctrl.type === '外形框' || ctrl.type === 'ShapeBox')) continue
+      if (!(isControl(ctrl.type, 'shapeBox'))) continue
       shapeBoxEntries.push({
         idMacro: `IDC_${ctrl.name.toUpperCase()}`,
         shape: readIntProp(ctrl.extraProps?.['外形'], 0),
@@ -8688,7 +8649,7 @@ function generateMainC(
       let lblCtrlIdx = 0
       for (const ctrl of winInfo.controls) {
         const idx = lblCtrlIdx++
-        if (!(ctrl.type === '标签' || ctrl.type === 'Label')) continue
+        if (!(isControl(ctrl.type, 'label'))) continue
         const hasImg = !!controlImageBytes[idx]
         const gradMode = readIntProp(ctrl.extraProps?.['渐变背景方式'], 0)
         if (!hasImg && gradMode === 0) continue  // 无底图无渐变 → 不挂子类
@@ -8767,7 +8728,7 @@ function generateMainC(
     // 超级链接框表：SysLink 控件，点击(NM_CLICK)或调用「跳转」方法时按类型 ShellExecute 打开邮件/网址。
     const hyperLinkEntries: Array<{ idMacro: string; type: number; email: string; url: string }> = []
     for (const ctrl of winInfo.controls) {
-      if (!(ctrl.type === '超级链接框' || ctrl.type === 'HyperLinker')) continue
+      if (!(isControl(ctrl.type, 'hyperLink'))) continue
       hyperLinkEntries.push({
         idMacro: `IDC_${ctrl.name.toUpperCase()}`,
         type: readIntProp(ctrl.extraProps?.['类型'], 0),  // 0电子邮件 1网址
@@ -8778,7 +8739,7 @@ function generateMainC(
     // 辅助窗口的超级链接框并入同一张表（ID 全局唯一）
     for (const swx of secondaryWindows) {
       swx.info.controls.forEach((ctrl, ci) => {
-        if (!(ctrl.type === '超级链接框' || ctrl.type === 'HyperLinker')) return
+        if (!(isControl(ctrl.type, 'hyperLink'))) return
         hyperLinkEntries.push({
           idMacro: String(swx.ctrlIds[ci]),
           type: readIntProp(ctrl.extraProps?.['类型'], 0),
@@ -8805,7 +8766,7 @@ function generateMainC(
     // 选择列表框：LBS_OWNERDRAWFIXED 自绘复选框。勾选/禁止状态用运行时 map<HWND, map<index,int>>；点击/空格切换勾选。
     const chkListIds = winInfo.controls
       .map((c, i) => ({ c, id: 1001 + i }))
-      .filter(x => x.c.type === '选择列表框' || x.c.type === 'ChkListBox')
+      .filter(x => isControl(x.c.type, 'checklist'))
       .map(x => `IDC_${x.c.name.toUpperCase()}`)
     mainCode += '/* 选择列表框自绘复选框：勾选/允许状态运行时表 + 点击切换 */\n'
     mainCode += 'static std::map<HWND, std::map<int,int>> g_ycChkChecked;\n'
@@ -8826,7 +8787,7 @@ function generateMainC(
     // 滚动条：原生 SCROLLBAR 的滑块不会自己移动，须父窗口在 WM_?SCROLL 里 GetScrollInfo→按滚动码调 pos→SetScrollInfo。收集行/页增量。
     const scrollBarEntries = winInfo.controls
       .map((c, i) => ({ c, id: 1001 + i }))
-      .filter(x => ['横向滚动条', '纵向滚动条', 'HScrollBar', 'VScrollBar'].includes(x.c.type))
+      .filter(x => isControl(x.c.type, 'scrollBar'))
       .map(x => ({
         idMacro: `IDC_${x.c.name.toUpperCase()}`,
         lineChange: readIntProp(x.c.extraProps?.['行改变值'], 1),
@@ -8869,7 +8830,7 @@ function generateMainC(
     // 时钟「时钟周期」运行时读写：时钟无 HWND，靠生成的 名→定时器id 表；周期存表内（可变），
     // 置周期 = KillTimer + (周期>0 时) SetTimer；0=不产生时钟事件（易语言语义）。表始终生成（空占位）保证跨编译单元可链接。
     {
-      const timerCtrls = winInfo.controls.filter(c => c.type === '时钟' || c.type === 'Timer')
+      const timerCtrls = winInfo.controls.filter(c => isControl(c.type, 'timer'))
       mainCode += 'struct YcTimerEntry { const wchar_t* name; int id; int period; };\n'
       const timerEntries = timerCtrls.map(c =>
         `{ L"${escapeCString(c.name)}", IDC_${c.name.toUpperCase()}, ${readIntProp(c.extraProps?.['时钟周期'], 0)} }`)
@@ -8881,7 +8842,7 @@ function generateMainC(
 
     // ===== 画板（DrawPanel）运行时：首个自注册控件窗口类 YCDRAWPANEL + 离屏 backbuffer + GDI 状态机 + 绘画事件 =====
     // 状态/助手/proc 始终生成（同超级链接框/选择夹策略，保证跨编译单元的画板方法调用可链接）。
-    const drawPanelCtrls = winInfo.controls.filter(c => c.type === '画板' || c.type === 'DrawPanel')
+    const drawPanelCtrls = winInfo.controls.filter(c => isControl(c.type, 'drawPanel'))
     // 各画板绘画事件处理函数原型（弱定义在事件区、用户 .eyc 强符号覆盖）：地址存入 state.paintHandler，由 WM_PAINT 派发。
     for (const dp of drawPanelCtrls) {
       mainCode += `void _${dp.name.replace(/^_+/, '')}_绘画(int, int, int, int);\n`
@@ -8955,7 +8916,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     // ===== 图形按钮运行时：四态图片(懒解码)+类型/选中/悬停/透明色 表（WM_DRAWITEM 绘制、BN_CLICKED 切换选中）=====
     const picBtnCtrls = winInfo.controls
       .map((c, i) => ({ c, i }))
-      .filter(x => x.c.type === '图形按钮' || x.c.type === 'PicBtn')
+      .filter(x => isControl(x.c.type, 'picBtn'))
     mainCode += '/* 图形按钮表（四态图片懒解码/类型/选中/悬停/透明色）*/\n'
     mainCode += 'struct YcPicBtnEntry { int id; int type; int checked; int hover; long long tclr; const unsigned char* img[4]; unsigned int imgSize[4]; Gdiplus::Image* decoded[4]; };\n'
     mainCode += 'static YcPicBtnEntry g_ycPicBtns[] = {\n'
@@ -9008,7 +8969,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     // ===== 图片框/图形按钮鼠标事件运行时：SetWindowSubclass 按控件派发（带 横向位置/纵向位置/功能键状态 参数，bool 返回=拦截缺省处理）=====
     // 事件签名与 .eyc 转译严格一致（逻辑型→bool、整数型→int），用户子程序参数不符时弱空实现兜底（事件静默不触发）。
     // 图形按钮共用同一子类过程：额外做「点燃」悬停跟踪（TrackMouseEvent + 悬停态重绘）。
-    const picBoxMouseCtrls = winInfo.controls.filter(c => c.type === '图片框' || c.type === 'PicBox' || c.type === '图形按钮' || c.type === 'PicBtn')
+    const picBoxMouseCtrls = winInfo.controls.filter(c => isControl(c.type, 'picBox') || isControl(c.type, 'picBtn'))
     if (picBoxMouseCtrls.length > 0) {
       // 处理函数原型：普通声明即可取址（弱定义在事件区、用户 .eyc 强符号覆盖，同画板 paintHandler 定式）
       for (const pb of picBoxMouseCtrls) {
@@ -9051,7 +9012,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     // 选择夹名 → 现行子夹（供子控件初始可视判定：非当前页子控件 born hidden）
     const tabCurTabMap = new Map<string, number>()
     for (const c of winInfo.controls) {
-      if (c.type === '选择夹' || c.type === 'Tab') tabCurTabMap.set(c.name, readIntProp(c.extraProps?.['现行子夹'], 0))
+      if (isControl(c.type, 'tab')) tabCurTabMap.set(c.name, readIntProp(c.extraProps?.['现行子夹'], 0))
     }
     let ctrlId = 1001
     for (const ctrl of winInfo.controls) {
@@ -9061,7 +9022,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       const libraryFileName = unitInfo ? (libNameToFileName.get(normalizeKey(unitInfo.libraryName)) || '') : ''
       const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
       // 时钟（Timer）：非可视组件，不创建窗口——用 SetTimer(定时器 id=IDC) 挂定时器，跳过其余生成。
-      if (ctrl.type === '时钟' || ctrl.type === 'Timer') {
+      if (isControl(ctrl.type, 'timer')) {
         const elapse = readIntProp(ctrl.extraProps?.['时钟周期'], 0)
         if (elapse > 0) mainCode += `    SetTimer(hWndParent, ${ctrlId}, (UINT)${elapse}, NULL);\n`
         ctrlId++
@@ -9070,7 +9031,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       // 通用对话框（CommonDlg）：非可视组件，不创建窗口——把设计期属性灌入 krnln 库的按名状态表。
       // 缺省值在库结构体里（与 window-units.json defaultValue 一致），只对「设计器里改过默认值」的属性发调用。
       // propId 序号与 lib/krnln/impl/windows.cpp 的 YcCommDlgState 注释一一对应。
-      if (ctrl.type === '通用对话框' || ctrl.type === 'CommonDlg') {
+      if (isControl(ctrl.type, 'commonDialog')) {
         const dlgName = `L"${escapeCString(ctrl.name)}"`
         const dlgIntProps: Array<[string, number, number]> = [
           ['类型', 0, 0], ['初始过滤器', 4, 0], ['字体颜色', 12, 0], ['字体大小', 18, 0], ['帮助命令', 20, 0], ['帮助标志值', 21, 0],
@@ -9104,7 +9065,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       }
       // 脚本组件（Script）：非可视功能组件，不创建窗口——把设计期语言/超时灌入 script 库按名状态表。
       // 缺省语言 JScript、超时 0 在库结构体里（与 window-units.json defaultValue 一致），只对改过默认的属性发调用。
-      if (ctrl.type === '脚本组件' || ctrl.type === 'Script') {
+      if (isControl(ctrl.type, 'scriptComponent')) {
         const scName = `L"${escapeCString(ctrl.name)}"`
         const scLang = ctrl.extraProps?.['语言']
         if (typeof scLang === 'string' && scLang && scLang !== 'JScript') {
@@ -9118,44 +9079,44 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       const isStdEdit = className === 'EDIT'
       const editCodegen = isStdEdit ? buildStdEditCodegen(ctrl.extraProps) : null
       // 标准按钮（非复选框/单选框/分组框，它们也是 BUTTON 类但样式不同）
-      const isStdButton = ctrl.type === '按钮' || ctrl.type === 'Button'
+      const isStdButton = isControl(ctrl.type, 'button')
       const buttonImageBytes = controlImageBytes[ctrlIndex]
       // 设了底色或文本色 → 自绘按钮（BS_OWNERDRAW）；自绘时图片让位于颜色（不走 BS_BITMAP）
       const ownerDrawButton = isStdButton && (readIntProp(ctrl.extraProps?.['底色'], 0) !== 0 || typeof parseControlFont(ctrl.extraProps?.['字体'])?.color === 'number')
       const buttonCodegen = isStdButton ? buildStdButtonCodegen(ctrl.extraProps, !!buttonImageBytes, ownerDrawButton) : null
       // 标准 STATIC 标签：对齐/边框落成样式位（颜色/透明已在上方颜色表收集）
-      const isStdLabel = ctrl.type === '标签' || ctrl.type === 'Label'
+      const isStdLabel = isControl(ctrl.type, 'label')
       const labelCodegen = isStdLabel ? buildStdLabelCodegen(ctrl.extraProps) : null
       // 标准 BUTTON·选择框/单选框/分组框
-      const isStdCheckable = ctrl.type === '选择框' || ctrl.type === 'CheckBox' || ctrl.type === '单选框' || ctrl.type === 'RadioBox'
-      const checkableCodegen = isStdCheckable ? buildStdCheckableCodegen(ctrl.extraProps, ctrl.type === '单选框' || ctrl.type === 'RadioBox') : null
-      const isStdGroupBox = ctrl.type === '分组框' || ctrl.type === 'GroupBox'
+      const isStdCheckable = isControl(ctrl.type, 'checkable')
+      const checkableCodegen = isStdCheckable ? buildStdCheckableCodegen(ctrl.extraProps, isControl(ctrl.type, 'radio')) : null
+      const isStdGroupBox = isControl(ctrl.type, 'groupBox')
       const groupBoxCodegen = isStdGroupBox ? buildStdGroupBoxCodegen(ctrl.extraProps) : null
       // 标准 STATIC·图片框（SS_BITMAP）
-      const isStdPicBox = ctrl.type === '图片框' || ctrl.type === 'PicBox'
+      const isStdPicBox = isControl(ctrl.type, 'picBox')
       const picBoxImageBytes = controlImageBytes[ctrlIndex]
       const picBoxCodegen = isStdPicBox ? buildStdPicBoxCodegen(ctrl.extraProps, !!picBoxImageBytes) : null
       // 图形按钮：BS_OWNERDRAW（样式/类名取 json），四态图片/类型/选中在 g_ycPicBtns 表，WM_DRAWITEM 绘制
-      const isStdPicBtn = ctrl.type === '图形按钮' || ctrl.type === 'PicBtn'
+      const isStdPicBtn = isControl(ctrl.type, 'picBtn')
       // 外形框：SS_OWNERDRAW（样式取 json），自绘参数在 g_ycShapeBoxes 表，需跳过 WCM_SETPROP
-      const isStdShapeBox = ctrl.type === '外形框' || ctrl.type === 'ShapeBox'
+      const isStdShapeBox = isControl(ctrl.type, 'shapeBox')
       // 画板：自注册 YCDRAWPANEL 类（边框→style/exStyle），运行时状态/绘画由 g_ycDrawPanels + YcDrawPanelProc 负责
-      const isStdDrawPanel = ctrl.type === '画板' || ctrl.type === 'DrawPanel'
+      const isStdDrawPanel = isControl(ctrl.type, 'drawPanel')
       const drawPanelCodegen = isStdDrawPanel ? buildStdDrawPanelCodegen(ctrl.extraProps) : null
       // 通用控件（原生 Win32 类，同样忽略 WM_APP+1，须专用 builder + 拦截分支）
-      const isStdProgress = ctrl.type === '进度条' || ctrl.type === 'ProgressBar'
+      const isStdProgress = isControl(ctrl.type, 'progressBar')
       const progressCodegen = isStdProgress ? buildStdProgressCodegen(ctrl.extraProps) : null
-      const isStdSlider = ctrl.type === '滑块条' || ctrl.type === 'SliderBar'
+      const isStdSlider = isControl(ctrl.type, 'slider')
       const sliderCodegen = isStdSlider ? buildStdSliderCodegen(ctrl.extraProps) : null
-      const isStdScrollBar = ctrl.type === '横向滚动条' || ctrl.type === '纵向滚动条' || ctrl.type === 'HScrollBar' || ctrl.type === 'VScrollBar'
-      const scrollBarCodegen = isStdScrollBar ? buildStdScrollBarCodegen(ctrl.extraProps, ctrl.type === '纵向滚动条' || ctrl.type === 'VScrollBar') : null
-      const isStdDatePicker = ctrl.type === '日期框' || ctrl.type === 'DatePicker'
+      const isStdScrollBar = isControl(ctrl.type, 'scrollBar')
+      const scrollBarCodegen = isStdScrollBar ? buildStdScrollBarCodegen(ctrl.extraProps, isControl(ctrl.type, 'vScrollBar')) : null
+      const isStdDatePicker = isControl(ctrl.type, 'datePicker')
       const datePickerCodegen = isStdDatePicker ? buildStdDatePickerCodegen(ctrl.extraProps) : null
-      const isStdMonthCal = ctrl.type === '月历' || ctrl.type === 'MonthCalendar'
+      const isStdMonthCal = isControl(ctrl.type, 'monthCalendar')
       const monthCalCodegen = isStdMonthCal ? buildStdMonthCalCodegen(ctrl.extraProps) : null
-      const isStdComboBox = ctrl.type === '组合框' || ctrl.type === 'ComboBox'
+      const isStdComboBox = isControl(ctrl.type, 'comboBox')
       const comboCodegen = isStdComboBox ? buildStdComboBoxCodegen(ctrl.extraProps) : null
-      const isStdChecklist = ctrl.type === '选择列表框' || ctrl.type === 'ChkListBox'
+      const isStdChecklist = isControl(ctrl.type, 'checklist')
       const isStdListBox = className === 'LISTBOX'
       const listBoxCodegen = isStdListBox ? buildStdListBoxCodegen(ctrl.extraProps, isStdChecklist) : null
       const baseStyle = editCodegen ? editCodegen.style
@@ -9183,7 +9144,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         : listBoxCodegen ? listBoxCodegen.exStyle
         : drawPanelCodegen ? drawPanelCodegen.exStyle
         : '0'
-      const isStdTabControl = ctrl.type === '选择夹' || ctrl.type === 'Tab'
+      const isStdTabControl = isControl(ctrl.type, 'tab')
       // 子控件属于某选择夹的某页：初始可视=（所属子夹 == 该选择夹现行子夹）；隐藏自身=真时选择夹自身也不可视。
       const tabOwner = typeof ctrl.extraProps?.['所属选择夹'] === 'string' ? String(ctrl.extraProps['所属选择夹']) : ''
       let effVisible = ctrl.visible
@@ -9198,20 +9159,11 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         className === 'EDIT'
         || className === 'YcWebView2Host'
         || className === 'YcWebEdit'
-        || ctrl.type === '编辑框'
-        || ctrl.type === '超级编辑框'
-        || ctrl.type === '文本框'
-        || ctrl.type === '浏览框'
-        || ctrl.type === '网页编辑框'
-        || ctrl.type === 'Edit'
-        || ctrl.type === 'TextBox'
-        || ctrl.type === '组合框' || ctrl.type === 'ComboBox'
-        || ctrl.type === '日期框' || ctrl.type === 'DatePicker'
-        || ctrl.type === '月历' || ctrl.type === 'MonthCalendar'
+        || isControl(ctrl.type, 'editLike')
         || className === 'LISTBOX' || className === 'SysDateTimePick32' || className === 'SysMonthCal32'
         || className === 'msctls_progress32' || className === 'msctls_trackbar32' || className === 'SCROLLBAR'
       // 超级链接框(SysLink)：标题包 <a>…</a> 标记才渲染为可点击链接（点击经 WM_NOTIFY NM_CLICK 打开）。
-      const isStdHyperLink = ctrl.type === '超级链接框' || ctrl.type === 'HyperLinker'
+      const isStdHyperLink = isControl(ctrl.type, 'hyperLink')
       const text = isStdHyperLink ? `<a>${ctrl.text || ctrl.name}</a>`
         : isEditLike ? (ctrl.text || '') : (ctrl.text || ctrl.name)
       mainCode += `    hCtrl = CreateWindowExW(${exStyle}, L"${className}", L"${escapeCString(text)}",\n`
@@ -9421,11 +9373,11 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       const events = unit?.events || []
       for (const ev of events) {
         // 画板「绘画」事件不走 WM_COMMAND/NOTIFY/SCROLL 通道，由 YcDrawPanelProc 的 WM_PAINT 带 4 个 int 参直接派发。
-        if ((ctrl.type === '画板' || ctrl.type === 'DrawPanel') && ev.name === '绘画') continue
+        if ((isControl(ctrl.type, 'drawPanel')) && ev.name === '绘画') continue
         // 时钟「周期事件」不走 WM_COMMAND/NOTIFY/SCROLL 通道，由主窗 WM_TIMER 按定时器 id 直接派发。
-        if ((ctrl.type === '时钟' || ctrl.type === 'Timer') && ev.name === '周期事件') continue
+        if ((isControl(ctrl.type, 'timer')) && ev.name === '周期事件') continue
         // 图片框/图形按钮鼠标事件不走上述通道（且 被双击 会被 STN_DBLCLK/BN_DBLCLK 兜底误绑成无参 void 处理），由 YcPicBoxMouseProc 子类带参直接派发。
-        if ((ctrl.type === '图片框' || ctrl.type === 'PicBox' || ctrl.type === '图形按钮' || ctrl.type === 'PicBtn') && PICBOX_MOUSE_EVENT_SET.has(ev.name)) continue
+        if ((isControl(ctrl.type, 'picBox') || isControl(ctrl.type, 'picBtn')) && PICBOX_MOUSE_EVENT_SET.has(ev.name)) continue
         const handlerName = `_${ctrl.name.replace(/^_+/, '')}_${ev.name}`
         const proto = resolveEventByProtocol(
           protocolBindings,
@@ -9501,7 +9453,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '#define WEAK_FUNC __attribute__((weak))\n'
 
     // 兼容历史按钮事件命名
-    const isClickable = (t: string) => ['Button', '按钮', 'ycUI按钮', '网页按钮', 'WebButton'].includes(t)
+    const isClickable = (t: string) => isControl(t, 'clickable')
     const declaredHandlers = new Set<string>()
     for (const ctrl of winInfo.controls) {
       if (isClickable(ctrl.type)) {
@@ -9529,7 +9481,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     }
 
     // 时钟「周期事件」处理函数（WM_TIMER 派发；weak 空实现保证无用户处理时可链接）
-    const timerEventCtrls = winInfo.controls.filter(c => c.type === '时钟' || c.type === 'Timer')
+    const timerEventCtrls = winInfo.controls.filter(c => isControl(c.type, 'timer'))
     for (const ctrl of timerEventCtrls) {
       const handlerName = `_${ctrl.name.replace(/^_+/, '')}_周期事件`
       if (declaredHandlers.has(handlerName)) continue
@@ -9615,7 +9567,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '        CreateControls(hWnd);\n'
     // 选择夹初始按现行子夹同步子控件显隐（TCM_SETCURSEL 不发 TCN_SELCHANGE，故显式同步一次）
     for (const c of winInfo.controls) {
-      if (c.type === '选择夹' || c.type === 'Tab') mainCode += `        yc_tab_sync(IDC_${c.name.toUpperCase()});\n`
+      if (isControl(c.type, 'tab')) mainCode += `        yc_tab_sync(IDC_${c.name.toUpperCase()});\n`
     }
     if (hasWindowMenu) mainCode += '        CreateMenus(hWnd);\n'
     mainCode += `        ${windowEventPrefix}_创建完毕();\n`
@@ -9644,7 +9596,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       if (bindings.length > 0 || hasCompatClick) {
         mainCode += `        case IDC_${ctrl.name.toUpperCase()}:\n`
         // 图形按钮·选择框类型：单击先切换「选中」再进用户事件（易语言语义：事件里读到的是新状态）
-        if (ctrl.type === '图形按钮' || ctrl.type === 'PicBtn') {
+        if (isControl(ctrl.type, 'picBtn')) {
           mainCode += `            if (wmEvent == BN_CLICKED) { yc_picbtn_toggle(GetDlgItem(hWnd, IDC_${ctrl.name.toUpperCase()})); }\n`
         }
         if (hasCompatClick && !hasCompatClickBinding) {
@@ -10039,9 +9991,9 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
           const libraryFileName = unit ? (libNameToFileName.get(normalizeKey(unit.libraryName)) || '') : ''
           const className = resolveControlClassName(ctrl.type, unit, libraryFileName, controlProtocolBindings)
           for (const ev of unit?.events || []) {
-            if ((ctrl.type === '画板' || ctrl.type === 'DrawPanel') && ev.name === '绘画') continue
-            if ((ctrl.type === '时钟' || ctrl.type === 'Timer') && ev.name === '周期事件') continue
-            if ((ctrl.type === '图片框' || ctrl.type === 'PicBox') && PICBOX_MOUSE_EVENT_SET.has(ev.name)) continue
+            if ((isControl(ctrl.type, 'drawPanel')) && ev.name === '绘画') continue
+            if ((isControl(ctrl.type, 'timer')) && ev.name === '周期事件') continue
+            if ((isControl(ctrl.type, 'picBox')) && PICBOX_MOUSE_EVENT_SET.has(ev.name)) continue
             const handlerName = `_${ctrl.name.replace(/^_+/, '')}_${ev.name}`
             const proto = resolveEventByProtocol(protocolBindings, libraryFileName, unit?.name || ctrl.type, unit?.englishName || '', ev.name)
             const id = swx.ctrlIds[ci]
@@ -10099,8 +10051,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
             const libraryFileName = unitInfo ? (libNameToFileName.get(normalizeKey(unitInfo.libraryName)) || '') : ''
             const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
             // 图形按钮已支持显示(style 从 json 带 BS_OWNERDRAW、四态图片并入 g_ycPicBtns、YcSubWinProc WM_DRAWITEM 绘制)；鼠标悬停/点击切换交互仍 v1 未接
-            const unsupported = ['画板', 'DrawPanel', '选择夹', 'Tab', '时钟', 'Timer', '外形框', 'ShapeBox', '菜单', 'menu', '字体', 'font']
-            if (unsupported.includes(ctrl.type)) {
+            if (isControl(ctrl.type, 'previewUnsupported')) {
               const wk = `${swx.info.formName}:${ctrl.type}`
               if (!secWarned.has(wk)) {
                 secWarned.add(wk)
@@ -10109,28 +10060,28 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
               return
             }
             // 通用对话框：非可视组件，属性灌入 krnln 按名状态表（与主窗同路径），不创建窗口
-            if (ctrl.type === '通用对话框' || ctrl.type === 'CommonDlg') return
+            if (isControl(ctrl.type, 'commonDialog')) return
             const isStdEdit = className === 'EDIT'
             const editCodegen = isStdEdit ? buildStdEditCodegen(ctrl.extraProps) : null
-            const isStdButton = ctrl.type === '按钮' || ctrl.type === 'Button'
+            const isStdButton = isControl(ctrl.type, 'button')
             // 底色/文本色 → 自绘按钮(BS_OWNERDRAW)，颜色由 YcSubWinProc WM_DRAWITEM 查 g_ycButtonDraws 画
             const swOwnerDrawButton = isStdButton && (readIntProp(ctrl.extraProps?.['底色'], 0) !== 0 || typeof parseControlFont(ctrl.extraProps?.['字体'])?.color === 'number')
             const buttonCodegen = isStdButton ? buildStdButtonCodegen(ctrl.extraProps, false, swOwnerDrawButton) : null
-            const isStdLabel = ctrl.type === '标签' || ctrl.type === 'Label'
+            const isStdLabel = isControl(ctrl.type, 'label')
             const labelCodegen = isStdLabel ? buildStdLabelCodegen(ctrl.extraProps) : null
-            const isStdCheckable = ctrl.type === '选择框' || ctrl.type === 'CheckBox' || ctrl.type === '单选框' || ctrl.type === 'RadioBox'
-            const checkableCodegen = isStdCheckable ? buildStdCheckableCodegen(ctrl.extraProps, ctrl.type === '单选框' || ctrl.type === 'RadioBox') : null
-            const isStdGroupBox = ctrl.type === '分组框' || ctrl.type === 'GroupBox'
+            const isStdCheckable = isControl(ctrl.type, 'checkable')
+            const checkableCodegen = isStdCheckable ? buildStdCheckableCodegen(ctrl.extraProps, isControl(ctrl.type, 'radio')) : null
+            const isStdGroupBox = isControl(ctrl.type, 'groupBox')
             const groupBoxCodegen = isStdGroupBox ? buildStdGroupBoxCodegen(ctrl.extraProps) : null
-            const isStdPicBox = ctrl.type === '图片框' || ctrl.type === 'PicBox'
+            const isStdPicBox = isControl(ctrl.type, 'picBox')
             const picBoxCodegen = isStdPicBox ? buildStdPicBoxCodegen(ctrl.extraProps, false) : null
-            const progressCodegen = (ctrl.type === '进度条' || ctrl.type === 'ProgressBar') ? buildStdProgressCodegen(ctrl.extraProps) : null
-            const sliderCodegen = (ctrl.type === '滑块条' || ctrl.type === 'SliderBar') ? buildStdSliderCodegen(ctrl.extraProps) : null
-            const scrollBarCodegen = (ctrl.type === '横向滚动条' || ctrl.type === '纵向滚动条' || ctrl.type === 'HScrollBar' || ctrl.type === 'VScrollBar')
-              ? buildStdScrollBarCodegen(ctrl.extraProps, ctrl.type === '纵向滚动条' || ctrl.type === 'VScrollBar') : null
-            const datePickerCodegen = (ctrl.type === '日期框' || ctrl.type === 'DatePicker') ? buildStdDatePickerCodegen(ctrl.extraProps) : null
-            const monthCalCodegen = (ctrl.type === '月历' || ctrl.type === 'MonthCalendar') ? buildStdMonthCalCodegen(ctrl.extraProps) : null
-            const comboCodegen = (ctrl.type === '组合框' || ctrl.type === 'ComboBox') ? buildStdComboBoxCodegen(ctrl.extraProps) : null
+            const progressCodegen = (isControl(ctrl.type, 'progressBar')) ? buildStdProgressCodegen(ctrl.extraProps) : null
+            const sliderCodegen = (isControl(ctrl.type, 'slider')) ? buildStdSliderCodegen(ctrl.extraProps) : null
+            const scrollBarCodegen = (isControl(ctrl.type, 'scrollBar'))
+              ? buildStdScrollBarCodegen(ctrl.extraProps, isControl(ctrl.type, 'vScrollBar')) : null
+            const datePickerCodegen = (isControl(ctrl.type, 'datePicker')) ? buildStdDatePickerCodegen(ctrl.extraProps) : null
+            const monthCalCodegen = (isControl(ctrl.type, 'monthCalendar')) ? buildStdMonthCalCodegen(ctrl.extraProps) : null
+            const comboCodegen = (isControl(ctrl.type, 'comboBox')) ? buildStdComboBoxCodegen(ctrl.extraProps) : null
             const listBoxCodegen = className === 'LISTBOX' ? buildStdListBoxCodegen(ctrl.extraProps, false) : null
             const anyCodegen = editCodegen || buttonCodegen || labelCodegen || checkableCodegen || groupBoxCodegen || picBoxCodegen
               || progressCodegen || sliderCodegen || scrollBarCodegen || datePickerCodegen || monthCalCodegen || comboCodegen || listBoxCodegen
@@ -10141,7 +10092,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
             const disFlag = ctrl.disabled ? ' | WS_DISABLED' : ''
             const isEditLike = isStdEdit || comboCodegen !== null || listBoxCodegen !== null || datePickerCodegen !== null || monthCalCodegen !== null
               || progressCodegen !== null || sliderCodegen !== null || scrollBarCodegen !== null
-            const isStdHyperLink = ctrl.type === '超级链接框' || ctrl.type === 'HyperLinker'
+            const isStdHyperLink = isControl(ctrl.type, 'hyperLink')
             const text = isStdHyperLink ? `<a>${ctrl.text || ctrl.name}</a>` : isEditLike ? (ctrl.text || '') : (ctrl.text || ctrl.name)
             mainCode += `    hCtrl = CreateWindowExW(${exStyle}, L"${className}", L"${escapeCString(text)}",\n`
             mainCode += `        ${baseStyle}${visFlag}${disFlag},\n`

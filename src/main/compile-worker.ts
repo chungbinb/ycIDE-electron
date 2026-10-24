@@ -44,6 +44,8 @@ interface CompileRequestMessage {
   editorFiles?: Record<string, string>
   /** 主进程随每次请求下发最新编译设置——用户改了设置立即生效，无需重启 worker */
   compilerSettings?: { zigPath: string; optimizeLevel: 'O0' | 'O1' | 'O2' | 'Os'; vc6Style?: boolean } | null
+  /** 插件被停用的支持库：worker 有自己的支持库管理实例，随请求同步 */
+  disabledLibraries?: string[]
 }
 
 interface ReloadLibrariesMessage {
@@ -64,6 +66,7 @@ function runCompile(message: CompileRequestMessage): void {
   compileChain = compileChain.then(async () => {
     const editorFiles = message.editorFiles ? new Map(Object.entries(message.editorFiles)) : undefined
     if (message.compilerSettings !== undefined) workerCompilerSettings = message.compilerSettings
+    if (message.disabledLibraries) libraryManager.setDisabledLibraries(message.disabledLibraries)
     try {
       const result = await compileProject(message.options, editorFiles)
       port.postMessage({ kind: 'compileResult', reqId: message.reqId, result })

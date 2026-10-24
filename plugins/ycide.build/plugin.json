@@ -11,8 +11,8 @@
       { "id": "build", "title": "编译", "mnemonic": "B", "order": 50 }
     ],
     "commands": [
-      { "id": "build:compile", "title": "普通编译", "enablement": "projectOpen" },
-      { "id": "build:run", "title": "编译运行", "enablement": "projectOpen" }
+      { "id": "build:compile", "title": "普通编译", "enablement": "projectOpen && compilerAvailable" },
+      { "id": "build:run", "title": "编译运行", "enablement": "projectOpen && compilerAvailable" }
     ],
     "menus": {
       "menubar/build": [

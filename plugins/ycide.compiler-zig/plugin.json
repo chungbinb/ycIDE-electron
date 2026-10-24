@@ -1,0 +1,37 @@
+{
+  "id": "ycide.compiler-zig",
+  "displayName": "Zig 编译器",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "内置编译器：把易语言源码转译为 C++，用 Zig 工具链编译。停用后 IDE 仍可编辑，编译与运行入口置灰；可以换用其他编译器插件。",
+  "builtin": true,
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "runtime": {
+    "type": "none"
+  },
+  "contributes": {
+    "compilers": [
+      {
+        "id": "ycide.zig",
+        "displayName": "Zig 编译器",
+        "targets": [
+          "windows-x64",
+          "windows-x86",
+          "windows-arm64",
+          "linux-x64",
+          "linux-arm64",
+          "macos-x64",
+          "macos-arm64",
+          "android-arm64"
+        ],
+        "acceptsImplementations": [
+          "cpp",
+          "objcpp",
+          "c"
+        ]
+      }
+    ]
+  }
+}

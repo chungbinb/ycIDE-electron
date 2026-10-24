@@ -6,6 +6,7 @@ import { Worker } from 'worker_threads'
 import { join } from 'path'
 import { BrowserWindow } from 'electron'
 import { getRuntimeEnv } from './runtimeEnv'
+import { libraryManager } from './libraryManager'
 import type { CompileOptions, CompileResult, CompileMessage } from './compiler'
 
 let workerReadyPromise: Promise<Worker | null> | null = null
@@ -137,6 +138,6 @@ export async function compileViaWorker(
   const compilerSettings = compilerSettingsReader ? compilerSettingsReader() : null
   return new Promise<CompileResult>((resolve) => {
     pending.set(reqId, resolve)
-    worker.postMessage({ kind: 'compile', reqId, options, editorFiles, compilerSettings })
+    worker.postMessage({ kind: 'compile', reqId, options, editorFiles, compilerSettings, disabledLibraries: libraryManager.getDisabledLibraries() })
   })
 }

@@ -27,6 +27,10 @@ export interface YcideApi {
     /** 在 IDE 输出面板显示一条消息 */
     showMessage(message: string, type?: PluginMessageType): void
   }
+  output: {
+    /** 往编译输出面板追加一行（编译器插件输出编译过程用） */
+    appendLine(text: string, type?: PluginMessageType): void
+  }
   documents: {
     /** 读取文档当前内容：已在编辑器打开的取编辑器里（含未保存修改）的内容，否则读磁盘 */
     getText(path: string): Promise<string>
@@ -108,6 +112,11 @@ export class PluginHostRuntime {
       window: {
         showMessage: (message, type = 'info') => {
           this.rpc.notify('window/showMessage', { pluginId, type, message: String(message) })
+        },
+      },
+      output: {
+        appendLine: (text, type = 'info') => {
+          this.rpc.notify('output/append', { pluginId, type, text: String(text) })
         },
       },
       documents: {

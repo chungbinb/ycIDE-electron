@@ -11,6 +11,7 @@
 //   commands/unregistered（通知）     插件注销了命令
 //   commands/executeHost（请求）      插件执行宿主侧的命令（内置命令或其他插件的命令）
 //   window/showMessage（通知）        插件请求在输出面板显示消息
+//   output/append（通知）             往编译输出面板追加一行（编译器插件使用）
 
 export const PLUGIN_PROTOCOL_VERSION = '0.1'
 
@@ -35,6 +36,12 @@ export interface ShowMessageParams {
   pluginId: string
   type: PluginMessageType
   message: string
+}
+
+export interface OutputAppendParams {
+  pluginId: string
+  type: PluginMessageType
+  text: string
 }
 
 export interface CommandRegistrationParams {

@@ -1,0 +1,203 @@
+{
+  "description": "核心支持库窗口组件与编译器内置控件实现的对应关系（编译器据此生成控件代码，不再写死组件名）。traits：特征 → 属于该特征的组件名（中英文）；win32ClassNames / win32Styles：组件名 → 默认 Win32 类名 / 样式（组件在 window-units.json 里没有声明 className / style 时使用）。部分名称是兼容旧版支持库（如 ycUI、旧版文本框）的别名。",
+  "traits": {
+    "button": [
+      "按钮",
+      "Button"
+    ],
+    "label": [
+      "标签",
+      "Label"
+    ],
+    "checkable": [
+      "选择框",
+      "CheckBox",
+      "单选框",
+      "RadioBox"
+    ],
+    "radio": [
+      "单选框",
+      "RadioBox"
+    ],
+    "groupBox": [
+      "分组框",
+      "GroupBox"
+    ],
+    "picBox": [
+      "图片框",
+      "PicBox"
+    ],
+    "picBtn": [
+      "图形按钮",
+      "PicBtn"
+    ],
+    "comboBox": [
+      "组合框",
+      "ComboBox"
+    ],
+    "checklist": [
+      "选择列表框",
+      "ChkListBox"
+    ],
+    "shapeBox": [
+      "外形框",
+      "ShapeBox"
+    ],
+    "hyperLink": [
+      "超级链接框",
+      "HyperLinker"
+    ],
+    "timer": [
+      "时钟",
+      "Timer"
+    ],
+    "drawPanel": [
+      "画板",
+      "DrawPanel"
+    ],
+    "tab": [
+      "选择夹",
+      "Tab"
+    ],
+    "commonDialog": [
+      "通用对话框",
+      "CommonDlg"
+    ],
+    "progressBar": [
+      "进度条",
+      "ProgressBar"
+    ],
+    "slider": [
+      "滑块条",
+      "SliderBar"
+    ],
+    "scrollBar": [
+      "横向滚动条",
+      "纵向滚动条",
+      "HScrollBar",
+      "VScrollBar"
+    ],
+    "vScrollBar": [
+      "纵向滚动条",
+      "VScrollBar"
+    ],
+    "datePicker": [
+      "日期框",
+      "DatePicker"
+    ],
+    "monthCalendar": [
+      "月历",
+      "MonthCalendar"
+    ],
+    "textCaption": [
+      "编辑框",
+      "超级编辑框",
+      "文本框",
+      "Edit",
+      "TextBox"
+    ],
+    "editLike": [
+      "编辑框",
+      "超级编辑框",
+      "文本框",
+      "Edit",
+      "TextBox",
+      "组合框",
+      "ComboBox",
+      "日期框",
+      "DatePicker",
+      "月历",
+      "MonthCalendar"
+    ],
+    "clickable": [
+      "Button",
+      "按钮",
+      "ycUI按钮"
+    ],
+    "previewUnsupported": [
+      "画板",
+      "DrawPanel",
+      "选择夹",
+      "Tab",
+      "时钟",
+      "Timer",
+      "外形框",
+      "ShapeBox",
+      "菜单",
+      "menu",
+      "字体",
+      "font"
+    ],
+    "window": [
+      "窗口"
+    ]
+  },
+  "win32ClassNames": {
+    "Button": "BUTTON",
+    "按钮": "BUTTON",
+    "Label": "STATIC",
+    "标签": "STATIC",
+    "Edit": "EDIT",
+    "编辑框": "EDIT",
+    "TextBox": "EDIT",
+    "文本框": "EDIT",
+    "CheckBox": "BUTTON",
+    "复选框": "BUTTON",
+    "选择框": "BUTTON",
+    "RadioButton": "BUTTON",
+    "单选框": "BUTTON",
+    "ListBox": "LISTBOX",
+    "列表框": "LISTBOX",
+    "ListView": "SysListView32",
+    "列表视图": "SysListView32",
+    "TreeView": "SysTreeView32",
+    "树形框": "SysTreeView32",
+    "TabControl": "SysTabControl32",
+    "标签页": "SysTabControl32",
+    "ComboBox": "COMBOBOX",
+    "组合框": "COMBOBOX",
+    "SliderBar": "msctls_trackbar32",
+    "滑块条": "msctls_trackbar32",
+    "ScrollBar": "SCROLLBAR",
+    "滚动条": "SCROLLBAR",
+    "ProgressBar": "msctls_progress32",
+    "进度条": "msctls_progress32",
+    "GroupBox": "BUTTON",
+    "分组框": "BUTTON",
+    "图片框": "STATIC",
+    "ycUI按钮": "ycButton"
+  },
+  "win32Styles": {
+    "Button": "WS_CHILD | BS_PUSHBUTTON",
+    "按钮": "WS_CHILD | BS_PUSHBUTTON",
+    "Label": "WS_CHILD | SS_LEFT",
+    "标签": "WS_CHILD | SS_LEFT",
+    "Edit": "WS_CHILD | WS_BORDER | ES_AUTOHSCROLL",
+    "编辑框": "WS_CHILD | WS_BORDER | ES_AUTOHSCROLL",
+    "TextBox": "WS_CHILD | WS_BORDER | ES_AUTOHSCROLL",
+    "文本框": "WS_CHILD | WS_BORDER | ES_AUTOHSCROLL",
+    "CheckBox": "WS_CHILD | BS_AUTOCHECKBOX",
+    "复选框": "WS_CHILD | BS_AUTOCHECKBOX",
+    "选择框": "WS_CHILD | BS_AUTOCHECKBOX",
+    "ListBox": "WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY",
+    "列表框": "WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY",
+    "ListView": "WS_CHILD | WS_BORDER | LVS_REPORT",
+    "列表视图": "WS_CHILD | WS_BORDER | LVS_REPORT",
+    "TreeView": "WS_CHILD | WS_BORDER | TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS",
+    "树形框": "WS_CHILD | WS_BORDER | TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS",
+    "TabControl": "WS_CHILD | WS_CLIPSIBLINGS",
+    "标签页": "WS_CHILD | WS_CLIPSIBLINGS",
+    "ComboBox": "WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL",
+    "组合框": "WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL",
+    "SliderBar": "WS_CHILD | TBS_AUTOTICKS",
+    "滑块条": "WS_CHILD | TBS_AUTOTICKS",
+    "ScrollBar": "WS_CHILD | SBS_HORZ",
+    "滚动条": "WS_CHILD | SBS_HORZ",
+    "ProgressBar": "WS_CHILD",
+    "进度条": "WS_CHILD",
+    "GroupBox": "WS_CHILD | BS_GROUPBOX",
+    "分组框": "WS_CHILD | BS_GROUPBOX",
+    "图片框": "WS_CHILD | SS_LEFT",
+    "ycUI按钮": "WS_CHILD"
+  }
+}
