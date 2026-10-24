@@ -53,6 +53,8 @@ export interface IDESettings {
   aiGlmApiKey: string
   /** 自定义模型列表 */
   aiCustomModels: AICustomModelConfig[]
+  /** 插件提供的模型的 API Key：键为「插件ID:提供方ID」（内置 DeepSeek / GLM 仍用上面两个字段） */
+  aiProviderApiKeys: Record<string, string>
   /** 支持库在线索引地址 */
   libraryStoreIndexUrl: string
   /**
@@ -103,6 +105,7 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   aiDeepseekApiKey: '',
   aiGlmApiKey: '',
   aiCustomModels: [],
+  aiProviderApiKeys: {},
   libraryStoreIndexUrl: DEFAULT_LIBRARY_STORE_INDEX_URL,
   compilerZigPath: '',
   compilerOptimizeLevel: 'O2',
@@ -163,6 +166,7 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
     aiDeepseekApiKey: resolveSecret(raw.aiDeepseekApiKey, d.aiDeepseekApiKey),
     aiGlmApiKey: resolveSecret(raw.aiGlmApiKey, d.aiGlmApiKey),
     aiCustomModels: resolveCustomModels(raw.aiCustomModels),
+    aiProviderApiKeys: resolveProviderApiKeys(raw.aiProviderApiKeys),
     libraryStoreIndexUrl: resolveUrl(raw.libraryStoreIndexUrl, d.libraryStoreIndexUrl),
     compilerZigPath: resolvePath(raw.compilerZigPath, d.compilerZigPath),
     compilerOptimizeLevel: resolveOptimizeLevel(raw.compilerOptimizeLevel, d.compilerOptimizeLevel),
@@ -246,6 +250,15 @@ function resolveCustomModels(value: unknown): AICustomModelConfig[] {
     const apiKey = typeof raw.apiKey === 'string' ? raw.apiKey.trim() : ''
     if (!id || !label || !endpoint || !modelName) continue
     out.push({ id, label, endpoint, modelName, apiKey })
+  }
+  return out
+}
+
+function resolveProviderApiKeys(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out: Record<string, string> = {}
+  for (const [key, secret] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof secret === 'string' && secret.trim() && key.trim()) out[key.trim()] = secret.trim()
   }
   return out
 }

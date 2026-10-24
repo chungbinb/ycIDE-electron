@@ -8,7 +8,7 @@ import { buildRecentOpenedEntries, buildThemeEntries, RECENT_OPENED_SUBMENU, THE
 
 const BUILTIN_THEME_IDS = ['默认深色', '默认浅色']
 
-// 菜单结构来自插件清单的 menubarMenus / menus / keybindings 贡献点（src/plugins/*/plugin.json）
+// 菜单结构来自插件清单的 menubarMenus / menus / keybindings 贡献点（plugins/*/plugin.json）
 function buildMenus(model: ContributionModel, runtimePlatform: RuntimePlatform, hasProject: boolean, hasWorkspace: boolean, hasOpenFile: boolean, themes: string[], currentTheme: string, recentOpened: RecentOpenedEntry[]): ResolvedMenu[] {
   return resolveMenubar(model, {
     platform: toPluginHostPlatform(runtimePlatform),

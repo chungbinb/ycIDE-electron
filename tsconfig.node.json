@@ -12,5 +12,5 @@
     "rootDir": ".",
     "resolveJsonModule": true
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*", "src/plugins/**/*.json", "electron.vite.config.ts"]
+  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*", "plugins/*/plugin.json", "electron.vite.config.ts"]
 }

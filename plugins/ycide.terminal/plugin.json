@@ -1,0 +1,39 @@
+{
+  "id": "ycide.terminal",
+  "displayName": "终端",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "内置终端，并为 AI Agent 提供执行命令、读取输出的工具。",
+  "builtin": true,
+  "engines": { "ycide": ">=0.0.5" },
+  "contributes": {
+    "commands": [
+      { "id": "aiTool:terminalSend", "title": "AI 工具：向终端发送命令" },
+      { "id": "aiTool:terminalRead", "title": "AI 工具：读取终端输出" },
+      { "id": "aiTool:terminalLastCommand", "title": "AI 工具：读取最近执行的终端命令" }
+    ],
+    "aiTools": [
+      {
+        "name": "terminal_send",
+        "description": "向终端发送命令并执行。",
+        "parameters": { "type": "object", "properties": { "command": { "type": "string" } }, "required": ["command"], "additionalProperties": false },
+        "command": "aiTool:terminalSend",
+        "risk": "exec"
+      },
+      {
+        "name": "terminal_read",
+        "description": "读取最近终端输出。",
+        "parameters": { "type": "object", "properties": { "limit": { "type": "integer" } }, "additionalProperties": false },
+        "command": "aiTool:terminalRead",
+        "risk": "read"
+      },
+      {
+        "name": "terminal_last_command",
+        "description": "读取最近执行的终端命令。",
+        "parameters": { "type": "object", "properties": {}, "additionalProperties": false },
+        "command": "aiTool:terminalLastCommand",
+        "risk": "read"
+      }
+    ]
+  }
+}

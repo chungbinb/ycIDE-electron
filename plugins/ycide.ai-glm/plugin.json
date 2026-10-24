@@ -1,0 +1,25 @@
+{
+  "id": "ycide.ai-glm",
+  "displayName": "智谱 GLM 模型",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "为 AI 助手提供智谱 GLM 模型（OpenAI 兼容接口，数据插件）。",
+  "builtin": true,
+  "engines": { "ycide": ">=0.0.5" },
+  "runtime": { "type": "none" },
+  "permissions": ["net:open.bigmodel.cn"],
+  "contributes": {
+    "aiProviders": [
+      {
+        "id": "glm",
+        "label": "GLM",
+        "endpoint": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        "envKey": "GLM_API_KEY",
+        "apiKeySetting": "aiGlmApiKey",
+        "models": [
+          { "id": "glm", "label": "GLM", "model": "glm-4-flash" }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "id": "ycide.ai-deepseek",
+  "displayName": "DeepSeek 模型",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "为 AI 助手提供 DeepSeek 模型（OpenAI 兼容接口，数据插件）。",
+  "builtin": true,
+  "engines": { "ycide": ">=0.0.5" },
+  "runtime": { "type": "none" },
+  "permissions": ["net:api.deepseek.com"],
+  "contributes": {
+    "aiProviders": [
+      {
+        "id": "deepseek",
+        "label": "DeepSeek",
+        "endpoint": "https://api.deepseek.com/chat/completions",
+        "envKey": "DEEPSEEK_API_KEY",
+        "apiKeySetting": "aiDeepseekApiKey",
+        "models": [
+          { "id": "deepseek", "label": "DeepSeek V4-Pro", "model": "deepseek-v4-pro" },
+          { "id": "deepseek-v4-flash", "label": "DeepSeek V4-Flash", "model": "deepseek-v4-flash" },
+          { "id": "deepseek-v3.2", "label": "DeepSeek V3.2", "model": "deepseek-v3.2" }
+        ]
+      }
+    ]
+  }
+}

@@ -3,6 +3,7 @@
 
 import { parseWhenClause } from './whenClause'
 import { parseKeybinding } from './keybinding'
+import { BUILTIN_API_KEY_SETTINGS } from './aiContributions'
 
 export type PluginHostPlatform = 'windows' | 'linux' | 'macos'
 export type PluginHostKind = 'electron' | 'native'
@@ -69,12 +70,25 @@ export interface KeybindingContribution {
   dispatch?: boolean
 }
 
+/** 主题：插件目录内的主题 JSON 文件，格式与 themes/ 目录下的主题文件相同 */
+export interface ThemeContribution {
+  /** 主题 ID（即主题名，显示在主题菜单和主题管理器里） */
+  id: string
+  /** 相对插件目录的路径 */
+  path: string
+}
+
 export interface PluginContributes {
   commands?: CommandContribution[]
   menubarMenus?: MenubarMenuContribution[]
   /** 键为菜单位置，阶段 0 只支持 menubar/<顶层菜单ID> */
   menus?: Record<string, MenuItemContribution[]>
   keybindings?: KeybindingContribution[]
+  themes?: ThemeContribution[]
+  /** AI 模型提供方，见 aiContributions.ts */
+  aiProviders?: unknown[]
+  /** AI Agent 工具，见 aiContributions.ts */
+  aiTools?: unknown[]
   [contributionPoint: string]: unknown
 }
 
@@ -109,6 +123,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
+}
+
+/** 插件内文件路径：相对路径，且不能用 .. 跳出插件目录 */
+export function isSafeRelativePath(path: string): boolean {
+  if (/^([a-zA-Z]:|[\\/])/.test(path)) return false
+  return !path.split(/[\\/]+/).some(part => part === '..')
 }
 
 function checkWhen(expr: unknown, where: string, errors: string[]): void {
@@ -234,6 +254,56 @@ export function validatePluginManifest(raw: unknown): ManifestValidationResult {
         checkKey(kb.linux, `${where}.linux`, errors)
         checkWhen(kb.when, where, errors)
         if (kb.args !== undefined && !Array.isArray(kb.args)) errors.push(`${where}: args 必须是数组`)
+      })
+    }
+
+    if (contributes.aiProviders !== undefined) {
+      if (!Array.isArray(contributes.aiProviders)) errors.push('contributes.aiProviders 必须是数组')
+      else contributes.aiProviders.forEach((provider, i) => {
+        const where = `contributes.aiProviders[${i}]`
+        if (!isRecord(provider) || !isNonEmptyString(provider.id) || !isNonEmptyString(provider.label) || !isNonEmptyString(provider.endpoint)) {
+          errors.push(`${where}: 需要 id、label 和 endpoint`)
+          return
+        }
+        if (!/^https?:\/\//i.test(provider.endpoint)) errors.push(`${where}: endpoint 必须是 http / https 地址`)
+        if (provider.envKey !== undefined && !isNonEmptyString(provider.envKey)) errors.push(`${where}: envKey 必须是字符串`)
+        if (provider.apiKeySetting !== undefined && !BUILTIN_API_KEY_SETTINGS.includes(provider.apiKeySetting as never)) {
+          errors.push(`${where}: apiKeySetting 只能是 ${BUILTIN_API_KEY_SETTINGS.join(' / ')}`)
+        }
+        if (!Array.isArray(provider.models) || provider.models.length === 0) {
+          errors.push(`${where}: models 必须是非空数组`)
+          return
+        }
+        provider.models.forEach((model, j) => {
+          if (!isRecord(model) || !isNonEmptyString(model.id) || !isNonEmptyString(model.label) || !isNonEmptyString(model.model)) {
+            errors.push(`${where}.models[${j}]: 需要 id、label 和 model`)
+          }
+        })
+      })
+    }
+
+    if (contributes.aiTools !== undefined) {
+      if (!Array.isArray(contributes.aiTools)) errors.push('contributes.aiTools 必须是数组')
+      else contributes.aiTools.forEach((tool, i) => {
+        const where = `contributes.aiTools[${i}]`
+        if (!isRecord(tool) || !isNonEmptyString(tool.name) || !isNonEmptyString(tool.description) || !isNonEmptyString(tool.command)) {
+          errors.push(`${where}: 需要 name、description 和 command`)
+          return
+        }
+        if (!/^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/.test(tool.name)) errors.push(`${where}: name 只能用英文字母、数字、下划线和短横线`)
+        if (tool.risk !== undefined && !['read', 'write', 'exec'].includes(String(tool.risk))) errors.push(`${where}: risk 只能是 read / write / exec`)
+        if (tool.parameters !== undefined && !isRecord(tool.parameters)) errors.push(`${where}: parameters 必须是 JSON Schema 对象`)
+      })
+    }
+
+    if (contributes.themes !== undefined) {
+      if (!Array.isArray(contributes.themes)) errors.push('contributes.themes 必须是数组')
+      else contributes.themes.forEach((theme, i) => {
+        if (!isRecord(theme) || !isNonEmptyString(theme.id) || !isNonEmptyString(theme.path)) {
+          errors.push(`contributes.themes[${i}]: 需要 id 和 path`)
+        } else if (!isSafeRelativePath(theme.path)) {
+          errors.push(`contributes.themes[${i}]: path 必须是插件目录内的相对路径`)
+        }
       })
     }
   }

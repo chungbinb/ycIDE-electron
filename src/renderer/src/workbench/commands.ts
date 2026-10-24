@@ -54,6 +54,15 @@ export function usePluginModel(): ContributionModel {
   return useSyncExternalStore(subscribeModel, getPluginModel)
 }
 
+export function getEnabledManifests(): PluginManifest[] {
+  return currentManifests
+}
+
+/** React 组件订阅已启用插件清单（读取 aiProviders、aiTools 等贡献点） */
+export function useEnabledManifests(): PluginManifest[] {
+  return useSyncExternalStore(subscribeModel, getEnabledManifests)
+}
+
 /** 命令所属插件是否有在插件进程里运行的代码 */
 function isPluginProcessCommand(command: string): boolean {
   const owner = currentModel.commands.get(command)?.pluginId

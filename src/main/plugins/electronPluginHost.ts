@@ -12,7 +12,7 @@
 //   plugins:executeRendererCommand   插件调用了内置命令，请渲染进程执行并回报结果
 
 import { app, BrowserWindow, ipcMain, utilityProcess } from 'electron'
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { BUILTIN_PLUGIN_CANDIDATES } from '../../shared/plugin/builtinPlugins'
 import type { PluginHostPlatform } from '../../shared/plugin/manifest'
 import { PluginService, type PluginHostConnection } from './pluginService'
@@ -68,6 +68,11 @@ function executeInRenderer(command: string, args: unknown[]): Promise<unknown> {
   })
 }
 
+/** 内置插件目录：开发时为仓库根目录的 plugins/，打包后为 <安装目录>/plugins/（与 themes、lib 相同的布局） */
+function getBuiltinPluginsDir(): string {
+  return app.isPackaged ? join(dirname(process.execPath), 'plugins') : join(app.getAppPath(), 'plugins')
+}
+
 /** 插件目录：用户数据目录下的 plugins，加上环境变量 YCIDE_EXTRA_PLUGIN_DIRS 指定的开发目录 */
 function resolvePluginDirs(): string[] {
   const extra = (process.env.YCIDE_EXTRA_PLUGIN_DIRS ?? '').split(delimiter).map(s => s.trim()).filter(Boolean)
@@ -78,7 +83,10 @@ function resolvePluginDirs(): string[] {
 export function initPluginHost(platform: PluginHostPlatform, onDidChange: () => void): PluginService {
   if (service) return service
   const created = new PluginService({
-    builtinCandidates: BUILTIN_PLUGIN_CANDIDATES,
+    builtinCandidates: BUILTIN_PLUGIN_CANDIDATES.map(c => ({
+      ...c,
+      dir: join(getBuiltinPluginsDir(), (c.manifest as { id: string }).id),
+    })),
     pluginDirs: resolvePluginDirs(),
     statePath: join(app.getPath('userData'), 'plugin-state.json'),
     platform,

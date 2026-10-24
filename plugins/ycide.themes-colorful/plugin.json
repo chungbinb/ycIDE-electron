@@ -1,0 +1,20 @@
+{
+  "id": "ycide.themes-colorful",
+  "displayName": "彩色主题包",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "抹茶绿、樱花粉、深海蓝三套配色及其渐变版本（数据插件，无代码）。",
+  "builtin": true,
+  "engines": { "ycide": ">=0.0.5" },
+  "runtime": { "type": "none" },
+  "contributes": {
+    "themes": [
+      { "id": "抹茶绿", "path": "themes/抹茶绿.json" },
+      { "id": "抹茶绿-渐变", "path": "themes/抹茶绿-渐变.json" },
+      { "id": "樱花粉", "path": "themes/樱花粉.json" },
+      { "id": "樱花粉-渐变", "path": "themes/樱花粉-渐变.json" },
+      { "id": "深海蓝", "path": "themes/深海蓝.json" },
+      { "id": "深海蓝-渐变", "path": "themes/深海蓝-渐变.json" }
+    ]
+  }
+}

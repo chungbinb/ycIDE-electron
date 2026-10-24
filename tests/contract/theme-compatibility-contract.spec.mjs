@@ -9,7 +9,7 @@ const tableEditorPath = path.resolve(process.cwd(), 'src/renderer/src/components
 const interactionHandlersPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/useEditorInteractionHandlers.ts')
 const tableEditorCssPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/EycTableEditor.css')
 const titleBarPath = path.resolve(process.cwd(), 'src/renderer/src/components/TitleBar/TitleBar.tsx')
-const workbenchPluginPath = path.resolve(process.cwd(), 'src/plugins/ycide.workbench/plugin.json')
+const workbenchPluginPath = path.resolve(process.cwd(), 'plugins/ycide.workbench/plugin.json')
 const workbenchMenusPath = path.resolve(process.cwd(), 'src/shared/plugin/workbenchMenus.ts')
 
 test('QUAL-01 contract: App theme switch path still routes through handleThemeSelect -> applyTheme', () => {

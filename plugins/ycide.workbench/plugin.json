@@ -50,6 +50,14 @@
       { "id": "tools:settings", "title": "系统设置" },
       { "id": "plugins:reload", "title": "重新加载插件" },
 
+      { "id": "documents:getText", "title": "读取文档内容" },
+      { "id": "documents:applyEdit", "title": "修改文档内容（显示差异）" },
+
+      { "id": "aiTool:listFiles", "title": "AI 工具：列出项目文件" },
+      { "id": "aiTool:readFile", "title": "AI 工具：读取文件" },
+      { "id": "aiTool:openFile", "title": "AI 工具：在编辑器中打开文件" },
+      { "id": "aiTool:editFile", "title": "AI 工具：按说明修改文件" },
+
       { "id": "help:topics", "title": "帮助主题" },
       { "id": "help:about", "title": "关于" }
     ],
@@ -97,6 +105,36 @@
         { "command": "help:about", "mnemonic": "A", "group": "2_about@1" }
       ]
     },
+    "aiTools": [
+      {
+        "name": "list_files",
+        "description": "列出项目内源码文件，可按 pattern 过滤。",
+        "parameters": { "type": "object", "properties": { "pattern": { "type": "string" }, "limit": { "type": "integer" } }, "additionalProperties": false },
+        "command": "aiTool:listFiles",
+        "risk": "read"
+      },
+      {
+        "name": "read_file",
+        "description": "读取项目内文件内容。",
+        "parameters": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"], "additionalProperties": false },
+        "command": "aiTool:readFile",
+        "risk": "read"
+      },
+      {
+        "name": "open_file",
+        "description": "在编辑器中打开项目内文件。",
+        "parameters": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"], "additionalProperties": false },
+        "command": "aiTool:openFile",
+        "risk": "read"
+      },
+      {
+        "name": "edit_file",
+        "description": "按 instruction 修改项目文件。",
+        "parameters": { "type": "object", "properties": { "path": { "type": "string" }, "instruction": { "type": "string" } }, "required": ["path", "instruction"], "additionalProperties": false },
+        "command": "aiTool:editFile",
+        "risk": "write"
+      }
+    ],
     "keybindings": [
       { "command": "file:newFile", "key": "CmdOrCtrl+Alt+N" },
       { "command": "file:openFile", "key": "CmdOrCtrl+O" },

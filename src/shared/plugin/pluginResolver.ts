@@ -34,6 +34,8 @@ export interface ResolvedPlugin {
   manifest?: PluginManifest
   /** 清单来源（路径或「内置」），便于排查 */
   source: string
+  /** 插件目录，插件附带的数据文件相对它解析；内置插件在渲染进程里没有目录 */
+  dir?: string
 }
 
 export interface PluginCandidate {
@@ -41,6 +43,8 @@ export interface PluginCandidate {
   source: string
   /** 扫描阶段发现的问题（如入口文件不存在），有值时该插件直接判为 error */
   error?: string
+  /** 插件目录 */
+  dir?: string
 }
 
 export interface PluginResolution {
@@ -89,7 +93,7 @@ export function resolvePlugins(candidates: PluginCandidate[], env: PluginResolve
       status = 'disabled'
       reason = '已停用'
     }
-    byId.set(manifest.id, { id: manifest.id, status, reason, manifest, source: candidate.source })
+    byId.set(manifest.id, { id: manifest.id, status, reason, manifest, source: candidate.source, dir: candidate.dir })
   }
 
   // 依赖检查，传递到不动点：A 依赖 B、B 不可用 → A 也不可用
