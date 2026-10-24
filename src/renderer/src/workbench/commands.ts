@@ -1,12 +1,17 @@
-// 渲染进程的插件内核入口：加载内置插件、持有命令注册表、分发全局快捷键。
-// 阶段 0 里命令处理函数仍写在 App.tsx，通过 useCommandHandlers 注册；
-// 菜单（TitleBar、macOS 原生菜单）和快捷键都从插件清单的贡献点生成。
+// 渲染进程的插件内核入口：持有命令注册表与当前生效的贡献点模型、分发全局快捷键、
+// 与主进程的插件服务对接（设计稿 §2、§5）。
+//
+// - 内置命令的处理函数写在 App.tsx，经 useCommandHandlers 注册到本地命令注册表；
+// - 插件命令在插件宿主进程里执行：本地没有处理函数时经 IPC 转给主进程；
+// - 插件也可以执行内置命令：主进程发来 plugins:executeRendererCommand，这里执行后回报结果；
+// - 菜单（TitleBar）与快捷键使用主进程下发的已启用插件清单，插件增删、启停后自动刷新。
 
-import { useEffect, useLayoutEffect, useRef } from 'react'
-import { loadPlugins, type LoadedPlugins } from '../../../shared/plugin/builtinPlugins'
+import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
+import { BUILTIN_PLUGIN_CANDIDATES } from '../../../shared/plugin/builtinPlugins'
 import { CommandRegistry, type CommandHandler } from '../../../shared/plugin/commandRegistry'
-import { matchKeybinding } from '../../../shared/plugin/contributions'
-import type { PluginHostPlatform } from '../../../shared/plugin/manifest'
+import { buildContributionModel, matchKeybinding, type ContributionModel } from '../../../shared/plugin/contributions'
+import type { PluginHostPlatform, PluginManifest } from '../../../shared/plugin/manifest'
+import { resolvePlugins } from '../../../shared/plugin/pluginResolver'
 import type { RuntimePlatform } from '../../../shared/platform'
 
 export const commandRegistry = new CommandRegistry()
@@ -17,12 +22,84 @@ export function toPluginHostPlatform(platform: RuntimePlatform): PluginHostPlatf
 
 const hostPlatform = toPluginHostPlatform(window.api?.system?.getRuntimePlatform?.() ?? 'windows')
 
-let loaded: LoadedPlugins | null = null
+// ───────────── 贡献点模型（随主进程插件状态更新） ─────────────
 
-export function getLoadedPlugins(): LoadedPlugins {
-  if (!loaded) loaded = loadPlugins({ platform: hostPlatform, host: 'electron' })
-  return loaded
+/** 主进程状态到达前先用内置插件，保证首屏菜单与快捷键可用 */
+function builtinManifests(): PluginManifest[] {
+  return resolvePlugins(BUILTIN_PLUGIN_CANDIDATES, { platform: hostPlatform, host: 'electron' }).enabled
 }
+
+let currentManifests: PluginManifest[] = builtinManifests()
+let currentModel: ContributionModel = buildContributionModel(currentManifests)
+const modelListeners = new Set<() => void>()
+
+function setManifests(manifests: PluginManifest[]): void {
+  currentManifests = manifests
+  currentModel = buildContributionModel(manifests)
+  for (const w of currentModel.warnings) console.warn(`[plugins] ${w}`)
+  modelListeners.forEach(l => l())
+}
+
+export function getPluginModel(): ContributionModel {
+  return currentModel
+}
+
+function subscribeModel(listener: () => void): () => void {
+  modelListeners.add(listener)
+  return () => { modelListeners.delete(listener) }
+}
+
+/** React 组件订阅贡献点模型：插件启停后菜单自动重绘 */
+export function usePluginModel(): ContributionModel {
+  return useSyncExternalStore(subscribeModel, getPluginModel)
+}
+
+/** 命令所属插件是否有在插件进程里运行的代码 */
+function isPluginProcessCommand(command: string): boolean {
+  const owner = currentModel.commands.get(command)?.pluginId
+  return !!owner && currentManifests.find(m => m.id === owner)?.runtime?.type === 'node'
+}
+
+async function refreshPluginState(): Promise<void> {
+  try {
+    const state = await window.api.plugins.getState()
+    setManifests(state.manifests)
+  } catch (err) {
+    console.error('[plugins] 获取插件状态失败', err)
+  }
+}
+
+function connectPluginService(): void {
+  const plugins = window.api?.plugins
+  if (!plugins) return
+
+  commandRegistry.setFallback((id, args) =>
+    isPluginProcessCommand(id) ? plugins.executeCommand(id, args) : undefined,
+  )
+
+  window.api.on('plugins:changed', () => { void refreshPluginState() })
+  window.api.on('plugins:executeRendererCommand', (payload: unknown) => {
+    const { requestId, command, args } = (payload ?? {}) as { requestId: number; command: string; args?: unknown[] }
+    commandRegistry.executeLocal(command, ...(Array.isArray(args) ? args : []))
+      .then(result => plugins.sendRendererCommandResult({ requestId, ok: true, result: toCloneable(result) }))
+      .catch((err: unknown) => plugins.sendRendererCommandResult({ requestId, ok: false, error: err instanceof Error ? err.message : String(err) }))
+  })
+  void refreshPluginState()
+}
+
+/** 命令返回值要经 IPC 结构化克隆，函数、DOM 对象等不可克隆的值丢弃 */
+function toCloneable(value: unknown): unknown {
+  try {
+    structuredClone(value)
+    return value
+  } catch {
+    return undefined
+  }
+}
+
+connectPluginService()
+
+// ───────────── 命令执行与注册 ─────────────
 
 export function executeCommand(id: string, ...args: unknown[]): Promise<unknown> {
   return commandRegistry.execute(id, ...args)
@@ -64,6 +141,25 @@ export function useCommandHandlers(handlers: Record<string, CommandHandler>): vo
   }, [idsKey])
 }
 
+// ───────────── 插件消息 ─────────────
+
+export interface PluginMessage {
+  pluginId: string
+  type: 'info' | 'warning' | 'error' | 'success'
+  message: string
+}
+
+/** 订阅插件发出的消息（window.showMessage），返回取消订阅函数 */
+export function onPluginMessage(listener: (message: PluginMessage) => void): () => void {
+  if (!window.api?.on) return () => undefined
+  return window.api.on('plugins:message', (payload: unknown) => {
+    const msg = payload as PluginMessage | undefined
+    if (msg && typeof msg.message === 'string') listener(msg)
+  })
+}
+
+// ───────────── 快捷键 ─────────────
+
 function isEditableElement(el: HTMLElement | null): boolean {
   if (!el) return false
   const tag = el.tagName
@@ -86,9 +182,9 @@ export function dispatchKeybinding(event: KeyboardEvent): boolean {
     get editableFocus() { return isEditableElement(document.activeElement as HTMLElement | null) },
     get nativeTextSelection() { return !!window.getSelection()?.toString() },
   }
-  const match = matchKeybinding(getLoadedPlugins().model, event, hostPlatform, context)
+  const match = matchKeybinding(currentModel, event, hostPlatform, context)
   if (!match) return false
   event.preventDefault()
-  void executeCommand(match.command, ...(match.args ?? []))
+  void executeCommand(match.command, ...(match.args ?? [])).catch(err => console.error(`[commands] 执行 ${match.command} 失败`, err))
   return true
 }

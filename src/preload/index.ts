@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { normalizeRuntimePlatform } from '../shared/platform'
 import { THEME_CONFIG_VERSION } from '../shared/theme'
 import type { IDESettings } from '../shared/settings'
+import type { PluginManifest } from '../shared/plugin/manifest'
 import type { AIChatRequest, AIChatResult, AIChatWithToolsRequest, AIChatWithToolsResult, AIEditRequest, AIEditResult } from '../shared/ai'
 import type { EProjectImportRequest, EProjectImportResult, OpenProjectSelectionResult, OpenWorkspaceFolderSelectionResult } from '../shared/eprojectImport'
 import type {
@@ -32,6 +33,20 @@ type AboutInfo = {
   libs: { react: string; monaco: string; xterm: string; nodePty: string; vite: string; typescript: string }
 }
 type RecentOpenedItem = { type: 'project' | 'file'; path: string; label: string }
+type PluginState = {
+  plugins: Array<{
+    id: string
+    displayName: string
+    version: string
+    status: 'enabled' | 'disabled' | 'unavailable' | 'error'
+    reason?: string
+    source: string
+    builtin: boolean
+    active: boolean
+    canDisable: boolean
+  }>
+  manifests: PluginManifest[]
+}
 type ThemeMenuState = { themes: string[]; currentTheme: string }
 type ThemeLifecycleSyncPayload = {
   config: ThemeConfigV2
@@ -201,6 +216,17 @@ const api = {
       }>
       errors: string[]
     }>,
+  },
+  // 插件（设计稿 docs/插件架构设计稿.md；主进程实现见 src/main/plugins/electronPluginHost.ts）
+  plugins: {
+    getState: () => ipcRenderer.invoke('plugins:getState') as Promise<PluginState>,
+    /** 执行插件进程里的命令（渲染进程本地没有处理函数时使用） */
+    executeCommand: (command: string, args: unknown[]) => ipcRenderer.invoke('plugins:executeCommand', command, args),
+    setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('plugins:setEnabled', id, enabled) as Promise<PluginState>,
+    reload: () => ipcRenderer.invoke('plugins:reload') as Promise<PluginState>,
+    /** 回报主进程请求执行的内置命令结果 */
+    sendRendererCommandResult: (payload: { requestId: number; ok: boolean; result?: unknown; error?: string }) =>
+      ipcRenderer.send('plugins:rendererCommandResult', payload),
   },
   // 系统设置
   settings: {

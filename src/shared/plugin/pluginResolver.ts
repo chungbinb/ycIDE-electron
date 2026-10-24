@@ -2,8 +2,9 @@
 // 规则（设计稿 §3.4、§9）：
 //   1. 清单无效 → error
 //   2. 宿主平台 / 宿主类型不匹配 → unavailable
-//   3. 依赖缺失、依赖不可用、存在循环依赖 → unavailable（会沿依赖链传递）
-//   4. 同 ID 重复 → 后出现的报 error，保留先出现的（内置插件排在前面，不能被覆盖）
+//   3. 用户停用 → disabled
+//   4. 依赖缺失、依赖不可用、存在循环依赖 → unavailable（会沿依赖链传递）
+//   5. 同 ID 重复 → 后出现的报 error，保留先出现的（内置插件排在前面，不能被覆盖）
 // 可用的插件按依赖拓扑排序：被依赖者在前。
 
 import {
@@ -19,9 +20,11 @@ export interface PluginResolveEnv {
   platform: PluginHostPlatform
   arch?: string
   host: PluginHostKind
+  /** 用户停用的插件 ID */
+  disabled?: ReadonlySet<string>
 }
 
-export type ResolvedPluginStatus = 'enabled' | 'unavailable' | 'error'
+export type ResolvedPluginStatus = 'enabled' | 'disabled' | 'unavailable' | 'error'
 
 export interface ResolvedPlugin {
   id: string
@@ -36,6 +39,8 @@ export interface ResolvedPlugin {
 export interface PluginCandidate {
   manifest: unknown
   source: string
+  /** 扫描阶段发现的问题（如入口文件不存在），有值时该插件直接判为 error */
+  error?: string
 }
 
 export interface PluginResolution {
@@ -50,6 +55,12 @@ export function resolvePlugins(candidates: PluginCandidate[], env: PluginResolve
   const extras: ResolvedPlugin[] = []
 
   for (const candidate of candidates) {
+    // 扫描阶段的问题（JSON 损坏、入口文件缺失）优先报出，比结构校验的报错更准确
+    if (candidate.error) {
+      const rawId = (candidate.manifest as { id?: unknown } | null)?.id
+      extras.push({ id: typeof rawId === 'string' ? rawId : '(未知)', status: 'error', reason: candidate.error, source: candidate.source })
+      continue
+    }
     const validation = validatePluginManifest(candidate.manifest)
     if (!validation.ok) {
       const rawId = (candidate.manifest as { id?: unknown } | null)?.id
@@ -74,6 +85,9 @@ export function resolvePlugins(candidates: PluginCandidate[], env: PluginResolve
     } else if (!isHostSupported(manifest, env.host)) {
       status = 'unavailable'
       reason = `当前宿主不可用（仅支持 ${manifest.hosts!.join('、')}）`
+    } else if (env.disabled?.has(manifest.id)) {
+      status = 'disabled'
+      reason = '已停用'
     }
     byId.set(manifest.id, { id: manifest.id, status, reason, manifest, source: candidate.source })
   }
@@ -91,7 +105,7 @@ export function resolvePlugins(candidates: PluginCandidate[], env: PluginResolve
           plugin.reason = `缺少依赖插件 ${depId}`
         } else if (dep.status !== 'enabled') {
           plugin.status = 'unavailable'
-          plugin.reason = `依赖插件 ${depId} 不可用`
+          plugin.reason = dep.status === 'disabled' ? `依赖插件 ${depId} 已停用` : `依赖插件 ${depId} 不可用`
         } else continue
         changed = true
         break

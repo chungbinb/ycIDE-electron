@@ -2,15 +2,15 @@
 import './TitleBar.css'
 import { isMacOSPlatform, type RuntimePlatform } from '../../utils/shortcuts'
 import ycideLogo from '../../assets/icons/YcideLogo.png'
-import { getLoadedPlugins, toPluginHostPlatform } from '../../workbench/commands'
-import { resolveMenubar, type ResolvedMenu, type ResolvedMenuItem } from '../../../../shared/plugin/contributions'
+import { toPluginHostPlatform, usePluginModel } from '../../workbench/commands'
+import { resolveMenubar, type ContributionModel, type ResolvedMenu, type ResolvedMenuItem } from '../../../../shared/plugin/contributions'
 import { buildRecentOpenedEntries, buildThemeEntries, RECENT_OPENED_SUBMENU, THEMES_SUBMENU, type RecentOpenedEntry } from '../../../../shared/plugin/workbenchMenus'
 
 const BUILTIN_THEME_IDS = ['默认深色', '默认浅色']
 
 // 菜单结构来自插件清单的 menubarMenus / menus / keybindings 贡献点（src/plugins/*/plugin.json）
-function buildMenus(runtimePlatform: RuntimePlatform, hasProject: boolean, hasWorkspace: boolean, hasOpenFile: boolean, themes: string[], currentTheme: string, recentOpened: RecentOpenedEntry[]): ResolvedMenu[] {
-  return resolveMenubar(getLoadedPlugins().model, {
+function buildMenus(model: ContributionModel, runtimePlatform: RuntimePlatform, hasProject: boolean, hasWorkspace: boolean, hasOpenFile: boolean, themes: string[], currentTheme: string, recentOpened: RecentOpenedEntry[]): ResolvedMenu[] {
+  return resolveMenubar(model, {
     platform: toPluginHostPlatform(runtimePlatform),
     showMnemonics: true,
     context: { projectOpen: hasProject, workspaceOpen: hasWorkspace, fileOpen: hasOpenFile },
@@ -34,7 +34,8 @@ interface TitleBarProps {
 }
 
 function TitleBar({ onCommand, onWindowClose, runtimePlatform = 'windows', hasProject = false, hasWorkspace = false, hasOpenFile = false, themes = [], currentTheme = '', recentOpened = [] }: TitleBarProps): React.JSX.Element {
-  const menus = buildMenus(runtimePlatform, hasProject, hasWorkspace, hasOpenFile, themes, currentTheme, recentOpened)
+  const pluginModel = usePluginModel()
+  const menus = buildMenus(pluginModel, runtimePlatform, hasProject, hasWorkspace, hasOpenFile, themes, currentTheme, recentOpened)
   const isMacOS = isMacOSPlatform(runtimePlatform)
   const [openMenu, setOpenMenu] = useState<number | null>(null)
   const menuBarRef = useRef<HTMLDivElement>(null)

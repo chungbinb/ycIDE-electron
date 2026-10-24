@@ -54,4 +54,36 @@ test.describe('插件贡献的菜单与快捷键', () => {
       await app.close();
     }
   });
+
+  test('用户插件：在独立的插件宿主进程里运行，菜单、快捷键、消息、调用内置命令都打通', async () => {
+    const app = await electron.launch({
+      args: [appRoot],
+      cwd: appRoot,
+      env: { ...process.env, CI: '1', YCIDE_EXTRA_PLUGIN_DIRS: path.join(appRoot, 'tests', 'fixtures', 'plugins') },
+    });
+    try {
+      const win = await app.firstWindow();
+      await win.waitForLoadState('domcontentloaded');
+      await expect(win.locator('.titlebar')).toBeVisible();
+
+      // 示例插件的菜单项并入「工具」菜单（插件状态由主进程异步下发，菜单随之刷新）
+      await win.getByRole('menuitem', { name: '工具(T)', exact: true }).click();
+      const greet = win.locator('.titlebar-dropdown').getByRole('menuitem', { name: /打招呼（示例插件）/ });
+      await expect(greet).toContainText('Ctrl+Alt+H');
+      await greet.click();
+      await expect(win.getByText('[插件 demo.hello] 你好，易语言开发者！（第 1 次，来自示例插件）')).toBeVisible();
+
+      // 插件贡献的快捷键
+      await win.locator('.titlebar-title').click();
+      await win.keyboard.press('Control+Alt+H');
+      await expect(win.getByText('[插件 demo.hello] 你好，易语言开发者！（第 2 次，来自示例插件）')).toBeVisible();
+
+      // 插件调用内置命令：插件进程 → 主进程 → 渲染进程执行 help:about
+      await win.getByRole('menuitem', { name: '工具(T)', exact: true }).click();
+      await win.locator('.titlebar-dropdown').getByRole('menuitem', { name: /通过插件打开关于/ }).click();
+      await expect(win.locator('.about-dialog')).toBeVisible();
+    } finally {
+      await app.close();
+    }
+  });
 });

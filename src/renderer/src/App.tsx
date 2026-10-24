@@ -21,7 +21,7 @@ import type { SelectionTarget, DesignForm, DesignControl } from './components/Ed
 import { parseLines } from './components/Editor/eycBlocks'
 import { resolveControlMethodDetail } from './components/Editor/editorCoreUtils'
 import { type RuntimePlatform } from './utils/shortcuts'
-import { useCommandHandlers, executeCommand, executeLegacyAction, dispatchKeybinding } from './workbench/commands'
+import { useCommandHandlers, executeCommand, executeLegacyAction, dispatchKeybinding, onPluginMessage } from './workbench/commands'
 import { mountIdeActionLogger } from './utils/ideActionLogger'
 import {
   BUILTIN_DARK_THEME_ID,
@@ -4093,7 +4093,26 @@ function App(): React.JSX.Element {
     'theme:apply': (themeName: unknown) => {
       applyTheme(String(themeName))
     },
+
+    // 插件
+    'plugins:reload': async () => {
+      const state = await window.api?.plugins?.reload() as { plugins: Array<{ id: string; status: string; reason?: string }> } | undefined
+      if (!state) return
+      const enabled = state.plugins.filter(p => p.status === 'enabled').length
+      const problems = state.plugins.filter(p => p.status === 'error' || p.status === 'unavailable')
+      setOutputMessages(prev => [
+        ...prev,
+        { type: 'info', text: `已重新加载插件：启用 ${enabled} 个` },
+        ...problems.map(p => ({ type: 'warning' as const, text: `插件 ${p.id} 未启用：${p.reason ?? ''}` })),
+      ])
+    },
   })
+
+  // 插件通过 window.showMessage 发来的消息显示在输出面板
+  useEffect(() => onPluginMessage(({ pluginId, type, message }) => {
+    setOutputMessages(prev => [...prev, { type, text: `[插件 ${pluginId}] ${message}` }])
+    setShowOutput(true)
+  }), [setShowOutput])
 
   // 兼容改造前的 action 字符串调用（项目树右键菜单、工具栏等），统一转成命令执行
   const handleMenuAction = useCallback((action: string) => executeLegacyAction(action), [])

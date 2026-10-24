@@ -161,8 +161,15 @@ function toLegacyAction(command: string, args?: unknown[]): string | undefined {
   return command
 }
 
+/** 插件化之后有意新增的菜单项（改造前没有），对照时剔除 */
+const INTENDED_MENU_ADDITIONS = new Set(['plugins:reload'])
+
 function normalizeNew(items: ResolvedMenuItem[]): Normalized[] {
-  return items.map(item => {
+  // 剔除新增项后，去掉因此落单的分隔线（开头、结尾、连续）
+  const kept = items.filter(item => !(item.kind === 'command' && INTENDED_MENU_ADDITIONS.has(item.command)))
+  const cleaned = kept.filter((item, i) =>
+    item.kind !== 'separator' || (i > 0 && i < kept.length - 1 && kept[i + 1].kind !== 'separator'))
+  return cleaned.map(item => {
     if (item.kind === 'separator') return '---'
     if (item.kind === 'submenu') return { label: item.label, submenu: normalizeNew(item.items) }
     return { label: item.label, shortcut: item.shortcut, disabled: !item.enabled, checked: item.checked, action: toLegacyAction(item.command, item.args) }

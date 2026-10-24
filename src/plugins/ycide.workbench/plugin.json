@@ -48,6 +48,7 @@
       { "id": "tools:library", "title": "支持库配置" },
       { "id": "tools:themeManager", "title": "主题管理器" },
       { "id": "tools:settings", "title": "系统设置" },
+      { "id": "plugins:reload", "title": "重新加载插件" },
 
       { "id": "help:topics", "title": "帮助主题" },
       { "id": "help:about", "title": "关于" }
@@ -88,7 +89,8 @@
       "menubar/tools": [
         { "command": "tools:library", "mnemonic": "L", "group": "1_config@1" },
         { "command": "tools:themeManager", "mnemonic": "M", "group": "1_config@2" },
-        { "command": "tools:settings", "mnemonic": "S", "group": "2_settings@1" }
+        { "command": "tools:settings", "mnemonic": "S", "group": "2_settings@1" },
+        { "command": "plugins:reload", "group": "3_plugins@1" }
       ],
       "menubar/help": [
         { "command": "help:topics", "mnemonic": "H", "group": "1_help@1" },

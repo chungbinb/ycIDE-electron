@@ -13,7 +13,8 @@ import { compileViaWorker, notifyWorkerLibrariesChanged, setWorkerCompilerSettin
 import { setRuntimeEnv } from './runtimeEnv'
 import { buildAndRunAndroidProject, shouldRunAsAndroid } from './android-runner'
 import { normalizeRuntimePlatform } from '../shared/platform'
-import { loadPlugins, type LoadedPlugins } from '../shared/plugin/builtinPlugins'
+import { initPluginHost, getPluginService } from './plugins/electronPluginHost'
+import { buildContributionModel } from '../shared/plugin/contributions'
 import { resolveMenubar, type ResolvedMenuItem } from '../shared/plugin/contributions'
 import { buildRecentOpenedEntries, buildThemeEntries, RECENT_OPENED_SUBMENU, THEMES_SUBMENU } from '../shared/plugin/workbenchMenus'
 import {
@@ -1029,15 +1030,7 @@ function emitMenuCommand(command: string, args?: unknown[]): void {
   targetWindow?.webContents.send('menu:action', { command, args: args ?? [] })
 }
 
-let mainPlugins: LoadedPlugins | null = null
-
-function getMainPlugins(): LoadedPlugins {
-  if (!mainPlugins) {
-    const platform = runtimePlatform === 'windows' || runtimePlatform === 'macos' ? runtimePlatform : 'linux'
-    mainPlugins = loadPlugins({ platform, arch: process.arch === 'ia32' ? 'x86' : process.arch, host: 'electron' })
-  }
-  return mainPlugins
-}
+const pluginHostPlatform = runtimePlatform === 'windows' || runtimePlatform === 'macos' ? runtimePlatform : 'linux'
 
 function toNativeMenuItem(item: ResolvedMenuItem): MenuItemConstructorOptions {
   if (item.kind === 'separator') return { type: 'separator' }
@@ -1059,7 +1052,7 @@ function setupNativeMenu(): void {
   }
 
   // 主进程不跟踪项目 / 文件的打开状态，原生菜单项一律可用，由命令处理函数自行判断
-  const pluginMenus = resolveMenubar(getMainPlugins().model, {
+  const pluginMenus = resolveMenubar(getPluginService()?.getModel() ?? buildContributionModel([]), {
     platform: 'macos',
     showMnemonics: false,
     context: { projectOpen: true, workspaceOpen: true, fileOpen: true },
@@ -1194,6 +1187,8 @@ app.whenReady().then(() => {
   )
 
   ensureBuiltinThemeFiles()
+  // 插件：解析内置与用户插件、激活 onStartup 插件；插件变化时重建 macOS 原生菜单
+  void initPluginHost(pluginHostPlatform, setupNativeMenu).start()
   setupNativeMenu()
 
   ipcMain.on('menu:updateRecentOpened', (_event, items: unknown) => {
