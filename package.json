@@ -68,6 +68,7 @@
     ],
     "asarUnpack": [
       "out/main/compile-worker.js",
+      "out/main/plugin-host.js",
       "out/main/chunks/**",
       "node_modules/node-pty/**"
     ],

@@ -13,7 +13,10 @@ import { compileViaWorker, notifyWorkerLibrariesChanged, setWorkerCompilerSettin
 import { setRuntimeEnv } from './runtimeEnv'
 import { buildAndRunAndroidProject, shouldRunAsAndroid } from './android-runner'
 import { normalizeRuntimePlatform } from '../shared/platform'
-import { getActionAccelerator } from '../shared/shortcut-config'
+import { initPluginHost, getPluginService } from './plugins/electronPluginHost'
+import { buildContributionModel } from '../shared/plugin/contributions'
+import { resolveMenubar, type ResolvedMenuItem } from '../shared/plugin/contributions'
+import { buildRecentOpenedEntries, buildThemeEntries, RECENT_OPENED_SUBMENU, THEMES_SUBMENU } from '../shared/plugin/workbenchMenus'
 import {
   BUILTIN_DARK_THEME_ID,
   validateThemeImportConflictDecision,
@@ -1021,48 +1024,43 @@ function createWindow(): void {
   }
 }
 
-function emitMenuAction(action: string): void {
+// 把菜单命令转发给渲染进程执行（命令处理函数注册在渲染进程的命令注册表里）
+function emitMenuCommand(command: string, args?: unknown[]): void {
   const targetWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
-  targetWindow?.webContents.send('menu:action', action)
+  targetWindow?.webContents.send('menu:action', { command, args: args ?? [] })
 }
 
+const pluginHostPlatform = runtimePlatform === 'windows' || runtimePlatform === 'macos' ? runtimePlatform : 'linux'
+
+function toNativeMenuItem(item: ResolvedMenuItem): MenuItemConstructorOptions {
+  if (item.kind === 'separator') return { type: 'separator' }
+  if (item.kind === 'submenu') return { label: item.label, submenu: item.items.map(toNativeMenuItem) }
+  if (item.nativeRole) return { role: item.nativeRole as MenuItemConstructorOptions['role'] }
+  return {
+    label: item.label,
+    accelerator: item.accelerator,
+    enabled: item.enabled,
+    ...(item.checked !== undefined ? { type: 'radio' as const, checked: item.checked } : {}),
+    click: () => emitMenuCommand(item.command, item.args),
+  }
+}
+
+// macOS 使用系统原生菜单栏；菜单结构与自绘标题栏一样来自插件清单的贡献点
 function setupNativeMenu(): void {
   if (runtimePlatform !== 'macos') {
     return
   }
 
-  const actionItem = (label: string, action: string, accelerator?: string): MenuItemConstructorOptions => ({
-    label,
-    accelerator,
-    click: () => emitMenuAction(action),
+  // 主进程不跟踪项目 / 文件的打开状态，原生菜单项一律可用，由命令处理函数自行判断
+  const pluginMenus = resolveMenubar(getPluginService()?.getModel() ?? buildContributionModel([]), {
+    platform: 'macos',
+    showMnemonics: false,
+    context: { projectOpen: true, workspaceOpen: true, fileOpen: true },
+    dynamicSubmenus: {
+      [RECENT_OPENED_SUBMENU]: buildRecentOpenedEntries(recentOpenedItems),
+      [THEMES_SUBMENU]: buildThemeEntries(themeMenuState.themes, themeMenuState.currentTheme, BUILTIN_THEME_IDS),
+    },
   })
-
-  const recentSubmenu: MenuItemConstructorOptions[] = recentOpenedItems.length > 0
-    ? recentOpenedItems.slice(0, 10).map(item => ({
-      label: `${item.type === 'project' ? '项目' : '文件'}: ${item.label}`,
-      click: () => emitMenuAction(`file:openRecent:${encodeURIComponent(JSON.stringify({ type: item.type, path: item.path }))}`),
-    }))
-    : [{ label: '(空)', enabled: false }]
-
-  const themeSubmenu: MenuItemConstructorOptions[] = themeMenuState.themes.length > 0
-    ? (() => {
-      const builtinThemes = BUILTIN_THEME_IDS.filter(themeId => themeMenuState.themes.includes(themeId))
-      const customThemes = themeMenuState.themes.filter(themeName => !BUILTIN_THEME_IDS.includes(themeName))
-      const orderedThemes = [...builtinThemes, ...customThemes]
-      return orderedThemes.flatMap((themeName, index) => {
-        const item: MenuItemConstructorOptions = {
-          label: themeName,
-          type: 'radio',
-          checked: themeName === themeMenuState.currentTheme,
-          click: () => emitMenuAction(`theme:${themeName}`),
-        }
-        if (index === builtinThemes.length && customThemes.length > 0) {
-          return [{ type: 'separator' } as MenuItemConstructorOptions, item]
-        }
-        return [item]
-      })
-    })()
-    : [{ label: '(空)', enabled: false }]
 
   const template: MenuItemConstructorOptions[] = [
     {
@@ -1079,109 +1077,7 @@ function setupNativeMenu(): void {
         { role: 'quit' },
       ]
     },
-    {
-      label: '文件',
-      submenu: [
-        actionItem('新建文件', 'file:newFile', getActionAccelerator('file:newFile')),
-        actionItem('新建项目', 'file:newProject', getActionAccelerator('file:newProject')),
-        actionItem('打开文件', 'file:openFile', getActionAccelerator('file:openFile')),
-        actionItem('打开项目', 'file:openProject', getActionAccelerator('file:openProject')),
-        actionItem('打开文件夹工作区', 'file:openWorkspaceFolder', getActionAccelerator('file:openWorkspaceFolder')),
-        { label: '最近打开', submenu: recentSubmenu },
-        { type: 'separator' },
-        actionItem('保存', 'file:save', getActionAccelerator('file:save')),
-        actionItem('另存为', 'file:saveAs', getActionAccelerator('file:saveAs')),
-        actionItem('保存全部', 'file:saveAll', getActionAccelerator('file:saveAll')),
-        { type: 'separator' },
-        actionItem('关闭文件', 'file:closeFile', getActionAccelerator('file:closeFile')),
-        actionItem('关闭工作区', 'file:closeProject'),
-        { type: 'separator' },
-        actionItem('退出', 'file:exit', getActionAccelerator('file:exit')),
-      ]
-    },
-    {
-      label: '编辑',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'delete' },
-        { type: 'separator' },
-        { role: 'selectAll' },
-        actionItem('查找', 'edit:find', getActionAccelerator('edit:find')),
-        actionItem('替换', 'edit:replace', getActionAccelerator('edit:replace')),
-      ]
-    },
-    {
-      label: '查看',
-      submenu: [
-        actionItem('属性面板', 'view:property'),
-        actionItem('输出面板', 'view:output'),
-        actionItem('支持库', 'view:library'),
-        { type: 'separator' },
-        actionItem('项目管理器', 'view:project'),
-        { type: 'separator' },
-        { label: '主题', submenu: themeSubmenu },
-      ]
-    },
-    {
-      label: '插入',
-      submenu: [
-        actionItem('全局变量', 'insert:globalVar'),
-        actionItem('常量', 'insert:constant'),
-        actionItem('自定义数据类型', 'insert:dataType'),
-        actionItem('DLL命令', 'insert:dllCmd'),
-        actionItem('指针命令', 'insert:ptrCmd'),
-        { type: 'separator' },
-        actionItem('类模块', 'insert:classModule'),
-        actionItem('程序集', 'insert:module'),
-        actionItem('子程序', 'insert:sub', getActionAccelerator('insert:sub')),
-        { type: 'separator' },
-        actionItem('窗口', 'insert:window'),
-        actionItem('资源', 'insert:resource'),
-      ]
-    },
-    {
-      label: '编译',
-      submenu: [
-        actionItem('普通编译', 'build:compile', getActionAccelerator('build:compile')),
-        { type: 'separator' },
-        actionItem('编译运行', 'build:run', 'F5'),
-      ]
-    },
-    {
-      label: '调试',
-      submenu: [
-        actionItem('运行', 'debug:run', 'F5'),
-        actionItem('停止', 'debug:stop', 'Shift+F5'),
-        { type: 'separator' },
-        actionItem('逐过程', 'debug:stepOver', 'F10'),
-        actionItem('逐语句', 'debug:stepInto', 'F11'),
-        actionItem('跳出', 'debug:stepOut', 'Shift+F11'),
-        actionItem('运行到光标处', 'debug:runToCursor', getActionAccelerator('debug:runToCursor')),
-        { type: 'separator' },
-        actionItem('切换断点', 'debug:toggleBreakpoint', 'F9'),
-        actionItem('清除所有断点', 'debug:clearBreakpoints'),
-      ]
-    },
-    {
-      label: '工具',
-      submenu: [
-        actionItem('支持库配置', 'tools:library'),
-        actionItem('系统配置', 'tools:settings'),
-      ]
-    },
-    {
-      label: '帮助',
-      submenu: [
-        actionItem('帮助主题', 'help:topics', 'F1'),
-        { type: 'separator' },
-        actionItem('关于', 'help:about'),
-      ]
-    },
+    ...pluginMenus.map(menu => ({ label: menu.label, submenu: menu.items.map(toNativeMenuItem) })),
     {
       label: '窗口',
       submenu: [
@@ -1291,6 +1187,8 @@ app.whenReady().then(() => {
   )
 
   ensureBuiltinThemeFiles()
+  // 插件：解析内置与用户插件、激活 onStartup 插件；插件变化时重建 macOS 原生菜单
+  void initPluginHost(pluginHostPlatform, setupNativeMenu).start()
   setupNativeMenu()
 
   ipcMain.on('menu:updateRecentOpened', (_event, items: unknown) => {

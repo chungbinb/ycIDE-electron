@@ -1,0 +1,46 @@
+{
+  "id": "ycide.debug",
+  "displayName": "调试",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "调试菜单：运行、停止、单步、断点。",
+  "builtin": true,
+  "engines": { "ycide": ">=0.0.5" },
+  "dependencies": { "ycide.build": "^1.0.0" },
+  "contributes": {
+    "menubarMenus": [
+      { "id": "debug", "title": "调试", "mnemonic": "D", "order": 60 }
+    ],
+    "commands": [
+      { "id": "debug:run", "title": "运行", "enablement": "projectOpen" },
+      { "id": "debug:stop", "title": "停止", "enablement": "projectOpen" },
+      { "id": "debug:stepOver", "title": "逐过程", "enablement": "projectOpen" },
+      { "id": "debug:stepInto", "title": "逐语句", "enablement": "projectOpen" },
+      { "id": "debug:stepOut", "title": "跳出", "enablement": "projectOpen" },
+      { "id": "debug:runToCursor", "title": "运行到光标处", "enablement": "projectOpen" },
+      { "id": "debug:toggleBreakpoint", "title": "切换断点", "enablement": "projectOpen" },
+      { "id": "debug:clearBreakpoints", "title": "清除所有断点", "enablement": "projectOpen" }
+    ],
+    "menus": {
+      "menubar/debug": [
+        { "command": "debug:run", "mnemonic": "R", "group": "1_run@1" },
+        { "command": "debug:stop", "mnemonic": "S", "group": "1_run@2" },
+        { "command": "debug:stepOver", "mnemonic": "O", "group": "2_step@1" },
+        { "command": "debug:stepInto", "mnemonic": "I", "group": "2_step@2" },
+        { "command": "debug:stepOut", "mnemonic": "U", "group": "2_step@3" },
+        { "command": "debug:runToCursor", "mnemonic": "C", "group": "2_step@4" },
+        { "command": "debug:toggleBreakpoint", "mnemonic": "B", "group": "3_breakpoint@1" },
+        { "command": "debug:clearBreakpoints", "group": "3_breakpoint@2" }
+      ]
+    },
+    "keybindings": [
+      { "command": "debug:run", "key": "F5", "dispatch": false },
+      { "command": "debug:stop", "key": "Shift+F5" },
+      { "command": "debug:toggleBreakpoint", "key": "F9" },
+      { "command": "debug:stepOver", "key": "F10" },
+      { "command": "debug:runToCursor", "key": "CmdOrCtrl+F8" },
+      { "command": "debug:stepInto", "key": "F11" },
+      { "command": "debug:stepOut", "key": "Shift+F11" }
+    ]
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "id": "ycide.workbench",
+  "displayName": "工作台",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "文件、编辑、查看、工具、帮助菜单及其命令与快捷键。",
+  "builtin": true,
+  "engines": { "ycide": ">=0.0.5" },
+  "contributes": {
+    "menubarMenus": [
+      { "id": "file", "title": "文件", "mnemonic": "F", "order": 10 },
+      { "id": "edit", "title": "编辑", "mnemonic": "E", "order": 20 },
+      { "id": "view", "title": "查看", "mnemonic": "V", "order": 30 },
+      { "id": "tools", "title": "工具", "mnemonic": "T", "order": 70 },
+      { "id": "help", "title": "帮助", "mnemonic": "H", "order": 80 }
+    ],
+    "commands": [
+      { "id": "file:newFile", "title": "新建文件" },
+      { "id": "file:newProject", "title": "新建项目" },
+      { "id": "file:openFile", "title": "打开文件" },
+      { "id": "file:openProject", "title": "打开项目" },
+      { "id": "file:openWorkspaceFolder", "title": "打开文件夹工作区" },
+      { "id": "file:openRecent", "title": "打开最近使用的项目或文件" },
+      { "id": "file:save", "title": "保存", "enablement": "fileOpen" },
+      { "id": "file:saveAs", "title": "另存为", "enablement": "fileOpen" },
+      { "id": "file:saveAll", "title": "保存全部", "enablement": "fileOpen" },
+      { "id": "file:closeFile", "title": "关闭文件", "enablement": "fileOpen" },
+      { "id": "file:closeProject", "title": "关闭工作区", "enablement": "workspaceOpen" },
+      { "id": "file:exit", "title": "退出" },
+
+      { "id": "edit:undo", "title": "撤销", "enablement": "fileOpen" },
+      { "id": "edit:redo", "title": "重做", "enablement": "fileOpen" },
+      { "id": "edit:cut", "title": "剪切", "enablement": "fileOpen" },
+      { "id": "edit:copy", "title": "复制", "enablement": "fileOpen" },
+      { "id": "edit:paste", "title": "粘贴", "enablement": "fileOpen" },
+      { "id": "edit:delete", "title": "删除", "enablement": "fileOpen" },
+      { "id": "edit:selectAll", "title": "全选", "enablement": "fileOpen" },
+      { "id": "edit:find", "title": "查找", "enablement": "fileOpen" },
+      { "id": "edit:replace", "title": "替换", "enablement": "fileOpen" },
+      { "id": "nav:back", "title": "跳回先前位置" },
+
+      { "id": "view:property", "title": "属性面板" },
+      { "id": "view:output", "title": "输出面板" },
+      { "id": "view:library", "title": "支持库" },
+      { "id": "view:project", "title": "项目管理器" },
+      { "id": "theme:apply", "title": "切换主题" },
+
+      { "id": "tools:library", "title": "支持库配置" },
+      { "id": "tools:themeManager", "title": "主题管理器" },
+      { "id": "tools:settings", "title": "系统设置" },
+      { "id": "plugins:reload", "title": "重新加载插件" },
+
+      { "id": "help:topics", "title": "帮助主题" },
+      { "id": "help:about", "title": "关于" }
+    ],
+    "menus": {
+      "menubar/file": [
+        { "command": "file:newFile", "mnemonic": "F", "group": "1_new@1" },
+        { "command": "file:newProject", "mnemonic": "N", "group": "1_new@2" },
+        { "command": "file:openFile", "mnemonic": "O", "group": "2_open@1" },
+        { "command": "file:openProject", "mnemonic": "P", "group": "2_open@2" },
+        { "command": "file:openWorkspaceFolder", "mnemonic": "F", "group": "2_open@3" },
+        { "submenu": "ycide.recentOpened", "title": "最近打开", "group": "2_open@4" },
+        { "command": "file:save", "mnemonic": "S", "group": "3_save@1" },
+        { "command": "file:saveAs", "mnemonic": "A", "group": "3_save@2" },
+        { "command": "file:saveAll", "mnemonic": "L", "group": "3_save@3" },
+        { "command": "file:closeFile", "mnemonic": "C", "group": "4_close@1" },
+        { "command": "file:closeProject", "group": "4_close@2" },
+        { "command": "file:exit", "mnemonic": "X", "group": "5_exit@1" }
+      ],
+      "menubar/edit": [
+        { "command": "edit:undo", "mnemonic": "U", "group": "1_undo@1", "nativeRole": "undo" },
+        { "command": "edit:redo", "mnemonic": "R", "group": "1_undo@2", "nativeRole": "redo" },
+        { "command": "edit:cut", "mnemonic": "T", "group": "2_clipboard@1", "nativeRole": "cut" },
+        { "command": "edit:copy", "mnemonic": "C", "group": "2_clipboard@2", "nativeRole": "copy" },
+        { "command": "edit:paste", "mnemonic": "P", "group": "2_clipboard@3", "nativeRole": "paste" },
+        { "command": "edit:delete", "mnemonic": "D", "group": "2_clipboard@4", "nativeRole": "delete" },
+        { "command": "edit:selectAll", "mnemonic": "A", "group": "3_find@1", "nativeRole": "selectAll" },
+        { "command": "edit:find", "mnemonic": "F", "group": "3_find@2" },
+        { "command": "edit:replace", "mnemonic": "H", "group": "3_find@3" }
+      ],
+      "menubar/view": [
+        { "command": "view:property", "group": "1_panels@1" },
+        { "command": "view:output", "group": "1_panels@2" },
+        { "command": "view:library", "group": "1_panels@3" },
+        { "command": "view:project", "group": "2_explorer@1" },
+        { "submenu": "ycide.themes", "title": "主题", "group": "3_theme@1" }
+      ],
+      "menubar/tools": [
+        { "command": "tools:library", "mnemonic": "L", "group": "1_config@1" },
+        { "command": "tools:themeManager", "mnemonic": "M", "group": "1_config@2" },
+        { "command": "tools:settings", "mnemonic": "S", "group": "2_settings@1" },
+        { "command": "plugins:reload", "group": "3_plugins@1" }
+      ],
+      "menubar/help": [
+        { "command": "help:topics", "mnemonic": "H", "group": "1_help@1" },
+        { "command": "help:about", "mnemonic": "A", "group": "2_about@1" }
+      ]
+    },
+    "keybindings": [
+      { "command": "file:newFile", "key": "CmdOrCtrl+Alt+N" },
+      { "command": "file:openFile", "key": "CmdOrCtrl+O" },
+      { "command": "file:newProject", "key": "CmdOrCtrl+Alt+Shift+N" },
+      { "command": "file:openProject", "key": "CmdOrCtrl+Shift+O" },
+      { "command": "file:openWorkspaceFolder", "key": "CmdOrCtrl+Alt+O" },
+      { "command": "file:saveAll", "key": "CmdOrCtrl+Shift+S" },
+      { "command": "file:saveAs", "key": "CmdOrCtrl+Alt+S" },
+      { "command": "file:save", "key": "CmdOrCtrl+S" },
+      { "command": "file:closeFile", "key": "CmdOrCtrl+W" },
+      { "command": "file:exit", "key": "Alt+F4", "mac": "CmdOrCtrl+Q", "dispatch": false },
+
+      { "command": "edit:undo", "key": "CmdOrCtrl+Z", "when": "!editableFocus" },
+      { "command": "edit:redo", "key": "CmdOrCtrl+Y", "mac": "CmdOrCtrl+Shift+Z", "when": "!editableFocus" },
+      { "command": "edit:redo", "key": "CmdOrCtrl+Y", "platforms": ["macos"], "when": "!editableFocus" },
+      { "command": "nav:back", "key": "CmdOrCtrl+J" },
+      { "command": "edit:cut", "key": "CmdOrCtrl+X", "when": "!editableFocus && !nativeTextSelection" },
+      { "command": "edit:copy", "key": "CmdOrCtrl+C", "when": "!editableFocus && !nativeTextSelection" },
+      { "command": "edit:paste", "key": "CmdOrCtrl+V", "when": "!editableFocus" },
+      { "command": "edit:delete", "key": "Delete", "dispatch": false },
+      { "command": "edit:selectAll", "key": "CmdOrCtrl+A", "dispatch": false },
+      { "command": "edit:find", "key": "CmdOrCtrl+F" },
+      { "command": "edit:replace", "key": "CmdOrCtrl+H" },
+
+      { "command": "help:topics", "key": "F1" }
+    ]
+  }
+}

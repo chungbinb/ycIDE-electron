@@ -1,0 +1,24 @@
+{
+  "id": "demo.hello",
+  "displayName": "示例插件：打招呼",
+  "version": "1.0.0",
+  "publisher": "demo",
+  "description": "插件化阶段 0 的示例与测试夹具：在插件进程里注册命令、显示消息、调用内置命令。",
+  "runtime": { "type": "node", "main": "main.js" },
+  "activationEvents": ["onCommand:hello:greet"],
+  "contributes": {
+    "commands": [
+      { "id": "hello:greet", "title": "打招呼（示例插件）" },
+      { "id": "hello:openAbout", "title": "通过插件打开关于（示例插件）" }
+    ],
+    "menus": {
+      "menubar/tools": [
+        { "command": "hello:greet", "group": "9_demo@1" },
+        { "command": "hello:openAbout", "group": "9_demo@2" }
+      ]
+    },
+    "keybindings": [
+      { "command": "hello:greet", "key": "CmdOrCtrl+Alt+H" }
+    ]
+  }
+}

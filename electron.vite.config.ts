@@ -15,10 +15,12 @@ export default defineConfig({
       sourcemap: 'hidden',
       rollupOptions: {
         external: ['fsevents'],
-        // 主进程入口 + 编译工作线程入口，各自打包到 out/main/<name>.js
+        // 主进程入口 + 编译工作线程入口 + 插件宿主进程入口，各自打包到 out/main/<name>.js
         input: {
           index: resolve('src/main/index.ts'),
-          'compile-worker': resolve('src/main/compile-worker.ts')
+          'compile-worker': resolve('src/main/compile-worker.ts'),
+          // 插件宿主进程（utilityProcess），运行用户 / 第三方插件代码
+          'plugin-host': resolve('src/main/plugins/pluginHostMain.ts')
         }
       }
     }
