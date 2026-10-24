@@ -5476,6 +5476,7 @@ function App(): React.JSX.Element {
                   designerCanvasMode={ideSettings.designerCanvasMode}
                   editorShowMinimapPreview={ideSettings.editorShowMinimapPreview}
                   editorShowVarSummaryPanel={ideSettings.editorShowVarSummaryPanel}
+                  tableRendererId={ideSettings.tableRendererId}
                   targetPlatform={targetPlatform}
                   readFileForExternalCheck={readFileForExternalCheck}
                   resolveFileEncoding={resolveFileEncoding}

@@ -26,7 +26,17 @@ function untrust(manifest: unknown): unknown {
 }
 
 /** 不允许停用的内置插件（设计稿 §13.1 卸载规则：工作台外壳、项目管理） */
-export const NON_DISABLEABLE_PLUGINS: ReadonlySet<string> = new Set(['ycide.workbench', 'ycide.project'])
+export const NON_DISABLEABLE_PLUGINS: ReadonlySet<string> = new Set([
+  'ycide.workbench',
+  'ycide.project',
+  // 设计稿 §13.1 卸载规则：语言服务、文本编辑器（所有编辑器的兜底）不可停用；
+  // 表格编辑器不可卸载但可被替换（第三方编辑器可以在「打开方式」里设为默认）
+  'ycide.lang-eyc',
+  'ycide.editor-text',
+  'ycide.editor-eyc-table',
+  // DOM 渲染后端是其它渲染后端不可用时的兜底，同样只能被替换（设置里换后端）不能停用
+  'ycide.render-dom',
+])
 
 export interface PluginHostConnection {
   transport: RpcTransport
@@ -232,6 +242,22 @@ export class PluginService {
 
   private dirOf(id: string): string | undefined {
     return this.resolution.plugins.find(p => p.id === id && p.status === 'enabled')?.dir
+  }
+
+  /**
+   * 已启用插件目录内的文件绝对路径（插件网页 UI 经 ycide-plugin:// 协议加载时使用）；
+   * 插件未启用、路径越出插件目录或文件不存在时返回 null
+   */
+  resolvePluginFile(id: string, relativePath: string): string | null {
+    const dir = this.dirOf(id)
+    if (!dir) return null
+    const file = this.resolveMain(dir, relativePath)
+    if (!file || !existsSync(file)) return null
+    try {
+      return statSync(file).isFile() ? file : null
+    } catch {
+      return null
+    }
   }
 
   /**

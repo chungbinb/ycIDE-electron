@@ -2326,7 +2326,10 @@ app.whenReady().then(() => {
 
   // 系统设置 IPC
   ipcMain.handle('settings:get', () => {
-    return readIDESettings()
+    const settings = readIDESettings()
+    // 性能测试（tests/perf）用环境变量临时指定流程线渲染后端，不写进设置文件
+    if (process.env.YCIDE_TABLE_RENDERER) settings.tableRendererId = process.env.YCIDE_TABLE_RENDERER
+    return settings
   })
 
   ipcMain.handle('settings:save', (_event, partial: Partial<IDESettings>) => {

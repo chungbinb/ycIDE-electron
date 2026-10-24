@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>大写编辑器</title>
+<style>
+  body { margin: 0; font: 13px "Microsoft YaHei UI", sans-serif; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 6px 10px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid #8884; }
+  textarea { flex: 1; border: none; outline: none; padding: 10px; font: 14px Consolas, monospace; resize: none; }
+</style>
+</head>
+<body>
+<header>
+  <strong id="label">（未打开）</strong>
+  <button id="upper" type="button">转大写</button>
+</header>
+<textarea id="text" spellcheck="false"></textarea>
+<script>
+  // 插件网页编辑器协议：ready → open → applyEdit / didChangeDocument（见 src/renderer/src/workbench/pluginWebEditor.tsx）
+  const text = document.getElementById('text')
+  const send = (message) => parent.postMessage(message, '*')
+  window.addEventListener('message', (event) => {
+    const msg = event.data || {}
+    if (msg.type === 'editor/open') {
+      document.getElementById('label').textContent = msg.label
+      text.value = msg.text
+      if (msg.theme && msg.theme['--editor-bg']) document.body.style.background = msg.theme['--editor-bg']
+    } else if (msg.type === 'editor/didChangeDocument') {
+      text.value = msg.text
+    }
+  })
+  text.addEventListener('input', () => send({ type: 'documents/applyEdit', text: text.value }))
+  document.getElementById('upper').addEventListener('click', () => {
+    text.value = text.value.toUpperCase()
+    send({ type: 'documents/applyEdit', text: text.value })
+  })
+  send({ type: 'editor/ready' })
+</script>
+</body>
+</html>

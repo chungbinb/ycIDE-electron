@@ -1,0 +1,70 @@
+{
+  "id": "ycide.lang-eyc",
+  "displayName": "易承语言服务",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "builtin": true,
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "description": "易语言源码的语言服务：块结构、流程线、诊断、补全，以及项目级符号索引（全局变量、常量、DLL 命令、数据类型、类、窗口与控件）。",
+  "contributes": {
+    "languages": [
+      {
+        "id": "eyc",
+        "aliases": [
+          "易语言源码"
+        ],
+        "extensions": [
+          ".eyc",
+          ".ecc"
+        ]
+      },
+      {
+        "id": "egv",
+        "aliases": [
+          "全局变量"
+        ],
+        "extensions": [
+          ".egv"
+        ]
+      },
+      {
+        "id": "ecs",
+        "aliases": [
+          "常量表"
+        ],
+        "extensions": [
+          ".ecs"
+        ]
+      },
+      {
+        "id": "edt",
+        "aliases": [
+          "自定义数据类型"
+        ],
+        "extensions": [
+          ".edt"
+        ]
+      },
+      {
+        "id": "ell",
+        "aliases": [
+          "DLL 命令"
+        ],
+        "extensions": [
+          ".ell"
+        ]
+      },
+      {
+        "id": "erc",
+        "aliases": [
+          "资源表"
+        ],
+        "extensions": [
+          ".erc"
+        ]
+      }
+    ]
+  }
+}

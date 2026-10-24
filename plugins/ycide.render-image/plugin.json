@@ -1,0 +1,24 @@
+{
+  "id": "ycide.render-image",
+  "displayName": "图像渲染后端",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "builtin": true,
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "description": "把整行流程线生成一张矢量图并缓存，每行只占一个元素，大文件、低配机器上滚动和输入更省；在设置 → 编辑器 → 流程线渲染里选择。",
+  "contributes": {
+    "renderers": [
+      {
+        "id": "ycide.image",
+        "displayName": "图像（整行一张图）",
+        "description": "整行流程线一张矢量图，同样结构的行只生成一次",
+        "surfaces": [
+          "eycTable.flowLines"
+        ],
+        "implementation": "image"
+      }
+    ]
+  }
+}

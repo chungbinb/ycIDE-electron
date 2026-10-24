@@ -1,0 +1,35 @@
+{
+  "id": "ycide.editor-eyc-table",
+  "displayName": "表格代码编辑器",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "builtin": true,
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "description": "以表格形式编辑易语言源码，带流程线、折叠、变量汇总与小地图。",
+  "dependencies": {
+    "ycide.lang-eyc": "^1.0.0"
+  },
+  "contributes": {
+    "editors": [
+      {
+        "id": "ycide.eycTable",
+        "displayName": "表格代码编辑器",
+        "languages": [
+          "eyc",
+          "egv",
+          "ecs",
+          "edt",
+          "ell",
+          "erc"
+        ],
+        "priority": "default",
+        "ui": {
+          "type": "builtin",
+          "component": "eycTable"
+        }
+      }
+    ]
+  }
+}

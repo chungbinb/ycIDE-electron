@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { DEFAULT_IDE_SETTINGS, type IDESettings } from '../../../../shared/settings'
 import { collectAIModels, collectProviderKeySlots } from '../../../../shared/plugin/aiContributions'
 import { collectCompilers } from '../../../../shared/plugin/compilerContributions'
+import { collectRenderers, renderersForSurface } from '../../../../shared/plugin/rendererContributions'
 import { useEnabledManifests } from '../../workbench/commands'
 
 interface SettingsDialogProps {
@@ -87,6 +88,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
   ]
   const providerKeySlots = collectProviderKeySlots(manifests)
   const compilers = collectCompilers(manifests)
+  const flowLineRenderers = renderersForSurface('eycTable.flowLines', collectRenderers(manifests))
 
   const updateDraft = useCallback(<K extends keyof IDESettings>(key: K, value: IDESettings[K]) => {
     setDraft(prev => {
@@ -283,6 +285,21 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
               />
               <span className="settings-switch-track" aria-hidden="true" />
             </label>
+            <span className="settings-unit" />
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">流程线渲染</span>
+            <select
+              className="settings-input"
+              title="表格编辑器流程线的渲染后端（来自渲染后端插件）"
+              value={draft.tableRendererId}
+              onChange={(e) => updateDraft('tableRendererId', e.target.value)}
+            >
+              <option value="">默认（DOM）</option>
+              {flowLineRenderers.map(r => (
+                <option key={r.id} value={r.id} title={r.description}>{r.displayName}</option>
+              ))}
+            </select>
             <span className="settings-unit" />
           </div>
         </div>

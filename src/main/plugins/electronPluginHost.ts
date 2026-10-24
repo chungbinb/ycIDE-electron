@@ -11,14 +11,65 @@
 //   plugins:message                  插件请求显示消息
 //   plugins:executeRendererCommand   插件调用了内置命令，请渲染进程执行并回报结果
 
-import { app, BrowserWindow, ipcMain, utilityProcess } from 'electron'
-import { delimiter, dirname, join } from 'node:path'
+import { app, BrowserWindow, ipcMain, protocol, utilityProcess } from 'electron'
+import { readFile } from 'node:fs/promises'
+import { delimiter, dirname, extname, join } from 'node:path'
 import { BUILTIN_PLUGIN_CANDIDATES } from '../../shared/plugin/builtinPlugins'
 import type { PluginHostPlatform } from '../../shared/plugin/manifest'
 import { PluginService, type PluginHostConnection } from './pluginService'
 import { libraryManager } from '../libraryManager'
 
 const RENDERER_COMMAND_TIMEOUT_MS = 10 * 60 * 1000
+
+// 插件网页 UI（编辑器、视图）经 ycide-plugin://<插件ID>/<路径> 加载（设计稿 §7）。
+// 必须在 app ready 之前登记为特权协议；本模块在主进程启动时即被导入。
+export const PLUGIN_UI_SCHEME = 'ycide-plugin'
+protocol.registerSchemesAsPrivileged([
+  { scheme: PLUGIN_UI_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+])
+
+const UI_MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.woff2': 'font/woff2',
+}
+
+/**
+ * 插件网页只能加载自己目录里的资源，不能直接联网（联网能力将来按清单权限单独开放，设计稿 §8）。
+ * 页面运行在不带 allow-same-origin 的沙箱 iframe 里，只能经 postMessage 与宿主交换数据。
+ */
+const PLUGIN_UI_CSP = "default-src 'none'; script-src ycide-plugin: 'unsafe-inline'; style-src ycide-plugin: 'unsafe-inline'; img-src ycide-plugin: data: blob:; font-src ycide-plugin: data:"
+
+function registerPluginUiProtocol(service: PluginService): void {
+  protocol.handle(PLUGIN_UI_SCHEME, async request => {
+    try {
+      const url = new URL(request.url)
+      const pluginId = url.hostname
+      const relativePath = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
+      const file = service.resolvePluginFile(pluginId, relativePath)
+      if (!file) return new Response('插件文件不存在或插件未启用', { status: 404 })
+      const body = await readFile(file)
+      return new Response(body, {
+        headers: {
+          'Content-Type': UI_MIME_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
+          'Content-Security-Policy': PLUGIN_UI_CSP,
+          'X-Content-Type-Options': 'nosniff',
+        },
+      })
+    } catch {
+      return new Response('读取插件文件失败', { status: 500 })
+    }
+  })
+}
 
 let service: PluginService | null = null
 
@@ -110,6 +161,7 @@ export function initPluginHost(platform: PluginHostPlatform, onDidChange: () => 
     },
   })
   service = created
+  registerPluginUiProtocol(created)
 
   ipcMain.handle('plugins:getState', () => created.getState())
   ipcMain.handle('plugins:executeCommand', async (_event, command: unknown, args: unknown) => {

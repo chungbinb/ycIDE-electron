@@ -745,6 +745,12 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
   --flow-join-gap: 1.5px;
 }
 
+/* 图像渲染后端：整行流程线是一张矢量图（flowLineImageRenderer.tsx），宽度与图像尺寸由行内样式给出 */
+.eyc-flow-seg.eyc-flow-image {
+  background-repeat: no-repeat;
+  background-position: 0 0;
+}
+
 .eyc-flow-overlap-slot {
   position: relative;
   display: inline-block;

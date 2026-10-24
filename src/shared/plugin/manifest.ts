@@ -1,6 +1,7 @@
 // 插件清单（plugin.json）的类型与校验。设计依据：docs/插件架构设计稿.md §3、§6。
 // 阶段 0 只落地命令 / 菜单 / 快捷键三类贡献点，其余贡献点字段先原样保留、不做解释。
 
+import { RENDERER_SURFACES } from './rendererContributions'
 import { parseWhenClause } from './whenClause'
 import { parseKeybinding } from './keybinding'
 import { BUILTIN_API_KEY_SETTINGS } from './aiContributions'
@@ -91,6 +92,12 @@ export interface PluginContributes {
   aiTools?: unknown[]
   /** 编译器，见 src/main/compilers/compilerService.ts */
   compilers?: unknown[]
+  /** 语言：文档语言 ID 与扩展名（语言服务插件声明） */
+  languages?: Array<{ id: string; aliases?: string[]; extensions?: string[] }>
+  /** 编辑器提供者，见 editorContributions.ts */
+  editors?: unknown[]
+  /** 渲染后端，见 rendererContributions.ts */
+  renderers?: unknown[]
   /** 支持库：插件目录本身就是一个支持库目录（*.ycmd.json、window-units.json、impl/ 等），name 为支持库名 */
   libraries?: Array<{ name: string }>
   [contributionPoint: string]: unknown
@@ -319,6 +326,55 @@ export function validatePluginManifest(raw: unknown): ManifestValidationResult {
         } else if (!raw.builtin) {
           errors.push(`${where}: 第三方编译器必须提供 commands.build`)
         }
+      })
+    }
+
+    if (contributes.languages !== undefined) {
+      if (!Array.isArray(contributes.languages) || contributes.languages.some(l => !isRecord(l) || !isNonEmptyString(l.id))) {
+        errors.push('contributes.languages 必须是 [{ id, aliases?, extensions? }] 数组')
+      }
+    }
+
+    if (contributes.editors !== undefined) {
+      if (!Array.isArray(contributes.editors)) errors.push('contributes.editors 必须是数组')
+      else contributes.editors.forEach((editor, i) => {
+        const where = `contributes.editors[${i}]`
+        if (!isRecord(editor) || !isNonEmptyString(editor.id) || !isNonEmptyString(editor.displayName)) {
+          errors.push(`${where}: 需要 id 和 displayName`)
+          return
+        }
+        if (!Array.isArray(editor.languages) || editor.languages.length === 0 || editor.languages.some(l => !isNonEmptyString(l))) {
+          errors.push(`${where}: languages 必须是非空字符串数组`)
+        }
+        if (editor.priority !== undefined && editor.priority !== 'default' && editor.priority !== 'option') {
+          errors.push(`${where}: priority 只能是 default / option`)
+        }
+        const ui = editor.ui
+        if (!isRecord(ui) || (ui.type !== 'builtin' && ui.type !== 'web')) {
+          errors.push(`${where}: ui.type 只能是 builtin / web`)
+        } else if (ui.type === 'builtin') {
+          if (!raw.builtin) errors.push(`${where}: 只有内置插件可以使用 builtin 编辑器`)
+          if (!isNonEmptyString(ui.component)) errors.push(`${where}: builtin 编辑器需要 ui.component`)
+        } else if (!isNonEmptyString(ui.entry) || !isSafeRelativePath(ui.entry)) {
+          errors.push(`${where}: web 编辑器需要插件目录内的 ui.entry`)
+        }
+      })
+    }
+
+    if (contributes.renderers !== undefined) {
+      if (!Array.isArray(contributes.renderers)) errors.push('contributes.renderers 必须是数组')
+      else contributes.renderers.forEach((renderer, i) => {
+        const where = `contributes.renderers[${i}]`
+        if (!isRecord(renderer) || !isNonEmptyString(renderer.id) || !isNonEmptyString(renderer.displayName)) {
+          errors.push(`${where}: 需要 id 和 displayName`)
+          return
+        }
+        if (!raw.builtin) errors.push(`${where}: 渲染后端直接操作编辑器界面，只有内置插件可以提供`)
+        if (!Array.isArray(renderer.surfaces) || renderer.surfaces.length === 0
+          || renderer.surfaces.some(s => !(RENDERER_SURFACES as readonly unknown[]).includes(s))) {
+          errors.push(`${where}: surfaces 必须是非空数组，可选 ${RENDERER_SURFACES.join(' / ')}`)
+        }
+        if (!isNonEmptyString(renderer.implementation)) errors.push(`${where}: 需要 implementation`)
       })
     }
 
