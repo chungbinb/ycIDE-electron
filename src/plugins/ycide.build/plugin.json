@@ -1,0 +1,28 @@
+{
+  "id": "ycide.build",
+  "displayName": "编译",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "编译菜单：普通编译、编译运行。",
+  "builtin": true,
+  "engines": { "ycide": ">=0.0.5" },
+  "contributes": {
+    "menubarMenus": [
+      { "id": "build", "title": "编译", "mnemonic": "B", "order": 50 }
+    ],
+    "commands": [
+      { "id": "build:compile", "title": "普通编译", "enablement": "projectOpen" },
+      { "id": "build:run", "title": "编译运行", "enablement": "projectOpen" }
+    ],
+    "menus": {
+      "menubar/build": [
+        { "command": "build:compile", "mnemonic": "C", "group": "1_compile@1" },
+        { "command": "build:run", "mnemonic": "R", "group": "2_run@1" }
+      ]
+    },
+    "keybindings": [
+      { "command": "build:compile", "key": "CmdOrCtrl+F7" },
+      { "command": "build:run", "key": "F5" }
+    ]
+  }
+}

@@ -9,6 +9,8 @@ const tableEditorPath = path.resolve(process.cwd(), 'src/renderer/src/components
 const interactionHandlersPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/useEditorInteractionHandlers.ts')
 const tableEditorCssPath = path.resolve(process.cwd(), 'src/renderer/src/components/Editor/EycTableEditor.css')
 const titleBarPath = path.resolve(process.cwd(), 'src/renderer/src/components/TitleBar/TitleBar.tsx')
+const workbenchPluginPath = path.resolve(process.cwd(), 'src/plugins/ycide.workbench/plugin.json')
+const workbenchMenusPath = path.resolve(process.cwd(), 'src/shared/plugin/workbenchMenus.ts')
 
 test('QUAL-01 contract: App theme switch path still routes through handleThemeSelect -> applyTheme', () => {
   const source = fs.readFileSync(appPath, 'utf-8')
@@ -46,9 +48,14 @@ test('QUAL-01 contract: EycTableEditor theme surface remains token-driven for ta
 })
 
 test('QUAL-01 contract: menu bar keeps explicit theme switching entry point (查看 -> 主题 submenu)', () => {
+  // 菜单由插件清单生成（阶段 0 插件化）：查看菜单里挂主题动态子菜单，子菜单项执行 theme:apply，App 把它落到 applyTheme
+  const workbench = JSON.parse(fs.readFileSync(workbenchPluginPath, 'utf-8'))
+  const viewMenu = workbench.contributes.menus['menubar/view']
+  assert.ok(viewMenu.some(item => item.submenu === 'ycide.themes' && item.title === '主题'))
   const titleBarSource = fs.readFileSync(titleBarPath, 'utf-8')
+  assert.match(titleBarSource, /\[THEMES_SUBMENU\]: buildThemeEntries\(themes, currentTheme, BUILTIN_THEME_IDS\)/)
+  const workbenchMenusSource = fs.readFileSync(workbenchMenusPath, 'utf-8')
+  assert.match(workbenchMenusSource, /command: 'theme:apply',\s*args: \[themeId\]/)
   const appSource = fs.readFileSync(appPath, 'utf-8')
-  assert.match(titleBarSource, /\{ label: '主题', submenu: themeSubmenu \}/)
-  assert.match(titleBarSource, /action: `theme:\$\{themeName\}`/)
-  assert.match(appSource, /if \(action\.startsWith\('theme:'\)\) \{\s*const themeName = action\.substring\(6\)\s*applyTheme\(themeName\)/)
+  assert.match(appSource, /'theme:apply': \(themeName: unknown\) => \{\s*applyTheme\(String\(themeName\)\)/)
 })

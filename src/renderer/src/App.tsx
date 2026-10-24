@@ -20,7 +20,8 @@ import AIAssistantPanel from './components/AIAssistantPanel/AIAssistantPanel'
 import type { SelectionTarget, DesignForm, DesignControl } from './components/Editor/VisualDesigner'
 import { parseLines } from './components/Editor/eycBlocks'
 import { resolveControlMethodDetail } from './components/Editor/editorCoreUtils'
-import { isRedoShortcut, type RuntimePlatform } from './utils/shortcuts'
+import { type RuntimePlatform } from './utils/shortcuts'
+import { useCommandHandlers, executeCommand, executeLegacyAction, dispatchKeybinding } from './workbench/commands'
 import { mountIdeActionLogger } from './utils/ideActionLogger'
 import {
   BUILTIN_DARK_THEME_ID,
@@ -3502,12 +3503,13 @@ function App(): React.JSX.Element {
     openFileByPathRef.current = openFileByPath
   }, [openFileByPath])
 
-  const handleMenuAction = useCallback(async (action: string) => {
-    if (action.startsWith('file:openRecent:')) {
-      const encoded = action.substring('file:openRecent:'.length)
+  // 命令处理函数。命令本身（标题、所在菜单、快捷键）由 src/plugins/*/plugin.json 声明，这里只负责实现；
+  // 阶段 0 先集中留在 App.tsx，后续阶段再迁进各自的插件（见 docs/插件架构设计稿.md §11）。
+  useCommandHandlers({
+    'file:openRecent': async (rawPayload: unknown) => {
+      const payload = rawPayload as { type: 'project' | 'file'; path: string } | undefined
+      if (!payload?.path) return
       try {
-        const payload = JSON.parse(decodeURIComponent(encoded)) as { type: 'project' | 'file'; path: string }
-        if (!payload?.path) return
         if (payload.type === 'project') {
           const lowerPath = payload.path.toLowerCase()
           if (lowerPath.endsWith('.epp')) {
@@ -3521,584 +3523,580 @@ function App(): React.JSX.Element {
       } catch {
         // 忽略无效最近打开项
       }
-      return
-    }
+    },
 
-    switch (action) {
-      // 文件菜单
-      case 'file:newFile': {
-        const seq = untitledFileSeqRef.current++
-        const label = `未命名${seq}.txt`
-        const tabId = `untitled:${Date.now()}-${seq}`
-        editorRef.current?.openFile({
-          id: tabId,
-          label,
-          language: 'plaintext',
-          value: '',
-          savedValue: '',
-        })
-        break
+    // 文件菜单
+    'file:newFile': () => {
+      const seq = untitledFileSeqRef.current++
+      const label = `未命名${seq}.txt`
+      const tabId = `untitled:${Date.now()}-${seq}`
+      editorRef.current?.openFile({
+        id: tabId,
+        label,
+        language: 'plaintext',
+        value: '',
+        savedValue: '',
+      })
+    },
+    'file:openFile': async () => {
+      const selectedFilePath = await window.api?.file?.openDialog?.()
+      if (!selectedFilePath) return
+      await openFileByPath(selectedFilePath)
+    },
+    'file:newProject': () => {
+      setShowNewProject(true)
+    },
+    'file:openProject': async () => {
+      const selection = await window.api?.project?.openEpp()
+      if (!selection || selection.status === 'canceled') return
+      if (selection.status === 'epp') {
+        await openProjectByEppPath(selection.eppPath)
+        return
       }
-      case 'file:openFile': {
-        const selectedFilePath = await window.api?.file?.openDialog?.()
-        if (!selectedFilePath) return
-        await openFileByPath(selectedFilePath)
-        break
+      const baseState: EProjectImportDialogState = {
+        eFilePath: selection.eFilePath,
+        projectName: selection.projectName,
+        targetDir: selection.targetDir,
+        targetExists: selection.targetExists,
+        needsPassword: false,
+        passwordInvalid: false,
+        busy: false,
       }
-      case 'file:newProject':
-        setShowNewProject(true)
-        break
-      case 'file:openProject': {
-        const selection = await window.api?.project?.openEpp()
-        if (!selection || selection.status === 'canceled') return
-        if (selection.status === 'epp') {
-          await openProjectByEppPath(selection.eppPath)
-          return
-        }
-        const baseState: EProjectImportDialogState = {
-          eFilePath: selection.eFilePath,
-          projectName: selection.projectName,
-          targetDir: selection.targetDir,
-          targetExists: selection.targetExists,
-          needsPassword: false,
-          passwordInvalid: false,
-          busy: false,
-        }
-        if (selection.targetExists) {
-          setEProjectImportDialog(baseState)
-          return
-        }
-        await runEProjectImport(baseState)
-        break
+      if (selection.targetExists) {
+        setEProjectImportDialog(baseState)
+        return
       }
-      case 'file:openWorkspaceFolder': {
-        const selection = await window.api?.project?.openWorkspaceFolder?.()
-        if (!selection || selection.status === 'canceled') return
-        if (selection.status === 'epp') {
-          await openProjectByEppPath(selection.eppPath)
-          return
-        }
-        await openWorkspaceFolderByPath(selection.folderPath)
-        break
+      await runEProjectImport(baseState)
+    },
+    'file:openWorkspaceFolder': async () => {
+      const selection = await window.api?.project?.openWorkspaceFolder?.()
+      if (!selection || selection.status === 'canceled') return
+      if (selection.status === 'epp') {
+        await openProjectByEppPath(selection.eppPath)
+        return
       }
-      case 'file:save':
-        editorRef.current?.save()
-        break
-      case 'file:saveAs':
-        editorRef.current?.saveAs()
-        break
-      case 'file:saveAll':
-        editorRef.current?.saveAll()
-        break
-      case 'file:closeFile':
-        editorRef.current?.closeActiveTab()
-        break
-      case 'file:closeProject':
-        {
-          const closed = await closeCurrentProject({ confirmUnsaved: true, clearLastProject: true })
-          if (!closed) break
-        }
-        break
-      case 'file:exit':
-        await handleAppClose()
-        break
+      await openWorkspaceFolderByPath(selection.folderPath)
+    },
+    'file:save': () => {
+      editorRef.current?.save()
+    },
+    'file:saveAs': () => {
+      editorRef.current?.saveAs()
+    },
+    'file:saveAll': () => {
+      editorRef.current?.saveAll()
+    },
+    'file:closeFile': () => {
+      editorRef.current?.closeActiveTab()
+    },
+    'file:closeProject': async () => {
+      await closeCurrentProject({ confirmUnsaved: true, clearLastProject: true })
+    },
+    'file:exit': async () => {
+      await handleAppClose()
+    },
 
-      // 编辑菜单
-      case 'edit:undo':
-      case 'edit:redo':
-      case 'edit:cut':
-      case 'edit:copy':
-      case 'edit:paste':
-      case 'edit:delete':
-      case 'edit:selectAll':
-      case 'edit:find':
-      case 'edit:replace':
-        editorRef.current?.editorAction(action.split(':')[1])
-        break
-      case 'nav:back':
-        editorRef.current?.editorAction('navBack')
-        break
-      case 'build:compile':
-        handleCompile()
-        break
-      case 'build:run':
-        handleCompileRun()
-        break
+    // 编辑菜单
+    'edit:undo': () => {
+      editorRef.current?.editorAction('undo')
+    },
+    'edit:redo': () => {
+      editorRef.current?.editorAction('redo')
+    },
+    'edit:cut': () => {
+      editorRef.current?.editorAction('cut')
+    },
+    'edit:copy': () => {
+      editorRef.current?.editorAction('copy')
+    },
+    'edit:paste': () => {
+      editorRef.current?.editorAction('paste')
+    },
+    'edit:delete': () => {
+      editorRef.current?.editorAction('delete')
+    },
+    'edit:selectAll': () => {
+      editorRef.current?.editorAction('selectAll')
+    },
+    'edit:find': () => {
+      editorRef.current?.editorAction('find')
+    },
+    'edit:replace': () => {
+      editorRef.current?.editorAction('replace')
+    },
+    'nav:back': () => {
+      editorRef.current?.editorAction('navBack')
+    },
+    'build:compile': () => {
+      handleCompile()
+    },
+    'build:run': () => {
+      handleCompileRun()
+    },
 
-      // 调试菜单
-      case 'debug:run':
-        handleCompileRun()
-        break
-      case 'debug:stop':
-        handleStop()
-        break
-      case 'debug:toggleBreakpoint':
-        toggleBreakpoint(activeFileIdRef.current, cursorRef.current.sourceLine ?? cursorRef.current.line)
-        break
-      case 'debug:clearBreakpoints':
-        setBreakpointsByFile({})
-        break
-      case 'debug:runToCursor':
-        if (!isProjectWorkspace || !currentProjectDir || !(cursorRef.current.sourceLine || cursorRef.current.line)) break
-        {
-          const fileId = activeFileIdRef.current
-          if (!fileId) break
-          const fileKey = getBaseName(fileId)
-          const requestedLine = (cursorRef.current.sourceLine ?? cursorRef.current.line)!
-          const editorFiles = editorRef.current?.getEditorFiles?.() || {}
-          const content = editorFiles[fileKey]
-          const targetLine = (() => {
-            if (!content) return requestedLine
-            const lines = content.replace(/\r\n/g, '\n').split('\n')
-            const normalizeLineText = (raw: string) => raw.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
-            const startIndex = Math.max(0, Math.min(lines.length - 1, requestedLine - 1))
-            for (let i = startIndex; i < lines.length; i++) {
-              if (normalizeLineText(lines[i]) !== '') return i + 1
-            }
-            for (let i = startIndex - 1; i >= 0; i--) {
-              if (normalizeLineText(lines[i]) !== '') return i + 1
-            }
-            return requestedLine
-          })()
-          const mergedBreakpoints: Record<string, number[]> = { ...breakpointsByFile }
-          const current = new Set(mergedBreakpoints[fileKey] || [])
-          current.add(targetLine)
-          mergedBreakpoints[fileKey] = Array.from(current).sort((a, b) => a - b)
-          setIsCompiling(true)
-          editorRef.current?.save()
-          resetOutputMessages()
-          setShowOutput(true)
-          setForceOutputTab('compile')
-          setDebugResumePending(false)
-          setDebugDisplayLine(null)
-          setDebugPause(null)
-          debugBreakAccumRef.current = null
-          const freshEditorFiles = editorRef.current?.getEditorFiles()
-          const result = await window.api.compiler.run(currentProjectDir, freshEditorFiles, targetArch, { breakpoints: mergedBreakpoints })
-          setIsCompiling(false)
-          setForceOutputTab(null)
-          if (result?.success) setIsRunning(true)
-        }
-        break
-      case 'debug:stepOver':
-      case 'debug:stepInto':
-      case 'debug:stepOut':
-        await continueDebugRun()
-        break
-
-      // 查看/工具菜单
-      case 'view:output':
-        setShowOutput(prev => !prev)
-        break
-      case 'view:library':
-      case 'tools:library':
-        setShowLibrary(true)
-        break
-      case 'tools:settings':
-        setShowSettings(true)
-        break
-      case 'tools:themeManager':
-        setShowThemeManager(true)
-        break
-      case 'help:about':
-        setShowAbout(true)
-        break
-
-      // 插入菜单
-      case 'insert:sub':
-        editorRef.current?.insertDeclaration()
-        break
-      case 'insert:localVar':
-        editorRef.current?.insertLocalVariable()
-        break
-      case 'insert:module': {
-        const dir = currentProjectDirRef.current
-        if (!dir) break
-        // 生成不重复的文件名
-        const existingFiles = projectTree[0]?.children
-          ?.find(c => c.id === '_cat_sources')?.children?.map(c => c.id) || []
-        let n = 1
-        while (existingFiles.includes('程序集' + n + '.eyc')) n++
-        const newFileName = '程序集' + n + '.eyc'
-        const assemblyName = '程序集' + n
-        const content = '.版本 2\n.程序集 ' + assemblyName + '\n\n.子程序 子程序1\n\n'
-        await window.api?.project?.addFile(dir, newFileName, 'EYC', content)
-        // 更新项目树：添加新文件到程序集分类
-        setProjectTree(prev => prev.map(root => ({
-          ...root,
-          children: root.children?.map(cat =>
-            cat.id === '_cat_sources'
-              ? { ...cat, children: [...(cat.children || []), { id: newFileName, label: assemblyName, type: 'module' as const, children: extractSubroutineNodes(content, newFileName), expanded: false }] }
-              : cat
-          )
-        })))
-        // 打开新文件
-        const filePath = joinPath(dir, newFileName)
-        editorRef.current?.openFile({ id: filePath, label: assemblyName, language: 'eyc', value: content, savedValue: content, filePath })
-        break
-      }
-      case 'insert:classModule': {
-        const dir = currentProjectDirRef.current
-        if (!dir) break
-        // 生成不重复的文件名（放在程序集分类下）
-        const existingFiles = projectTree[0]?.children
-          ?.find(c => c.id === '_cat_sources')?.children?.map(c => c.id) || []
-        let n = 1
-        while (existingFiles.includes('类模块' + n + '.ecc')) n++
-        const newFileName = '类模块' + n + '.ecc'
-        const className = '类' + n
-        const content =
-          '.版本 2\n\n' +
-          '.程序集 ' + className + ', , , \n\n' +
-          '.子程序 _初始化, , , , 当基于本类的对象被创建后，此方法会被自动调用\n\n\n\n' +
-          '.子程序 _销毁, , , , 当基于本类的对象被销毁前，此方法会被自动调用\n\n'
-        await window.api?.project?.addFile(dir, newFileName, 'EYC', content)
-        // 更新项目树：添加新文件到程序集分类
-        setProjectTree(prev => prev.map(root => ({
-          ...root,
-          children: root.children?.map(cat =>
-            cat.id === '_cat_sources'
-              ? { ...cat, children: [...(cat.children || []), { id: newFileName, label: className, type: 'module' as const, children: extractSubroutineNodes(content, newFileName), expanded: false }] }
-              : cat
-          )
-        })))
-        // 打开新文件（使用 EYC 编辑体验）
-        const filePath = joinPath(dir, newFileName)
-        editorRef.current?.openFile({ id: filePath, label: className, language: 'eyc', value: content, savedValue: content, filePath })
-        break
-      }
-      case 'insert:globalVar':
+    // 调试菜单
+    'debug:run': () => {
+      handleCompileRun()
+    },
+    'debug:stop': () => {
+      handleStop()
+    },
+    'debug:toggleBreakpoint': () => {
+      toggleBreakpoint(activeFileIdRef.current, cursorRef.current.sourceLine ?? cursorRef.current.line)
+    },
+    'debug:clearBreakpoints': () => {
+      setBreakpointsByFile({})
+    },
+    'debug:runToCursor': async () => {
+      if (!isProjectWorkspace || !currentProjectDir || !(cursorRef.current.sourceLine || cursorRef.current.line)) return
       {
-        const dir = currentProjectDirRef.current
-        if (!dir) break
-        const existingFiles = projectTree[0]?.children
-          ?.find(c => c.id === '_cat_globals')?.children?.map(c => c.id) || []
-        const globalFileName = '全局变量.egv'
-        const filePath = joinPath(dir, globalFileName)
-
-        // 优先使用编辑器中的最新内容（含未保存修改），再回退到磁盘内容
-        const editorFiles = editorRef.current?.getEditorFiles()
-        const fromEditor = editorFiles?.[globalFileName]
-        const fromDisk = fromEditor === undefined ? await window.api?.project?.readFile(filePath) : undefined
-        const baseContent = (fromEditor ?? fromDisk ?? '.版本 2\n\n').replace(/\r\n/g, '\n')
-
-        let n = 1
-        while (new RegExp('^\\.全局变量\\s+全局变量' + n + '(?:,|\\s|$)', 'm').test(baseContent)) n++
-        const varName = '全局变量' + n
-        const appendLine = '.全局变量 ' + varName + ', 整数型'
-        const content = baseContent.trimEnd() + '\n' + appendLine + '\n\n'
-
-        if (!existingFiles.includes(globalFileName)) {
-          await window.api?.project?.addFile(dir, globalFileName, 'EGV', content)
-          setProjectTree(prev => prev.map(root => ({
-            ...root,
-            children: root.children?.map(cat =>
-              cat.id === '_cat_globals'
-                ? { ...cat, children: [...(cat.children || []), { id: globalFileName, label: stripFileExtension(globalFileName), type: 'module' as const, children: extractGlobalVarNodes(content, globalFileName), expanded: false }] }
-                : cat
-            )
-          })))
-        } else {
-          await window.api?.file?.save(filePath, content)
-        }
-
-        editorRef.current?.upsertFile({ id: filePath, label: stripFileExtension(globalFileName), language: 'egv', value: content, savedValue: content, filePath })
-        break
-      }
-      case 'insert:constant':
-      {
-        const dir = currentProjectDirRef.current
-        if (!dir) break
-        const existingFiles = projectTree[0]?.children
-          ?.find(c => c.id === '_cat_constants')?.children?.map(c => c.id) || []
-        const constantFileName = '常量.ecs'
-        const filePath = joinPath(dir, constantFileName)
-
-        // 优先使用编辑器中的最新内容（含未保存修改），再回退到磁盘内容
-        const editorFiles = editorRef.current?.getEditorFiles()
-        const fromEditor = editorFiles?.[constantFileName]
-        const fromDisk = fromEditor === undefined ? await window.api?.project?.readFile(filePath) : undefined
-        const baseContent = (fromEditor ?? fromDisk ?? '.版本 2\n\n').replace(/\r\n/g, '\n')
-
-        let n = 1
-        while (new RegExp('^\\.常量\\s+常量' + n + '(?:,|\\s|$)', 'm').test(baseContent)) n++
-        const constName = '常量' + n
-        const appendLine = '.常量 ' + constName + ', 0'
-        const content = baseContent.trimEnd() + '\n' + appendLine + '\n\n'
-
-        if (!existingFiles.includes(constantFileName)) {
-          await window.api?.project?.addFile(dir, constantFileName, 'ECS', content)
-          setProjectTree(prev => prev.map(root => ({
-            ...root,
-            children: root.children?.map(cat =>
-              cat.id === '_cat_constants'
-                ? { ...cat, children: [...(cat.children || []), { id: constantFileName, label: stripFileExtension(constantFileName), type: 'module' as const, children: extractConstantNodes(content, constantFileName), expanded: false }] }
-                : cat
-            )
-          })))
-        } else {
-          await window.api?.file?.save(filePath, content)
-        }
-
-        editorRef.current?.upsertFile({ id: filePath, label: stripFileExtension(constantFileName), language: 'ecs', value: content, savedValue: content, filePath })
-        break
-      }
-      case 'insert:dataType':
-      {
-        const dir = currentProjectDirRef.current
-        if (!dir) break
-        const existingFiles = projectTree[0]?.children
-          ?.find(c => c.id === '_cat_datatypes')?.children?.map(c => c.id) || []
-        const dataTypeFileName = '自定义数据类型.edt'
-        const filePath = joinPath(dir, dataTypeFileName)
-
-        // 优先使用编辑器中的最新内容（含未保存修改），再回退到磁盘内容
-        const editorFiles = editorRef.current?.getEditorFiles()
-        const fromEditor = editorFiles?.[dataTypeFileName]
-        const fromDisk = fromEditor === undefined ? await window.api?.project?.readFile(filePath) : undefined
-        const baseContent = (fromEditor ?? fromDisk ?? '.版本 2\n\n').replace(/\r\n/g, '\n')
-
-        let n = 1
-        while (new RegExp('^\\.数据类型\\s+数据类型' + n + '(?:,|\\s|$)', 'm').test(baseContent)) n++
-        const dataTypeName = '数据类型' + n
-        const appendBlock = '.数据类型 ' + dataTypeName + '\n    .成员 成员1, 整数型'
-        const content = baseContent.trimEnd() + '\n' + appendBlock + '\n\n'
-
-        if (!existingFiles.includes(dataTypeFileName)) {
-          await window.api?.project?.addFile(dir, dataTypeFileName, 'EDT', content)
-          setProjectTree(prev => prev.map(root => ({
-            ...root,
-            children: root.children?.map(cat =>
-              cat.id === '_cat_datatypes'
-                ? { ...cat, children: [...(cat.children || []), { id: dataTypeFileName, label: stripFileExtension(dataTypeFileName), type: 'module' as const, children: extractDataTypeNodes(content, dataTypeFileName), expanded: false }] }
-                : cat
-            )
-          })))
-        } else {
-          await window.api?.file?.save(filePath, content)
-        }
-
-        editorRef.current?.upsertFile({ id: filePath, label: stripFileExtension(dataTypeFileName), language: 'edt', value: content, savedValue: content, filePath })
-        break
-      }
-      case 'insert:dllCmd':
-      {
-        const dir = currentProjectDirRef.current
-        if (!dir) break
-        const existingFiles = projectTree[0]?.children
-          ?.find(c => c.id === '_cat_dllcmds')?.children?.map(c => c.id) || []
-        const dllFileName = 'DLL命令.ell'
-        const filePath = joinPath(dir, dllFileName)
-
-        // 优先使用编辑器中的最新内容（含未保存修改），再回退到磁盘内容
-        const editorFiles = editorRef.current?.getEditorFiles()
-        const fromEditor = editorFiles?.[dllFileName]
-        const fromDisk = fromEditor === undefined ? await window.api?.project?.readFile(filePath) : undefined
-        const baseContent = (fromEditor ?? fromDisk ?? '.版本 2\n\n').replace(/\r\n/g, '\n')
-
-        let n = 1
-        while (new RegExp('^\\.DLL命令\\s+DLL命令' + n + '(?:,|\\s|$)', 'm').test(baseContent)) n++
-        const dllName = 'DLL命令' + n
-        const appendLine = '.DLL命令 ' + dllName + ', , "", ""'
-        const content = baseContent.trimEnd() + '\n' + appendLine + '\n\n'
-
-        if (!existingFiles.includes(dllFileName)) {
-          await window.api?.project?.addFile(dir, dllFileName, 'ELL', content)
-          setProjectTree(prev => prev.map(root => ({
-            ...root,
-            children: root.children?.map(cat =>
-              cat.id === '_cat_dllcmds'
-                ? { ...cat, children: [...(cat.children || []), { id: dllFileName, label: stripFileExtension(dllFileName), type: 'module' as const, children: extractDllCommandNodes(content, dllFileName), expanded: false }] }
-                : cat
-            )
-          })))
-        } else {
-          await window.api?.file?.save(filePath, content)
-        }
-
-        editorRef.current?.upsertFile({ id: filePath, label: stripFileExtension(dllFileName), language: 'ell', value: content, savedValue: content, filePath })
-        break
-      }
-      case 'insert:ptrCmd':
-      {
-        const dir = currentProjectDirRef.current
-        if (!dir) break
-        const existingFiles = projectTree[0]?.children
-          ?.find(c => c.id === '_cat_dllcmds')?.children?.map(c => c.id) || []
-        const dllFileName = 'DLL命令.ell'
-        const filePath = joinPath(dir, dllFileName)
-
-        // 优先使用编辑器中的最新内容（含未保存修改），再回退到磁盘内容
-        const editorFiles = editorRef.current?.getEditorFiles()
-        const fromEditor = editorFiles?.[dllFileName]
-        const fromDisk = fromEditor === undefined ? await window.api?.project?.readFile(filePath) : undefined
-        const baseContent = (fromEditor ?? fromDisk ?? '.版本 2\n\n').replace(/\r\n/g, '\n')
-
-        let n = 1
-        while (new RegExp('^\\.指针命令\\s+指针命令' + n + '(?:,|\\s|$)', 'm').test(baseContent)) n++
-        const ptrName = '指针命令' + n
-        const appendLine = '.指针命令 ' + ptrName
-        const content = baseContent.trimEnd() + '\n' + appendLine + '\n\n'
-
-        if (!existingFiles.includes(dllFileName)) {
-          await window.api?.project?.addFile(dir, dllFileName, 'ELL', content)
-          setProjectTree(prev => prev.map(root => ({
-            ...root,
-            children: root.children?.map(cat =>
-              cat.id === '_cat_dllcmds'
-                ? { ...cat, children: [...(cat.children || []), { id: dllFileName, label: stripFileExtension(dllFileName), type: 'module' as const, children: extractDllCommandNodes(content, dllFileName), expanded: false }] }
-                : cat
-            )
-          })))
-        } else {
-          await window.api?.file?.save(filePath, content)
-        }
-
-        editorRef.current?.upsertFile({ id: filePath, label: stripFileExtension(dllFileName), language: 'ell', value: content, savedValue: content, filePath })
-        break
-      }
-      case 'insert:window':
-      {
-        const dir = currentProjectDirRef.current
-        if (!dir) break
-
-        const existingWindowFiles = projectTree[0]?.children
-          ?.find(c => c.id === '_cat_windows')?.children?.map(c => c.id) || []
-
-        let n = 1
-        while (existingWindowFiles.includes('窗口' + n + '.efw')) n++
-
-        const windowName = '窗口' + n
-        const efwFileName = windowName + '.efw'
-        const eycFileName = windowName + '.eyc'
-
-        const efwData = JSON.stringify({
-          type: 'window',
-          name: windowName,
-          title: windowName,
-          width: 592,
-          height: 384,
-          sourceFile: eycFileName,
-          controls: [],
-        }, null, 2)
-
-        const eycContent = '.版本 2\n.程序集 窗口程序集_' + windowName + '\n\n'
-
-        await window.api?.project?.addFile(dir, efwFileName, 'EFW', efwData)
-        await window.api?.project?.addFile(dir, eycFileName, 'EYC', eycContent)
-
-        setProjectTree(prev => prev.map(root => ({
-          ...root,
-          children: root.children?.map(cat => {
-            if (cat.id === '_cat_windows') {
-              return {
-                ...cat,
-                children: [...(cat.children || []), { id: efwFileName, label: windowName, type: 'window' as const }],
-              }
-            }
-            if (cat.id === '_cat_sources') {
-              return {
-                ...cat,
-                children: [...(cat.children || []), {
-                  id: eycFileName,
-                  label: extractAssemblyLabel(eycContent) || stripFileExtension(eycFileName),
-                  type: 'module' as const,
-                  children: extractSubroutineNodes(eycContent, eycFileName),
-                  expanded: false,
-                }],
-              }
-            }
-            return cat
-          }),
-        })))
-
-        await openFileByPath(joinPath(dir, efwFileName))
-        break
-      }
-      case 'insert:resource':
-      {
-        // 串行排队(见 insertResourceChainRef 注释):连点各自基于前一次产物,消除读改写竞态
-        insertResourceChainRef.current = insertResourceChainRef.current.then(async () => {
-        const dir = currentProjectDirRef.current
-        if (!dir) return
-
-        const resourceFileName = '资源表.erc'
-        const resourceTablePath = joinPath(dir, resourceFileName)
+        const fileId = activeFileIdRef.current
+        if (!fileId) return
+        const fileKey = getBaseName(fileId)
+        const requestedLine = (cursorRef.current.sourceLine ?? cursorRef.current.line)!
         const editorFiles = editorRef.current?.getEditorFiles?.() || {}
-
-        let content = ''
-        let fileExists = false
-        if (typeof editorFiles[resourceFileName] === 'string') {
-          content = editorFiles[resourceFileName]
-          fileExists = true
-        } else {
-          const diskContent = await window.api?.project?.readFile(resourceTablePath)
-          if (typeof diskContent === 'string') {
-            content = diskContent
-            fileExists = true
+        const content = editorFiles[fileKey]
+        const targetLine = (() => {
+          if (!content) return requestedLine
+          const lines = content.replace(/\r\n/g, '\n').split('\n')
+          const normalizeLineText = (raw: string) => raw.replace(/[\u200B\u200C\u200D\u2060]/g, '').trim()
+          const startIndex = Math.max(0, Math.min(lines.length - 1, requestedLine - 1))
+          for (let i = startIndex; i < lines.length; i++) {
+            if (normalizeLineText(lines[i]) !== '') return i + 1
           }
-        }
-
-        if (!fileExists) {
-          content = '.版本 2\n'
-        }
-
-        content = normalizeResourceTableContent(content)
-
-        const lines = content.replace(/\r\n/g, '\n').split('\n')
-        let nextIndex = 1
-        for (const line of lines) {
-          const match = /^\s*\.(?:资源|常量)\s+资源(\d+)\b/.exec(line)
-          if (!match) continue
-          const n = Number(match[1])
-          if (Number.isFinite(n) && n >= nextIndex) nextIndex = n + 1
-        }
-
-        const newRow = `.资源 资源${nextIndex}, "", 其它`
-        let normalized = content.replace(/\r\n/g, '\n')
-        if (normalized.length > 0 && !normalized.endsWith('\n')) {
-          normalized += '\n'
-        }
-        const nextContent = `${normalized}${newRow}\n`
-
-        // UI 先行:先更新编辑器让表格**立即**显示新行,写盘/树刷新跟在后面——否则"写盘→更新编辑器
-        // →刷新项目树"串行下点击到出行有约 1 秒延迟,用户会以为没生效再点一次(实测录屏感知)。
-        editorRef.current?.upsertFile({
-          id: resourceTablePath,
-          label: stripFileExtension(resourceFileName),
-          language: 'erc',
-          value: nextContent,
-          savedValue: nextContent,
-          filePath: resourceTablePath,
-        })
-
-        if (fileExists) {
-          await window.api?.file?.save(resourceTablePath, nextContent)
-        } else {
-          const addResult = await window.api?.project?.addFile(dir, resourceFileName, 'ERC', nextContent)
-          if (typeof addResult !== 'string' || addResult.length === 0) {
-            setOutputMessages(prev => [...prev, { type: 'error', text: '创建资源表失败: addFile 返回无效结果' }])
-            return
+          for (let i = startIndex - 1; i >= 0; i--) {
+            if (normalizeLineText(lines[i]) !== '') return i + 1
           }
-        }
+          return requestedLine
+        })()
+        const mergedBreakpoints: Record<string, number[]> = { ...breakpointsByFile }
+        const current = new Set(mergedBreakpoints[fileKey] || [])
+        current.add(targetLine)
+        mergedBreakpoints[fileKey] = Array.from(current).sort((a, b) => a - b)
+        setIsCompiling(true)
+        editorRef.current?.save()
+        resetOutputMessages()
+        setShowOutput(true)
+        setForceOutputTab('compile')
+        setDebugResumePending(false)
+        setDebugDisplayLine(null)
+        setDebugPause(null)
+        debugBreakAccumRef.current = null
+        const freshEditorFiles = editorRef.current?.getEditorFiles()
+        const result = await window.api.compiler.run(currentProjectDir, freshEditorFiles, targetArch, { breakpoints: mergedBreakpoints })
+        setIsCompiling(false)
+        setForceOutputTab(null)
+        if (result?.success) setIsRunning(true)
+      }
+    },
+    'debug:stepOver': async () => {
+      await continueDebugRun()
+    },
+    'debug:stepInto': async () => {
+      await continueDebugRun()
+    },
+    'debug:stepOut': async () => {
+      await continueDebugRun()
+    },
 
-        setOutputMessages(prev => [...prev, { type: 'info', text: `已在 ${resourceFileName} 插入空资源: 资源${nextIndex}` }])
-        await refreshProjectTree()
-        setSidebarTab('project')
-        })
-        await insertResourceChainRef.current
-        break
+    // 查看/工具菜单
+    'view:output': () => {
+      setShowOutput(prev => !prev)
+    },
+    'view:library': () => {
+      setShowLibrary(true)
+    },
+    'tools:library': () => {
+      setShowLibrary(true)
+    },
+    'tools:settings': () => {
+      setShowSettings(true)
+    },
+    'tools:themeManager': () => {
+      setShowThemeManager(true)
+    },
+    'help:about': () => {
+      setShowAbout(true)
+    },
+
+    // 插入菜单
+    'insert:sub': () => {
+      editorRef.current?.insertDeclaration()
+    },
+    'insert:localVar': () => {
+      editorRef.current?.insertLocalVariable()
+    },
+    'insert:module': async () => {
+      const dir = currentProjectDirRef.current
+      if (!dir) return
+      // 生成不重复的文件名
+      const existingFiles = projectTree[0]?.children
+        ?.find(c => c.id === '_cat_sources')?.children?.map(c => c.id) || []
+      let n = 1
+      while (existingFiles.includes('程序集' + n + '.eyc')) n++
+      const newFileName = '程序集' + n + '.eyc'
+      const assemblyName = '程序集' + n
+      const content = '.版本 2\n.程序集 ' + assemblyName + '\n\n.子程序 子程序1\n\n'
+      await window.api?.project?.addFile(dir, newFileName, 'EYC', content)
+      // 更新项目树：添加新文件到程序集分类
+      setProjectTree(prev => prev.map(root => ({
+        ...root,
+        children: root.children?.map(cat =>
+          cat.id === '_cat_sources'
+            ? { ...cat, children: [...(cat.children || []), { id: newFileName, label: assemblyName, type: 'module' as const, children: extractSubroutineNodes(content, newFileName), expanded: false }] }
+            : cat
+        )
+      })))
+      // 打开新文件
+      const filePath = joinPath(dir, newFileName)
+      editorRef.current?.openFile({ id: filePath, label: assemblyName, language: 'eyc', value: content, savedValue: content, filePath })
+    },
+    'insert:classModule': async () => {
+      const dir = currentProjectDirRef.current
+      if (!dir) return
+      // 生成不重复的文件名（放在程序集分类下）
+      const existingFiles = projectTree[0]?.children
+        ?.find(c => c.id === '_cat_sources')?.children?.map(c => c.id) || []
+      let n = 1
+      while (existingFiles.includes('类模块' + n + '.ecc')) n++
+      const newFileName = '类模块' + n + '.ecc'
+      const className = '类' + n
+      const content =
+        '.版本 2\n\n' +
+        '.程序集 ' + className + ', , , \n\n' +
+        '.子程序 _初始化, , , , 当基于本类的对象被创建后，此方法会被自动调用\n\n\n\n' +
+        '.子程序 _销毁, , , , 当基于本类的对象被销毁前，此方法会被自动调用\n\n'
+      await window.api?.project?.addFile(dir, newFileName, 'EYC', content)
+      // 更新项目树：添加新文件到程序集分类
+      setProjectTree(prev => prev.map(root => ({
+        ...root,
+        children: root.children?.map(cat =>
+          cat.id === '_cat_sources'
+            ? { ...cat, children: [...(cat.children || []), { id: newFileName, label: className, type: 'module' as const, children: extractSubroutineNodes(content, newFileName), expanded: false }] }
+            : cat
+        )
+      })))
+      // 打开新文件（使用 EYC 编辑体验）
+      const filePath = joinPath(dir, newFileName)
+      editorRef.current?.openFile({ id: filePath, label: className, language: 'eyc', value: content, savedValue: content, filePath })
+    },
+    'insert:globalVar': async () => {
+      const dir = currentProjectDirRef.current
+      if (!dir) return
+      const existingFiles = projectTree[0]?.children
+        ?.find(c => c.id === '_cat_globals')?.children?.map(c => c.id) || []
+      const globalFileName = '全局变量.egv'
+      const filePath = joinPath(dir, globalFileName)
+
+      // 优先使用编辑器中的最新内容（含未保存修改），再回退到磁盘内容
+      const editorFiles = editorRef.current?.getEditorFiles()
+      const fromEditor = editorFiles?.[globalFileName]
+      const fromDisk = fromEditor === undefined ? await window.api?.project?.readFile(filePath) : undefined
+      const baseContent = (fromEditor ?? fromDisk ?? '.版本 2\n\n').replace(/\r\n/g, '\n')
+
+      let n = 1
+      while (new RegExp('^\\.全局变量\\s+全局变量' + n + '(?:,|\\s|$)', 'm').test(baseContent)) n++
+      const varName = '全局变量' + n
+      const appendLine = '.全局变量 ' + varName + ', 整数型'
+      const content = baseContent.trimEnd() + '\n' + appendLine + '\n\n'
+
+      if (!existingFiles.includes(globalFileName)) {
+        await window.api?.project?.addFile(dir, globalFileName, 'EGV', content)
+        setProjectTree(prev => prev.map(root => ({
+          ...root,
+          children: root.children?.map(cat =>
+            cat.id === '_cat_globals'
+              ? { ...cat, children: [...(cat.children || []), { id: globalFileName, label: stripFileExtension(globalFileName), type: 'module' as const, children: extractGlobalVarNodes(content, globalFileName), expanded: false }] }
+              : cat
+          )
+        })))
+      } else {
+        await window.api?.file?.save(filePath, content)
       }
 
-      // 主题切换
-      default:
-        if (action.startsWith('theme:')) {
-          const themeName = action.substring(6)
-          applyTheme(themeName)
+      editorRef.current?.upsertFile({ id: filePath, label: stripFileExtension(globalFileName), language: 'egv', value: content, savedValue: content, filePath })
+    },
+    'insert:constant': async () => {
+      const dir = currentProjectDirRef.current
+      if (!dir) return
+      const existingFiles = projectTree[0]?.children
+        ?.find(c => c.id === '_cat_constants')?.children?.map(c => c.id) || []
+      const constantFileName = '常量.ecs'
+      const filePath = joinPath(dir, constantFileName)
+
+      // 优先使用编辑器中的最新内容（含未保存修改），再回退到磁盘内容
+      const editorFiles = editorRef.current?.getEditorFiles()
+      const fromEditor = editorFiles?.[constantFileName]
+      const fromDisk = fromEditor === undefined ? await window.api?.project?.readFile(filePath) : undefined
+      const baseContent = (fromEditor ?? fromDisk ?? '.版本 2\n\n').replace(/\r\n/g, '\n')
+
+      let n = 1
+      while (new RegExp('^\\.常量\\s+常量' + n + '(?:,|\\s|$)', 'm').test(baseContent)) n++
+      const constName = '常量' + n
+      const appendLine = '.常量 ' + constName + ', 0'
+      const content = baseContent.trimEnd() + '\n' + appendLine + '\n\n'
+
+      if (!existingFiles.includes(constantFileName)) {
+        await window.api?.project?.addFile(dir, constantFileName, 'ECS', content)
+        setProjectTree(prev => prev.map(root => ({
+          ...root,
+          children: root.children?.map(cat =>
+            cat.id === '_cat_constants'
+              ? { ...cat, children: [...(cat.children || []), { id: constantFileName, label: stripFileExtension(constantFileName), type: 'module' as const, children: extractConstantNodes(content, constantFileName), expanded: false }] }
+              : cat
+          )
+        })))
+      } else {
+        await window.api?.file?.save(filePath, content)
+      }
+
+      editorRef.current?.upsertFile({ id: filePath, label: stripFileExtension(constantFileName), language: 'ecs', value: content, savedValue: content, filePath })
+    },
+    'insert:dataType': async () => {
+      const dir = currentProjectDirRef.current
+      if (!dir) return
+      const existingFiles = projectTree[0]?.children
+        ?.find(c => c.id === '_cat_datatypes')?.children?.map(c => c.id) || []
+      const dataTypeFileName = '自定义数据类型.edt'
+      const filePath = joinPath(dir, dataTypeFileName)
+
+      // 优先使用编辑器中的最新内容（含未保存修改），再回退到磁盘内容
+      const editorFiles = editorRef.current?.getEditorFiles()
+      const fromEditor = editorFiles?.[dataTypeFileName]
+      const fromDisk = fromEditor === undefined ? await window.api?.project?.readFile(filePath) : undefined
+      const baseContent = (fromEditor ?? fromDisk ?? '.版本 2\n\n').replace(/\r\n/g, '\n')
+
+      let n = 1
+      while (new RegExp('^\\.数据类型\\s+数据类型' + n + '(?:,|\\s|$)', 'm').test(baseContent)) n++
+      const dataTypeName = '数据类型' + n
+      const appendBlock = '.数据类型 ' + dataTypeName + '\n    .成员 成员1, 整数型'
+      const content = baseContent.trimEnd() + '\n' + appendBlock + '\n\n'
+
+      if (!existingFiles.includes(dataTypeFileName)) {
+        await window.api?.project?.addFile(dir, dataTypeFileName, 'EDT', content)
+        setProjectTree(prev => prev.map(root => ({
+          ...root,
+          children: root.children?.map(cat =>
+            cat.id === '_cat_datatypes'
+              ? { ...cat, children: [...(cat.children || []), { id: dataTypeFileName, label: stripFileExtension(dataTypeFileName), type: 'module' as const, children: extractDataTypeNodes(content, dataTypeFileName), expanded: false }] }
+              : cat
+          )
+        })))
+      } else {
+        await window.api?.file?.save(filePath, content)
+      }
+
+      editorRef.current?.upsertFile({ id: filePath, label: stripFileExtension(dataTypeFileName), language: 'edt', value: content, savedValue: content, filePath })
+    },
+    'insert:dllCmd': async () => {
+      const dir = currentProjectDirRef.current
+      if (!dir) return
+      const existingFiles = projectTree[0]?.children
+        ?.find(c => c.id === '_cat_dllcmds')?.children?.map(c => c.id) || []
+      const dllFileName = 'DLL命令.ell'
+      const filePath = joinPath(dir, dllFileName)
+
+      // 优先使用编辑器中的最新内容（含未保存修改），再回退到磁盘内容
+      const editorFiles = editorRef.current?.getEditorFiles()
+      const fromEditor = editorFiles?.[dllFileName]
+      const fromDisk = fromEditor === undefined ? await window.api?.project?.readFile(filePath) : undefined
+      const baseContent = (fromEditor ?? fromDisk ?? '.版本 2\n\n').replace(/\r\n/g, '\n')
+
+      let n = 1
+      while (new RegExp('^\\.DLL命令\\s+DLL命令' + n + '(?:,|\\s|$)', 'm').test(baseContent)) n++
+      const dllName = 'DLL命令' + n
+      const appendLine = '.DLL命令 ' + dllName + ', , "", ""'
+      const content = baseContent.trimEnd() + '\n' + appendLine + '\n\n'
+
+      if (!existingFiles.includes(dllFileName)) {
+        await window.api?.project?.addFile(dir, dllFileName, 'ELL', content)
+        setProjectTree(prev => prev.map(root => ({
+          ...root,
+          children: root.children?.map(cat =>
+            cat.id === '_cat_dllcmds'
+              ? { ...cat, children: [...(cat.children || []), { id: dllFileName, label: stripFileExtension(dllFileName), type: 'module' as const, children: extractDllCommandNodes(content, dllFileName), expanded: false }] }
+              : cat
+          )
+        })))
+      } else {
+        await window.api?.file?.save(filePath, content)
+      }
+
+      editorRef.current?.upsertFile({ id: filePath, label: stripFileExtension(dllFileName), language: 'ell', value: content, savedValue: content, filePath })
+    },
+    'insert:ptrCmd': async () => {
+      const dir = currentProjectDirRef.current
+      if (!dir) return
+      const existingFiles = projectTree[0]?.children
+        ?.find(c => c.id === '_cat_dllcmds')?.children?.map(c => c.id) || []
+      const dllFileName = 'DLL命令.ell'
+      const filePath = joinPath(dir, dllFileName)
+
+      // 优先使用编辑器中的最新内容（含未保存修改），再回退到磁盘内容
+      const editorFiles = editorRef.current?.getEditorFiles()
+      const fromEditor = editorFiles?.[dllFileName]
+      const fromDisk = fromEditor === undefined ? await window.api?.project?.readFile(filePath) : undefined
+      const baseContent = (fromEditor ?? fromDisk ?? '.版本 2\n\n').replace(/\r\n/g, '\n')
+
+      let n = 1
+      while (new RegExp('^\\.指针命令\\s+指针命令' + n + '(?:,|\\s|$)', 'm').test(baseContent)) n++
+      const ptrName = '指针命令' + n
+      const appendLine = '.指针命令 ' + ptrName
+      const content = baseContent.trimEnd() + '\n' + appendLine + '\n\n'
+
+      if (!existingFiles.includes(dllFileName)) {
+        await window.api?.project?.addFile(dir, dllFileName, 'ELL', content)
+        setProjectTree(prev => prev.map(root => ({
+          ...root,
+          children: root.children?.map(cat =>
+            cat.id === '_cat_dllcmds'
+              ? { ...cat, children: [...(cat.children || []), { id: dllFileName, label: stripFileExtension(dllFileName), type: 'module' as const, children: extractDllCommandNodes(content, dllFileName), expanded: false }] }
+              : cat
+          )
+        })))
+      } else {
+        await window.api?.file?.save(filePath, content)
+      }
+
+      editorRef.current?.upsertFile({ id: filePath, label: stripFileExtension(dllFileName), language: 'ell', value: content, savedValue: content, filePath })
+    },
+    'insert:window': async () => {
+      const dir = currentProjectDirRef.current
+      if (!dir) return
+
+      const existingWindowFiles = projectTree[0]?.children
+        ?.find(c => c.id === '_cat_windows')?.children?.map(c => c.id) || []
+
+      let n = 1
+      while (existingWindowFiles.includes('窗口' + n + '.efw')) n++
+
+      const windowName = '窗口' + n
+      const efwFileName = windowName + '.efw'
+      const eycFileName = windowName + '.eyc'
+
+      const efwData = JSON.stringify({
+        type: 'window',
+        name: windowName,
+        title: windowName,
+        width: 592,
+        height: 384,
+        sourceFile: eycFileName,
+        controls: [],
+      }, null, 2)
+
+      const eycContent = '.版本 2\n.程序集 窗口程序集_' + windowName + '\n\n'
+
+      await window.api?.project?.addFile(dir, efwFileName, 'EFW', efwData)
+      await window.api?.project?.addFile(dir, eycFileName, 'EYC', eycContent)
+
+      setProjectTree(prev => prev.map(root => ({
+        ...root,
+        children: root.children?.map(cat => {
+          if (cat.id === '_cat_windows') {
+            return {
+              ...cat,
+              children: [...(cat.children || []), { id: efwFileName, label: windowName, type: 'window' as const }],
+            }
+          }
+          if (cat.id === '_cat_sources') {
+            return {
+              ...cat,
+              children: [...(cat.children || []), {
+                id: eycFileName,
+                label: extractAssemblyLabel(eycContent) || stripFileExtension(eycFileName),
+                type: 'module' as const,
+                children: extractSubroutineNodes(eycContent, eycFileName),
+                expanded: false,
+              }],
+            }
+          }
+          return cat
+        }),
+      })))
+
+      await openFileByPath(joinPath(dir, efwFileName))
+    },
+    'insert:resource': async () => {
+      // 串行排队(见 insertResourceChainRef 注释):连点各自基于前一次产物,消除读改写竞态
+      insertResourceChainRef.current = insertResourceChainRef.current.then(async () => {
+      const dir = currentProjectDirRef.current
+      if (!dir) return
+
+      const resourceFileName = '资源表.erc'
+      const resourceTablePath = joinPath(dir, resourceFileName)
+      const editorFiles = editorRef.current?.getEditorFiles?.() || {}
+
+      let content = ''
+      let fileExists = false
+      if (typeof editorFiles[resourceFileName] === 'string') {
+        content = editorFiles[resourceFileName]
+        fileExists = true
+      } else {
+        const diskContent = await window.api?.project?.readFile(resourceTablePath)
+        if (typeof diskContent === 'string') {
+          content = diskContent
+          fileExists = true
         }
-        break
-    }
-  }, [openProjectByEppPath, openWorkspaceFolderByPath, openFileByPath, extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes, applyTheme, handleCompile, handleCompileRun, handleStop, handleAppClose, joinPath, projectTree, refreshProjectTree, toggleBreakpoint, isProjectWorkspace, currentProjectDir, breakpointsByFile, targetArch, continueDebugRun, getBaseName, runEProjectImport])
+      }
+
+      if (!fileExists) {
+        content = '.版本 2\n'
+      }
+
+      content = normalizeResourceTableContent(content)
+
+      const lines = content.replace(/\r\n/g, '\n').split('\n')
+      let nextIndex = 1
+      for (const line of lines) {
+        const match = /^\s*\.(?:资源|常量)\s+资源(\d+)\b/.exec(line)
+        if (!match) continue
+        const n = Number(match[1])
+        if (Number.isFinite(n) && n >= nextIndex) nextIndex = n + 1
+      }
+
+      const newRow = `.资源 资源${nextIndex}, "", 其它`
+      let normalized = content.replace(/\r\n/g, '\n')
+      if (normalized.length > 0 && !normalized.endsWith('\n')) {
+        normalized += '\n'
+      }
+      const nextContent = `${normalized}${newRow}\n`
+
+      // UI 先行:先更新编辑器让表格**立即**显示新行,写盘/树刷新跟在后面——否则"写盘→更新编辑器
+      // →刷新项目树"串行下点击到出行有约 1 秒延迟,用户会以为没生效再点一次(实测录屏感知)。
+      editorRef.current?.upsertFile({
+        id: resourceTablePath,
+        label: stripFileExtension(resourceFileName),
+        language: 'erc',
+        value: nextContent,
+        savedValue: nextContent,
+        filePath: resourceTablePath,
+      })
+
+      if (fileExists) {
+        await window.api?.file?.save(resourceTablePath, nextContent)
+      } else {
+        const addResult = await window.api?.project?.addFile(dir, resourceFileName, 'ERC', nextContent)
+        if (typeof addResult !== 'string' || addResult.length === 0) {
+          setOutputMessages(prev => [...prev, { type: 'error', text: '创建资源表失败: addFile 返回无效结果' }])
+          return
+        }
+      }
+
+      setOutputMessages(prev => [...prev, { type: 'info', text: `已在 ${resourceFileName} 插入空资源: 资源${nextIndex}` }])
+      await refreshProjectTree()
+      setSidebarTab('project')
+      })
+      await insertResourceChainRef.current
+    },
+
+    // 主题切换（查看 → 主题 子菜单）
+    'theme:apply': (themeName: unknown) => {
+      applyTheme(String(themeName))
+    },
+  })
+
+  // 兼容改造前的 action 字符串调用（项目树右键菜单、工具栏等），统一转成命令执行
+  const handleMenuAction = useCallback((action: string) => executeLegacyAction(action), [])
 
   // 项目树节点右键操作：新建程序集/类模块/子程序、删除程序集或类模块
   // 窗口复制剪贴板：记录被复制窗口的 .efw 文件名（粘贴时按当前内容读取复制体）
@@ -4311,15 +4309,18 @@ function App(): React.JSX.Element {
   }, [handleMenuAction, joinPath, projectTree, copiedWindowFile, extractSubroutineNodes, openFileByPath])
 
   useEffect(() => {
-    const handleNativeMenuAction = (action: unknown) => {
-      if (typeof action !== 'string') return
-      void handleMenuAction(action)
+    // macOS 原生菜单：主进程发来 { command, args }
+    const handleNativeMenuAction = (payload: unknown) => {
+      if (typeof payload === 'string') {
+        void handleMenuAction(payload)
+        return
+      }
+      const { command, args } = (payload ?? {}) as { command?: unknown; args?: unknown }
+      if (typeof command !== 'string') return
+      void executeCommand(command, ...(Array.isArray(args) ? args : []))
     }
 
-    window.api.on('menu:action', handleNativeMenuAction)
-    return () => {
-      window.api.off('menu:action')
-    }
+    return window.api.on('menu:action', handleNativeMenuAction)
   }, [handleMenuAction])
 
   useEffect(() => {
@@ -4489,79 +4490,18 @@ function App(): React.JSX.Element {
     }
   }, [buildProjectTreeFromEpp, closeCurrentProject, joinPath, pushRecentOpened])
 
-  // 全局快捷键
+  // 全局快捷键：按键与命令的对应关系由插件清单的 keybindings 贡献点声明
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
       // 已被子组件处理
       if (e.defaultPrevented) return
       // 弹窗打开时不处理快捷键
       if (showLibrary || showNewProject) return
-
-      const ctrl = e.ctrlKey || e.metaKey
-      const shift = e.shiftKey
-      const code = e.code
-      const key = e.key
-
-      let action: string | null = null
-
-      // 文件菜单
-      if (ctrl && !e.altKey && !shift && code === 'KeyN') action = 'insert:sub'
-      else if (ctrl && e.altKey && !shift && code === 'KeyN') action = 'file:newFile'
-      else if (ctrl && !shift && code === 'KeyO') action = 'file:openFile'
-      else if (ctrl && e.altKey && shift && code === 'KeyN') action = 'file:newProject'
-      else if (ctrl && shift && code === 'KeyO') action = 'file:openProject'
-      else if (ctrl && e.altKey && !shift && code === 'KeyO') action = 'file:openWorkspaceFolder'
-      else if (ctrl && shift && code === 'KeyS') action = 'file:saveAll'
-      else if (ctrl && e.altKey && !shift && code === 'KeyS') action = 'file:saveAs'
-      else if (ctrl && !shift && code === 'KeyS') action = 'file:save'
-      else if (ctrl && !shift && code === 'KeyW') action = 'file:closeFile'
-      // 编辑菜单
-      else if (ctrl && !shift && code === 'KeyZ') action = 'edit:undo'
-      else if (isRedoShortcut(e, runtimePlatform)) action = 'edit:redo'
-      else if (ctrl && !shift && code === 'KeyJ') action = 'nav:back'  // 跳回先前位置
-      else if (ctrl && !shift && code === 'KeyX') action = 'edit:cut'
-      else if (ctrl && !shift && code === 'KeyC') action = 'edit:copy'
-      else if (ctrl && !shift && code === 'KeyV') action = 'edit:paste'
-      else if (ctrl && !shift && code === 'KeyF') action = 'edit:find'
-      else if (ctrl && !shift && code === 'KeyH') action = 'edit:replace'
-      // 编译菜单
-      else if (ctrl && !shift && key === 'F7') action = 'build:compile'
-      else if (!ctrl && !shift && key === 'F7') action = 'build:build'
-      // 调试菜单
-      else if (!ctrl && !shift && key === 'F5') action = 'build:run'
-      else if (!ctrl && shift && key === 'F5') action = 'debug:stop'
-      else if (!ctrl && !shift && key === 'F9') action = 'debug:toggleBreakpoint'
-      else if (!ctrl && !shift && key === 'F10') action = 'debug:stepOver'
-      else if (ctrl && !shift && key === 'F8') action = 'debug:runToCursor'
-      else if (!ctrl && !shift && key === 'F11') action = 'debug:stepInto'
-      else if (!ctrl && shift && key === 'F11') action = 'debug:stepOut'
-      // 帮助
-      // 插入菜单
-      else if (ctrl && !shift && code === 'KeyL') action = 'insert:localVar'
-      else if (!ctrl && !shift && key === 'F1') action = 'help:topics'
-
-      if (action) {
-        // 编辑类快捷键在可编辑控件中时让控件自身处理（含 Monaco 文本模式）
-        const activeEl = document.activeElement as HTMLElement | null
-        const tag = activeEl?.tagName
-        const isEditableContext = !!activeEl && (
-          tag === 'INPUT'
-          || tag === 'TEXTAREA'
-          || tag === 'SELECT'
-          || activeEl.isContentEditable
-          || !!activeEl.closest('[contenteditable="true"]')
-          || !!activeEl.closest('.monaco-editor')
-        )
-        if (action.startsWith('edit:') && action !== 'edit:find' && action !== 'edit:replace' && isEditableContext) return
-        // 有浏览器原生文本选中时，让浏览器处理复制/剪切/全选
-        if ((action === 'edit:copy' || action === 'edit:cut' || action === 'edit:selectAll') && window.getSelection()?.toString()) return
-        e.preventDefault()
-        handleMenuAction(action)
-      }
+      dispatchKeybinding(e)
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [handleMenuAction, runtimePlatform, showLibrary, showNewProject])
+  }, [showLibrary, showNewProject])
 
   const openProjectExplorer = useCallback(() => {
     setSidebarCollapsed(false)
@@ -5673,7 +5613,7 @@ function App(): React.JSX.Element {
 
   return (
     <div className={`app${isWorkspaceEmpty ? ' app-empty-workspace' : ''}`}>
-      <TitleBar onMenuAction={handleMenuAction} onWindowClose={handleWindowCloseClick} runtimePlatform={runtimePlatform} hasProject={!!currentProjectDir && isProjectWorkspace} hasWorkspace={!!currentProjectDir} hasOpenFile={(openProjectFiles?.length ?? 0) > 0} themes={themeList} currentTheme={currentTheme} recentOpened={recentOpened} />
+      <TitleBar onCommand={executeCommand} onWindowClose={handleWindowCloseClick} runtimePlatform={runtimePlatform} hasProject={!!currentProjectDir && isProjectWorkspace} hasWorkspace={!!currentProjectDir} hasOpenFile={(openProjectFiles?.length ?? 0) > 0} themes={themeList} currentTheme={currentTheme} recentOpened={recentOpened} />
       <Toolbar
         hasProject={!!currentProjectDir && isProjectWorkspace}
         canCompileRun={canCompileRunCurrentTab}

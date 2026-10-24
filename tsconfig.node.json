@@ -9,7 +9,8 @@
     "forceConsistentCasingInFileNames": true,
     "composite": true,
     "outDir": "./out/main",
-    "rootDir": "."
+    "rootDir": ".",
+    "resolveJsonModule": true
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*", "electron.vite.config.ts"]
+  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*", "src/plugins/**/*.json", "electron.vite.config.ts"]
 }

@@ -1,0 +1,45 @@
+{
+  "id": "ycide.project",
+  "displayName": "项目管理",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "插入菜单：向项目添加程序集、类模块、窗口、全局变量、常量、数据类型、DLL 命令和资源。",
+  "builtin": true,
+  "engines": { "ycide": ">=0.0.5" },
+  "contributes": {
+    "menubarMenus": [
+      { "id": "insert", "title": "插入", "mnemonic": "I", "order": 40 }
+    ],
+    "commands": [
+      { "id": "insert:globalVar", "title": "全局变量", "enablement": "projectOpen" },
+      { "id": "insert:constant", "title": "常量", "enablement": "projectOpen" },
+      { "id": "insert:dataType", "title": "自定义数据类型", "enablement": "projectOpen" },
+      { "id": "insert:dllCmd", "title": "DLL命令", "enablement": "projectOpen" },
+      { "id": "insert:ptrCmd", "title": "指针命令", "enablement": "projectOpen" },
+      { "id": "insert:classModule", "title": "类模块", "enablement": "projectOpen" },
+      { "id": "insert:module", "title": "程序集", "enablement": "projectOpen" },
+      { "id": "insert:sub", "title": "子程序", "enablement": "projectOpen" },
+      { "id": "insert:localVar", "title": "局部变量" },
+      { "id": "insert:window", "title": "窗口", "enablement": "projectOpen" },
+      { "id": "insert:resource", "title": "资源", "enablement": "projectOpen" }
+    ],
+    "menus": {
+      "menubar/insert": [
+        { "command": "insert:globalVar", "mnemonic": "G", "group": "1_declare@1" },
+        { "command": "insert:constant", "mnemonic": "C", "group": "1_declare@2" },
+        { "command": "insert:dataType", "mnemonic": "T", "group": "1_declare@3" },
+        { "command": "insert:dllCmd", "mnemonic": "D", "group": "1_declare@4" },
+        { "command": "insert:ptrCmd", "mnemonic": "P", "group": "1_declare@5" },
+        { "command": "insert:classModule", "mnemonic": "L", "group": "2_code@1" },
+        { "command": "insert:module", "mnemonic": "M", "group": "2_code@2" },
+        { "command": "insert:sub", "mnemonic": "S", "group": "2_code@3" },
+        { "command": "insert:window", "mnemonic": "W", "group": "3_ui@1" },
+        { "command": "insert:resource", "mnemonic": "R", "group": "3_ui@2" }
+      ]
+    },
+    "keybindings": [
+      { "command": "insert:sub", "key": "CmdOrCtrl+N" },
+      { "command": "insert:localVar", "key": "CmdOrCtrl+L" }
+    ]
+  }
+}
