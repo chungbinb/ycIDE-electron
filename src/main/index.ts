@@ -14,6 +14,7 @@ import { setRuntimeEnv } from './runtimeEnv'
 import { buildAndRunAndroidProject, shouldRunAsAndroid } from './android-runner'
 import { normalizeRuntimePlatform } from '../shared/platform'
 import { initPluginHost, getPluginService } from './plugins/electronPluginHost'
+import { CompilerService, DEFAULT_COMPILER_ID, readProjectValue } from './compilers/compilerService'
 import { buildContributionModel } from '../shared/plugin/contributions'
 import { resolveMenubar, type ResolvedMenuItem } from '../shared/plugin/contributions'
 import { buildRecentOpenedEntries, buildThemeEntries, RECENT_OPENED_SUBMENU, THEMES_SUBMENU } from '../shared/plugin/workbenchMenus'
@@ -1092,7 +1093,7 @@ function setupNativeMenu(): void {
   const pluginMenus = resolveMenubar(getPluginService()?.getModel() ?? buildContributionModel([]), {
     platform: 'macos',
     showMnemonics: false,
-    context: { projectOpen: true, workspaceOpen: true, fileOpen: true },
+    context: { projectOpen: true, workspaceOpen: true, fileOpen: true, compilerAvailable: compilerService.listCompilers().length > 0 },
     dynamicSubmenus: {
       [RECENT_OPENED_SUBMENU]: buildRecentOpenedEntries(recentOpenedItems),
       [THEMES_SUBMENU]: buildThemeEntries(themeMenuState.themes, themeMenuState.currentTheme, BUILTIN_THEME_IDS),
@@ -1127,6 +1128,82 @@ function setupNativeMenu(): void {
   ]
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+// 编译器由插件提供（设计稿 §6.5）：内置 Zig 编译器的实现在本进程，第三方编译器经插件命令实现
+const compilerService = new CompilerService({
+  getManifests: () => getPluginService()?.getState().manifests ?? [],
+  builtinBackends: {
+    [DEFAULT_COMPILER_ID]: entry => ({
+      id: entry.id,
+      displayName: entry.displayName,
+      build: async request => libraryManager.getList().some(l => l.isCore) ? compileViaWorker({
+        projectDir: request.projectDir,
+        debug: request.debug,
+        arch: request.arch,
+        mode: request.mode,
+        breakpoints: request.breakpoints,
+        previewWindow: request.previewWindow,
+      }, request.editorFiles) : {
+        success: false,
+        outputFile: '',
+        errorCount: 1,
+        warningCount: 0,
+        elapsedMs: 0,
+        error: '核心支持库（ycide.krnln）已停用：内置 Zig 编译器生成的程序依赖核心库运行时，无法编译。请在插件管理中启用核心支持库。',
+      },
+      run: async outputFile => runExecutable(outputFile),
+      stop: async () => stopExecutable(),
+      isRunning: async () => isRunning(),
+      continueDebug: async () => continueDebugExecutable(),
+    }),
+  },
+  executeCommand: (command, args) => {
+    const service = getPluginService()
+    if (!service) return Promise.reject(new Error('插件服务尚未启动'))
+    return service.executeCommand(command, args)
+  },
+  getDefaultCompilerId: () => readIDESettings().compilerId,
+  getLibraryImplementationLanguages: targetPlatform => libraryManager.getLoadedImplementationLanguages(targetPlatform),
+})
+
+/** 核心支持库文件被篡改或缺失（启动校验失败）：视同停用 */
+let coreLibraryTampered = false
+
+function coreLibraryDisabledByPlugin(): boolean {
+  return getPluginService()?.getState().plugins.some(p => p.id === 'ycide.krnln' && p.status !== 'enabled') ?? false
+}
+
+/** 支持库数据插件被停用（或因依赖不可用、清单出错）时，对应支持库视同未安装 */
+function syncLibraryPlugins(): void {
+  const disabled = new Set<string>()
+  for (const plugin of getPluginService()?.getState().plugins ?? []) {
+    if (plugin.status === 'enabled') continue
+    const manifest = getPluginService()!.getManifest(plugin.id)
+    for (const lib of manifest?.contributes?.libraries ?? []) disabled.add(lib.name)
+  }
+  if (coreLibraryTampered) disabled.add('krnln')
+  if (libraryManager.setDisabledLibraries(disabled)) {
+    BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.webContents.send('library:loaded') })
+    notifyWorkerLibrariesChanged()
+  }
+}
+
+function broadcastCompilerOutput(msg: { type: 'info' | 'warning' | 'error' | 'success'; text: string }): void {
+  BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.webContents.send('compiler:output', msg) })
+}
+
+/** 当前默认要用的编译器是不是内置 Zig（只有它需要预热编译缓存） */
+function usesBuiltinZig(): boolean {
+  return compilerService.pickCompiler()?.id === DEFAULT_COMPILER_ID
+}
+
+/** 预热状态：内置 Zig 走真实预热；用其他编译器时直接就绪；没有编译器时提示安装 */
+function getEffectiveWarmupState(): ReturnType<typeof getWarmupState> {
+  const picked = compilerService.pickCompiler()
+  if (!picked) return { phase: 'no-compiler', message: '没有可用的编译器：请在插件管理中启用编译器插件。' }
+  if (picked.id !== DEFAULT_COMPILER_ID) return { phase: 'ready', message: '' }
+  return getWarmupState()
 }
 
 app.whenReady().then(() => {
@@ -1228,6 +1305,8 @@ app.whenReady().then(() => {
   void initPluginHost(pluginHostPlatform, () => {
     // 插件增删、启停可能改变主题列表（插件贡献的主题），同步主题子菜单
     syncThemeMenuState(themeMenuState.currentTheme || readThemeConfigForWrite().currentThemeId)
+    // 支持库数据插件被停用时，对应支持库视同未安装
+    syncLibraryPlugins()
     setupNativeMenu()
   }).start()
   setupNativeMenu()
@@ -2263,8 +2342,8 @@ app.whenReady().then(() => {
   })
 
   // 编译环境预热：状态查询 + 主动触发（渲染进程据此禁用运行/编译按钮并显示进度）
-  ipcMain.handle('compiler:warmupState', () => getWarmupState())
-  ipcMain.handle('compiler:ensureWarm', () => ensureCompilerWarm(findZigCompiler()))
+  ipcMain.handle('compiler:warmupState', () => getEffectiveWarmupState())
+  ipcMain.handle('compiler:ensureWarm', () => (usesBuiltinZig() ? ensureCompilerWarm(findZigCompiler()) : getEffectiveWarmupState()))
 
   // AI 请求：模型来自插件贡献的 aiProviders（内置 DeepSeek / GLM 也是插件）+ 用户自定义模型；
   // API Key 按模型所属提供方取：内置提供方用原有设置字段，第三方提供方用 aiProviderApiKeys
@@ -2943,10 +3022,14 @@ app.whenReady().then(() => {
 
   // 编译器 IPC
   ipcMain.handle('compiler:compile', async (_event, projectDir: string, editorFilesObj?: Record<string, string>, arch?: string) => {
-    // 编译走工作线程，避免阻塞主进程导致 IDE「停止响应」。
+    // 编译器由插件提供（内置 Zig 编译器走工作线程，避免阻塞主进程导致 IDE「停止响应」）。
     // 普通编译 = 发布编译：debug=false → 关掉断点/逐行调试输出（YC_DEBUG_BUILD=0），
     // 并让编译走用户在设置里选的优化级别（运行 F5 才强制 O0 保证响应速度）。
-    const result = await compileViaWorker({ projectDir, debug: false, arch, mode: 'compile' }, editorFilesObj)
+    const result = await compilerService.compile(
+      { projectDir, debug: false, arch, mode: 'compile', editorFiles: editorFilesObj },
+      readProjectValue(projectDir, 'Platform') || runtimePlatform,
+    )
+    if (result.error) broadcastCompilerOutput({ type: 'error', text: result.error })
     // 编译成功后在资源管理器里打开输出目录并选中产物，方便用户直接取用 exe
     if (result.success && result.outputFile) {
       try { shell.showItemInFolder(result.outputFile) } catch { /* 打开资源管理器失败无害，不影响编译结果 */ }
@@ -2968,21 +3051,18 @@ app.whenReady().then(() => {
       const editorFiles = editorFilesObj ? new Map(Object.entries(editorFilesObj)) : undefined
       return buildAndRunAndroidProject(projectDir, settings, editorFiles)
     }
-    // 编译在工作线程完成（不卡界面）；运行 exe 仍在主进程（本就用子进程，不阻塞，且涉及调试交互）。
-    const result = await compileViaWorker({ projectDir, debug: true, arch, mode: 'run', breakpoints: debugOptions?.breakpoints || {}, previewWindow: debugOptions?.previewWindow }, editorFilesObj)
-    if (result.success && result.outputFile) {
-      runExecutable(result.outputFile)
-    }
+    // 内置 Zig 编译器：编译在工作线程完成（不卡界面）；运行 exe 仍在主进程（本就用子进程，不阻塞，且涉及调试交互）。
+    const result = await compilerService.compileAndRun(
+      { projectDir, debug: true, arch, mode: 'run', breakpoints: debugOptions?.breakpoints || {}, previewWindow: debugOptions?.previewWindow, editorFiles: editorFilesObj },
+      runtimePlatform,
+    )
+    if (result.error) broadcastCompilerOutput({ type: 'error', text: result.error })
     return result
   })
 
-  ipcMain.handle('compiler:stop', () => {
-    return stopExecutable()
-  })
+  ipcMain.handle('compiler:stop', () => compilerService.stop())
 
-  ipcMain.handle('compiler:isRunning', () => {
-    return isRunning()
-  })
+  ipcMain.handle('compiler:isRunning', () => compilerService.isRunning())
 
   // 渲染进程诊断日志
   ipcMain.handle('debug:logRendererError', (_event, payload: { source?: string; message: string; stack?: string; extra?: unknown }) => {
@@ -3014,15 +3094,19 @@ app.whenReady().then(() => {
     return getRendererDebugLogPath()
   })
 
-  ipcMain.handle('debug:continue', () => {
-    return continueDebugExecutable()
-  })
+  ipcMain.handle('debug:continue', () => compilerService.continueDebug())
 
-  const coreLibraryValidation = libraryManager.validateCoreLibraryIntegrity()
-  if (!coreLibraryValidation.ok) {
-    dialog.showErrorBox('核心支持库校验失败', coreLibraryValidation.errors.join('\n'))
-    app.quit()
-    return
+  // 核心支持库也是可卸载的插件（设计稿 §6.6）：校验失败不再退出，停用核心库并以空壳模式运行
+  if (!coreLibraryDisabledByPlugin()) {
+    const coreLibraryValidation = libraryManager.validateCoreLibraryIntegrity()
+    if (!coreLibraryValidation.ok) {
+      coreLibraryTampered = true
+      syncLibraryPlugins()
+      dialog.showErrorBox(
+        '核心支持库校验失败',
+        `${coreLibraryValidation.errors.join('\n')}\n\n已停用核心支持库，IDE 将以空壳模式运行：可以编辑代码，但没有核心命令和基础窗口组件，也无法编译。重新安装 ycIDE 可恢复。`,
+      )
+    }
   }
 
   // 启动时自动扫描并加载上次已加载的支持库
@@ -3032,7 +3116,7 @@ app.whenReady().then(() => {
 
   // 启动即在后台检查/预热编译环境：热则 1 秒内就绪，冷则边预热边由状态栏提示、
   // 期间运行/编译按钮禁用（详见 compilerWarmup.ts）。不阻塞窗口创建。
-  setTimeout(() => { void ensureCompilerWarm(findZigCompiler()) }, 1200)
+  setTimeout(() => { if (usesBuiltinZig()) void ensureCompilerWarm(findZigCompiler()) }, 1200)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

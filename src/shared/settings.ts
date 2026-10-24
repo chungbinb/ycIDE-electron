@@ -55,6 +55,8 @@ export interface IDESettings {
   aiCustomModels: AICustomModelConfig[]
   /** 插件提供的模型的 API Key：键为「插件ID:提供方ID」（内置 DeepSeek / GLM 仍用上面两个字段） */
   aiProviderApiKeys: Record<string, string>
+  /** 默认编译器（编译器插件提供的编译器 ID）；空 = 自动（优先内置 Zig 编译器）。项目文件里的 Compiler= 优先 */
+  compilerId: string
   /** 支持库在线索引地址 */
   libraryStoreIndexUrl: string
   /**
@@ -106,6 +108,7 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   aiGlmApiKey: '',
   aiCustomModels: [],
   aiProviderApiKeys: {},
+  compilerId: '',
   libraryStoreIndexUrl: DEFAULT_LIBRARY_STORE_INDEX_URL,
   compilerZigPath: '',
   compilerOptimizeLevel: 'O2',
@@ -167,6 +170,7 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
     aiGlmApiKey: resolveSecret(raw.aiGlmApiKey, d.aiGlmApiKey),
     aiCustomModels: resolveCustomModels(raw.aiCustomModels),
     aiProviderApiKeys: resolveProviderApiKeys(raw.aiProviderApiKeys),
+    compilerId: typeof raw.compilerId === 'string' ? raw.compilerId.trim() : d.compilerId,
     libraryStoreIndexUrl: resolveUrl(raw.libraryStoreIndexUrl, d.libraryStoreIndexUrl),
     compilerZigPath: resolvePath(raw.compilerZigPath, d.compilerZigPath),
     compilerOptimizeLevel: resolveOptimizeLevel(raw.compilerOptimizeLevel, d.compilerOptimizeLevel),

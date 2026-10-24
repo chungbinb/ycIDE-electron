@@ -6,8 +6,16 @@ export type LibraryInstallStatus = 'missing' | 'downloaded' | 'installed' | 'loa
 
 export const DEFAULT_LIBRARY_STORE_INDEX_URL = 'https://ycide.dev/libraries/index.json'
 
+/**
+ * 商店条目类型：支持库、插件、主题共用同一个索引（设计稿 §13.1 第 4 条）。
+ * 支持库管理窗口只列 library；插件、主题由插件管理界面处理。
+ */
+export type StorePackageKind = 'library' | 'plugin' | 'theme'
+
 export interface LibraryPackageEntry {
   id: string
+  /** 缺省为 library，兼容只有支持库的旧索引 */
+  kind?: StorePackageKind
   displayName: string
   version: string
   packageFileName: string

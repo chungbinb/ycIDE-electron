@@ -1,0 +1,24 @@
+{
+  "id": "ycide.webview2",
+  "displayName": "WebView2 浏览器支持库",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "基于 Microsoft Edge WebView2 运行时的浏览框组件。（支持库数据插件：命令清单、窗口组件与各平台实现源码都在本目录）",
+  "builtin": true,
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "runtime": {
+    "type": "none"
+  },
+  "targets": [
+    "windows"
+  ],
+  "contributes": {
+    "libraries": [
+      {
+        "name": "webview2"
+      }
+    ]
+  }
+}

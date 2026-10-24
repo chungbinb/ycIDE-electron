@@ -20,6 +20,9 @@ test.describe('library store cards', () => {
     try {
       const fixtures = createLibraryStoreFixtures()
       const details = createLibraryInfoFixture()
+      // 先等主窗口出现（主进程此时已注册完 IPC 处理函数），再替换为测试桩；
+      // 抢在注册前替换会让主进程注册时报「重复注册」而中断启动
+      const window = await electronApp.firstWindow()
       await electronApp.evaluate(async ({ ipcMain }, { cards, infoMap }) => {
         let currentCards = cards
         ipcMain.removeHandler('library:getStoreCards')
@@ -33,7 +36,6 @@ test.describe('library store cards', () => {
         })
       }, { cards: [fixtures.windowsOnly, fixtures.allPlatform], infoMap: details })
 
-      const window = await electronApp.firstWindow()
       await window.waitForLoadState('domcontentloaded')
 
       await openLibraryDialog(window)

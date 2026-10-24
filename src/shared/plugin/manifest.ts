@@ -89,6 +89,10 @@ export interface PluginContributes {
   aiProviders?: unknown[]
   /** AI Agent 工具，见 aiContributions.ts */
   aiTools?: unknown[]
+  /** 编译器，见 src/main/compilers/compilerService.ts */
+  compilers?: unknown[]
+  /** 支持库：插件目录本身就是一个支持库目录（*.ycmd.json、window-units.json、impl/ 等），name 为支持库名 */
+  libraries?: Array<{ name: string }>
   [contributionPoint: string]: unknown
 }
 
@@ -103,6 +107,8 @@ export interface PluginManifest {
   platforms?: string[]
   /** 可加载的宿主类型；省略表示全部 */
   hosts?: PluginHostKind[]
+  /** 支持库、编译器专用：编译产物可运行的目标平台（与宿主平台无关，见设计稿 §3.4） */
+  targets?: string[]
   runtime?: { type: 'node' | 'executable' | 'none'; [key: string]: unknown }
   activationEvents?: string[]
   permissions?: string[]
@@ -294,6 +300,32 @@ export function validatePluginManifest(raw: unknown): ManifestValidationResult {
         if (tool.risk !== undefined && !['read', 'write', 'exec'].includes(String(tool.risk))) errors.push(`${where}: risk 只能是 read / write / exec`)
         if (tool.parameters !== undefined && !isRecord(tool.parameters)) errors.push(`${where}: parameters 必须是 JSON Schema 对象`)
       })
+    }
+
+    if (contributes.compilers !== undefined) {
+      if (!Array.isArray(contributes.compilers)) errors.push('contributes.compilers 必须是数组')
+      else contributes.compilers.forEach((compiler, i) => {
+        const where = `contributes.compilers[${i}]`
+        if (!isRecord(compiler) || !isNonEmptyString(compiler.id) || !isNonEmptyString(compiler.displayName)) {
+          errors.push(`${where}: 需要 id 和 displayName`)
+          return
+        }
+        for (const field of ['targets', 'acceptsImplementations'] as const) {
+          const value = compiler[field]
+          if (value !== undefined && (!Array.isArray(value) || value.some(v => !isNonEmptyString(v)))) errors.push(`${where}: ${field} 必须是字符串数组`)
+        }
+        if (compiler.commands !== undefined) {
+          if (!isRecord(compiler.commands) || !isNonEmptyString(compiler.commands.build)) errors.push(`${where}: commands.build 必须是命令 ID`)
+        } else if (!raw.builtin) {
+          errors.push(`${where}: 第三方编译器必须提供 commands.build`)
+        }
+      })
+    }
+
+    if (contributes.libraries !== undefined) {
+      if (!Array.isArray(contributes.libraries) || contributes.libraries.some(lib => !isRecord(lib) || !isNonEmptyString(lib.name))) {
+        errors.push('contributes.libraries 必须是 [{ name }] 数组')
+      }
     }
 
     if (contributes.themes !== undefined) {

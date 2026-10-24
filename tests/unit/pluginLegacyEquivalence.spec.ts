@@ -196,7 +196,7 @@ describe('标题栏菜单：插件清单生成的结果与改造前一致', () =
         const resolved = resolveMenubar(model, {
           platform,
           showMnemonics: true,
-          context: { projectOpen: state.hasProject, workspaceOpen: state.hasWorkspace, fileOpen: state.hasOpenFile },
+          context: { projectOpen: state.hasProject, workspaceOpen: state.hasWorkspace, fileOpen: state.hasOpenFile, compilerAvailable: true },
           dynamicSubmenus: {
             [RECENT_OPENED_SUBMENU]: buildRecentOpenedEntries(state.recentOpened),
             [THEMES_SUBMENU]: buildThemeEntries(state.themes, state.currentTheme, BUILTIN_THEME_IDS),

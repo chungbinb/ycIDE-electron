@@ -16,6 +16,7 @@ import { delimiter, dirname, join } from 'node:path'
 import { BUILTIN_PLUGIN_CANDIDATES } from '../../shared/plugin/builtinPlugins'
 import type { PluginHostPlatform } from '../../shared/plugin/manifest'
 import { PluginService, type PluginHostConnection } from './pluginService'
+import { libraryManager } from '../libraryManager'
 
 const RENDERER_COMMAND_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -73,10 +74,15 @@ function getBuiltinPluginsDir(): string {
   return app.isPackaged ? join(dirname(process.execPath), 'plugins') : join(app.getAppPath(), 'plugins')
 }
 
-/** 插件目录：用户数据目录下的 plugins，加上环境变量 YCIDE_EXTRA_PLUGIN_DIRS 指定的开发目录 */
+/**
+ * 插件目录：
+ *   - 内置支持库目录 lib/、用户安装的支持库目录（每个支持库目录带 plugin.json，即支持库数据插件，设计稿 §6.6）
+ *   - 用户数据目录下的 plugins
+ *   - 环境变量 YCIDE_EXTRA_PLUGIN_DIRS 指定的开发目录
+ */
 function resolvePluginDirs(): string[] {
   const extra = (process.env.YCIDE_EXTRA_PLUGIN_DIRS ?? '').split(delimiter).map(s => s.trim()).filter(Boolean)
-  return [join(app.getPath('userData'), 'plugins'), ...extra]
+  return [libraryManager.getLibFolder(), libraryManager.getInstalledLibrariesRoot(), join(app.getPath('userData'), 'plugins'), ...extra]
 }
 
 /** 创建插件服务并注册 IPC；onDidChange 供主进程刷新 macOS 原生菜单 */
@@ -88,6 +94,8 @@ export function initPluginHost(platform: PluginHostPlatform, onDidChange: () => 
       dir: join(getBuiltinPluginsDir(), (c.manifest as { id: string }).id),
     })),
     pluginDirs: resolvePluginDirs(),
+    // 只有随安装包发布的内置支持库目录可信（用户安装的支持库、插件、开发目录都不可信）
+    trustedDirs: [libraryManager.getLibFolder()],
     statePath: join(app.getPath('userData'), 'plugin-state.json'),
     platform,
     arch: process.arch === 'ia32' ? 'x86' : process.arch,
@@ -95,6 +103,7 @@ export function initPluginHost(platform: PluginHostPlatform, onDidChange: () => 
     spawnHost: spawnPluginHost,
     executeHostCommand: executeInRenderer,
     showMessage: params => broadcast('plugins:message', params),
+    appendOutput: params => broadcast('compiler:output', { type: params.type, text: params.text }),
     onDidChange: () => {
       broadcast('plugins:changed')
       onDidChange()

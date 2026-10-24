@@ -1,0 +1,24 @@
+{
+  "id": "ycide.script",
+  "displayName": "脚本语言支持组件",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "基于系统 IActiveScript 引擎的 JScript / VBScript 支持。（支持库数据插件：命令清单、窗口组件与各平台实现源码都在本目录）",
+  "builtin": true,
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "runtime": {
+    "type": "none"
+  },
+  "targets": [
+    "windows"
+  ],
+  "contributes": {
+    "libraries": [
+      {
+        "name": "script"
+      }
+    ]
+  }
+}

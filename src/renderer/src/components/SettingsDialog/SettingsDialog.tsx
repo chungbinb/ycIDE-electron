@@ -2,6 +2,7 @@ import './SettingsDialog.css'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { DEFAULT_IDE_SETTINGS, type IDESettings } from '../../../../shared/settings'
 import { collectAIModels, collectProviderKeySlots } from '../../../../shared/plugin/aiContributions'
+import { collectCompilers } from '../../../../shared/plugin/compilerContributions'
 import { useEnabledManifests } from '../../workbench/commands'
 
 interface SettingsDialogProps {
@@ -85,6 +86,7 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
     ...draft.aiCustomModels.map(m => ({ label: m.label, value: m.id })),
   ]
   const providerKeySlots = collectProviderKeySlots(manifests)
+  const compilers = collectCompilers(manifests)
 
   const updateDraft = useCallback(<K extends keyof IDESettings>(key: K, value: IDESettings[K]) => {
     setDraft(prev => {
@@ -405,6 +407,24 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
             <p className="settings-hint settings-hint-warning">
               未检测到编译器。请指定 Zig 编译器路径（zig.exe 或其所在目录），设置后会自动在后台准备编译环境。
             </p>
+          )}
+          <div className="settings-row">
+            <span className="settings-label">默认编译器</span>
+            <select
+              className="settings-input"
+              title="默认编译器（来自编译器插件；项目文件里的 Compiler= 优先）"
+              value={draft.compilerId}
+              onChange={(e) => updateDraft('compilerId', e.target.value)}
+            >
+              <option value="">自动（优先内置 Zig 编译器）</option>
+              {compilers.map(c => (
+                <option key={c.id} value={c.id}>{c.displayName}{c.builtin ? '' : `（插件 ${c.pluginId}）`}</option>
+              ))}
+            </select>
+            <span className="settings-unit" />
+          </div>
+          {compilers.length === 0 && (
+            <p className="settings-hint settings-hint-warning">没有可用的编译器：请在插件管理中启用编译器插件。</p>
           )}
           <div className="settings-row">
             <span className="settings-label">编译器路径</span>

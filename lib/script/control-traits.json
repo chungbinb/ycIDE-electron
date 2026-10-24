@@ -1,0 +1,9 @@
+{
+  "description": "脚本语言支持组件的组件与编译器内置实现的对应关系（见核心库 control-traits.json 的说明）。",
+  "traits": {
+    "scriptComponent": [
+      "脚本组件",
+      "Script"
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "id": "ycide.spec",
+  "displayName": "系统特殊功能支持库",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "调试输出、检查、延时等特殊功能命令。（支持库数据插件：命令清单、窗口组件与各平台实现源码都在本目录）",
+  "builtin": true,
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "runtime": {
+    "type": "none"
+  },
+  "targets": [
+    "windows"
+  ],
+  "contributes": {
+    "libraries": [
+      {
+        "name": "spec"
+      }
+    ]
+  }
+}

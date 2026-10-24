@@ -1,0 +1,26 @@
+{
+  "id": "ycide.krnln",
+  "displayName": "系统核心支持库",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "核心命令、常量与基础窗口组件。停用后 IDE 以空壳模式运行：可以编辑，但没有核心命令和基础窗口组件，内置 Zig 编译器也无法编译（其运行时依赖核心库）。（支持库数据插件：命令清单、窗口组件与各平台实现源码都在本目录）",
+  "builtin": true,
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "runtime": {
+    "type": "none"
+  },
+  "targets": [
+    "windows",
+    "linux",
+    "macos"
+  ],
+  "contributes": {
+    "libraries": [
+      {
+        "name": "krnln"
+      }
+    ]
+  }
+}

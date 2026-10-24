@@ -15,7 +15,15 @@ import {
   type CommandRegistrationParams,
   type ExecuteCommandParams,
   type ShowMessageParams,
+  type OutputAppendParams,
 } from './pluginProtocol'
+
+/** 去掉不可信清单里的 builtin 声明 */
+function untrust(manifest: unknown): unknown {
+  if (!manifest || typeof manifest !== 'object' || !('builtin' in manifest)) return manifest
+  const { builtin: _ignored, ...rest } = manifest as Record<string, unknown>
+  return rest
+}
 
 /** 不允许停用的内置插件（设计稿 §13.1 卸载规则：工作台外壳、项目管理） */
 export const NON_DISABLEABLE_PLUGINS: ReadonlySet<string> = new Set(['ycide.workbench', 'ycide.project'])
@@ -31,6 +39,12 @@ export interface PluginServiceOptions {
   builtinCandidates: PluginCandidate[]
   /** 用户插件目录，按顺序扫描；目录下每个子目录一个插件 */
   pluginDirs: string[]
+  /**
+   * 随安装包发布、可信的插件目录（如内置支持库目录 lib/）。只有这些目录里的插件清单可以声明 builtin；
+   * 其余目录（用户安装、开发目录）的插件一律按非内置处理——否则插件只要在清单里写 builtin: true，
+   * 就能借用内置提供方的 API Key、绕过 AI 工具调用确认。
+   */
+  trustedDirs?: string[]
   /** 停用列表的持久化文件 */
   statePath: string
   platform: PluginHostPlatform
@@ -42,6 +56,8 @@ export interface PluginServiceOptions {
   executeHostCommand(command: string, args: unknown[]): Promise<unknown>
   /** 插件请求在输出面板显示消息 */
   showMessage(params: ShowMessageParams): void
+  /** 插件往编译输出面板追加一行；未提供时并入 showMessage */
+  appendOutput?(params: OutputAppendParams): void
   /** 插件列表、贡献点或命令注册发生变化 */
   onDidChange(): void
   log?: (message: string) => void
@@ -111,10 +127,15 @@ export class PluginService {
           candidates.push({ manifest: { id: name }, source: pluginDir, dir: pluginDir, error: `plugin.json 不是合法 JSON：${(err as Error).message}` })
           continue
         }
-        candidates.push({ manifest, source: pluginDir, dir: pluginDir, error: this.checkEntry(manifest, pluginDir) })
+        candidates.push({ manifest: this.trusted(dir) ? manifest : untrust(manifest), source: pluginDir, dir: pluginDir, error: this.checkEntry(manifest, pluginDir) })
       }
     }
     return candidates
+  }
+
+  private trusted(dir: string): boolean {
+    const target = resolve(dir).toLowerCase()
+    return (this.options.trustedDirs ?? []).some(d => resolve(d).toLowerCase() === target)
   }
 
   private checkEntry(manifest: unknown, pluginDir: string): string | undefined {
@@ -174,6 +195,11 @@ export class PluginService {
 
   getModel(): ContributionModel {
     return this.model
+  }
+
+  /** 按 ID 取插件清单（含停用、不可用的插件；清单本身无效时没有） */
+  getManifest(id: string): PluginManifest | undefined {
+    return this.resolution.plugins.find(p => p.id === id)?.manifest
   }
 
   getState(): PluginServiceState {
@@ -246,6 +272,11 @@ export class PluginService {
       this.options.onDidChange()
     })
     rpc.onNotification('window/showMessage', params => this.options.showMessage(params as ShowMessageParams))
+    rpc.onNotification('output/append', params => {
+      const p = params as OutputAppendParams
+      if (this.options.appendOutput) this.options.appendOutput(p)
+      else this.options.showMessage({ pluginId: p.pluginId, type: p.type, message: p.text })
+    })
     rpc.onRequest('commands/executeHost', params => {
       const { command, args } = params as ExecuteCommandParams
       return this.executeCommand(command, args ?? [])
