@@ -1200,7 +1200,8 @@ function App(): React.JSX.Element {
 
   // 监听编译器输出
   useEffect(() => {
-    const handleOutput = (msg: OutputMessage) => {
+    const handleOutput = (payload: unknown) => {
+      const msg = payload as OutputMessage
       const text = msg.text || ''
       if (text.startsWith('__YCDBG_BREAK_BEGIN__|')) {
         const [, file = '', lineText = '0'] = text.split('|')
@@ -2394,11 +2395,9 @@ function App(): React.JSX.Element {
   const handleThemeManagerImportCommit = useCallback(async (
     request: { importedTheme: ThemeDefinition; decision?: ThemeImportConflictDecision }
   ): Promise<{ success: boolean; importedThemeId?: string; message?: string }> => {
+    // UI 测试注入的替身，签名与真实的 window.api.theme.importCommit 一致
     const testImportCommit = (window as Window & {
-      __ycideTestThemeImportCommit?: (payload: { importedTheme: ThemeDefinition; decision?: ThemeImportConflictDecision }) => Promise<{
-        success: boolean
-        importedThemeId?: string
-      } & ThemeLifecycleSyncPayload>
+      __ycideTestThemeImportCommit?: Window['api']['theme']['importCommit']
     }).__ycideTestThemeImportCommit
     const result = testImportCommit
       ? await testImportCommit(request)
@@ -4096,7 +4095,7 @@ function App(): React.JSX.Element {
 
     // 插件
     'plugins:reload': async () => {
-      const state = await window.api?.plugins?.reload() as { plugins: Array<{ id: string; status: string; reason?: string }> } | undefined
+      const state = await window.api?.plugins?.reload()
       if (!state) return
       const enabled = state.plugins.filter(p => p.status === 'enabled').length
       const problems = state.plugins.filter(p => p.status === 'error' || p.status === 'unavailable')
