@@ -1,0 +1,27 @@
+{
+  "id": "ycide.editor-text",
+  "displayName": "文本编辑器",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "builtin": true,
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "description": "基于 Monaco 的文本编辑器，可以打开任何文档；其它编辑器出错或被停用时作为兜底。",
+  "contributes": {
+    "editors": [
+      {
+        "id": "ycide.text",
+        "displayName": "文本编辑器",
+        "languages": [
+          "*"
+        ],
+        "priority": "option",
+        "ui": {
+          "type": "builtin",
+          "component": "text"
+        }
+      }
+    ]
+  }
+}

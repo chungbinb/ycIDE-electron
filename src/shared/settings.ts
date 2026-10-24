@@ -57,6 +57,8 @@ export interface IDESettings {
   aiProviderApiKeys: Record<string, string>
   /** 默认编译器（编译器插件提供的编译器 ID）；空 = 自动（优先内置 Zig 编译器）。项目文件里的 Compiler= 优先 */
   compilerId: string
+  /** 表格编辑器流程线的渲染后端（渲染后端插件提供的 ID）；空 = 默认（DOM） */
+  tableRendererId: string
   /** 支持库在线索引地址 */
   libraryStoreIndexUrl: string
   /**
@@ -109,6 +111,7 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   aiCustomModels: [],
   aiProviderApiKeys: {},
   compilerId: '',
+  tableRendererId: '',
   libraryStoreIndexUrl: DEFAULT_LIBRARY_STORE_INDEX_URL,
   compilerZigPath: '',
   compilerOptimizeLevel: 'O2',
@@ -171,6 +174,7 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
     aiCustomModels: resolveCustomModels(raw.aiCustomModels),
     aiProviderApiKeys: resolveProviderApiKeys(raw.aiProviderApiKeys),
     compilerId: typeof raw.compilerId === 'string' ? raw.compilerId.trim() : d.compilerId,
+    tableRendererId: typeof raw.tableRendererId === 'string' ? raw.tableRendererId.trim() : d.tableRendererId,
     libraryStoreIndexUrl: resolveUrl(raw.libraryStoreIndexUrl, d.libraryStoreIndexUrl),
     compilerZigPath: resolvePath(raw.compilerZigPath, d.compilerZigPath),
     compilerOptimizeLevel: resolveOptimizeLevel(raw.compilerOptimizeLevel, d.compilerOptimizeLevel),

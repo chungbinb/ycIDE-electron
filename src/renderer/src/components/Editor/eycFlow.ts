@@ -121,23 +121,34 @@ export const FLOW_KW = new Set([
   '计次循环首', '计次循环尾', '变量循环首', '变量循环尾', '如果结束',
 ])
 
+const FLOW_KW_PREFIXES = [
+  '如果真结束', '如果结束', '判断结束',
+  '判断开始',
+  '判断循环首', '判断循环尾', '循环判断首', '循环判断尾',
+  '计次循环首', '计次循环尾', '变量循环首', '变量循环尾',
+  '如果真', '如果', '判断', '否则', '默认',
+]
+
+// 输入时每次重算流程线都会对全文逐行调用（性能剖析里的热点），按行文本缓存结果
+const flowKwCache = new Map<string, string | null>()
+const FLOW_KW_CACHE_LIMIT = 20000
+
 export function extractFlowKw(codeLine: string): string | null {
+  const cached = flowKwCache.get(codeLine)
+  if (cached !== undefined) return cached
   const trimmed = codeLine.replace(/^ +/, '')
-  let stripped = trimmed.replace(/[\r\t\u200B]/g, '')
+  let stripped = trimmed.replace(/[\r\t​]/g, '')
   if (stripped.startsWith('.')) stripped = stripped.slice(1)
-  const allKw = [
-    '如果真结束', '如果结束', '判断结束',
-    '判断开始',
-    '判断循环首', '判断循环尾', '循环判断首', '循环判断尾',
-    '计次循环首', '计次循环尾', '变量循环首', '变量循环尾',
-    '如果真', '如果', '判断', '否则', '默认',
-  ]
-  for (const kw of allKw) {
+  let result: string | null = null
+  for (const kw of FLOW_KW_PREFIXES) {
     if (stripped === kw || stripped.startsWith(kw + ' ') || stripped.startsWith(kw + '(') || stripped.startsWith(kw + '（')) {
-      return kw
+      result = kw
+      break
     }
   }
-  return null
+  if (flowKwCache.size >= FLOW_KW_CACHE_LIMIT) flowKwCache.clear()
+  flowKwCache.set(codeLine, result)
+  return result
 }
 
 export function isFlowMarkerLine(lineText: string): boolean {

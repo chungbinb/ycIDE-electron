@@ -11,6 +11,12 @@ import terminal from '../../../plugins/ycide.terminal/plugin.json'
 import aiDeepseek from '../../../plugins/ycide.ai-deepseek/plugin.json'
 import aiGlm from '../../../plugins/ycide.ai-glm/plugin.json'
 import compilerZig from '../../../plugins/ycide.compiler-zig/plugin.json'
+import langEyc from '../../../plugins/ycide.lang-eyc/plugin.json'
+import editorEycTable from '../../../plugins/ycide.editor-eyc-table/plugin.json'
+import editorFormDesigner from '../../../plugins/ycide.editor-form-designer/plugin.json'
+import editorText from '../../../plugins/ycide.editor-text/plugin.json'
+import renderDom from '../../../plugins/ycide.render-dom/plugin.json'
+import renderImage from '../../../plugins/ycide.render-image/plugin.json'
 import { resolvePlugins, type PluginCandidate, type PluginResolution, type PluginResolveEnv } from './pluginResolver'
 import { buildContributionModel, type ContributionModel } from './contributions'
 
@@ -24,6 +30,12 @@ export const BUILTIN_PLUGIN_CANDIDATES: PluginCandidate[] = [
   { manifest: aiDeepseek, source: '内置:ycide.ai-deepseek' },
   { manifest: aiGlm, source: '内置:ycide.ai-glm' },
   { manifest: compilerZig, source: '内置:ycide.compiler-zig' },
+  { manifest: langEyc, source: '内置:ycide.lang-eyc' },
+  { manifest: editorEycTable, source: '内置:ycide.editor-eyc-table' },
+  { manifest: editorFormDesigner, source: '内置:ycide.editor-form-designer' },
+  { manifest: editorText, source: '内置:ycide.editor-text' },
+  { manifest: renderDom, source: '内置:ycide.render-dom' },
+  { manifest: renderImage, source: '内置:ycide.render-image' },
 ]
 
 export interface LoadedPlugins {

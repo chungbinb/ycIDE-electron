@@ -1,0 +1,27 @@
+{
+  "id": "ycide.editor-form-designer",
+  "displayName": "窗口设计器",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "builtin": true,
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "description": "可视化设计窗口（.efw）：拖放组件、属性编辑、菜单编辑。",
+  "contributes": {
+    "editors": [
+      {
+        "id": "ycide.formDesigner",
+        "displayName": "窗口设计器",
+        "languages": [
+          "efw"
+        ],
+        "priority": "default",
+        "ui": {
+          "type": "builtin",
+          "component": "formDesigner"
+        }
+      }
+    ]
+  }
+}

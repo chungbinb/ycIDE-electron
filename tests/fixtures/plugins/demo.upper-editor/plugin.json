@@ -1,0 +1,18 @@
+{
+  "id": "demo.upper-editor",
+  "displayName": "示例：大写编辑器",
+  "version": "1.0.0",
+  "publisher": "demo",
+  "description": "插件网页编辑器示例与测试夹具：在沙箱 iframe 里显示文本文件，一键转成大写。",
+  "contributes": {
+    "editors": [
+      {
+        "id": "demo.upperEditor",
+        "displayName": "大写编辑器（示例）",
+        "languages": ["plaintext"],
+        "priority": "option",
+        "ui": { "type": "web", "entry": "ui/editor.html" }
+      }
+    ]
+  }
+}

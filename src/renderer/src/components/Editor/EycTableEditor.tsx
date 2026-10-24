@@ -1,4 +1,5 @@
 import { Fragment, memo, useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react'
+import { useEycProjectSymbolsService, useDocumentDecorations } from '../../languages/eyc/languageService'
 import { flushSync } from 'react-dom'
 import { eycToYiFormat, sanitizePastedTextForCurrent, extractAssemblyVarLinesFromPasted, extractRoutedDeclarationLinesFromPasted } from './eycFormat'
 import {
@@ -62,10 +63,7 @@ import {
   removeDuplicateFlowAutoEndings,
   trimTrailingEmptyFormattedLine,
 } from './editorFlowAutoExpandUtils'
-import {
-  renderFlowContinuationLine,
-  renderFlowSegsLine,
-} from './editorFlowRenderUtils'
+import { useFlowLineRenderer, type FlowLineMetrics } from './flowLineRenderers'
 import { buildMultiLinePasteResult, relocateMisplacedLocalVarLines } from './editorPasteUtils'
 import { useEditorInteractionHandlers, EYC_LONG_TEXT_PLACEHOLDER_RE } from './useEditorInteractionHandlers'
 import {
@@ -137,16 +135,6 @@ interface EycTableEditorProps {
   projectDir?: string
   targetPlatform?: string
   isClassModule?: boolean
-  projectGlobalVars?: Array<{ name: string; type: string }>
-  windowControlNames?: string[]
-  windowControlTypes?: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>
-  // 项目内所有窗口的控件+子程序（供跨窗口成员补全：在本窗口代码里引用另一窗口名）
-  projectWindows?: Array<{ name: string; controls: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>; subs: string[] }>
-  windowUnits?: LibWindowUnit[]
-  projectConstants?: Array<{ name: string; value: string; kind?: 'constant' | 'resource' }>
-  projectDllCommands?: Array<{ name: string; returnType: string; description: string; params: CompletionParam[]; isIndirect?: boolean }>
-  projectDataTypes?: Array<{ name: string; fields: Array<{ name: string; type: string }> }>
-  projectClassNames?: Array<{ name: string; methods?: Array<{ name: string; returnType: string; description: string; params: Array<{ name: string; type: string }> }> }>
   onClassNameRename?: (oldName: string, newName: string) => void
   onChange: (value: string) => void
   // 全局撤销/重做：编辑器区域内按 Ctrl+Z / Ctrl+Y 时上抛给外层统一的全局撤销栈处理（不再各自维护）
@@ -157,15 +145,6 @@ interface EycTableEditorProps {
   onProblemsChange?: (problems: FileProblem[]) => void
   onCursorChange?: (line: number, column: number, sourceLine?: number) => void
   onRouteDeclarationPaste?: (routes: Array<{ language: 'ell' | 'egv' | 'ecs' | 'edt'; lines: string[] }>) => void
-  breakpointLines?: number[]
-  debugSourceLine?: number
-  debugVariables?: Array<{ name: string; type: string; value: string }>
-  diffHighlightLines?: Set<number>
-  diffAddedLines?: Set<number>
-  diffEditedLines?: Set<number>
-  diffDeletedAfterLines?: Set<number>
-  // 锚点行 → 被删除的原文（红色删除占位行内展示被删内容）
-  diffDeletedTextAfterLines?: Map<number, string>
   // 右侧变量汇总面板总开关（系统设置），关闭时连收起细条也不渲染
   showVarSummaryPanel?: boolean
 }
@@ -327,7 +306,16 @@ function ensureMinimalFlowBodies(lines: string[]): string[] {
 const EMPTY_ARRAY: never[] = []
 const EMPTY_LINE_SET: Set<number> = new Set()
 
-const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, projectGlobalVars = EMPTY_ARRAY, windowControlNames = EMPTY_ARRAY, windowControlTypes = EMPTY_ARRAY, projectWindows = EMPTY_ARRAY, windowUnits = EMPTY_ARRAY, projectConstants = EMPTY_ARRAY, projectDllCommands = EMPTY_ARRAY, projectDataTypes = EMPTY_ARRAY, projectClassNames = EMPTY_ARRAY, onClassNameRename, onChange, onGlobalUndo, onGlobalRedo, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, breakpointLines = EMPTY_ARRAY, debugSourceLine, debugVariables = EMPTY_ARRAY, diffHighlightLines, diffAddedLines = EMPTY_LINE_SET, diffEditedLines = EMPTY_LINE_SET, diffDeletedAfterLines = EMPTY_LINE_SET, diffDeletedTextAfterLines, showVarSummaryPanel = true }, ref) {
+const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(function EycTableEditor({ value, docLanguage = '', editorFontFamily = '"Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace', editorFontSize = 14, editorLineHeight = 20, freezeSubTableHeader = false, showMinimapPreview = true, projectDir, targetPlatform = 'windows', isClassModule = false, onClassNameRename, onChange, onGlobalUndo, onGlobalRedo, onCommandClick, onCommandClear, onProblemsChange, onCursorChange, onRouteDeclarationPaste, showVarSummaryPanel = true }, ref) {
+  // 项目语义来自 ycide.lang-eyc 语言服务、装饰来自宿主的装饰服务（设计稿 §6.2、§6.3），不再经 props 下传
+  const {
+    projectGlobalVars, activeWindowControlNames: windowControlNames, activeWindowControls: windowControlTypes, projectWindows,
+    windowUnits, projectConstants, projectDllCommands, projectDataTypes, projectClassNames,
+  } = useEycProjectSymbolsService()
+  const {
+    breakpointLines, debugSourceLine, debugVariables, diffHighlightLines,
+    diffAddedLines, diffEditedLines, diffDeletedAfterLines, diffDeletedTextAfterLines,
+  } = useDocumentDecorations()
   const eycScale = useMemo(() => clampNumber(editorFontSize / 13, 0.75, 2), [editorFontSize])
   const [editCell, setEditCell] = useState<EditState | null>(null)
   const [editVal, setEditVal] = useState('')
@@ -717,6 +705,27 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     startLine: 0,
     endLine: Math.max(logicalLineCount - 1, 0),
   })
+
+  // 按几何生成图像的流程线渲染后端（图像后端）要知道一个流程线格的实际宽度：
+  // 在编辑器里放一个隐藏的流程线格量一次，字体、字号、缩放变化时重量
+  const flowLineRendererForMetrics = useFlowLineRenderer()
+  const [flowLineMetrics, setFlowLineMetrics] = useState<FlowLineMetrics | null>(null)
+  useLayoutEffect(() => {
+    const root = editorRootRef.current
+    if (!root || !flowLineRendererForMetrics.needsMetrics) return
+    const probe = document.createElement('div')
+    probe.className = 'eyc-code-line'
+    probe.style.cssText = 'position:absolute;left:-10000px;top:0;visibility:hidden;pointer-events:none'
+    probe.innerHTML = '<span class="eyc-code-spans"><span class="eyc-flow-seg"></span></span>'
+    root.appendChild(probe)
+    const rect = probe.querySelector('.eyc-flow-seg')!.getBoundingClientRect()
+    probe.remove()
+    if (rect.width > 0 && rect.height > 0) {
+      // 以 22px 行高为基准换算（编辑器有 CSS 缩放，宽高同比例缩放，比值不受影响）
+      const ch = (22 * rect.width) / rect.height / 4
+      setFlowLineMetrics(prev => (prev && Math.abs(prev.ch - ch) < 0.001 ? prev : { ch }))
+    }
+  }, [flowLineRendererForMetrics, editorFontFamily, editorFontSize, eycScale])
 
   useEffect(() => {
     const root = editorRootRef.current
@@ -7976,19 +7985,21 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return () => window.removeEventListener('keydown', handler)
   }, [selectedParamRows, applyTextChange, pushUndo])
 
-  /** 渲染某行的流程线段 */
+  /** 渲染某行的流程线段：由设置里选的渲染后端绘制（设计稿 §11 阶段 3/4） */
+  const flowLineRenderer = useFlowLineRenderer()
   const renderFlowSegs = (lineIndex: number, isExpanded?: boolean): { node: React.ReactNode; skipTreeLines: number } => {
-    return renderFlowSegsLine({
+    return flowLineRenderer.renderLine({
       flowLines: displayFlowLines,
       lineIndex,
       isExpanded,
       resolveColors: (depth) => resolveFlowLineColors(flowLineModeConfig, depth),
+      metrics: flowLineMetrics ?? undefined,
     })
   }
 
   /** 渲染参数展开区域的流程线延续（只绘制纵向穿越线） */
   const renderFlowContinuation = (lineIndex: number): React.ReactNode => {
-    return renderFlowContinuationLine({
+    return flowLineRenderer.renderContinuation({
       flowLines: displayFlowLines,
       lineIndex,
       resolveColors: (depth) => resolveFlowLineColors(flowLineModeConfig, depth),

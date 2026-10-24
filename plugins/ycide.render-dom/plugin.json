@@ -1,0 +1,24 @@
+{
+  "id": "ycide.render-dom",
+  "displayName": "DOM 渲染后端",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "builtin": true,
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "description": "用 HTML/CSS 绘制表格编辑器的流程线（默认渲染后端，不可停用，可在设置里换成其它后端）。",
+  "contributes": {
+    "renderers": [
+      {
+        "id": "ycide.dom",
+        "displayName": "DOM（HTML/CSS）",
+        "description": "每段流程线是一个带伪元素的元素，兼容性最好",
+        "surfaces": [
+          "eycTable.flowLines"
+        ],
+        "implementation": "dom"
+      }
+    ]
+  }
+}
