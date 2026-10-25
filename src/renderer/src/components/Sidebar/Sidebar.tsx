@@ -6,6 +6,7 @@ import { parseFontSpec, stringifyFontSpec, formatFontSummary, fontSpecToCss, col
 import Icon, { resolveUnitIconName } from '../Icon/Icon'
 import ChildTabEditorDialog from '../Editor/ChildTabEditorDialog'
 import ListItemEditorDialog from '../Editor/ListItemEditorDialog'
+import { filterProjectTree, parseProjectTreeQuery, splitLabelByQuery } from './projectTreeFilter'
 import '../Icon/Icon.css'
 import './Sidebar.css'
 
@@ -203,6 +204,8 @@ function TreeItem({
   aiModifiedFileKeys,
   onProjectContextMenu,
   onNodeContextMenu,
+  forceExpandIds,
+  highlightTerms,
 }: {
   node: TreeNode
   depth?: number
@@ -214,8 +217,15 @@ function TreeItem({
   aiModifiedFileKeys?: Set<string>
   onProjectContextMenu?: (event: React.MouseEvent<HTMLElement>, projectDir: string, projectName: string) => void
   onNodeContextMenu?: (event: React.MouseEvent<HTMLElement>, node: TreeNode) => void
+  forceExpandIds?: Set<string>
+  highlightTerms?: string[]
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(node.expanded ?? false)
+  // 搜索时展开通往命中项的各级节点；之后仍可手动折叠
+  const forceExpand = !!forceExpandIds?.has(node.id)
+  useEffect(() => {
+    if (forceExpand) setExpanded(true)
+  }, [forceExpand])
   const hasChildren = node.children && node.children.length > 0
   const declMatch = /^(.+)::(sub|global|const|dtype|dll)::(\d+)$/.exec(node.id)
   const ownerFile = declMatch?.[1]
@@ -363,7 +373,11 @@ function TreeItem({
           className={`tree-label${node.unused ? ' tree-label-unused' : ''}`}
           title={node.unused ? '该子程序未被任何代码调用' : undefined}
         >
-          {node.label}
+          {highlightTerms && highlightTerms.length > 0
+            ? splitLabelByQuery(node.label, highlightTerms).map((part, i) => (
+                part.hit ? <mark key={i} className="tree-label-match">{part.text}</mark> : <span key={i}>{part.text}</span>
+              ))
+            : node.label}
         </span>
         {shouldShowModifiedDot && (
           <span
@@ -388,6 +402,8 @@ function TreeItem({
               aiModifiedFileKeys={aiModifiedFileKeys}
               onProjectContextMenu={onProjectContextMenu}
               onNodeContextMenu={onNodeContextMenu}
+              forceExpandIds={forceExpandIds}
+              highlightTerms={highlightTerms}
             />
           ))}
         </ul>
@@ -2420,6 +2436,15 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
     setSelectedEventIndex('')
   }, [selection, selectedEvents.length, selectedTypeName])
 
+  // 项目管理器搜索：节点多时直接按名称过滤，不用靠滚动条找
+  const [projectQuery, setProjectQuery] = useState('')
+  const projectSearchInputRef = useRef<HTMLInputElement>(null)
+  const projectQueryTerms = useMemo(() => parseProjectTreeQuery(projectQuery), [projectQuery])
+  const filteredProject = useMemo(
+    () => filterProjectTree(projectTree || [], projectQuery),
+    [projectTree, projectQuery],
+  )
+
   useEffect(() => {
     if (activeTab !== 'project') return
     if (!projectTree || projectTree.length === 0) {
@@ -2451,22 +2476,60 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
         {activeTab === 'project' && (
           <div id="sidebar-panel-project">
             {projectTree && projectTree.length > 0 ? (
-              <ul className="tree" aria-label="项目结构">
-                {projectTree.map((node) => (
-                  <TreeItem
-                    key={node.id}
-                    node={node}
-                    onOpenFile={onOpenFile}
-                    activeFileId={activeFileId}
-                    focusedItemId={focusedProjectItemId}
-                    onFocusItem={setFocusedProjectItemId}
-                    modifiedFileKeys={modifiedFileKeys}
-              aiModifiedFileKeys={aiModifiedFileKeys}
-                    onProjectContextMenu={handleProjectContextMenu}
-                    onNodeContextMenu={handleNodeContextMenu}
+              <>
+                <div className="sidebar-tree-search">
+                  <input
+                    ref={projectSearchInputRef}
+                    className="sidebar-tree-search-input"
+                    type="search"
+                    value={projectQuery}
+                    onChange={(e) => setProjectQuery(e.target.value)}
+                    placeholder="搜索项目…"
+                    aria-label="搜索项目管理器"
+                    spellCheck={false}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        e.preventDefault()
+                        setProjectQuery('')
+                      } else if (e.key === 'ArrowDown' || (e.key === 'Enter' && projectQuery.trim())) {
+                        // 跳到第一个结果：Enter 直接打开第一个命中项，↓ 只移动焦点
+                        const tree = e.currentTarget.closest('#sidebar-panel-project')?.querySelector<HTMLElement>('.tree')
+                        const target = e.key === 'Enter'
+                          ? tree?.querySelector<HTMLElement>('.tree-item:has(.tree-label-match)') ?? null
+                          : tree?.querySelector<HTMLElement>('.tree-item') ?? null
+                        if (target) {
+                          e.preventDefault()
+                          target.focus()
+                          if (e.key === 'Enter') target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+                        }
+                      }
+                    }}
                   />
-                ))}
-              </ul>
+                  {projectQuery.trim() && (
+                    <span className="sidebar-tree-search-count" aria-live="polite">
+                      {filteredProject.matchCount > 0 ? `${filteredProject.matchCount} 项` : '无匹配'}
+                    </span>
+                  )}
+                </div>
+                <ul className="tree" aria-label="项目结构">
+                  {filteredProject.nodes.map((node) => (
+                    <TreeItem
+                      key={node.id}
+                      node={node}
+                      onOpenFile={onOpenFile}
+                      activeFileId={activeFileId}
+                      focusedItemId={focusedProjectItemId}
+                      onFocusItem={setFocusedProjectItemId}
+                      modifiedFileKeys={modifiedFileKeys}
+                      aiModifiedFileKeys={aiModifiedFileKeys}
+                      onProjectContextMenu={handleProjectContextMenu}
+                      onNodeContextMenu={handleNodeContextMenu}
+                      forceExpandIds={filteredProject.expandIds}
+                      highlightTerms={projectQueryTerms}
+                    />
+                  ))}
+                </ul>
+              </>
             ) : (
               <div className="sidebar-empty">暂无打开的项目</div>
             )}

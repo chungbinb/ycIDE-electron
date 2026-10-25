@@ -2995,11 +2995,25 @@ function App(): React.JSX.Element {
 
     // 用标签页内存内容即时回写项目树声明节点，避免“未保存编辑”下项目树信息滞后。
     // 同时以内存内容覆盖源码缓存后重算"未调用子程序"标记（分词判定，O(总源码量)）。
+    // 全局变量 / 常量 / 自定义数据类型 / DLL 命令文件（标签页语言即扩展名）回写到各自分类的声明节点，
+    // 不计入"未调用子程序"判定的源码缓存。
+    const liveDeclContents = new Map<string, { content: string; catId: string; extract: (content: string, fileName: string) => TreeNode[] }>()
+    const declExtractors: Record<string, { catId: string; extract: (content: string, fileName: string) => TreeNode[] }> = {
+      egv: { catId: '_cat_globals', extract: extractGlobalVarNodes },
+      ecs: { catId: '_cat_constants', extract: extractConstantNodes },
+      edt: { catId: '_cat_datatypes', extract: extractDataTypeNodes },
+      ell: { catId: '_cat_dllcmds', extract: extractDllCommandNodes },
+    }
     const liveContents = new Map<string, string>()
     for (const tab of tabs) {
-      if (tab.language !== 'eyc') continue
+      const decl = Object.prototype.hasOwnProperty.call(declExtractors, tab.language) ? declExtractors[tab.language] : undefined
+      if (tab.language !== 'eyc' && !decl) continue
       const fileName = (tab.filePath || tab.id || '').replace(/^.*[\\/]/, '')
       if (!fileName) continue
+      if (decl) {
+        liveDeclContents.set(fileName, { ...decl, content: tab.value || '' })
+        continue
+      }
       liveContents.set(fileName, tab.value || '')
     }
     for (const [fileName, content] of liveContents) {
@@ -3016,7 +3030,7 @@ function App(): React.JSX.Element {
       })
     }
 
-    if (liveSourceModules.size > 0) {
+    if (liveSourceModules.size > 0 || liveDeclContents.size > 0) {
       const currentRootId = buildProjectRootId(currentProjectDirRef.current)
       setProjectTree(prev => {
         if (!prev || prev.length === 0) return prev
@@ -3026,7 +3040,21 @@ function App(): React.JSX.Element {
           return {
             ...root,
             children: cats.map(cat => {
-              if (cat.id !== '_cat_sources') return cat
+              if (cat.id !== '_cat_sources') {
+                if (!cat.children?.length) return cat
+                let changed = false
+                const nextModules = cat.children.map(mod => {
+                  const live = liveDeclContents.get(mod.id)
+                  if (!live || live.catId !== cat.id) return mod
+                  const nextChildren = live.extract(live.content, mod.id)
+                  const prevChildren = mod.children || []
+                  if (nextChildren.length === prevChildren.length
+                    && nextChildren.every((n, i) => n.id === prevChildren[i].id && n.label === prevChildren[i].label)) return mod
+                  changed = true
+                  return { ...mod, children: nextChildren }
+                })
+                return changed ? { ...cat, children: nextModules } : cat
+              }
               const modules = cat.children || []
               return {
                 ...cat,
@@ -3057,7 +3085,7 @@ function App(): React.JSX.Element {
         })
       })
     }
-  }, [extractSubroutineNodes])
+  }, [extractSubroutineNodes, extractGlobalVarNodes, extractConstantNodes, extractDataTypeNodes, extractDllCommandNodes])
 
   const projectSyncTimerRef = useRef<number | null>(null)
   const handleOpenTabsChange = useCallback((tabs: EditorTab[]) => {
