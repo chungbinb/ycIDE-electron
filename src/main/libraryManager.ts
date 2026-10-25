@@ -5,8 +5,8 @@
 import { getRuntimeEnv } from './runtimeEnv'
 import { createHash } from 'crypto'
 import AdmZip from 'adm-zip'
-import { dirname, isAbsolute, join, normalize, resolve } from 'path'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { dirname, join, resolve, sep } from 'path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { getYcmdCommands, scanYcmdRegistry, invalidateYcmdRegistryCache, type YcmdResolvedCommand, type YcmdTargetPlatform } from './ycmd-registry'
 import { languageOfImplementation } from './compilers/compilerService'
 import {
@@ -23,6 +23,9 @@ import {
   type StoreLibraryCard,
   type StorePackageKind,
 } from '../shared/library-store'
+import coreLibraryHashes from './coreLibraryHashes.json'
+import { createRequire } from 'node:module'
+import { OFFICIAL_STORE_INDEX_KEYS, verifyEd25519 } from './security/signature'
 import { assertSafeZipEntry, MAX_ZIP_ENTRIES, MAX_ZIP_TOTAL_BYTES } from './security/safeZip'
 
 export interface LibraryParam {
@@ -245,20 +248,19 @@ interface ParsedLibraryMetadata {
   windowUnits: LibraryWindowUnit[]
 }
 
+/** 支持库代码生成函数：编译器按名称调用（组件属性、窗口属性、事件名映射、方法翻译等） */
+export type ControlCodegenFunction = (...args: unknown[]) => unknown
+
+// 加载支持库代码生成脚本（.cjs）；用 createRequire，打包后与开发时都按绝对路径加载
+const nodeRequire = createRequire(__filename)
+
 const CORE_LIBRARY_NAME = '系统核心支持库'
 const CORE_LIBRARY_FILE_NAME = 'krnln'
 const CORE_LIBRARY_GUID = 'D09F2340818511D396F6AE4C17150413'
 
-const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = {
-  'impl/linux.cpp': '088edd74d09dac6c9e70da4feed932e3e0d4aceba36b6aab5d9fb152077aef34',
-  'impl/macos.mm': '798149470018bf45a3e996d82db1db41f473f6a6aca2fd3badf7b8ad1538b4ac',
-  'impl/pinyin-table.inc': 'dd70222f361e247007abaa4a5c441d9be2f5d54bfa89a777624ef2a52c93f504',
-  'impl/windows.cpp': '1082f4cb6d425c1abe1f04759439b3246c662cbd96786b0cd999f09734778607',
-  'krnln.commands.ycmd.json': '1fcc2456595ff17225d2f35683fa501f4fda1d44f648fa7eb904496cc427981d',
-  'krnln.constants.json': 'f351e8dfb8a4f3d47c1e02e015ee37b5fe3ada180983084a422ff08c43b8a9a2',
-  'krnln.library.json': '718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1',
-  'window-units.json': '409d53730b6a0b2a4865e070a10a42f9373b430f015acc89a5e7be959f1ab6c4',
-}
+// 核心支持库完整性哈希：由 scripts/update-core-hashes.mjs 生成（换行统一为 LF 后计算），
+// 过期时 tests/unit/coreLibraryHashes.spec.ts 会失败
+const CORE_LIBRARY_EXPECTED_SHA256: Record<string, string> = coreLibraryHashes
 
 const DEFAULT_PROTOCOL_UNIT_PROPERTIES: LibraryWindowUnitProperty[] = [
   { name: '标题', englishName: 'text', description: '控件显示文本。', type: 0, typeName: '文本型', isReadOnly: false, pickOptions: [] },
@@ -383,6 +385,11 @@ function normalizeRemoteIndex(raw: unknown): LibraryRemoteIndex {
   }
 }
 
+/** 文本文件哈希：换行统一为 LF，Windows 的 CRLF 检出与其它平台结果一致 */
+export function normalizedTextSha256(buffer: Buffer): string {
+  return createHash('sha256').update(buffer.toString('utf-8').replace(/\r\n/g, '\n'), 'utf-8').digest('hex')
+}
+
 function sha256Buffer(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex')
 }
@@ -444,11 +451,29 @@ class LibraryManager {
     return join(this.getInstalledRootPath(), normalizeLibraryId(name))
   }
 
+  private trustedIndexKeysProvider: () => string[] = () => [...OFFICIAL_STORE_INDEX_KEYS]
+
+  /** 商店索引签名的可信公钥（官方公钥 + 设置里追加的）；有公钥时索引必须带有效签名 */
+  setTrustedIndexKeysProvider(provider: () => string[]): void {
+    this.trustedIndexKeysProvider = provider
+  }
+
   async getRemoteIndex(indexUrl: string): Promise<LibraryRemoteIndexResult> {
     try {
       const response = await fetch(indexUrl, { cache: 'no-store' })
       if (!response.ok) return { ok: false, error: `读取支持库索引失败: HTTP ${response.status}` }
-      const json = await response.json()
+      const raw = Buffer.from(await response.arrayBuffer())
+      const keys = this.trustedIndexKeysProvider().filter(Boolean)
+      if (keys.length > 0) {
+        // 索引签名放在同目录的 <索引文件>.sig（对索引原始字节的 Ed25519 签名，base64）
+        const sigResponse = await fetch(`${indexUrl}.sig`, { cache: 'no-store' })
+        if (!sigResponse.ok) return { ok: false, error: `商店索引缺少签名（${indexUrl}.sig: HTTP ${sigResponse.status}），已拒绝` }
+        const signature = (await sigResponse.text()).trim()
+        if (!keys.some(key => verifyEd25519(raw, signature, key))) {
+          return { ok: false, error: '商店索引签名校验失败，可能被篡改，已拒绝' }
+        }
+      }
+      const json = JSON.parse(raw.toString('utf-8').replace(/^\uFEFF/, ''))
       return { ok: true, index: normalizeRemoteIndex(json) }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -993,7 +1018,11 @@ class LibraryManager {
     if (!this.shouldEnforceCoreLibraryIntegrity()) {
       return { ok: true, errors: [] }
     }
+    return this.checkCoreLibraryIntegrity()
+  }
 
+  /** 逐项检查核心支持库（不论是否稳定版；稳定版启动时经 validateCoreLibraryIntegrity 调用） */
+  checkCoreLibraryIntegrity(): { ok: boolean; errors: string[] } {
     const errors: string[] = []
     const libRoot = this.getLibFolder()
     const coreFolder = join(libRoot, CORE_LIBRARY_FILE_NAME)
@@ -1020,7 +1049,7 @@ class LibraryManager {
         errors.push(`核心支持库文件缺失: ${relativePath}`)
         continue
       }
-      const actualHash = sha256Buffer(readFileSync(filePath))
+      const actualHash = normalizedTextSha256(readFileSync(filePath))
       if (actualHash !== expectedHash) {
         errors.push(`核心支持库文件被修改: ${relativePath}`)
       }
@@ -1086,6 +1115,36 @@ class LibraryManager {
     return merged
   }
 
+  private controlCodegenCache: Record<string, ControlCodegenFunction> | null = null
+
+  /**
+   * 组件代码生成函数：各支持库目录下 codegen/*.cjs 导出的 controlCodegen 合并结果（先到先得）。
+   * 脚本在编译器进程里执行，所以只加载随安装包发布的内置支持库目录（lib/）里的脚本；
+   * 用户安装的支持库只能提供数据（命令清单、特征、实现源码），不能提供代码生成脚本。
+   */
+  getControlCodegen(): Record<string, ControlCodegenFunction> {
+    if (this.controlCodegenCache) return this.controlCodegenCache
+    if (this.libraries.length === 0) this.scan()
+    const merged: Record<string, ControlCodegenFunction> = {}
+    const trustedRoot = resolve(this.getLibFolder())
+    for (const lib of this.libraries) {
+      const dir = join(lib.filePath, 'codegen')
+      if (!resolve(lib.filePath).startsWith(trustedRoot + sep) || !existsSync(dir)) continue
+      for (const name of readdirSync(dir).filter(f => f.endsWith('.cjs')).sort()) {
+        try {
+          const mod = nodeRequire(join(dir, name)) as { controlCodegen?: Record<string, unknown> }
+          for (const [key, fn] of Object.entries(mod.controlCodegen ?? {})) {
+            if (typeof fn === 'function' && !(key in merged)) merged[key] = fn as ControlCodegenFunction
+          }
+        } catch (err) {
+          console.error(`[libraryManager] 加载代码生成脚本失败：${join(dir, name)}`, err)
+        }
+      }
+    }
+    this.controlCodegenCache = merged
+    return merged
+  }
+
   /** 插件被停用（或因依赖不可用）的支持库名：扫描时排除，相当于未安装（设计稿 §6.6） */
   private disabledLibraries = new Set<string>()
 
@@ -1117,6 +1176,7 @@ class LibraryManager {
     this.metadataCache.clear()
     this.allCommandsCache.clear()
     this.controlTraitsCache = null
+    this.controlCodegenCache = null
     // 库集合发生重扫时，强制刷新 ycmd 注册表缓存，确保新增/移除/更新立即生效。
     invalidateYcmdRegistryCache()
 

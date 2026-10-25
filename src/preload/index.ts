@@ -258,7 +258,7 @@ const api = {
     /** 卸载商店安装的插件 */
     uninstall: (id: string) => ipcRenderer.invoke('plugins:uninstall', id) as Promise<{ ok: true; id: string } | { ok: false; error: string }>,
     /** 回报主进程请求执行的内置命令结果 */
-    sendRendererCommandResult: (payload: { requestId: number; ok: boolean; result?: unknown; error?: string }) =>
+    sendRendererCommandResult: (payload: { requestId: number; ok: boolean; result?: unknown; error?: string; code?: number }) =>
       ipcRenderer.send('plugins:rendererCommandResult', payload),
   },
   // 系统设置

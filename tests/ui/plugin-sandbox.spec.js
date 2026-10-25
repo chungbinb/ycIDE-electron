@@ -97,6 +97,9 @@ test('第三方插件：授权后启用、受限进程拦下越权操作；商�
       fetchAllowed: 'pong',
       fetchDenied: 'DENIED:ERR_ACCESS_DENIED',
       workbench: 'DENIED:-33001',
+      udpAllowed: 'sent',
+      udpDenied: 'DENIED:ERR_ACCESS_DENIED',
+      dnsDenied: 'DENIED:ERR_ACCESS_DENIED',
     })
     expect(fs.existsSync(path.join(outside, 'probe.txt'))).toBe(false)
     expect(fs.readFileSync(path.join(userData, 'plugin-storage', 'acme.sandbox', 'probe.txt'), 'utf-8')).toBe('ok')
@@ -151,6 +154,47 @@ test('开发中的插件改了代码自动重新加载（YCIDE_EXTRA_PLUGIN_DIRS
     await expect.poll(run).toBe('第一版')
     writeMain('第二版')
     await expect.poll(run, { timeout: 15000 }).toBe('第二版')
+  } finally {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(w => w.destroy())).catch(() => {})
+    await app.close()
+    fs.rmSync(devDir, { recursive: true, force: true })
+    fs.rmSync(userData, { recursive: true, force: true })
+  }
+})
+
+test('插件经命令使用易语言语言服务：块结构与流程线、项目符号、诊断', async () => {
+  test.setTimeout(120000)
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'ycide-phase5-userdata-'))
+  const devDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ycide-phase5-dev-'))
+  const pluginDir = path.join(devDir, 'acme.lang')
+  fs.mkdirSync(pluginDir)
+  fs.writeFileSync(path.join(pluginDir, 'plugin.json'), JSON.stringify({
+    id: 'acme.lang', displayName: '语言服务调用', version: '1.0.0', publisher: 'acme',
+    runtime: { type: 'node', main: 'main.js' }, permissions: ['workspace:read'],
+    contributes: { commands: [{ id: 'lang:probe', title: 'probe' }] },
+  }))
+  fs.writeFileSync(path.join(pluginDir, 'main.js'), `
+exports.activate = (c, y) => { c.subscriptions.push(y.commands.registerCommand('lang:probe', async (text) => {
+  const parsed = await y.commands.executeCommand('eyc:parseBlocks', text)
+  const symbols = await y.commands.executeCommand('eyc:getProjectSymbols')
+  const diagnostics = await y.commands.executeCommand('eyc:getDiagnostics')
+  return { blocks: parsed.blocks.length, flowMaxDepth: parsed.flowMaxDepth, flowLines: parsed.flowLines.length, symbolKeys: Object.keys(symbols).sort(), diagnostics: Array.isArray(diagnostics) }
+})) }
+`)
+  const app = await electron.launch({
+    args: [appRoot, `--user-data-dir=${userData}`],
+    cwd: appRoot,
+    env: { ...process.env, CI: '1', YCIDE_EXTRA_PLUGIN_DIRS: devDir, YCIDE_PLUGIN_HOT_RELOAD: '0' },
+  })
+  try {
+    const win = await app.firstWindow()
+    await win.waitForLoadState('domcontentloaded')
+    await expect(win.locator('.titlebar')).toBeVisible()
+    const source = ['.版本 2', '.程序集 程序集1', '', '.子程序 子程序1', '.如果真 (真)', '    .计次循环首 (3, )', '    .计次循环尾 ()', '.如果真结束', ''].join('\n')
+    const result = await win.evaluate(text => window.api.plugins.executeCommand('lang:probe', [text]), source)
+    expect(result).toMatchObject({ flowMaxDepth: 2, diagnostics: true, symbolKeys: ['classNames', 'constants', 'dataTypes', 'dllCommands', 'globalVars', 'windows'] })
+    expect(result.blocks).toBeGreaterThan(2)
+    expect(result.flowLines).toBeGreaterThanOrEqual(4)
   } finally {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(w => w.destroy())).catch(() => {})
     await app.close()

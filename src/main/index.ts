@@ -52,6 +52,7 @@ import { runAIChat, runAIChatStream, runAIChatWithTools, runAIEdit, runAIEditStr
 import type { EProjectImportRequest, OpenProjectSelectionResult, OpenWorkspaceFolderSelectionResult } from '../shared/eprojectImport'
 import { getEProjectImportTarget, importEProjectFile } from './eproject/importService'
 import { initPathGuard, authorizeRoot, validatePath } from './security/pathGuard'
+import { OFFICIAL_STORE_INDEX_KEYS } from './security/signature'
 import { isSafeExternalUrl } from '../shared/urlSafety'
 
 const isDev = !app.isPackaged
@@ -1288,6 +1289,9 @@ app.whenReady().then(() => {
       console.error('[renderer-debug] failed to write startup heartbeat', error)
     }
   }
+
+  // 商店索引签名：官方公钥 + 设置里追加的公钥；有公钥时索引必须带有效签名
+  libraryManager.setTrustedIndexKeysProvider(() => [...OFFICIAL_STORE_INDEX_KEYS, ...readIDESettings().storeIndexPublicKeys])
 
   // IPC 路径白名单：静态根 + 用户经对话框选择的目录（持久化在 userData）
   initPathGuard(

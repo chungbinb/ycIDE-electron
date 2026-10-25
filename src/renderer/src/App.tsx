@@ -22,7 +22,8 @@ import type { SelectionTarget, DesignForm, DesignControl } from './components/Ed
 import { parseLines } from './components/Editor/eycBlocks'
 import { resolveControlMethodDetail } from './components/Editor/editorCoreUtils'
 import { type RuntimePlatform } from './utils/shortcuts'
-import { useCommandHandlers, executeCommand, executeLegacyAction, dispatchKeybinding, onPluginMessage, getEnabledManifests } from './workbench/commands'
+import { documentVersion, DOCUMENT_VERSION_STALE } from '../../shared/plugin/documentVersion'
+import { useCommandHandlers, executeCommand, executeLocalCommand, executeLegacyAction, dispatchKeybinding, onPluginMessage, getEnabledManifests } from './workbench/commands'
 import { runAgentTask, createProjectPathHelpers, collectEditableFiles, type AgentTaskResult, type AgentToolTrace, type AgentToolContext } from './workbench/aiAgent'
 import { collectAITools } from '../../shared/plugin/aiContributions'
 import { mountIdeActionLogger } from './utils/ideActionLogger'
@@ -752,6 +753,9 @@ function App(): React.JSX.Element {
   const showAIPanel = useUiLayoutStore(s => s.showAIPanel)
   const toggleAIPanel = useUiLayoutStore(s => s.toggleAIPanel)
   const ideSettings = useSettingsStore(s => s.ideSettings)
+  // 插件命令处理函数里读最新设置用
+  const ideSettingsRef = useRef(ideSettings)
+  ideSettingsRef.current = ideSettings
   const setIdeSettings = useSettingsStore(s => s.setIdeSettings)
   const libraryWindowRef = useRef<Window | null>(null)
   const [libraryPortalRoot, setLibraryPortalRoot] = useState<HTMLElement | null>(null)
@@ -817,6 +821,8 @@ function App(): React.JSX.Element {
   const [commandDetail, setCommandDetail] = useState<CommandDetail | null>(null)
   const commandCacheRef = useRef<Map<string, CommandDetail | null>>(new Map())
   const [fileProblems, setFileProblems] = useState<FileProblem[]>([])
+  const fileProblemsRef = useRef(fileProblems)
+  fileProblemsRef.current = fileProblems
   const [designProblems, setDesignProblems] = useState<FileProblem[]>([])
   const openTabsRef = useRef<EditorTab[]>([])
   const activeFileIdRef = useRef<string | null>(null)
@@ -5247,8 +5253,12 @@ function App(): React.JSX.Element {
       if (typeof disk !== 'string') throw new Error(`无法读取：${filePath}`)
       return disk
     },
+    'documents:get': async (rawPath: unknown) => {
+      const text = await executeLocalCommand('documents:getText', [rawPath]) as string
+      return { text, version: documentVersion(text) }
+    },
     'documents:applyEdit': async (rawRequest: unknown) => {
-      const request = (rawRequest ?? {}) as { path?: unknown; text?: unknown; baseText?: unknown }
+      const request = (rawRequest ?? {}) as { path?: unknown; text?: unknown; baseText?: unknown; version?: unknown }
       const filePath = typeof request.path === 'string' ? request.path : ''
       if (!filePath || typeof request.text !== 'string') throw new Error('需要 path 和 text')
       if (!inferAIEditableLanguage(filePath)) throw new Error(`文件类型不支持：${filePath}`)
@@ -5256,8 +5266,9 @@ function App(): React.JSX.Element {
       const current = tab ? tab.value : await window.api?.project?.readFile(filePath)
       if (typeof current !== 'string') throw new Error(`无法读取：${filePath}`)
       // 乐观并发：调用方传了 baseText 而文档已被改动时拒绝，避免覆盖用户的修改（对应设计稿的版本过期错误）
-      if (typeof request.baseText === 'string' && request.baseText !== current) {
-        throw new Error('文档内容已变化，请重新读取后再修改')
+      if ((typeof request.baseText === 'string' && request.baseText !== current)
+        || (typeof request.version === 'string' && request.version !== documentVersion(current))) {
+        throw Object.assign(new Error('文档已被修改（版本过期），请重新读取后再修改'), { code: DOCUMENT_VERSION_STALE })
       }
       const applied = await handleAIApplyEdit({
         ok: true,
@@ -5273,6 +5284,70 @@ function App(): React.JSX.Element {
     'aiTool:terminalLastCommand': async () => {
       const last = await window.api?.terminal?.getLastCommand()
       return { ok: true, logs: [`工具 terminal_last_command：${last || '（空）'}`], data: { ok: true, lastCommand: last || '' } }
+    },
+  })
+
+  // 插件 API（设计稿 §5）：项目文件、AI、终端。第三方插件调用时由插件服务检查权限
+  // （workspace:read / workspace:write / ai:invoke / terminal），并把文档读写换成只能访问项目目录的版本。
+  const resolveInProject = useCallback((rawPath: unknown): string => {
+    const projectDir = currentProjectDirRef.current
+    if (!projectDir) throw new Error('没有打开项目')
+    const absolute = createProjectPathHelpers(projectDir, joinPath, pathSeparator).resolveProjectPath(typeof rawPath === 'string' ? rawPath : '')
+    if (!absolute) throw new Error(`路径不在当前项目内：${String(rawPath)}`)
+    return absolute
+  }, [])
+  useCommandHandlers({
+    'workspace:getRoot': () => currentProjectDirRef.current || null,
+    // 语言服务：当前文件的诊断（ycide.lang-eyc 声明的 eyc:getDiagnostics）
+    'eyc:getDiagnostics': () => fileProblemsRef.current,
+    'workspace:listFiles': async (rawPattern: unknown) => {
+      const projectDir = currentProjectDirRef.current
+      if (!projectDir) throw new Error('没有打开项目')
+      const paths = createProjectPathHelpers(projectDir, joinPath, pathSeparator)
+      const files = (await collectEditableFiles(projectDir, async dir => await window.api?.file?.readDir(dir) as string[] | undefined, joinPath, () => true))
+        .map(paths.toRelative)
+      const pattern = (typeof rawPattern === 'string' ? rawPattern : '').trim().toLowerCase()
+      return pattern ? files.filter(f => f.toLowerCase().includes(pattern)) : files
+    },
+    'workspace:readFile': async (rawPath: unknown) => {
+      const absolute = resolveInProject(rawPath)
+      const content = await window.api?.project?.readFile(absolute)
+      if (typeof content !== 'string') throw new Error(`无法读取：${String(rawPath)}`)
+      return content
+    },
+    'workspace:writeFile': async (rawPath: unknown, rawContent: unknown) => {
+      if (typeof rawContent !== 'string') throw new Error('文件内容必须是文本')
+      const absolute = resolveInProject(rawPath)
+      if (getTextTabByPath(absolute)) throw new Error(`文件已在编辑器中打开，请用 documents.applyEdit 修改：${String(rawPath)}`)
+      await window.api?.file?.save(absolute, rawContent)
+      return { ok: true }
+    },
+    'documents:getTextScoped': async (rawPath: unknown) => executeLocalCommand('documents:getText', [resolveInProject(rawPath)]),
+    'documents:getScoped': async (rawPath: unknown) => executeLocalCommand('documents:get', [resolveInProject(rawPath)]),
+    'documents:applyEditScoped': async (rawRequest: unknown) => {
+      const request = (rawRequest ?? {}) as { path?: unknown }
+      return executeLocalCommand('documents:applyEdit', [{ ...request, path: resolveInProject(request.path) }])
+    },
+    'ai:chat': async (rawMessages: unknown) => {
+      if (!Array.isArray(rawMessages)) throw new Error('messages 必须是 [{ role, content }] 数组')
+      const messages = rawMessages
+        .filter((m): m is { role: string; content: string } => !!m && typeof m === 'object' && typeof (m as { content?: unknown }).content === 'string')
+        .map(m => ({ role: m.role === 'system' || m.role === 'assistant' ? m.role : 'user', content: m.content } as const))
+      const result = await window.api?.ai?.chat({ model: ideSettingsRef.current.aiModel, messages })
+      if (!result?.ok) throw new Error(result?.error || 'AI 调用失败')
+      return result.message
+    },
+    'terminal:send': async (rawCommand: unknown) => {
+      const command = typeof rawCommand === 'string' ? rawCommand.trim() : ''
+      if (!command) throw new Error('缺少命令')
+      const sent = await handleTerminalSend(command)
+      if (!sent.ok) throw new Error(sent.error || '发送失败')
+      return { ok: true }
+    },
+    'terminal:read': async (rawLimit: unknown) => {
+      const snapshot = await window.api?.terminal?.getSnapshot()
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(500, Number(rawLimit))) : 40
+      return (snapshot?.output || []).slice(-limit).join('')
     },
   })
 

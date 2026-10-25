@@ -1,0 +1,6 @@
+<!doctype html>
+<meta charset="utf-8">
+<script>
+  // 模拟编辑器初始化失败：告诉宿主出错，宿主应改用文本编辑器
+  parent.postMessage({ type: 'editor/error', message: '初始化失败（测试）' }, '*')
+</script>

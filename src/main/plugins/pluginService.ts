@@ -51,6 +51,39 @@ export const NON_DISABLEABLE_PLUGINS: ReadonlySet<string> = new Set([
   'ycide.render-dom',
 ])
 
+/**
+ * 宿主命令需要的权限（设计稿 §8.1）。不在表里的：插件之间互相调用不需要权限，其余内置命令需要 workbench:commands。
+ * AI 工具命令按它实际做的事归类，免得插件借道 AI 工具绕过权限。
+ */
+const HOST_COMMAND_PERMISSIONS: Readonly<Record<string, string>> = {
+  'documents:getText': 'workspace:read',
+  'documents:get': 'workspace:read',
+  'documents:applyEdit': 'documents:write',
+  'workspace:getRoot': 'workspace:read',
+  'workspace:listFiles': 'workspace:read',
+  'workspace:readFile': 'workspace:read',
+  'workspace:writeFile': 'workspace:write',
+  'ai:chat': 'ai:invoke',
+  'eyc:getProjectSymbols': 'workspace:read',
+  'eyc:parseBlocks': 'workspace:read',
+  'eyc:getDiagnostics': 'workspace:read',
+  'terminal:send': 'terminal',
+  'terminal:read': 'terminal',
+  'aiTool:listFiles': 'workspace:read',
+  'aiTool:readFile': 'workspace:read',
+  'aiTool:editFile': 'documents:write',
+  'aiTool:terminalSend': 'terminal',
+  'aiTool:terminalRead': 'terminal',
+  'aiTool:terminalLastCommand': 'terminal',
+}
+
+/** 第三方插件读写文档时改用只能访问当前项目目录的版本（内置插件不受限） */
+const SCOPED_HOST_COMMANDS: Readonly<Record<string, string>> = {
+  'documents:getText': 'documents:getTextScoped',
+  'documents:get': 'documents:getScoped',
+  'documents:applyEdit': 'documents:applyEditScoped',
+}
+
 /** 插件进程在 CRASH_WINDOW_MS 内崩溃这么多次后不再自动拉起，直到重新加载插件 */
 export const MAX_HOST_CRASHES = 3
 const CRASH_WINDOW_MS = 5 * 60 * 1000
@@ -354,6 +387,11 @@ export class PluginService {
 
   // ───────────── 权限授权 ─────────────
 
+  /** 插件获准访问的域名权限（net:…），插件网页 UI 的 CSP 据此放开 connect-src */
+  getNetPermissions(id: string): string[] {
+    return this.effectiveGrants(id).filter(p => p.startsWith('net:'))
+  }
+
   /** 用户同意插件申请的全部权限（插件管理里的「授权并启用」、商店安装确认时调用） */
   async grantPermissions(id: string): Promise<void> {
     const manifest = this.getManifest(id)
@@ -530,7 +568,8 @@ export class PluginService {
       if (typeof command !== 'string') throw new RpcError(RpcErrorCode.InvalidParams, '命令 ID 无效')
       const permission = this.permissionForHostCommand(command)
       if (permission) this.requirePermission(pluginId, permission)
-      return this.executeCommand(command, Array.isArray(args) ? args : [])
+      const scoped = !this.findEnabled(pluginId)?.builtin ? SCOPED_HOST_COMMANDS[command] : undefined
+      return this.executeCommand(scoped ?? command, Array.isArray(args) ? args : [])
     })
     rpc.onRequest('secrets/get', params => this.handleSecret('get', callerOf(params), params as SecretParams))
     rpc.onRequest('secrets/store', params => this.handleSecret('store', callerOf(params), params as SecretParams))
@@ -589,8 +628,9 @@ export class PluginService {
 
   /** 插件调用宿主侧命令需要的权限；插件之间互相调用命令不需要权限 */
   private permissionForHostCommand(command: string): string | null {
-    if (command === 'documents:getText') return 'workspace:read'
-    if (command === 'documents:applyEdit') return 'documents:write'
+    if (HOST_COMMAND_PERMISSIONS[command]) return HOST_COMMAND_PERMISSIONS[command]
+    // 只能限定项目目录的版本由宿主改写，插件直接调用视同内置命令
+    if (Object.values(SCOPED_HOST_COMMANDS).includes(command)) return 'workbench:commands'
     if (this.hostCommands.has(command)) return null
     const owner = this.model.commands.get(command)?.pluginId
     const ownerManifest = owner ? this.findEnabled(owner) : undefined

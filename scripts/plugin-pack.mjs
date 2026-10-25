@@ -5,6 +5,8 @@
 //       生成发布者密钥：<输出目录>/publisher-private.pem（自己保管，不要提交）与 publisher-public.txt（填进商店索引 publishers）
 //   node scripts/plugin-pack.mjs pack <插件目录> <输出目录> [--key publisher-private.pem] [--url-base https://…/]
 //       把插件目录打成 <插件ID>-<版本>.zip，计算 sha256，用私钥签名，并打印商店索引条目（JSON）
+//   node scripts/plugin-pack.mjs sign-index <index.json> --key publisher-private.pem
+//       给商店索引签名，生成 index.json.sig（自建商店在设置里填对应公钥后，IDE 只接受签名有效的索引）
 //
 // 签名内容是包的 sha256 十六进制字符串，算法 Ed25519；IDE 安装时用索引里该发布者的公钥校验，
 // 首次见到的公钥会固定在本机，之后公钥变化即拒绝安装。
@@ -77,6 +79,14 @@ if (command === 'keygen') {
   }
   console.log(JSON.stringify(entry, null, 2))
   if (!signature) console.error('提示：没有用 --key 签名，IDE 安装时会提示「未签名」')
+} else if (command === 'sign-index') {
+  // 给商店索引签名：输出 <索引文件>.sig，与索引放在同一目录（IDE 读取 <索引地址>.sig 校验）
+  const indexPath = resolve(args[0] || '')
+  const keyPath = option(args, '--key')
+  if (!existsSync(indexPath) || !keyPath) fail('用法：node scripts/plugin-pack.mjs sign-index <index.json> --key <私钥.pem>')
+  const signature = sign(null, readFileSync(indexPath), createPrivateKey(readFileSync(resolve(keyPath)))).toString('base64')
+  writeFileSync(`${indexPath}.sig`, `${signature}\n`)
+  console.log(`已生成 ${indexPath}.sig`)
 } else {
-  fail('用法：\n  node scripts/plugin-pack.mjs keygen <输出目录>\n  node scripts/plugin-pack.mjs pack <插件目录> <输出目录> [--key 私钥.pem] [--url-base 下载地址前缀]')
+  fail('用法：\n  node scripts/plugin-pack.mjs keygen <输出目录>\n  node scripts/plugin-pack.mjs pack <插件目录> <输出目录> [--key 私钥.pem] [--url-base 下载地址前缀]\n  node scripts/plugin-pack.mjs sign-index <index.json> --key 私钥.pem')
 }

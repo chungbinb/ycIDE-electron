@@ -4,13 +4,14 @@
 // 放进用户插件目录 → 记录用户同意的权限 → 重新扫描插件。
 // 不直接依赖 Electron，便于测试。
 
-import { createHash, createPublicKey, verify } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { LibraryPackageEntry, LibraryRemoteIndex, LibraryRemoteIndexResult, Platform } from '../../shared/library-store'
 import { validatePluginManifest } from '../../shared/plugin/manifest'
 import { requestedPermissions } from '../../shared/plugin/permissions'
 import { extractZipSafely } from '../security/safeZip'
+import { verifyEd25519 } from '../security/signature'
 import type { PluginService } from './pluginService'
 
 export type StorePluginKind = 'plugin' | 'theme'
@@ -57,13 +58,7 @@ function sha256(buffer: Buffer): string {
 
 /** 校验 Ed25519 签名：被签的内容是包的 sha256 十六进制字符串 */
 export function verifyPackageSignature(packageSha256: string, signatureBase64: string, publicKeyBase64: string): boolean {
-  try {
-    const key = createPublicKey({ key: Buffer.from(publicKeyBase64, 'base64'), format: 'der', type: 'spki' })
-    if (key.asymmetricKeyType !== 'ed25519') return false
-    return verify(null, Buffer.from(packageSha256, 'utf-8'), key, Buffer.from(signatureBase64, 'base64'))
-  } catch {
-    return false
-  }
+  return verifyEd25519(Buffer.from(packageSha256, 'utf-8'), signatureBase64, publicKeyBase64)
 }
 
 function isStorePluginEntry(entry: LibraryPackageEntry): entry is LibraryPackageEntry & { kind: StorePluginKind } {

@@ -65,6 +65,20 @@
           ".erc"
         ]
       }
+    ],
+    "commands": [
+      {
+        "id": "eyc:getProjectSymbols",
+        "title": "易语言：取项目符号（全局变量、常量、DLL 命令、数据类型、类、窗口）"
+      },
+      {
+        "id": "eyc:parseBlocks",
+        "title": "易语言：解析源码的块结构与流程线"
+      },
+      {
+        "id": "eyc:getDiagnostics",
+        "title": "易语言：取当前文件的诊断"
+      }
     ]
   }
 }

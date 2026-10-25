@@ -1,0 +1,14 @@
+{
+  "codegen/controls.cjs": "67350fc412b62c94b99a929d66ac3b921a44da427e3bc74c1e4b6265a40aa693",
+  "codegen/window.cjs": "0fc3b3e893215e1177b8b6c71a941d224ec50ae0b72dc179d0ef459a4a040670",
+  "control-traits.json": "a2460fc519d58967bfa0b30c3c9a0e6b1b6e35b8d99d9b3639b740329edafe38",
+  "impl/linux.cpp": "bd41519b441455201ac948cefafa0dd3d2367376ca3c786278c9fdc2194022f7",
+  "impl/macos.mm": "dc43948eb94bd9a50723694ab97447a7b5fbd6a3fc1261e8b43cb352e7f46ba1",
+  "impl/pinyin-table.inc": "dd70222f361e247007abaa4a5c441d9be2f5d54bfa89a777624ef2a52c93f504",
+  "impl/windows.cpp": "72c01d5530df64ac6dbed10121878b60460416937707356b203de9f97afea185",
+  "krnln.commands.ycmd.json": "3f169cc844f78a09502fc0ba679d0e19d6f3c55af4bc7de434478a976868c545",
+  "krnln.constants.json": "f351e8dfb8a4f3d47c1e02e015ee37b5fe3ada180983084a422ff08c43b8a9a2",
+  "krnln.library.json": "718281c7fa906179767dbc9d2508b967a456b3deff3a661e6fcbf6abc0eb5bb1",
+  "plugin.json": "519e24cd03a0896b7dcd5ce0b72ccd5897052d8250a477481f4c349d21373773",
+  "window-units.json": "28ddcc50b5b9dc543d6e15ab72444a7abdc4cca221453f63e66b7ac41ae84bbf"
+}

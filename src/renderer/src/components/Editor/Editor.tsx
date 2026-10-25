@@ -3,7 +3,8 @@ import { useEycProjectSymbols, isEycSourceLanguage } from '../../languages/eyc/p
 import { EycLanguageServiceContext, EditorDecorationsContext } from '../../languages/eyc/languageService'
 import { collectRenderers, pickRenderer } from '../../../../shared/plugin/rendererContributions'
 import { FlowLineRendererContext, getFlowLineRenderer } from './flowLineRenderers'
-import { useEnabledManifests } from '../../workbench/commands'
+import { useEnabledManifests, useCommandHandlers } from '../../workbench/commands'
+import { getBlocksFlowModelCached } from './editorBlocksModelShared'
 import { collectEditors, editorsForLanguage, pickEditor, type EditorEntry } from '../../../../shared/plugin/editorContributions'
 import PluginWebEditor from '../../workbench/pluginWebEditor'
 import './monaco-setup' // 必须在 @monaco-editor/react 首次 init 前：用本地 monaco 替代 CDN（离线可用）
@@ -483,6 +484,28 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   const [eycEditorModeTabs, setEycEditorModeTabs] = useState<Record<string, EycEditorMode>>({})
   // 「打开方式」：标签页 → 用户选的编辑器 ID（插件网页编辑器，或窗口文件改用文本编辑器）
   const [editorChoiceTabs, setEditorChoiceTabs] = useState<Record<string, string>>({})
+  // 编辑器崩溃回退（设计稿 §6.3）：标签页 → 出错的编辑器与原因；出错后改用文本编辑器打开
+  const [editorFailures, setEditorFailures] = useState<Record<string, { editorId: string; editorName: string; reason: string }>>({})
+  const reportEditorFailure = useCallback((tabId: string, editorId: string, editorName: string, reason: string) => {
+    console.error('[Editor] 编辑器出错，回退到文本编辑器', { tabId, editorId, reason })
+    void window.api?.debug?.logRendererError({ source: 'EditorFallback', message: `${editorName}: ${reason}`, extra: { tabId, editorId } })
+    setEditorFailures(prev => ({ ...prev, [tabId]: { editorId, editorName, reason } }))
+    setEditorChoiceTabs(prev => ({ ...prev, [tabId]: 'ycide.text' }))
+  }, [])
+  const retryFailedEditor = useCallback((tabId: string) => {
+    const failure = editorFailures[tabId]
+    setEditorFailures(prev => {
+      const next = { ...prev }
+      delete next[tabId]
+      return next
+    })
+    setEditorChoiceTabs(prev => {
+      const next = { ...prev }
+      if (failure && failure.editorId !== 'ycide.formDesigner') next[tabId] = failure.editorId
+      else delete next[tabId]
+      return next
+    })
+  }, [editorFailures])
   const [externalChangePrompt, setExternalChangePrompt] = useState<{
     tabId: string
     filePath: string
@@ -2159,6 +2182,32 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
     projectWindows, activeWindowControls, activeWindowControlNames, windowUnits,
   }), [projectGlobalVars, projectConstants, projectDllCommands, projectDataTypes, projectClassNames,
     projectWindows, activeWindowControls, activeWindowControlNames, windowUnits])
+  // 语言服务对插件开放的接口（ycide.lang-eyc 声明的命令；第三方插件需要 workspace:read）
+  const eycLanguageServiceRef = useRef(eycLanguageService)
+  eycLanguageServiceRef.current = eycLanguageService
+  useCommandHandlers({
+    'eyc:getProjectSymbols': () => {
+      const s = eycLanguageServiceRef.current
+      return {
+        globalVars: s.projectGlobalVars,
+        constants: s.projectConstants,
+        dllCommands: s.projectDllCommands,
+        dataTypes: s.projectDataTypes,
+        classNames: s.projectClassNames,
+        windows: s.projectWindows,
+      }
+    },
+    'eyc:parseBlocks': (rawText: unknown, rawOptions: unknown) => {
+      if (typeof rawText !== 'string') throw new Error('需要源码文本')
+      const options = (rawOptions ?? {}) as { classModule?: unknown }
+      const model = getBlocksFlowModelCached(rawText.replace(/\r\n/g, '\n'), options.classModule === true, false)
+      return {
+        blocks: model.blocks,
+        flowMaxDepth: model.flowMaxDepth,
+        flowLines: [...model.flowMap.entries()],
+      }
+    },
+  })
   // 装饰服务：当前文档的断点、调试位置与变量、AI 改动差异
   const activeTabLabel = activeTab?.label ?? ''
   const activeBreakpointLines = breakpointsByFile[activeTabLabel]
@@ -2202,10 +2251,11 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
   // 表格编辑器插件不可用时，易语言源码一律用文本编辑器打开
   const activeTabUseTextMode = !eycTableAvailable
     || ((activeTabEycMode === 'text' || activeTabFallbackTextMode) && !activeTabForceTableForPendingNavigation)
+  // 只有文本模式才需要转换格式：表格模式下每次按键都整篇转换是输入延迟的热点之一
   const activeTabTextModeValue = useMemo(() => {
-    if (!activeTab || !isEycSourceLanguage(activeTab.language)) return ''
+    if (!activeTab || !isEycSourceLanguage(activeTab.language) || !activeTabUseTextMode) return ''
     return eycToYiFormat(activeTab.value)
-  }, [activeTab])
+  }, [activeTab, activeTabUseTextMode])
   const textModeValidCommandNames = useMemo(() => new Set<string>(), [])
   const textModeAllKnownVarNames = useMemo(() => new Set<string>(), [])
   const textModeReservedNameSet = useMemo(() => new Set<string>(), [])
@@ -2688,8 +2738,13 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             text={activeTab.value}
             themeTokenValues={themeTokenValues}
             onChange={setActiveTabValue}
+            onFailure={(reason) => reportEditorFailure(activeTab.id, activeWebEditor.id, activeWebEditor.displayName, reason)}
           />
         ) : activeTab.language === 'efw' && activeTab.formData && formDesignerAvailable && activeEditorChoice !== 'ycide.text' ? (
+          <EycEditorErrorBoundary
+            tabId={activeTab.id}
+            onError={(tabId, error) => reportEditorFailure(tabId, 'ycide.formDesigner', '窗口设计器', error.message || '渲染出错')}
+          >
           <VisualDesigner
             form={activeTab.formData}
             onChange={handleFormChange}
@@ -2713,6 +2768,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             onMenuItemActivate={handleMenuItemActivate}
             onMenuItemRenames={handleMenuItemRenames}
           />
+          </EycEditorErrorBoundary>
         ) : isEycSourceLanguage(activeTab.language) ? (
           activeTabUseTextMode ? (
             <div className="editor-eyc-textmode-shell">
@@ -2804,6 +2860,18 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             </EycEditorErrorBoundary>
           )
         ) : (
+          <div className="editor-eyc-textmode-shell">
+          {editorFailures[activeTab.id] && (
+            <div className="editor-eyc-fallback-banner" role="alert">
+              <span className="editor-eyc-fallback-text">
+                {`「${editorFailures[activeTab.id].editorName}」出错（${editorFailures[activeTab.id].reason}），已改用文本编辑器打开`}
+              </span>
+              <button type="button" className="editor-eyc-fallback-btn" onClick={() => retryFailedEditor(activeTab.id)}>
+                重试
+              </button>
+            </div>
+          )}
+          <div className="editor-eyc-textmode-main">
           <MonacoEditor
           key={activeTab.id}
           language={activeTab.language}
@@ -2823,6 +2891,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             </div>
           }
         />
+          </div>
+          </div>
         )}
       </div>
 

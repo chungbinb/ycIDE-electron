@@ -9,10 +9,12 @@ import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { validatePluginManifest } from '../../src/shared/plugin/manifest'
 import { isHostAllowed, isValidPermission, requestedPermissions, hasPermission } from '../../src/shared/plugin/permissions'
-import { createInMemoryTransportPair, RpcErrorCode, type RpcTransport } from '../../src/shared/plugin/rpc'
+import { createInMemoryTransportPair, RpcError, RpcErrorCode, type RpcTransport } from '../../src/shared/plugin/rpc'
 import { encodeFrame, FrameDecoder, createStdioTransport } from '../../src/shared/plugin/stdioTransport'
 import { PluginHostRuntime } from '../../src/main/plugins/pluginHostRuntime'
 import { PluginInstaller } from '../../src/main/plugins/pluginInstaller'
+import { buildPluginUiCsp } from '../../src/main/plugins/pluginUiCsp'
+import { documentVersion, DOCUMENT_VERSION_STALE } from '../../src/shared/plugin/documentVersion'
 import type { LibraryPackageEntry } from '../../src/shared/library-store'
 import { PluginService, MAX_HOST_CRASHES, type PluginHostConnection, type PluginHostSpec, type PluginServiceOptions } from '../../src/main/plugins/pluginService'
 
@@ -185,11 +187,11 @@ describe('授权与权限检查', () => {
     await h.service.grantPermissions('acme.reader')
     await h.service.grantPermissions('acme.full')
     const reader = await h.service.executeCommand('reader:run') as Record<string, unknown>
-    expect(reader).toMatchObject({ read: 'host:documents:getText', workbench: `DENIED:${RpcErrorCode.PermissionDenied}`, secretStore: `DENIED:${RpcErrorCode.PermissionDenied}` })
+    expect(reader).toMatchObject({ read: 'host:documents:getTextScoped', workbench: `DENIED:${RpcErrorCode.PermissionDenied}`, secretStore: `DENIED:${RpcErrorCode.PermissionDenied}` })
     expect(reader.storagePath).toBe(join(h.root, 'storage', 'acme.reader'))
     const full = await h.service.executeCommand('full:run') as Record<string, unknown>
-    expect(full).toMatchObject({ read: 'host:documents:getText', workbench: 'host:file:save', secretGet: 'full-secret' })
-    expect(h.hostCalls).toEqual(['documents:getText', 'documents:getText', 'file:save'])
+    expect(full).toMatchObject({ read: 'host:documents:getTextScoped', workbench: 'host:file:save', secretGet: 'full-secret' })
+    expect(h.hostCalls).toEqual(['documents:getTextScoped', 'documents:getTextScoped', 'file:save'])
   })
 
   it('同一发布者的插件共用一个受限进程（目录、权限取并集），不同发布者各自一个进程', async () => {
@@ -223,7 +225,7 @@ describe('授权与权限检查', () => {
     })
     evilSide.send({ jsonrpc: '2.0', id: 'forged', method: 'commands/executeHost', params: { pluginId: 'good.probe', command: 'documents:getText', args: ['secret.eyc'] } })
     expect(((await response) as { error?: { code: number } }).error?.code).toBe(RpcErrorCode.PermissionDenied)
-    expect(h.hostCalls).not.toContain('documents:getText')
+    expect(h.hostCalls).toEqual([])
   })
 })
 
@@ -403,5 +405,101 @@ describe('JS 插件模板', () => {
     await h.service.start()
     await h.service.grantPermissions('yourname.hello')
     expect(await h.service.executeCommand('hello:countLines', [{ path: 'a.eyc' }])).toBe(3)
+  })
+})
+
+describe('插件 API：项目文件、AI、终端', () => {
+  const API_MAIN = `
+exports.activate = (context, ycide) => {
+  context.subscriptions.push(ycide.commands.registerCommand('api:run', async () => {
+    const out = {}
+    const attempt = async (label, fn) => { try { out[label] = await fn() } catch (e) { out[label] = 'DENIED:' + e.code } }
+    await attempt('root', () => ycide.workspace.getRoot())
+    await attempt('list', () => ycide.workspace.listFiles('eyc'))
+    await attempt('read', () => ycide.workspace.readFile('a.eyc'))
+    await attempt('write', () => ycide.workspace.writeFile('b.eyc', 'x'))
+    await attempt('chat', () => ycide.ai.chat([{ role: 'user', content: 'hi' }]))
+    await attempt('termSend', () => ycide.terminal.send('dir'))
+    await attempt('termRead', () => ycide.terminal.read(5))
+    await attempt('viaAiTool', () => ycide.commands.executeCommand('aiTool:terminalSend', { command: 'dir' }))
+    await attempt('scopedDirect', () => ycide.commands.executeCommand('documents:getTextScoped', 'a.eyc'))
+    return out
+  }))
+}
+`
+  function apiPlugin(id: string, permissions: string[]): Record<string, unknown> {
+    return manifest(id, { runtime: { type: 'node', main: 'main.js' }, permissions, contributes: { commands: [{ id: 'api:run', title: 'run' }] } })
+  }
+
+  it('每个接口要对应的权限；不能借道 AI 工具命令或直接调用受限版本命令绕过', async () => {
+    const h = createHarness(dir => writePlugin(join(dir, 'p'), apiPlugin('acme.reader', ['workspace:read', 'workbench:commands']), API_MAIN))
+    await h.service.start()
+    await h.service.grantPermissions('acme.reader')
+    const denied = `DENIED:${RpcErrorCode.PermissionDenied}`
+    expect(await h.service.executeCommand('api:run')).toEqual({
+      root: 'host:workspace:getRoot', list: 'host:workspace:listFiles', read: 'host:workspace:readFile',
+      write: denied, chat: denied, termSend: denied, termRead: denied, viaAiTool: denied,
+      // 受限版本命令本身属于内置命令（需要 workbench:commands），直接调用也只能访问项目目录
+      scopedDirect: 'host:documents:getTextScoped',
+    })
+  })
+
+  it('同意了写文件、AI、终端权限后可以使用', async () => {
+    const h = createHarness(dir => writePlugin(join(dir, 'p'), apiPlugin('acme.all', ['workspace:read', 'workspace:write', 'ai:invoke', 'terminal']), API_MAIN))
+    await h.service.start()
+    await h.service.grantPermissions('acme.all')
+    const result = await h.service.executeCommand('api:run') as Record<string, unknown>
+    // 写文件、发送终端命令没有返回值（经 RPC 后字段不存在），只要没被拒绝即可
+    expect(result.write).toBeUndefined()
+    expect(result.termSend).toBeUndefined()
+    expect(result).toMatchObject({ chat: 'host:ai:chat', termRead: 'host:terminal:read', viaAiTool: 'host:aiTool:terminalSend' })
+  })
+})
+
+describe('插件网页 UI 的联网策略', () => {
+  it('没有 net 权限不能联网；按获准的域名放开 connect-src', () => {
+    expect(buildPluginUiCsp([])).not.toContain('connect-src')
+    expect(buildPluginUiCsp(['net:api.a.com'])).toContain('connect-src https://api.a.com http://api.a.com wss://api.a.com ws://api.a.com')
+    expect(buildPluginUiCsp(['net:*.a.com'])).toContain('https://*.a.com')
+    expect(buildPluginUiCsp(['net:*.a.com'])).toContain('https://a.com')
+    expect(buildPluginUiCsp(['net:*'])).toContain('connect-src https: http: wss: ws:')
+    expect(buildPluginUiCsp(['net:*'])).toMatch(/^default-src 'none'/)
+  })
+})
+
+describe('文档版本号', () => {
+  it('内容变了版本号就变；插件提交过期版本时收到 -33002', async () => {
+    expect(documentVersion('abc')).toBe(documentVersion('abc'))
+    expect(documentVersion('abc')).not.toBe(documentVersion('abd'))
+    expect(documentVersion('')).not.toBe(documentVersion(' '))
+    const VERSION_MAIN = `
+exports.activate = (context, ycide) => {
+  context.subscriptions.push(ycide.commands.registerCommand('ver:edit', async () => {
+    const doc = await ycide.documents.get('a.eyc')
+    try { await ycide.documents.applyEdit('a.eyc', doc.text + '!', { version: doc.version }); return 'applied' } catch (e) { return 'ERR:' + e.code }
+  }))
+}
+`
+    let current = '原文'
+    const h = createHarness(dir => writePlugin(join(dir, 'p'), manifest('acme.ver', {
+      runtime: { type: 'node', main: 'main.js' }, permissions: ['workspace:read', 'documents:write'], contributes: { commands: [{ id: 'ver:edit', title: 'edit' }] },
+    }), VERSION_MAIN), {
+      executeHostCommand: async (command, args) => {
+        if (command === 'documents:getScoped') {
+          const doc = { text: current, version: documentVersion(current) }
+          current = '被别人改了' // 插件读完之后、提交之前文档被改
+          return doc
+        }
+        if (command === 'documents:applyEditScoped') {
+          const request = args[0] as { version?: string }
+          if (request.version !== documentVersion(current)) throw new RpcError(DOCUMENT_VERSION_STALE, '版本过期')
+          return { ok: true }
+        }
+        return undefined
+      },
+    })
+    await h.service.start()
+    await h.service.grantPermissions('acme.ver')
+    expect(await h.service.executeCommand('ver:edit')).toBe(`ERR:${DOCUMENT_VERSION_STALE}`)
   })
 })

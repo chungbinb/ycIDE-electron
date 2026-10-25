@@ -65,40 +65,57 @@ export function inferResourceTypeByFileName(fileName: string): string {
   return '其它'
 }
 
+// 输入时每次按键都会整篇重新解析（性能剖析里的热点），而每行的解析只取决于这一行的文本：按行缓存。
+// 缓存的对象会被多行、多次调用共享，所以冻结——调用方不能修改解析结果（目前没有修改的地方）。
+const parsedLineCache = new Map<string, ParsedLine>()
+const PARSED_LINE_CACHE_LIMIT = 50000
+
+function parseLineUncached(line: string): ParsedLine {
+  const t = line.replace(/[\r\t]/g, '').trim()
+  if (!t) return { type: 'blank' as const, raw: line, fields: [] }
+  if (t.startsWith('.版本 ')) return { type: 'version' as const, raw: line, fields: [] }
+  if (t.startsWith('.支持库 ')) return { type: 'supportLib' as const, raw: line, fields: [t.slice(5)] }
+  if (t.startsWith("'")) return { type: 'comment' as const, raw: line, fields: [t.slice(1)] }
+
+  const lt = line.replace(/[\r\t]/g, '')
+  const decls: [DeclType, string][] = [
+    ['assembly', '.程序集 '], ['assemblyVar', '.程序集变量 '],
+    ['sub', '.子程序 '], ['localVar', '.局部变量 '],
+    ['globalVar', '.全局变量 '], ['longConstant', '.长文本常量 '], ['constant', '.常量 '],
+    ['resource', '.资源 '],
+    ['dataType', '.数据类型 '], ['dll', '.DLL命令 '],
+    ['ptrCmd', '.指针命令 '],
+    ['image', '.图片 '], ['sound', '.声音 '],
+  ]
+  for (const [dt, pf] of decls) {
+    const kw = pf.trim()
+    if (t === kw || t.startsWith(pf)) {
+      const rest = t === kw ? '' : t.slice(pf.length)
+      return { type: dt, raw: line, fields: splitCSV(rest) }
+    }
+  }
+  if (lt.startsWith('    .成员 ') || t.startsWith('.成员 ')) {
+    const pf = lt.startsWith('    .成员 ') ? '    .成员 ' : '.成员 '
+    return { type: 'dataTypeMember' as DeclType, raw: line, fields: splitCSV((lt.startsWith('    .成员 ') ? lt : t).slice(pf.length)) }
+  }
+  if (lt.startsWith('    .参数 ') || t.startsWith('.参数 ')) {
+    const pf = lt.startsWith('    .参数 ') ? '    .参数 ' : '.参数 '
+    return { type: 'subParam' as DeclType, raw: line, fields: splitCSV((lt.startsWith('    .参数 ') ? lt : t).slice(pf.length)) }
+  }
+  return { type: 'code' as const, raw: line, fields: [] }
+}
+
 export function parseLines(text: string): ParsedLine[] {
   return text.split('\n').map(line => {
-    const t = line.replace(/[\r\t]/g, '').trim()
-    if (!t) return { type: 'blank' as const, raw: line, fields: [] }
-    if (t.startsWith('.版本 ')) return { type: 'version' as const, raw: line, fields: [] }
-    if (t.startsWith('.支持库 ')) return { type: 'supportLib' as const, raw: line, fields: [t.slice(5)] }
-    if (t.startsWith("'")) return { type: 'comment' as const, raw: line, fields: [t.slice(1)] }
-
-    const lt = line.replace(/[\r\t]/g, '')
-    const decls: [DeclType, string][] = [
-      ['assembly', '.程序集 '], ['assemblyVar', '.程序集变量 '],
-      ['sub', '.子程序 '], ['localVar', '.局部变量 '],
-      ['globalVar', '.全局变量 '], ['longConstant', '.长文本常量 '], ['constant', '.常量 '],
-      ['resource', '.资源 '],
-      ['dataType', '.数据类型 '], ['dll', '.DLL命令 '],
-      ['ptrCmd', '.指针命令 '],
-      ['image', '.图片 '], ['sound', '.声音 '],
-    ]
-    for (const [dt, pf] of decls) {
-      const kw = pf.trim()
-      if (t === kw || t.startsWith(pf)) {
-        const rest = t === kw ? '' : t.slice(pf.length)
-        return { type: dt, raw: line, fields: splitCSV(rest) }
-      }
+    let parsed = parsedLineCache.get(line)
+    if (!parsed) {
+      parsed = parseLineUncached(line)
+      Object.freeze(parsed.fields)
+      Object.freeze(parsed)
+      if (parsedLineCache.size >= PARSED_LINE_CACHE_LIMIT) parsedLineCache.clear()
+      parsedLineCache.set(line, parsed)
     }
-    if (lt.startsWith('    .成员 ') || t.startsWith('.成员 ')) {
-      const pf = lt.startsWith('    .成员 ') ? '    .成员 ' : '.成员 '
-      return { type: 'dataTypeMember' as DeclType, raw: line, fields: splitCSV((lt.startsWith('    .成员 ') ? lt : t).slice(pf.length)) }
-    }
-    if (lt.startsWith('    .参数 ') || t.startsWith('.参数 ')) {
-      const pf = lt.startsWith('    .参数 ') ? '    .参数 ' : '.参数 '
-      return { type: 'subParam' as DeclType, raw: line, fields: splitCSV((lt.startsWith('    .参数 ') ? lt : t).slice(pf.length)) }
-    }
-    return { type: 'code' as const, raw: line, fields: [] }
+    return parsed
   })
 }
 

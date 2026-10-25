@@ -24,8 +24,10 @@ import { delimiter, dirname, extname, join } from 'node:path'
 import { BUILTIN_PLUGIN_CANDIDATES } from '../../shared/plugin/builtinPlugins'
 import type { PluginHostPlatform } from '../../shared/plugin/manifest'
 import { createStdioTransport } from '../../shared/plugin/stdioTransport'
+import { RpcError } from '../../shared/plugin/rpc'
 import { PluginService, type PluginHostConnection, type PluginHostSpec, type PluginSecretStore } from './pluginService'
 import { PluginInstaller, type InstallConsent } from './pluginInstaller'
+import { buildPluginUiCsp } from './pluginUiCsp'
 import { libraryManager } from '../libraryManager'
 
 const RENDERER_COMMAND_TIMEOUT_MS = 10 * 60 * 1000
@@ -52,11 +54,6 @@ const UI_MIME_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 }
 
-/**
- * 插件网页只能加载自己目录里的资源，不能直接联网（联网能力将来按清单权限单独开放，设计稿 §8）。
- * 页面运行在不带 allow-same-origin 的沙箱 iframe 里，只能经 postMessage 与宿主交换数据。
- */
-const PLUGIN_UI_CSP = "default-src 'none'; script-src ycide-plugin: 'unsafe-inline'; style-src ycide-plugin: 'unsafe-inline'; img-src ycide-plugin: data: blob:; font-src ycide-plugin: data:"
 
 function registerPluginUiProtocol(service: PluginService): void {
   protocol.handle(PLUGIN_UI_SCHEME, async request => {
@@ -70,7 +67,7 @@ function registerPluginUiProtocol(service: PluginService): void {
       return new Response(body, {
         headers: {
           'Content-Type': UI_MIME_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
-          'Content-Security-Policy': PLUGIN_UI_CSP,
+          'Content-Security-Policy': buildPluginUiCsp(service.getNetPermissions(pluginId)),
           'X-Content-Type-Options': 'nosniff',
         },
       })
@@ -411,13 +408,13 @@ export function initPluginHost(platform: PluginHostPlatform, onDidChange: () => 
     app.on('before-quit', stop)
   }
   ipcMain.on('plugins:rendererCommandResult', (_event, payload: unknown) => {
-    const { requestId, ok, result, error } = (payload ?? {}) as { requestId?: number; ok?: boolean; result?: unknown; error?: string }
+    const { requestId, ok, result, error, code } = (payload ?? {}) as { requestId?: number; ok?: boolean; result?: unknown; error?: string; code?: unknown }
     const pending = typeof requestId === 'number' ? pendingRendererRequests.get(requestId) : undefined
     if (!pending) return
     pendingRendererRequests.delete(requestId!)
     clearTimeout(pending.timer)
     if (ok) pending.resolve(result)
-    else pending.reject(new Error(error || '命令执行失败'))
+    else pending.reject(typeof code === 'number' ? new RpcError(code, error || '命令执行失败') : new Error(error || '命令执行失败'))
   })
 
   app.on('before-quit', () => { void created.shutdown() })

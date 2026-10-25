@@ -856,9 +856,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const maxScrollTop = Math.max(scrollHeight - wrapper.clientHeight, 1)
     const topRatio = Math.min(Math.max(wrapper.scrollTop / maxScrollTop, 0), 1)
     const bottomRatio = Math.min(Math.max((wrapper.scrollTop + wrapper.clientHeight) / scrollHeight, 0), 1)
-    // overscan 直接决定每次重渲染的行数（点击/输入的主线程开销大头是行虚拟 DOM 构建），
-    // 取视口典型高度（~40 行）的 2 倍冗余，滚动窗口更新由 rAF 驱动足以跟上。
-    const overscanLines = 80
+    // overscan 直接决定每次重渲染、重绘的行数（点击/输入/滚动的主线程开销大头）。
+    // 取约 1 个视口高度（~40 行）的冗余：性能录制（tests/perf）里 4 倍降速滚动每帧从 53ms 降到 33ms，
+    // 快速滚动露出未渲染区域的帧数与 80 行时相当（1455 帧中 8 帧 / 6 帧）。
+    const overscanLines = 40
     const quantizeStep = 32
     const rawStart = Math.max(0, Math.floor(topRatio * maxLineIndex) - overscanLines)
     const rawEnd = Math.min(maxLineIndex, Math.ceil(bottomRatio * maxLineIndex) + overscanLines)
@@ -2199,12 +2200,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
   }, [])
 
-  // 确保选中项始终可见
+  // 确保选中项始终可见：只滚动补全列表自身（scrollIntoView 会连带滚动编辑器等祖先容器，
+  // 且每次按键弹出补全时都强制一次整页布局，是输入延迟的热点之一）
   useEffect(() => {
-    if (acVisible && acListRef.current) {
-      const selected = acListRef.current.children[acIndex] as HTMLElement | undefined
-      selected?.scrollIntoView({ block: 'nearest' })
-    }
+    const list = acListRef.current
+    if (!acVisible || !list) return
+    const selected = list.children[acIndex] as HTMLElement | undefined
+    if (!selected) return
+    const top = selected.offsetTop
+    const bottom = top + selected.offsetHeight
+    if (top < list.scrollTop) list.scrollTop = top
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight
   }, [acIndex, acVisible])
 
   // 项目类名 → 公开方法补全项（用于 对象.方法 成员补全）
@@ -8207,7 +8213,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
             const tableMeta = tableRenderMetaByBlockIndex.get(bi)
             if (!tableMeta) return null
             const { tableLineIndices, tableColCount, tableRenderRowsAll } = tableMeta
-            const tableRowOverscanLines = 120
+            // 表格块内的行另有冗余（与上面的 overscanLines 叠加），同样按性能录制减半
+            const tableRowOverscanLines = 60
             const minVisibleLine = Math.max(0, visibleLineWindow.startLine - tableRowOverscanLines)
             const maxVisibleLine = visibleLineWindow.endLine + tableRowOverscanLines
             const isRowVisible = (tableRow: typeof tableRenderRowsAll[number]): boolean => {

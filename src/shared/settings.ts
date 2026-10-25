@@ -61,6 +61,8 @@ export interface IDESettings {
   tableRendererId: string
   /** 支持库在线索引地址 */
   libraryStoreIndexUrl: string
+  /** 商店索引签名公钥（SPKI DER 的 base64），自建商店时填写；有公钥时索引必须带有效签名 */
+  storeIndexPublicKeys: string[]
   /**
    * Zig 编译器可执行文件路径（绿色版解压后手动指定）。
    * 空 = 按内置目录（IDE 目录下 compiler/zig 等）自动查找。
@@ -113,6 +115,7 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   compilerId: '',
   tableRendererId: '',
   libraryStoreIndexUrl: DEFAULT_LIBRARY_STORE_INDEX_URL,
+  storeIndexPublicKeys: [],
   compilerZigPath: '',
   compilerOptimizeLevel: 'O2',
   androidSdkPath: '',
@@ -176,6 +179,9 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
     compilerId: typeof raw.compilerId === 'string' ? raw.compilerId.trim() : d.compilerId,
     tableRendererId: typeof raw.tableRendererId === 'string' ? raw.tableRendererId.trim() : d.tableRendererId,
     libraryStoreIndexUrl: resolveUrl(raw.libraryStoreIndexUrl, d.libraryStoreIndexUrl),
+    storeIndexPublicKeys: Array.isArray(raw.storeIndexPublicKeys)
+      ? raw.storeIndexPublicKeys.filter((k): k is string => typeof k === 'string' && k.trim().length > 0).map(k => k.trim())
+      : d.storeIndexPublicKeys,
     compilerZigPath: resolvePath(raw.compilerZigPath, d.compilerZigPath),
     compilerOptimizeLevel: resolveOptimizeLevel(raw.compilerOptimizeLevel, d.compilerOptimizeLevel),
     androidSdkPath: resolvePath(raw.androidSdkPath, d.androidSdkPath),

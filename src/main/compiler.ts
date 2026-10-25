@@ -111,45 +111,14 @@ function createDefaultWindowFileInfo(formName: string, title: string): WindowFil
   }
 }
 
-// 从 .efw 的 properties 字典读取窗口属性（编辑器内存与磁盘解析两条路径共用）
+// 从 .efw 的 properties 字典读取窗口属性（编辑器内存与磁盘解析两条路径共用）；属性名由核心支持库脚本定义
 function applyWindowProperties(info: WindowFileInfo, p: Record<string, unknown>): void {
-  if (p['可视'] === false) info.visible = false
-  if (p['禁止'] === true) info.disabled = true
-  if (typeof p['边框'] === 'number') info.border = p['边框']
-  // 兼容简体"钮"（设计器内存路径与 window-units.json 用简体）与历史繁体"鈕"，
-  // 否则关闭标签页后按磁盘 .efw 编译时这几个属性被忽略、与标签开着时行为不一致。
-  if (p['最大化按钮'] === false || p['最大化按鈕'] === false) info.maxButton = false
-  if (p['最小化按钮'] === false || p['最小化按鈕'] === false) info.minButton = false
-  if (p['控制按钮'] === false || p['控制按鈕'] === false) info.controlBox = false
-  if (p['总在最前'] === true) info.topmost = true
-  if (typeof p['位置'] === 'number') info.startPos = p['位置']
-  if (typeof p['左边'] === 'number') info.left = p['左边']
-  if (typeof p['顶边'] === 'number') info.top = p['顶边']
-  if (typeof p['底色'] === 'number') info.backColor = p['底色']
-  if (typeof p['鼠标指针'] === 'number') info.mousePointer = p['鼠标指针']
-  if (p['可否移动'] === false) info.movable = false
-  if (p['回车下移焦点'] === true) info.enterAsTab = true
-  if (p['Esc键关闭'] === true) info.escClose = true
-  if (p['在任务条中显示'] === false) info.showInTaskbar = false
-  if (p['随意移动'] === true) info.dragMove = true
-  if (p['保持标题条激活'] === true) info.keepCaptionActive = true
-  if (typeof p['窗口类名'] === 'string' && p['窗口类名'].trim() !== '') info.wndClassName = p['窗口类名'].trim()
-  if (typeof p['外形'] === 'number' && p['外形'] >= 0 && p['外形'] <= 2) info.shape = p['外形']
-  if (typeof p['圆角半径'] === 'number' && p['圆角半径'] >= 0) info.cornerRadius = p['圆角半径']
-  if (typeof p['底图'] === 'string' && p['底图'].startsWith('data:image')) info.backImage = p['底图']
-  if (typeof p['底图方式'] === 'number' && p['底图方式'] >= 0 && p['底图方式'] <= 4) info.backImageMode = p['底图方式']
-  if (typeof p['图标'] === 'string' && p['图标'].startsWith('data:image')) info.iconImage = p['图标']
+  controlCodegen<void>('windowProperties', p, info)
 }
 
-// 鼠标指针枚举 → Win32 系统光标（15 自定义型暂按默认箭头处理）
-const MOUSE_POINTER_CURSOR_IDS = [
-  'IDC_ARROW', 'IDC_ARROW', 'IDC_CROSS', 'IDC_IBEAM', 'IDC_WAIT', 'IDC_HELP',
-  'IDC_APPSTARTING', 'IDC_NO', 'IDC_SIZEALL', 'IDC_UPARROW', 'IDC_SIZENS',
-  'IDC_SIZEWE', 'IDC_SIZENWSE', 'IDC_SIZENESW', 'IDC_HAND', 'IDC_ARROW',
-]
 
 function mapMousePointerCursor(mousePointer: number): string {
-  return MOUSE_POINTER_CURSOR_IDS[mousePointer] || 'IDC_ARROW'
+  return controlCodegen<string>('mousePointerCursor', mousePointer)
 }
 
 // 项目文件条目
@@ -1236,102 +1205,15 @@ function getWin32ClassName(ctrlType: string): string {
 function getWin32Style(ctrlType: string): string {
   return libraryManager.getControlTraits().win32Styles[ctrlType] || 'WS_CHILD | SS_LEFT'
 }
-
+// 事件名 → WM_COMMAND 通知码 / WM_NOTIFY 码 / 滚动消息：核心库组件的事件语义，由核心支持库脚本提供
 function resolveCommandNotifyCode(className: string, eventName: string): string | null {
-  const cls = (className || '').toUpperCase()
-  const ev = (eventName || '').replace(/\s+/g, '')
-
-  const isClick = ev.includes('被单击') || ev === '单击' || ev === '点击'
-  const isDblClick = ev.includes('双击')
-  const isTextChange = ev.includes('内容被改变') || ev.includes('内容改变') || ev.includes('文本被改变') || ev.includes('文本改变')
-  const isSelectChange = ev.includes('选择项被改变') || ev.includes('选择被改变') || ev.includes('选中项被改变') || ev.includes('选中被改变')
-  const isFocus = ev.includes('得到焦点')
-  const isBlur = ev.includes('失去焦点')
-
-  if (isClick) {
-    if (cls === 'BUTTON' || cls === 'YCBUTTON') return 'BN_CLICKED'
-    if (cls === 'STATIC') return 'STN_CLICKED'
-  }
-  if (isDblClick) {
-    if (cls === 'BUTTON' || cls === 'YCBUTTON') return 'BN_DBLCLK'
-    if (cls === 'STATIC') return 'STN_DBLCLK'
-    if (cls === 'LISTBOX') return 'LBN_DBLCLK'
-  }
-  if (isTextChange) {
-    if (cls === 'EDIT') return 'EN_CHANGE'
-    if (cls === 'COMBOBOX') return 'CBN_EDITCHANGE'
-  }
-  if (isSelectChange) {
-    if (cls === 'LISTBOX') return 'LBN_SELCHANGE'
-    if (cls === 'COMBOBOX') return 'CBN_SELCHANGE'
-  }
-  if (isFocus) {
-    if (cls === 'EDIT') return 'EN_SETFOCUS'
-    if (cls === 'LISTBOX') return 'LBN_SETFOCUS'
-    if (cls === 'COMBOBOX') return 'CBN_SETFOCUS'
-    if (cls === 'BUTTON' || cls === 'YCBUTTON') return 'BN_SETFOCUS'
-  }
-  if (isBlur) {
-    if (cls === 'EDIT') return 'EN_KILLFOCUS'
-    if (cls === 'LISTBOX') return 'LBN_KILLFOCUS'
-    if (cls === 'COMBOBOX') return 'CBN_KILLFOCUS'
-    if (cls === 'BUTTON' || cls === 'YCBUTTON') return 'BN_KILLFOCUS'
-  }
-
-  return null
+  return controlCodegen<string | null>('commandNotifyCode', className, eventName)
 }
-
 function resolveNotifyCode(className: string, eventName: string): string | null {
-  const cls = (className || '').toUpperCase()
-  const ev = (eventName || '').replace(/\s+/g, '')
-
-  const isClick = ev.includes('被单击') || ev === '单击' || ev === '点击'
-  const isDblClick = ev.includes('双击')
-  const isSelectChange = ev.includes('选择项被改变') || ev.includes('选择被改变') || ev.includes('选中项被改变') || ev.includes('选中被改变')
-  const isItemActivate = ev.includes('项被激活') || ev.includes('激活项')
-  const isLabelBegin = ev.includes('开始标签编辑') || ev.includes('开始编辑标签')
-  const isLabelEnd = ev.includes('结束标签编辑') || ev.includes('标签编辑结束')
-  const isExpandCollapse = ev.includes('展开') || ev.includes('折叠')
-  const isCustomDraw = ev.includes('自定义绘制') || ev.includes('绘制')
-
-  if (cls === 'SYSLISTVIEW32') {
-    if (isClick) return 'NM_CLICK'
-    if (isDblClick) return 'NM_DBLCLK'
-    if (isSelectChange) return 'LVN_ITEMCHANGED'
-    if (isItemActivate) return 'LVN_ITEMACTIVATE'
-    if (isLabelBegin) return 'LVN_BEGINLABELEDIT'
-    if (isLabelEnd) return 'LVN_ENDLABELEDIT'
-    if (isCustomDraw) return 'NM_CUSTOMDRAW'
-  }
-
-  if (cls === 'SYSTREEVIEW32') {
-    if (isClick) return 'NM_CLICK'
-    if (isDblClick) return 'NM_DBLCLK'
-    if (isSelectChange) return 'TVN_SELCHANGED'
-    if (isLabelBegin) return 'TVN_BEGINLABELEDIT'
-    if (isLabelEnd) return 'TVN_ENDLABELEDIT'
-    if (isExpandCollapse) return 'TVN_ITEMEXPANDED'
-    if (isCustomDraw) return 'NM_CUSTOMDRAW'
-  }
-
-  if (cls === 'SYSTABCONTROL32') {
-    if (isSelectChange) return 'TCN_SELCHANGE'
-    if (isClick) return 'NM_CLICK'
-    if (isDblClick) return 'NM_DBLCLK'
-  }
-
-  return null
+  return controlCodegen<string | null>('notifyCode', className, eventName)
 }
-
 function resolveScrollMessage(className: string, eventName: string): 'WM_HSCROLL' | 'WM_VSCROLL' | null {
-  const cls = (className || '').toUpperCase()
-  const ev = (eventName || '').replace(/\s+/g, '')
-  const isScrollLike = ev.includes('滚动') || ev.includes('位置') || ev.includes('值被改变') || ev.includes('值改变')
-  if (!isScrollLike) return null
-
-  if (cls === 'MSCTLS_TRACKBAR32') return 'WM_HSCROLL'
-  if (cls === 'SCROLLBAR') return 'WM_HSCROLL'
-  return null
+  return controlCodegen<'WM_HSCROLL' | 'WM_VSCROLL' | null>('scrollMessage', className, eventName)
 }
 
 function normalizeKey(text: string): string {
@@ -1966,7 +1848,7 @@ function resolveControlInitialText(
   c: { type?: string; text?: string; name?: string },
   props: Record<string, unknown>,
 ): string {
-  const fromProps = props['标题'] || props['内容'] || props['文本'] || props['地址'] || props['title'] || props['text']
+  const fromProps = controlCodegen<unknown>('captionText', props)
   const noNameFallback = isControl(c.type ?? '', 'textCaption')
   const fallbackName = noNameFallback ? '' : (c.name || '')
   return String(fromProps || c.text || fallbackName || '')
@@ -1995,410 +1877,70 @@ interface EditControlCodegen {
   needsInputFilter: boolean
 }
 
-// 标准 EDIT 控件不走 WCM_SETPROP 协议（Win32 原生类忽略 WM_APP+1），
-// 编辑框属性必须在创建时落成样式位，创建后用 EM_* 消息补齐动态属性。
-// 各属性默认值必须与 lib/krnln/window-units.json 编辑框定义中的 defaultValue 保持一致。
-function buildStdEditCodegen(extraProps: Record<string, unknown>): EditControlCodegen {
-  const border = readIntProp(extraProps['边框'], 1)
-  const multiline = readBoolProp(extraProps['是否允许多行'], false)
-  const scroll = readIntProp(extraProps['滚动条'], 0)
-  const align = readIntProp(extraProps['对齐方式'], 0)
-  const inputMode = readIntProp(extraProps['输入方式'], 0)
-  const caseConvert = readIntProp(extraProps['转换方式'], 0)
-  const hideSelection = readBoolProp(extraProps['隐藏选择'], true)
-  const tabStop = readBoolProp(extraProps['可停留焦点'], true)
-  const maxLen = readIntProp(extraProps['最大允许长度'], 0)
-  const selStart = readIntProp(extraProps['起始选择位置'], 0)
-  const selLength = readIntProp(extraProps['被选择字符数'], 0)
-  const spinMode = readIntProp(extraProps['调节器方式'], 0)
-  const spinMin = readIntProp(extraProps['调节器底限值'], 0)
-  const spinMax = readIntProp(extraProps['调节器上限值'], 100)
-  const passwordChar = String(extraProps['密码遮盖字符'] ?? '*')
-  const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], 0xffffff)
 
-  const parts = ['WS_CHILD']
-  if (tabStop) parts.push('WS_TABSTOP')
-  if (multiline) {
-    parts.push('ES_MULTILINE', 'ES_AUTOVSCROLL', 'ES_WANTRETURN')
-  } else {
-    parts.push('ES_AUTOHSCROLL')
-  }
-  if (scroll === 1 || scroll === 3) parts.push('WS_HSCROLL')
-  if (scroll === 2 || scroll === 3) parts.push('WS_VSCROLL')
-  if (align === 1) parts.push('ES_CENTER')
-  else if (align === 2) parts.push('ES_RIGHT')
-  // 输入方式：0通常 1只读方式 2密码输入 3整数文本 4小数文本 5字节 6短整数 7整数 8长整数 9小数 10双精度 11日期时间
-  if (inputMode === 1) parts.push('ES_READONLY')
-  if (inputMode === 2) parts.push('ES_PASSWORD')
-  // 转换方式（与易语言 ConvertMode 索引一致）：1=大写->小写(强制小写) 2=小写->大写(强制大写)
-  if (caseConvert === 1) parts.push('ES_LOWERCASE')
-  else if (caseConvert === 2) parts.push('ES_UPPERCASE')
-  if (!hideSelection) parts.push('ES_NOHIDESEL')
-  // 边框（与易语言 EditBox.border 索引一致）：0无 1凹入式 2凸出式 3浅凹入式 4镜框式 5单线边框式
-  if (border === 5) parts.push('WS_BORDER')
 
-  const postCreateLines: string[] = []
-  if (maxLen > 0) {
-    postCreateLines.push(`SendMessage(hCtrl, EM_LIMITTEXT, ${maxLen}, 0);`)
-  }
-  if (inputMode === 2) {
-    const maskCodePoint = passwordChar.codePointAt(0) ?? 42
-    if (maskCodePoint !== 42) {
-      postCreateLines.push(`SendMessage(hCtrl, EM_SETPASSWORDCHAR, ${maskCodePoint}, 0);`)
-    }
-  }
-  const needsInputFilter = inputMode >= 3 && inputMode <= 11
-  if (needsInputFilter) {
-    postCreateLines.push(`SetWindowSubclass(hCtrl, YcEditInputFilterProc, 1, (DWORD_PTR)${inputMode});`)
-  }
-  if (selStart > 0 || selLength > 0) {
-    postCreateLines.push(`SendMessage(hCtrl, EM_SETSEL, ${Math.max(selStart, 0)}, ${Math.max(selStart, 0) + Math.max(selLength, 0)});`)
-  }
-  if (spinMode === 1 || spinMode === 2) {
-    // 自动调节器(1)：UDS_SETBUDDYINT 让上下键在上/下限内自动增减编辑框整数内容 + 设范围；
-    // 手动调节器(2)：不绑整数、不设范围，仅贴附编辑框，由程序在 WM_VSCROLL 事件里自行处理。
-    const budInt = spinMode === 1 ? ' | UDS_SETBUDDYINT' : ''
-    const rangeMsg = spinMode === 1 ? ` SendMessage(hSpin, UDM_SETRANGE32, (WPARAM)${spinMin}, (LPARAM)${spinMax});` : ''
-    postCreateLines.push(
-      `{ HWND hSpin = CreateWindowExW(0, L"msctls_updown32", L"", WS_CHILD | WS_VISIBLE${budInt} | UDS_ALIGNRIGHT | UDS_ARROWKEYS | UDS_NOTHOUSANDS, 0, 0, 0, 0, hWndParent, NULL, g_hInstance, NULL);`
-      + ' SendMessage(hSpin, UDM_SETBUDDY, (WPARAM)hCtrl, 0);'
-      + rangeMsg + ' }',
-    )
-  }
 
-  return {
-    exStyle: border === 1 ? 'WS_EX_CLIENTEDGE'
-      : border === 2 ? 'WS_EX_WINDOWEDGE'
-      : border === 3 ? 'WS_EX_STATICEDGE'
-      : border === 4 ? 'WS_EX_DLGMODALFRAME'
-      : '0',
-    style: parts.join(' | '),
-    postCreateLines,
-    colorEntry: (textColor !== 0 || backColor !== 0xffffff) ? { textColor, backColor } : null,
-    needsInputFilter,
-  }
-}
 
-// 标准 STATIC 标签：横/纵对齐落成 SS_* 样式位、边框走 exStyle（与编辑框同 6 路映射 + 渐变镜框式）、
-// 文本/背景色与透明经 WM_CTLCOLORSTATIC 查表（复用 g_ycEditColors）。字体走通用 CreateFontW 路径。
-// 底图/底图方式/数据源/数据列暂声明占位（需 owner-draw/数据绑定，待后续）。
-function buildStdLabelCodegen(extraProps: Record<string, unknown>): {
-  style: string; exStyle: string; colorEntry: { textColor: number; backColor: number } | null; transparent: boolean
-} {
-  const hAlign = readIntProp(extraProps['横向对齐方式'], 0)  // 0左 1中 2右
-  const vAlign = readIntProp(extraProps['纵向对齐方式'], 0)  // 0顶 1中 2底
-  const border = readIntProp(extraProps['边框'], 0)          // 0无 1凹入 2凸出 3浅凹 4镜框 5单线 6渐变镜框
-  const effect = readIntProp(extraProps['效果'], 0)          // 0通常 1凹入 2凸出 3阴影 4透明
-  const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], 16777215)  // 默认白色（进颜色表填白，创建即白底不再融入窗口）；-1 兼容旧工程=融入窗口；0=纯黑；显式白/黑=真白/真黑
-  const autoWrap = readBoolProp(extraProps['是否自动折行'], false)
-  const parts = ['WS_CHILD', 'SS_NOTIFY']
-  // 横向对齐：居中/右总是折行；左对齐时按「是否自动折行」选 SS_LEFT(折行)/SS_LEFTNOWORDWRAP(不折行)
-  parts.push(hAlign === 1 ? 'SS_CENTER' : hAlign === 2 ? 'SS_RIGHT' : (autoWrap ? 'SS_LEFT' : 'SS_LEFTNOWORDWRAP'))
-  if (vAlign === 1) parts.push('SS_CENTERIMAGE')  // STATIC 仅支持垂直居中（单行）
-  if (border === 5) parts.push('WS_BORDER')
-  const exStyle = border === 1 ? 'WS_EX_CLIENTEDGE'
-    : border === 2 ? 'WS_EX_WINDOWEDGE'
-    : border === 3 ? 'WS_EX_STATICEDGE'
-    : (border === 4 || border === 6) ? 'WS_EX_DLGMODALFRAME'
-    : '0'
-  return {
-    style: parts.join(' | '),
-    exStyle,
-    colorEntry: (textColor !== 0 || backColor >= 0) ? { textColor, backColor: backColor >= 0 ? backColor : 0xffffff } : null,
-    transparent: effect === 4,
-  }
-}
-
-// 标准 BUTTON·选择框(BS_AUTOCHECKBOX)/单选框(BS_AUTORADIOBUTTON)：勾选/按钮形式/平面/标题居左/对齐落成样式，
-// 选中态创建后 BM_SETCHECK。文本/背景色经 WM_CTLCOLORSTATIC（复用 g_ycEditColors），字体走通用路径。
-// 图片/数据源/数据列暂声明占位。
-function buildStdCheckableCodegen(extraProps: Record<string, unknown>, isRadio: boolean): {
-  style: string; checked: boolean; colorEntry: { textColor: number; backColor: number } | null
-} {
-  const hAlign = readIntProp(extraProps['横向对齐方式'], 0)  // 0左 1中 2右
-  const vAlign = readIntProp(extraProps['纵向对齐方式'], 0)  // 0顶 1中 2底
-  const pushLike = readBoolProp(extraProps['按钮形式'], false)
-  const flat = readBoolProp(extraProps['平面'], false)
-  const leftText = readBoolProp(extraProps['标题居左'], false)
-  const checked = readBoolProp(extraProps['选中'], false)
-  const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], 16777215)  // 默认白色（进颜色表填白，创建即白底不再融入窗口）；-1 兼容旧工程=融入窗口；0=纯黑；显式白/黑=真白/真黑
-  const parts = ['WS_CHILD', 'WS_TABSTOP', isRadio ? 'BS_AUTORADIOBUTTON' : 'BS_AUTOCHECKBOX']
-  if (pushLike) parts.push('BS_PUSHLIKE')
-  if (flat) parts.push('BS_FLAT')
-  if (leftText) parts.push('BS_LEFTTEXT')  // 标题居左（勾选框移到右侧）
-  parts.push(hAlign === 1 ? 'BS_CENTER' : hAlign === 2 ? 'BS_RIGHT' : 'BS_LEFT')
-  parts.push(vAlign === 1 ? 'BS_VCENTER' : vAlign === 2 ? 'BS_BOTTOM' : 'BS_TOP')
-  return {
-    style: parts.join(' | '),
-    checked,
-    colorEntry: (textColor !== 0 || backColor >= 0) ? { textColor, backColor: backColor >= 0 ? backColor : 0xffffff } : null,
-  }
-}
-
-// 标准 BUTTON·分组框(BS_GROUPBOX)：标题对齐落成样式，文本/背景色经 WM_CTLCOLORSTATIC，字体走通用路径。
-function buildStdGroupBoxCodegen(extraProps: Record<string, unknown>): {
-  style: string; colorEntry: { textColor: number; backColor: number } | null
-} {
-  const hAlign = readIntProp(extraProps['对齐方式'], 0)  // 0左 1中 2右
-  const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], 16777215)  // 默认白色（进颜色表填白，创建即白底不再融入窗口）；-1 兼容旧工程=融入窗口；0=纯黑；显式白/黑=真白/真黑
-  const parts = ['WS_CHILD', 'BS_GROUPBOX']
-  parts.push(hAlign === 1 ? 'BS_CENTER' : hAlign === 2 ? 'BS_RIGHT' : 'BS_LEFT')
-  return {
-    style: parts.join(' | '),
-    colorEntry: (textColor !== 0 || backColor >= 0) ? { textColor, backColor: backColor >= 0 ? backColor : 0xffffff } : null,
-  }
-}
-
-// 标准 STATIC·图片框：边框走 exStyle，背景色经 WM_CTLCOLORSTATIC；有图片则 SS_BITMAP + SS_REALSIZECONTROL
-// + 创建后 STM_SETIMAGE。显示方式=居中→SS_CENTERIMAGE；=缩放→STM_SETIMAGE 前把位图拉伸到控件客户区（见图片赋值处）。
-// SS_REALSIZECONTROL 关键：不加则 SS_BITMAP 会把控件放大到图片原始尺寸（运行后图片框异常变大），加了才保持设计尺寸。
-function buildStdPicBoxCodegen(extraProps: Record<string, unknown>, hasImage: boolean): {
-  style: string; exStyle: string; colorEntry: { textColor: number; backColor: number } | null
-} {
-  const border = readIntProp(extraProps['边框'], 0)      // 0无 1凹入 2凸出 3浅凹 4镜框 5单线
-  const drawMode = readIntProp(extraProps['显示方式'], 0) // 0居左上 1缩放 2居中
-  const backColor = readIntProp(extraProps['背景颜色'], 0xffffff)
-  const parts = ['WS_CHILD', 'SS_NOTIFY']
-  if (hasImage) parts.push('SS_BITMAP', 'SS_REALSIZECONTROL')  // REALSIZECONTROL：控件不随位图自动放大，恒守设计尺寸
-  if (drawMode === 2) parts.push('SS_CENTERIMAGE')  // 图片居中（真实尺寸居中，裁剪）
-  const exStyle = border === 1 ? 'WS_EX_CLIENTEDGE'
-    : border === 2 ? 'WS_EX_WINDOWEDGE'
-    : border === 3 ? 'WS_EX_STATICEDGE'
-    : border === 4 ? 'WS_EX_DLGMODALFRAME'
-    : '0'
-  if (border === 5) parts.push('WS_BORDER')
-  return {
-    style: parts.join(' | '),
-    exStyle,
-    // 图片框是实底控件：背景色恒经 WM_CTLCOLORSTATIC 上色（含白色），否则 STATIC 会透出父窗口背景。
-    colorEntry: { textColor: 0, backColor },
-  }
-}
 
 // 图片框鼠标事件（易语言对齐）：不走 WM_COMMAND/NOTIFY/SCROLL 通道，由 YcPicBoxMouseProc 子类带参直接派发。
 // 前 6 个带 横向位置/纵向位置/功能键状态 三参，滚轮被滚动 带 滚动距离/功能键状态 两参；均 bool 返回（真=拦截缺省处理）。
-const PICBOX_MOUSE_XY_EVENTS = ['鼠标左键被按下', '鼠标左键被放开', '被双击', '鼠标右键被按下', '鼠标右键被放开', '鼠标位置被移动'] as const
-const PICBOX_MOUSE_EVENT_SET = new Set<string>([...PICBOX_MOUSE_XY_EVENTS, '滚轮被滚动'])
+// 事件名由核心支持库脚本定义（eventNames）：图片框鼠标事件 mouseXY / wheel
+const isPicBoxMouseEvent = (name: string): boolean => krnlnEvents().mouseXY.includes(name) || name === krnlnEvents().wheel
 
-// 控件「边框」6 路映射到 exStyle（0无/1凹入CLIENTEDGE/2凸出WINDOWEDGE/3浅凹STATICEDGE/4镜框DLGMODALFRAME；5单线走 style 的 WS_BORDER）。
-function ctrlBorderExStyle(border: number): string {
-  return border === 1 ? 'WS_EX_CLIENTEDGE'
-    : border === 2 ? 'WS_EX_WINDOWEDGE'
-    : border === 3 ? 'WS_EX_STATICEDGE'
-    : border === 4 ? 'WS_EX_DLGMODALFRAME'
-    : '0'
+type CtrlColorEntry = { textColor: number; backColor: number } | null
+
+/** 组件属性的语义字段：属性名与默认值由核心支持库脚本（lib/krnln/codegen/window.cjs 的 props）定义 */
+interface ControlProps {
+  backColor: number; font: unknown; shape: number; lineEffect: number; lineStyle: number; lineWidth: number; lineColor: number
+  fillColor: number; backgroundColor: number; gradientMode: number; gradientColor1: number; gradientColor2: number; gradientColor3: number
+  backImageMode: number; hAlign: number; vAlign: number; kind: number; email: string; url: string; lineStep: number; pageStep: number
+  tabOwner: string; tabPage: number; timerInterval: number; checked: boolean; transparentColor: number; currentTab: number; tabTitles: string
+  hideSelf: boolean; displayMode: number; penStyle: number; penWidth: number; penColor: number; drawMode: number; brushStyle: number
+  brushColor: number; textColor: number; textBackColor: number; drawUnit: number; autoRedraw: boolean; panelBackColor: number
+  tabOrder: number; disabled: boolean; picture: unknown; backImage: unknown
+}
+
+function controlProps(extraProps: Record<string, unknown> | undefined): ControlProps {
+  return controlCodegen<ControlProps>('props', extraProps ?? {})
+}
+
+/** 编译器生成事件处理函数时用到的核心库事件名（由核心支持库脚本定义） */
+interface KrnlnEventNames {
+  windowCreated: string; windowKeyDown: string; windowKeyUp: string; windowResized: string; windowClosing: string; menuSelected: string; windowMoved: string; windowActivated: string; windowFocus: string; windowBlur: string
+  windowDestroyed: string; click: string; paint: string; timerTick: string; mouseXY: string[]; wheel: string
+}
+
+function krnlnEvents(): KrnlnEventNames {
+  return controlCodegen<KrnlnEventNames>('eventNames')
+}
+type LabelCodegen = { style: string; exStyle: string; colorEntry: CtrlColorEntry; transparent: boolean }
+type CheckableCodegen = { style: string; checked: boolean; colorEntry: CtrlColorEntry }
+type GroupBoxCodegen = { style: string; colorEntry: CtrlColorEntry }
+type PicBoxCodegen = { style: string; exStyle: string; colorEntry: CtrlColorEntry }
+type ButtonCodegen = { style: string }
+
+/**
+ * 组件代码生成由支持库的代码生成脚本提供（lib/krnln/codegen/controls.cjs）：
+ * 按名称取函数，传入组件属性与附加参数，返回样式位、扩展样式、创建后消息等。
+ * 核心支持库被停用（空壳模式）时没有这些脚本，编译含窗口组件的程序会给出明确提示。
+ */
+function controlCodegen<T>(name: string, ...args: unknown[]): T {
+  const fn = libraryManager.getControlCodegen()[name]
+  if (!fn) throw new Error(`缺少组件代码生成「${name}」：核心支持库未启用或其代码生成脚本缺失`)
+  return fn(...args) as T
 }
 
 // 通用控件后创建 codegen 的返回型（样式 + exStyle + 创建后消息 + 可选颜色表项）。
 interface CommonCtrlCodegen { style: string; exStyle: string; postCreateLines: string[]; colorEntry: { textColor: number; backColor: number } | null }
 
-// 进度条（msctls_progress32）：方向/显示方式→样式位，边框→exStyle，范围/位置→PBM_ 消息。
-function buildStdProgressCodegen(extraProps: Record<string, unknown>): CommonCtrlCodegen {
-  const orient = readIntProp(extraProps['方向'], 0)      // 0横 1纵
-  const drawMode = readIntProp(extraProps['显示方式'], 0) // 0分块 1连续
-  const border = readIntProp(extraProps['边框'], 1)
-  const minPos = readIntProp(extraProps['最小位置'], 0)
-  const maxPos = readIntProp(extraProps['最大位置'], 100)
-  const pos = readIntProp(extraProps['位置'], 0)
-  const parts = ['WS_CHILD']
-  if (orient === 1) parts.push('PBS_VERTICAL')
-  if (drawMode === 1) parts.push('PBS_SMOOTH')
-  if (border === 5) parts.push('WS_BORDER')
-  const post: string[] = []
-  if (minPos !== 0 || maxPos !== 100) post.push(`SendMessage(hCtrl, PBM_SETRANGE32, (WPARAM)${minPos}, (LPARAM)${maxPos});`)
-  if (pos !== 0) post.push(`SendMessage(hCtrl, PBM_SETPOS, (WPARAM)${pos}, 0);`)
-  return { style: parts.join(' | '), exStyle: ctrlBorderExStyle(border), postCreateLines: post, colorEntry: null }
-}
 
-// 画板（自注册 YCDRAWPANEL 类）：边框→style/exStyle。无 WS_TABSTOP（画板只有绘画事件、无焦点输入）；
-// 运行时状态/backbuffer/绘画事件由 YcDrawPanelProc + g_ycDrawPanels 负责（见 CreateControls 前的画板运行时块）。
-function buildStdDrawPanelCodegen(extraProps: Record<string, unknown>): CommonCtrlCodegen {
-  const border = readIntProp(extraProps['边框'], 0)
-  const parts = ['WS_CHILD', 'WS_CLIPSIBLINGS']
-  if (border === 5) parts.push('WS_BORDER')
-  return { style: parts.join(' | '), exStyle: ctrlBorderExStyle(border), postCreateLines: [], colorEntry: null }
-}
 
-// 滑块条（msctls_trackbar32）：方向/刻度类型/允许选择→样式位，范围/刻度/页行/选区/位置→TBM_ 消息。
-function buildStdSliderCodegen(extraProps: Record<string, unknown>): CommonCtrlCodegen {
-  const orient = readIntProp(extraProps['方向'], 0)
-  const tick = readIntProp(extraProps['刻度类型'], 2)      // 0无 1上左 2下右 3双向
-  const tickFreq = readIntProp(extraProps['单位刻度值'], 1)
-  const allowSel = readBoolProp(extraProps['允许选择'], false)
-  const selStart = readIntProp(extraProps['首选择位置'], 0)
-  const selLen = readIntProp(extraProps['选择长度'], 0)
-  const pageChange = readIntProp(extraProps['页改变值'], 0)
-  const lineChange = readIntProp(extraProps['行改变值'], 0)
-  const minPos = readIntProp(extraProps['最小位置'], 0)
-  const maxPos = readIntProp(extraProps['最大位置'], 100)
-  const pos = readIntProp(extraProps['位置'], 0)
-  const border = readIntProp(extraProps['边框'], 0)
-  const parts = ['WS_CHILD', 'WS_TABSTOP']
-  parts.push(orient === 1 ? 'TBS_VERT' : 'TBS_HORZ')
-  if (tick === 0) parts.push('TBS_NOTICKS')
-  else { parts.push('TBS_AUTOTICKS'); if (tick === 1) parts.push('TBS_TOP'); else if (tick === 3) parts.push('TBS_BOTH') }
-  if (allowSel) parts.push('TBS_ENABLESELRANGE')
-  if (border === 5) parts.push('WS_BORDER')
-  const post: string[] = []
-  post.push(`SendMessage(hCtrl, TBM_SETRANGEMIN, (WPARAM)TRUE, (LPARAM)${minPos});`)
-  post.push(`SendMessage(hCtrl, TBM_SETRANGEMAX, (WPARAM)TRUE, (LPARAM)${maxPos});`)
-  if (tick !== 0 && tickFreq > 0) post.push(`SendMessage(hCtrl, TBM_SETTICFREQ, (WPARAM)${tickFreq}, 0);`)
-  if (pageChange > 0) post.push(`SendMessage(hCtrl, TBM_SETPAGESIZE, 0, (LPARAM)${pageChange});`)
-  if (lineChange > 0) post.push(`SendMessage(hCtrl, TBM_SETLINESIZE, 0, (LPARAM)${lineChange});`)
-  if (allowSel && selLen > 0) post.push(`SendMessage(hCtrl, TBM_SETSEL, (WPARAM)TRUE, (LPARAM)MAKELONG(${selStart}, ${selStart + selLen}));`)
-  if (pos !== 0) post.push(`SendMessage(hCtrl, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)${pos});`)
-  return { style: parts.join(' | '), exStyle: ctrlBorderExStyle(border), postCreateLines: post, colorEntry: null }
-}
 
-// 滚动条（SCROLLBAR）：SBS_HORZ/VERT，范围+页+位置→SetScrollInfo。跟随/事件门控在 WM_?SCROLL 处理器（未在此实现，静态范围/位置已生效）。
-function buildStdScrollBarCodegen(extraProps: Record<string, unknown>, isVert: boolean): CommonCtrlCodegen {
-  const minPos = readIntProp(extraProps['最小位置'], 0)
-  const maxPos = readIntProp(extraProps['最大位置'], 100)
-  const pageChange = readIntProp(extraProps['页改变值'], 10)
-  const pos = readIntProp(extraProps['位置'], 0)
-  const post = [
-    `{ SCROLLINFO si; ZeroMemory(&si, sizeof(si)); si.cbSize = sizeof(si); si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS; si.nMin = ${minPos}; si.nMax = ${maxPos}; si.nPage = ${Math.max(0, pageChange)}; si.nPos = ${pos}; SetScrollInfo(hCtrl, SB_CTL, &si, TRUE); }`,
-  ]
-  return { style: `WS_CHILD | ${isVert ? 'SBS_VERT' : 'SBS_HORZ'}`, exStyle: '0', postCreateLines: post, colorEntry: null }
-}
 
-// 日期框（SysDateTimePick32）：允许编辑/附件类型/边框→样式位/exStyle。今天/最小/最大日期缺文本→SYSTEMTIME 解析，暂占位。
-function buildStdDatePickerCodegen(extraProps: Record<string, unknown>): CommonCtrlCodegen {
-  const allowEdit = readBoolProp(extraProps['允许编辑'], false)
-  const kind = readIntProp(extraProps['附件类型'], 0)  // 0下拉月历 1调节器
-  const border = readIntProp(extraProps['边框'], 0)
-  const parts = ['WS_CHILD', 'WS_TABSTOP']
-  if (allowEdit) parts.push('DTS_APPCANPARSE')
-  if (kind === 1) parts.push('DTS_UPDOWN')
-  if (border === 5) parts.push('WS_BORDER')
-  const today = String(extraProps['今天'] ?? '')
-  const minDate = String(extraProps['最小日期'] ?? '')
-  const maxDate = String(extraProps['最大日期'] ?? '')
-  const post: string[] = []
-  if (today) post.push(`{ SYSTEMTIME st; if (yc_parse_systemtime(L"${escapeCString(today)}", &st)) SendMessage(hCtrl, DTM_SETSYSTEMTIME, GDT_VALID, (LPARAM)&st); }`)
-  if (minDate || maxDate) {
-    const setMin = minDate ? `if (yc_parse_systemtime(L"${escapeCString(minDate)}", &r[0])) f |= GDTR_MIN;` : ''
-    const setMax = maxDate ? `if (yc_parse_systemtime(L"${escapeCString(maxDate)}", &r[1])) f |= GDTR_MAX;` : ''
-    post.push(`{ SYSTEMTIME r[2]; ZeroMemory(r, sizeof(r)); DWORD f = 0; ${setMin} ${setMax} if (f) SendMessage(hCtrl, DTM_SETRANGE, (WPARAM)f, (LPARAM)r); }`)
-  }
-  return { style: parts.join(' | '), exStyle: ctrlBorderExStyle(border), postCreateLines: post, colorEntry: null }
-}
 
-// 月历（SysMonthCal32）：显示项样式位 + 首日/滚动月/最多选天→MCM_ 消息 + 颜色→MCM_SETCOLOR。日期属性暂占位。
-function buildStdMonthCalCodegen(extraProps: Record<string, unknown>): CommonCtrlCodegen {
-  const border = readIntProp(extraProps['边框'], 0)
-  const noToday = readBoolProp(extraProps['不显示今天'], false)
-  const noTodayCircle = readBoolProp(extraProps['不圈注今天'], false)
-  const weekNumbers = readBoolProp(extraProps['显示星期序号'], false)
-  const multiSel = readBoolProp(extraProps['允许选择多天'], false)
-  const firstDay = readIntProp(extraProps['开始星期首日'], 0)
-  const monthDelta = readIntProp(extraProps['滚动月数'], 0)
-  const maxSel = readIntProp(extraProps['最多选择天数'], 0)
-  const parts = ['WS_CHILD']
-  if (noToday) parts.push('MCS_NOTODAY')
-  if (noTodayCircle) parts.push('MCS_NOTODAYCIRCLE')
-  if (weekNumbers) parts.push('MCS_WEEKNUMBERS')
-  if (multiSel) parts.push('MCS_MULTISELECT')
-  if (border === 5) parts.push('WS_BORDER')
-  const post: string[] = []
-  if (firstDay !== 0) post.push(`SendMessage(hCtrl, MCM_SETFIRSTDAYOFWEEK, 0, (LPARAM)${firstDay});`)
-  if (monthDelta > 0) post.push(`SendMessage(hCtrl, MCM_SETMONTHDELTA, (WPARAM)${monthDelta}, 0);`)
-  if (multiSel && maxSel > 0) post.push(`SendMessage(hCtrl, MCM_SETMAXSELCOUNT, (WPARAM)${maxSel}, 0);`)
-  const colorMap: Array<[string, string, number]> = [
-    ['文本颜色', 'MCSC_TEXT', 0], ['背景颜色', 'MCSC_BACKGROUND', 0xffffff], ['标题颜色', 'MCSC_TITLETEXT', 0],
-    ['标题背景颜色', 'MCSC_TITLEBK', 0], ['内背景颜色', 'MCSC_MONTHBK', 0xffffff], ['非本月颜色', 'MCSC_TRAILINGTEXT', 0],
-  ]
-  for (const [prop, macro, def] of colorMap) {
-    const v = readIntProp(extraProps[prop], def)
-    if (v !== def) post.push(`SendMessage(hCtrl, MCM_SETCOLOR, ${macro}, (LPARAM)(COLORREF)${v >>> 0});`)
-  }
-  // 日期属性（今天/最小/最大日期/首尾选择日）经 yc_parse_systemtime 解析 → MCM_ 消息。
-  const today = String(extraProps['今天'] ?? '')
-  const minDate = String(extraProps['最小日期'] ?? '')
-  const maxDate = String(extraProps['最大日期'] ?? '')
-  const minSel = String(extraProps['首选择日'] ?? '')
-  const maxSel2 = String(extraProps['尾选择日'] ?? '')
-  if (today) post.push(`{ SYSTEMTIME st; if (yc_parse_systemtime(L"${escapeCString(today)}", &st)) SendMessage(hCtrl, MCM_SETTODAY, 0, (LPARAM)&st); }`)
-  if (minDate || maxDate) {
-    const setMin = minDate ? `if (yc_parse_systemtime(L"${escapeCString(minDate)}", &r[0])) f |= GDTR_MIN;` : ''
-    const setMax = maxDate ? `if (yc_parse_systemtime(L"${escapeCString(maxDate)}", &r[1])) f |= GDTR_MAX;` : ''
-    post.push(`{ SYSTEMTIME r[2]; ZeroMemory(r, sizeof(r)); DWORD f = 0; ${setMin} ${setMax} if (f) SendMessage(hCtrl, MCM_SETRANGE, (WPARAM)f, (LPARAM)r); }`)
-  }
-  if (multiSel && minSel && maxSel2) {
-    post.push(`{ SYSTEMTIME r[2]; ZeroMemory(r, sizeof(r)); if (yc_parse_systemtime(L"${escapeCString(minSel)}", &r[0]) && yc_parse_systemtime(L"${escapeCString(maxSel2)}", &r[1])) SendMessage(hCtrl, MCM_SETSELRANGE, 0, (LPARAM)r); }`)
-  } else if (!multiSel && minSel) {
-    post.push(`{ SYSTEMTIME st; if (yc_parse_systemtime(L"${escapeCString(minSel)}", &st)) SendMessage(hCtrl, MCM_SETCURSEL, 0, (LPARAM)&st); }`)
-  }
-  return { style: parts.join(' | '), exStyle: ctrlBorderExStyle(border), postCreateLines: post, colorEntry: null }
-}
 
-// 组合框（COMBOBOX）：类型→CBS_SIMPLE/DROPDOWN/DROPDOWNLIST，自动排序→CBS_SORT；内容/长度/选中→CB_ 消息；文本/背景色→颜色表。
-function buildStdComboBoxCodegen(extraProps: Record<string, unknown>): CommonCtrlCodegen {
-  const kind = readIntProp(extraProps['类型'], 2)  // 0可编辑列表 1可编辑下拉 2不可编辑下拉
-  const sort = readBoolProp(extraProps['自动排序'], false)
-  const maxLen = readIntProp(extraProps['最大文本长度'], 0)
-  const curSel = readIntProp(extraProps['现行选中项'], -1)
-  const content = String(extraProps['内容'] ?? '')
-  const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], 0xffffff)
-  const parts = ['WS_CHILD', 'WS_TABSTOP', 'WS_VSCROLL', 'CBS_HASSTRINGS']
-  parts.push(kind === 0 ? 'CBS_SIMPLE' : kind === 1 ? 'CBS_DROPDOWN' : 'CBS_DROPDOWNLIST')
-  if (sort) parts.push('CBS_SORT')
-  const post: string[] = []
-  if (content && kind !== 2) post.push(`SetWindowTextW(hCtrl, L"${escapeCString(content)}");`)
-  if (maxLen > 0 && kind !== 2) post.push(`SendMessage(hCtrl, CB_LIMITTEXT, (WPARAM)${maxLen}, 0);`)
-  if (curSel >= 0) post.push(`SendMessage(hCtrl, CB_SETCURSEL, (WPARAM)${curSel}, 0);`)
-  return { style: parts.join(' | '), exStyle: '0', postCreateLines: post, colorEntry: (textColor !== 0 || backColor !== 0xffffff) ? { textColor, backColor } : null }
-}
 
-// 列表框/选择列表框（LISTBOX）：自动排序/多列/允许多选→样式位，边框→exStyle，行间距/选中→LB_ 消息；文本/背景色→颜色表。
-function buildStdListBoxCodegen(extraProps: Record<string, unknown>, isChecked: boolean): CommonCtrlCodegen {
-  const border = readIntProp(extraProps['边框'], isChecked ? 1 : 1)
-  const sort = readBoolProp(extraProps['自动排序'], false)
-  const multiCol = readBoolProp(extraProps['多列'], false)
-  const multiSel = readBoolProp(extraProps['允许选择多项'], false)
-  const rowExtra = readIntProp(extraProps['行间距'], 0)
-  const curSel = readIntProp(extraProps['现行选中项'], -1)
-  const textColor = readIntProp(extraProps['文本颜色'], 0)
-  const backColor = readIntProp(extraProps['背景颜色'], 0xffffff)
-  const parts = ['WS_CHILD', 'WS_TABSTOP', 'LBS_NOTIFY', 'LBS_HASSTRINGS']
-  if (multiCol) parts.push('LBS_MULTICOLUMN', 'WS_HSCROLL')
-  else parts.push('WS_VSCROLL')
-  if (sort) parts.push('LBS_SORT')
-  if (!isChecked && multiSel) parts.push('LBS_EXTENDEDSEL', 'LBS_MULTIPLESEL')
-  if (isChecked) parts.push('LBS_OWNERDRAWFIXED')  // 选择列表框：自绘复选框（WM_DRAWITEM 画勾选框+文本）
-  if (border === 5) parts.push('WS_BORDER')
-  const post: string[] = []
-  if (isChecked) post.push('SetWindowSubclass(hCtrl, YcChkListProc, 1, 0);')  // 选择列表框：挂子类做点击/空格切换勾选
-  if (rowExtra > 0) post.push(`{ int ih = (int)SendMessage(hCtrl, LB_GETITEMHEIGHT, 0, 0); SendMessage(hCtrl, LB_SETITEMHEIGHT, 0, (LPARAM)(ih + ${rowExtra})); }`)
-  if (curSel >= 0 && (isChecked || !multiSel)) post.push(`SendMessage(hCtrl, LB_SETCURSEL, (WPARAM)${curSel}, 0);`)
-  return { style: parts.join(' | '), exStyle: ctrlBorderExStyle(border), postCreateLines: post, colorEntry: (textColor !== 0 || backColor !== 0xffffff) ? { textColor, backColor } : null }
-}
 
-// 标准 BUTTON 控件同样忽略 WM_APP+1，按钮属性必须在创建时落成样式位。
-// 类型/横向/纵向对齐/可停留焦点默认值须与 window-units.json 按钮定义一致。
-// ownerDraw=true（设了底色或文本色）时用 BS_OWNERDRAW，颜色/文字由 WM_DRAWITEM 自绘。
-function buildStdButtonCodegen(extraProps: Record<string, unknown>, hasImage: boolean, ownerDraw: boolean): { style: string } {
-  const style = readIntProp(extraProps['类型'], 0)           // 0通常 1默认
-  const hAlign = readIntProp(extraProps['横向对齐方式'], 1)   // 0左 1中 2右
-  const vAlign = readIntProp(extraProps['纵向对齐方式'], 1)   // 0顶 1中 2底
-  const tabStop = readBoolProp(extraProps['可停留焦点'], true)
-  const parts = ['WS_CHILD']
-  if (ownerDraw) {
-    parts.push('BS_OWNERDRAW')
-  } else {
-    parts.push(style === 1 ? 'BS_DEFPUSHBUTTON' : 'BS_PUSHBUTTON')
-    parts.push(hAlign === 0 ? 'BS_LEFT' : hAlign === 2 ? 'BS_RIGHT' : 'BS_CENTER')
-    parts.push(vAlign === 0 ? 'BS_TOP' : vAlign === 2 ? 'BS_BOTTOM' : 'BS_VCENTER')
-    if (hasImage) parts.push('BS_BITMAP')
-  }
-  if (tabStop) parts.push('WS_TABSTOP')
-  return { style: parts.join(' | ') }
-}
 
 // 解析窗口文件
 function parseWindowFile(efwPath: string): WindowFileInfo {
@@ -2424,7 +1966,7 @@ function parseWindowFile(efwPath: string): WindowFileInfo {
           height: c.height ?? 24,
           text: resolveControlInitialText(c, props),
           visible: c.visible ?? true,
-          disabled: c.enabled === false || props['禁止'] === true,
+          disabled: c.enabled === false || controlProps(props).disabled,
           extraProps: { ...props },
         })
       }
@@ -3751,6 +3293,13 @@ function rewriteArrayIndexOnce(
     const info = currentTranspileArrayVars.get(name)
     let k = j
     while (k < expr.length && /\s/.test(expr[k])) k++
+    if (expr[k] === '[' && !info && ((variableTypeResolver || currentVariableTypeResolver)?.(name) || '').trim() === '字节集') {
+      const g = matchBracketGroup(expr, k)
+      if (g) {
+        const idx = translateExpressionToC(g.inner, commandMap, directCallables, variableTypeResolver)
+        return `${expr.slice(0, i)}yc_bin_at(${name}, ${idx})${expr.slice(g.end + 1)}`
+      }
+    }
     if (expr[k] !== '[' || !info) {
       i = j - 1
       continue
@@ -3842,6 +3391,36 @@ function buildArrayLiteralExpr(
   return `yc_ary_lit({${parts.map(p => `(long long)(${p})`).join(', ')}})`
 }
 
+// 字节集上下文：赋值目标或运算另一侧是字节集时，花括号字面量 { 1, 2 } 译成字节集而不是整数数组
+let binLiteralContext = false
+function withBinLiteralContext<T>(fn: () => T): T {
+  const prev = binLiteralContext
+  binLiteralContext = true
+  try { return fn() } finally { binLiteralContext = prev }
+}
+function isBinRawOperand(raw: string, resolver?: VariableTypeResolver): boolean {
+  const name = (raw || '').trim()
+  // 没传类型查询时退到当前子程序的（流程语句的条件等经 formatArgForC 翻译，不带查询）
+  const resolve = resolver || currentVariableTypeResolver
+  return /^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(name) && (resolve?.(name) || '').trim() === '字节集'
+}
+function isBinExpression(cExpr: string): boolean {
+  return /^(yc_bin_lit|yc_bin_concat)\(/.test((cExpr || '').trim())
+}
+
+/**
+ * 日期时间字面量 [2024年1月2日] / [2024年1月2日13时5分6秒] → 编译期换算成 OLE 自动化日期（1899-12-30 起的天数，
+ * 小数部分为时刻），即 YC_DATE 的存储形态。不是日期字面量时返回 null。
+ */
+function translateDateLiteral(text: string): string | null {
+  const m = /^\[\s*(\d{1,4})年(\d{1,2})月(\d{1,2})日(?:(\d{1,2})时(?:(\d{1,2})分(?:(\d{1,2})秒)?)?)?\s*\]$/.exec(text.trim())
+  if (!m) return null
+  const [y, mo, d, h, mi, sec] = m.slice(1).map(v => (v === undefined ? 0 : Number(v)))
+  const days = (Date.UTC(y, mo - 1, d) - Date.UTC(1899, 11, 30)) / 86400000
+  const ole = days + (h * 3600 + mi * 60 + sec) / 86400
+  return `YC_DATE(${Number.isInteger(ole) ? `${ole}.0` : String(ole)})`
+}
+
 /** 解析下标赋值语句左值：`名称 [e1] [e2]… ＝ 右值`；非该形态返回 null（是否数组由调用方查表判定） */
 function parseIndexedAssignTarget(line: string): { name: string; indexExprs: string[]; rhs: string } | null {
   const head = line.match(/^\s*([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)\s*(?=\[)/)
@@ -3871,7 +3450,8 @@ function rewriteArrayIndexRefs(
   directCallables?: DirectCallableNames,
   variableTypeResolver?: VariableTypeResolver,
 ): string {
-  if (currentTranspileArrayVars.size === 0) return expr
+  // 没有数组变量时只剩字节集下标可改写，不含方括号就直接返回
+  if (currentTranspileArrayVars.size === 0 && !/[\[［]/.test(expr)) return expr
   let cur = expr
   for (let guard = 0; guard < 16; guard++) {
     const next = rewriteArrayIndexOnce(cur, commandMap, directCallables, variableTypeResolver)
@@ -3959,76 +3539,16 @@ function replaceControlPropertyReads(expr: string, variableTypeResolver?: (name:
     },
   )
 }
-// 组合框/列表框/选择列表框 项目成员方法名（这些名字对控件是专属的，用作 名.方法(参数) 的运行时派发判据）。
-const LISTLIKE_METHOD_NAMES = new Set([
-  '跳转',  // 超级链接框：按类型 ShellExecute 打开邮件/网址
-  '是否被选中', '选中项目', '是否被允许', '允许',  // 选择列表框：勾选/允许状态
-  '取子夹数目', '取子夹名称', '置子夹名称',  // 选择夹
-  // 画板绘图方法（名称与上面各控件不重叠，故共用派发不冲突）
-  '取设备句柄', '清除', '取点', '画点', '画直线', '画椭圆', '画弧线', '画弦', '画饼',
-  '画矩形', '画渐变矩形', '填充矩形', '画圆角矩形', '翻转矩形区', '画多边形',
-  '置写出位置', '写文本行', '滚动写行', '写出', '定位写出', '取宽度', '取高度',
-  '画图片', '取图片宽度', '取图片高度', '复制', '取图片', '单位转换',
-])
 
-// 把 组合框1.加入项目("x", 5) 之类的控件项目成员方法调用译成 yc_ll_*/yc_lb_* 运行时助手调用。
+// 组件成员方法（画板绘图、选择列表框、选择夹、超级链接框）译成运行时助手调用：由核心支持库脚本提供。
 // tx = 递归翻译参数表达式的回调。返回 null 表示不是此类调用（交回主流程）。
 function translateListLikeMethodCall(
   call: { name: string; args: string[] },
   tx: (expr: string) => string,
 ): string | null {
-  const dot = call.name.lastIndexOf('.')
-  if (dot <= 0) return null
-  const objName = call.name.slice(0, dot)
-  const method = call.name.slice(dot + 1)
-  if (!LISTLIKE_METHOD_NAMES.has(method)) return null
-  if (!/^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(objName)) return null
-  const args = call.args || []
-  const nm = `L"${escapeCString(objName)}"`
-  const A = (i: number): string => tx(args[i] ?? '0')
-  switch (method) {
-    // 组合框/列表框 项目方法已全部走声明式协议（controlMethodBindings→krnln_ll_*/krnln_lb_*），旧路不再兜底。
-    case '跳转': return `yc_hyperlink_jump(${nm})`
-    case '是否被选中': return `yc_chk_is_checked(${nm}, ${A(0)})`
-    case '选中项目': return `yc_chk_set_checked(${nm}, ${A(0)}, ${args.length > 1 ? A(1) : '1'})`
-    case '是否被允许': return `yc_chk_is_enabled(${nm}, ${A(0)})`
-    case '允许': return `yc_chk_enable(${nm}, ${A(0)}, ${args.length > 1 ? A(1) : '1'})`
-    case '取子夹数目': return `yc_tab_count(${nm})`
-    case '取子夹名称': return `yc_tab_get_name(${nm}, ${A(0)})`
-    case '置子夹名称': return `yc_tab_set_name(${nm}, ${A(0)}, ${A(1)})`
-    // ===== 画板绘图方法（省略参数用 (-2147483647-1)=INT_MIN 哨兵；通用型文本参数经 yc_value_to_text 转文本）=====
-    case '取设备句柄': return `yc_dp_gethdc(${nm})`
-    case '清除': return `yc_dp_cls(${nm}, ${args.length > 0 ? A(0) : '0'}, ${args.length > 1 ? A(1) : '0'}, ${args.length > 2 ? A(2) : '0'}, ${args.length > 3 ? A(3) : '0'})`
-    case '取点': return `yc_dp_getpixel(${nm}, ${A(0)}, ${A(1)})`
-    case '画点': return `yc_dp_setpixel(${nm}, ${A(0)}, ${A(1)}, ${A(2)})`
-    case '画直线': return `yc_dp_line(${nm}, ${A(0)}, ${A(1)}, ${A(2)}, ${A(3)})`
-    case '画椭圆': return `yc_dp_ellipse(${nm}, ${A(0)}, ${A(1)}, ${A(2)}, ${A(3)})`
-    case '画弧线': return `yc_dp_arc(${nm}, ${A(0)}, ${A(1)}, ${A(2)}, ${A(3)}, ${A(4)}, ${A(5)}, ${A(6)}, ${A(7)})`
-    case '画弦': return `yc_dp_chord(${nm}, ${A(0)}, ${A(1)}, ${A(2)}, ${A(3)}, ${A(4)}, ${A(5)}, ${A(6)}, ${A(7)})`
-    case '画饼': return `yc_dp_pie(${nm}, ${A(0)}, ${A(1)}, ${A(2)}, ${A(3)}, ${A(4)}, ${A(5)}, ${A(6)}, ${A(7)})`
-    case '画矩形': return `yc_dp_rect(${nm}, ${A(0)}, ${A(1)}, ${A(2)}, ${A(3)})`
-    case '画渐变矩形': return args.length >= 7
-      ? `yc_dp_gradrect(${nm}, ${A(0)}, ${A(1)}, ${A(2)}, ${A(3)}, ${A(4)}, ${A(5)}, ${A(6)})`
-      : `yc_dp_gradrect(${nm}, ${A(0)}, ${A(1)}, ${A(2)}, ${A(3)}, 2, ${A(4)}, ${A(5)})`
-    case '填充矩形': return `yc_dp_fillrect(${nm}, ${A(0)}, ${A(1)}, ${A(2)}, ${A(3)})`
-    case '画圆角矩形': return `yc_dp_roundrect(${nm}, ${A(0)}, ${A(1)}, ${A(2)}, ${A(3)}, ${A(4)}, ${args.length > 5 ? A(5) : '(-2147483647-1)'})`
-    case '翻转矩形区': return `yc_dp_invert(${nm}, ${A(0)}, ${A(1)}, ${A(2)}, ${A(3)})`
-    case '画多边形': return `yc_dp_polygon(${nm}, ${A(0)}, ${args.length > 1 ? A(1) : '0'})`
-    case '置写出位置': return `yc_dp_setwritepos(${nm}, ${args.length > 0 ? A(0) : '(-2147483647-1)'}, ${args.length > 1 ? A(1) : '(-2147483647-1)'})`
-    case '写文本行': return `yc_dp_print(${nm}, ${args.length > 0 ? `yc_value_to_text(${A(0)})` : 'L""'})`
-    case '滚动写行': return `yc_dp_sprint(${nm}, ${args.length > 0 ? `yc_value_to_text(${A(0)})` : 'L""'})`
-    case '写出': return `yc_dp_writeout(${nm}, ${args.length > 0 ? `yc_value_to_text(${A(0)})` : 'L""'})`
-    case '定位写出': return `yc_dp_say(${nm}, ${args.length > 0 ? A(0) : '(-2147483647-1)'}, ${args.length > 1 ? A(1) : '(-2147483647-1)'}, ${args.length > 2 ? `yc_value_to_text(${A(2)})` : 'L""'})`
-    case '取宽度': return `yc_dp_getwidth(${nm}, yc_value_to_text(${A(0)}))`
-    case '取高度': return `yc_dp_getheight(${nm}, yc_value_to_text(${A(0)}))`
-    case '画图片': return `yc_dp_drawpic(${nm}, ${A(0)}, ${A(1)}, ${A(2)}, ${args.length > 3 ? A(3) : '0'}, ${args.length > 4 ? A(4) : '0'}, ${args.length > 5 ? A(5) : '0'})`
-    case '取图片宽度': return `yc_dp_getpicwidth(${nm}, ${A(0)})`
-    case '取图片高度': return `yc_dp_getpicheight(${nm}, ${A(0)})`
-    case '复制': return `yc_dp_copy(${nm})`
-    case '取图片': return `yc_dp_getpic(${nm}, ${args.length > 0 ? A(0) : '0'}, ${args.length > 1 ? A(1) : '0'})`
-    case '单位转换': return `yc_dp_unitcnv(${nm}, ${A(0)}, ${A(1)})`
-    default: return null
-  }
+  // 没有核心支持库（空壳模式）时没有这些组件方法，交回主流程按普通调用处理
+  const fn = libraryManager.getControlCodegen().controlMethodCall
+  return fn ? fn(call, tx) as string | null : null
 }
 
 function isTextExpression(expr: string): boolean {
@@ -4326,9 +3846,16 @@ function translateExpressionToCStringFallback(
 ): string {
   let trimmed = (expr || '').trim()
   if (!trimmed) return '0'
+  const dateLit = translateDateLiteral(trimmed)
+  if (dateLit) return dateLit
   // \u6570\u7ec4\u5b57\u9762\u91cf { 1, 2, 3 } \u2192 \u6784\u9020\u4e34\u65f6 vector\uff08\u5143\u7d20\u542b\u5c0f\u6570\u70b9\u6309 double \u4f4d\u6a21\u5f0f\u5b58\uff09
   const aryLit = matchArrayLiteral(trimmed)
   if (aryLit) {
+    if (binLiteralContext) {
+      const parts = splitArguments(aryLit.inner).filter(e => e.trim().length > 0)
+        .map(e => `(long long)(${translateExpressionToC(e, commandMap, directCallables, variableTypeResolver)})`)
+      return `yc_bin_lit({${parts.join(', ')}})`
+    }
     return buildArrayLiteralExpr(aryLit.inner, commandMap, directCallables, variableTypeResolver)
   }
   // \u6570\u7ec4\u4e0b\u6807\u5f15\u7528\u5148\u6539\u5199\u4e3a yc_ary_at(\u540d\u79f0, \u4e0b\u6807) \u5f62\u5f0f\uff08\u62ec\u53f7\u5f62\u5f0f\u4e0e\u540e\u7eed\u6309\u62ec\u53f7\u611f\u77e5\u7684
@@ -4534,8 +4061,15 @@ function translateExpressionToCStringFallback(
 
   const additive = findTopLevelAdditive(translated)
   if (additive && additive.left && additive.right) {
-    const left = translateExpressionToC(additive.left, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
-    const right = translateExpressionToC(additive.right, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral)
+    const binOperands = additive.operator === '+' && (binLiteralContext || isBinRawOperand(additive.left, variableTypeResolver) || isBinRawOperand(additive.right, variableTypeResolver))
+    const translateOperand = (raw: string): string => (binOperands
+      ? withBinLiteralContext(() => translateExpressionToC(raw, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral))
+      : translateExpressionToC(raw, commandMap, directCallables, variableTypeResolver, preferBigIntLiteral))
+    const left = translateOperand(additive.left)
+    const right = translateOperand(additive.right)
+    if (binOperands && (isBinExpression(left) || isBinExpression(right) || isBinRawOperand(additive.left, variableTypeResolver) || isBinRawOperand(additive.right, variableTypeResolver))) {
+      return `yc_bin_concat(${left}, ${right})`
+    }
     const leftIsBig = isBigExpression(left) || isBigRawOperand(additive.left, variableTypeResolver)
     const rightIsBig = isBigExpression(right) || isBigRawOperand(additive.right, variableTypeResolver)
     if (
@@ -5846,6 +5380,11 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
   // 字节集数组：元素存堆上 YC_BIN 的指针位模式（YC_BIN 是值类型、装不进 long long）。
   // 与 yc_wcsdup_text 同策——全程序生命期，不回收（数组元素没有析构时机）。
   result += 'static YC_BIN* yc_bin_dup(const YC_BIN& b) { return new YC_BIN(b); }\n'
+  // 字节集（语言本身的基本类型，不依赖核心库）：{ 1, 2 } 字面量、＋ 拼接、[n] 按 1 起下标读写（越界读写哑元，与数组一致）
+  result += 'static YC_BIN yc_bin_lit(std::initializer_list<long long> v) { YC_BIN r; r.reserve(v.size()); for (long long b : v) r.push_back((unsigned char)(b & 0xFF)); return r; }\n'
+  result += 'static YC_BIN yc_bin_concat(const YC_BIN& a, const YC_BIN& b) { YC_BIN r(a); r.insert(r.end(), b.begin(), b.end()); return r; }\n'
+  result += 'static unsigned char yc_bin_dummy_slot = 0;\n'
+  result += 'static inline unsigned char& yc_bin_at(YC_BIN& b, long long idx1) { if (idx1 < 1 || (size_t)idx1 > b.size()) { yc_bin_dummy_slot = 0; return yc_bin_dummy_slot; } return b[(size_t)(idx1 - 1)]; }\n'
   result += 'static std::vector<long long> yc_ary_lit_bin(std::initializer_list<YC_BIN> v) { std::vector<long long> r; r.reserve(v.size()); for (const YC_BIN& b : v) r.push_back((long long)(intptr_t)yc_bin_dup(b)); return r; }\n\n'
   // 【数组返回 ABI】接管 krnln impl 交回的堆 vector：移走内容后 delete，所有权到此为止归调用处。
   // impl 只负责 new + 填充（文本元素用 _wcsdup 出的宽串指针存位模式，与 yc_ary_lit_text 同款、同样不回收）。
@@ -7533,6 +7072,13 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
       // 数组下标赋值：数组 [i] ＝ 右值 / 矩阵 [i] [j] ＝ 右值 → yc_ary_at 引用做左值（一基，
       // 多维链式下标折算行主序线性下标；浮点族元素经 yc_f64_bits 存位模式）
       const idxAssignTarget = parseIndexedAssignTarget(line)
+      if (idxAssignTarget && !currentTranspileArrayVars.has(idxAssignTarget.name) && (resolveVisibleVarType(idxAssignTarget.name) || '').trim() === '字节集') {
+        if (idxAssignTarget.indexExprs.length !== 1) throwSourceError(lineIndex + 1, `字节集“${idxAssignTarget.name}”只有一维下标`)
+        const idxC = translateExpressionToC(idxAssignTarget.indexExprs[0], commandMap, directCallables, resolveVisibleVarType)
+        const rhsC = translateExpressionToC(idxAssignTarget.rhs, commandMap, directCallables, resolveVisibleVarType)
+        emitSubLine(`yc_bin_at(${idxAssignTarget.name}, ${idxC}) = (unsigned char)(${rhsC});`)
+        continue
+      }
       if (idxAssignTarget) {
         const info = currentTranspileArrayVars.get(idxAssignTarget.name)
         if (info) {
@@ -7569,6 +7115,14 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
           emitSubLine(`${aryLitAssign[1]} = ${litC};`)
           continue
         }
+      }
+
+      // 字节集变量 ＝ 含花括号字面量的表达式（{ 1, 2 }、{ 1 } ＋ 变量）：花括号按字节集译
+      const binLitAssign = line.match(/^([一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*)\s*[＝=]\s*(.*[{｛][\s\S]*)$/)
+      if (binLitAssign && !currentTranspileArrayVars.has(binLitAssign[1]) && (resolveVisibleVarType(binLitAssign[1]) || '').trim() === '字节集') {
+        const rhsC = withBinLiteralContext(() => translateExpressionToC(binLitAssign[2], commandMap, directCallables, resolveVisibleVarType))
+        emitSubLine(`${binLitAssign[1]} = ${rhsC};`)
+        continue
       }
 
       // 赋值表达式：支持全角/半角等号
@@ -8007,7 +7561,7 @@ function generateMainC(
                 width: c.width ?? 80, height: c.height ?? 24,
                 text: resolveControlInitialText(c, props),
                 visible: c.visible ?? true,
-                disabled: c.enabled === false || props['禁止'] === true,
+                disabled: c.enabled === false || controlProps(props).disabled,
                 extraProps: { ...props },
               })
             }
@@ -8028,11 +7582,11 @@ function generateMainC(
     // 注意：必须在所有按 winInfo.controls 顺序生成代码（IDC 宏/创建/事件分发）之前排序，保证 ctrlId 一致。
     winInfo.controls = winInfo.controls
       .map((c, i) => ({ c, i }))
-      .sort((a, b) => (readIntProp(a.c.extraProps['停留顺序'], 0) - readIntProp(b.c.extraProps['停留顺序'], 0)) || (a.i - b.i))
+      .sort((a, b) => (controlProps(a.c.extraProps).tabOrder - controlProps(b.c.extraProps).tabOrder) || (a.i - b.i))
       .map(x => x.c)
 
     // ===== 多窗口：解析启动窗口之外的全部辅助窗口（载入/销毁 的目标）=====
-    // v1 辅助窗口为轻量形态：支持经 buildStd* 构建器的常规控件 + 事件分发 + 颜色表并入；
+    // v1 辅助窗口为轻量形态：支持经支持库的组件代码生成脚本的常规控件 + 事件分发 + 颜色表并入；
     // 暂不支持：控件图片/底图、画板、菜单、选择夹子夹页、时钟、选择列表框自绘勾选（降级普通列表框）。
     // 控件 ID 全局唯一（接在启动窗口之后分配），运行时各表（颜色/超链接等）按 ID/HWND 查询天然共用。
     interface SecondaryWindow { info: WindowFileInfo; ctrlIds: number[] }
@@ -8061,7 +7615,7 @@ function generateMainC(
                   width: c.width ?? 80, height: c.height ?? 24,
                   text: resolveControlInitialText(c, props),
                   visible: c.visible ?? true,
-                  disabled: c.enabled === false || props['禁止'] === true,
+                  disabled: c.enabled === false || controlProps(props).disabled,
                   extraProps: { ...props },
                 })
               }
@@ -8073,7 +7627,7 @@ function generateMainC(
         if (!sw.formName) continue
         sw.controls = sw.controls
           .map((c, i) => ({ c, i }))
-          .sort((a, b) => (readIntProp(a.c.extraProps['停留顺序'], 0) - readIntProp(b.c.extraProps['停留顺序'], 0)) || (a.i - b.i))
+          .sort((a, b) => (controlProps(a.c.extraProps).tabOrder - controlProps(b.c.extraProps).tabOrder) || (a.i - b.i))
           .map(x => x.c)
         secondaryWindows.push({ info: sw, ctrlIds: [] })
       }
@@ -8100,7 +7654,7 @@ function generateMainC(
     // 按索引与 winInfo.controls 对齐（controls 已按停留顺序排序，两处循环同序）
     const controlImageBytes: Array<Buffer | null> = winInfo.controls.map(c => {
       // 图片框/按钮用「图片」，画板/标签用「底图」
-      const img = (isControl(c.type, 'drawPanel') || isControl(c.type, 'label')) ? c.extraProps?.['底图'] : c.extraProps?.['图片']
+      const img = (isControl(c.type, 'drawPanel') || isControl(c.type, 'label')) ? controlProps(c.extraProps).backImage : controlProps(c.extraProps).picture
       return (typeof img === 'string' && img.startsWith('data:image')) ? decodeImageDataUrl(img) : null
     })
     const hasAnyControlImage = controlImageBytes.some(Boolean)
@@ -8447,17 +8001,17 @@ function generateMainC(
         const libraryFileName = unitInfo ? (libNameToFileName.get(normalizeKey(unitInfo.libraryName)) || '') : ''
         const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
         if (className === 'EDIT') {
-          const editCodegenInfo = buildStdEditCodegen(ctrl.extraProps)
+          const editCodegenInfo = controlCodegen<EditControlCodegen>('edit', ctrl.extraProps)
           if (editCodegenInfo.colorEntry) {
             editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...editCodegenInfo.colorEntry, transparent: 0 })
           }
           if (editCodegenInfo.needsInputFilter) anyEditNeedsInputFilter = true
         } else if (isControl(ctrl.type, 'label')) {
-          const lc = buildStdLabelCodegen(ctrl.extraProps)
+          const lc = controlCodegen<LabelCodegen>('label', ctrl.extraProps)
           // 有底图/渐变背景的标签：文字必须以透明背景模式画在图/渐变上（transparent 路径 = SetBkMode(TRANSPARENT)+NULL_BRUSH，
           // 擦除由 YcLblBgProc 子类的 WM_ERASEBKGND 负责画图/渐变），否则文字自带底色矩形会在其上打洞。
           const lblHasBgImg = !!controlImageBytes[winInfo.controls.indexOf(ctrl)]
-          const lblHasGrad = readIntProp(ctrl.extraProps?.['渐变背景方式'], 0) !== 0
+          const lblHasGrad = controlProps(ctrl.extraProps).gradientMode !== 0
           if (lc.colorEntry || lc.transparent || lblHasBgImg || lblHasGrad) {
             editColorEntries.push({
               idMacro: `IDC_${ctrl.name.toUpperCase()}`,
@@ -8467,21 +8021,21 @@ function generateMainC(
             })
           }
         } else if (isControl(ctrl.type, 'checkable')) {
-          const cc = buildStdCheckableCodegen(ctrl.extraProps, isControl(ctrl.type, 'radio'))
+          const cc = controlCodegen<CheckableCodegen>('checkable', ctrl.extraProps, isControl(ctrl.type, 'radio'))
           if (cc.colorEntry) editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...cc.colorEntry, transparent: 0 })
         } else if (isControl(ctrl.type, 'groupBox')) {
-          const gc = buildStdGroupBoxCodegen(ctrl.extraProps)
+          const gc = controlCodegen<GroupBoxCodegen>('groupBox', ctrl.extraProps)
           if (gc.colorEntry) editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...gc.colorEntry, transparent: 0 })
         } else if (isControl(ctrl.type, 'picBox')) {
-          const img = ctrl.extraProps?.['图片']
+          const img = controlProps(ctrl.extraProps).picture
           const hasImg = typeof img === 'string' && img.startsWith('data:image')
-          const pc = buildStdPicBoxCodegen(ctrl.extraProps, hasImg)
+          const pc = controlCodegen<PicBoxCodegen>('picBox', ctrl.extraProps, hasImg)
           if (pc.colorEntry) editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...pc.colorEntry, transparent: 0 })
         } else if (isControl(ctrl.type, 'comboBox')) {
-          const cbc = buildStdComboBoxCodegen(ctrl.extraProps)
+          const cbc = controlCodegen<CommonCtrlCodegen>('comboBox', ctrl.extraProps)
           if (cbc.colorEntry) editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...cbc.colorEntry, transparent: 0 })
         } else if (className === 'LISTBOX') {
-          const lbc = buildStdListBoxCodegen(ctrl.extraProps, isControl(ctrl.type, 'checklist'))
+          const lbc = controlCodegen<CommonCtrlCodegen>('listBox', ctrl.extraProps, isControl(ctrl.type, 'checklist'))
           if (lbc.colorEntry) editColorEntries.push({ idMacro: `IDC_${ctrl.name.toUpperCase()}`, ...lbc.colorEntry, transparent: 0 })
         }
       }
@@ -8493,28 +8047,28 @@ function generateMainC(
           const libraryFileName = unitInfo ? (libNameToFileName.get(normalizeKey(unitInfo.libraryName)) || '') : ''
           const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
           if (className === 'EDIT') {
-            const ec = buildStdEditCodegen(ctrl.extraProps)
+            const ec = controlCodegen<EditControlCodegen>('edit', ctrl.extraProps)
             if (ec.colorEntry) editColorEntries.push({ idMacro: idText, ...ec.colorEntry, transparent: 0 })
             if (ec.needsInputFilter) anyEditNeedsInputFilter = true
           } else if (isControl(ctrl.type, 'label')) {
-            const lc = buildStdLabelCodegen(ctrl.extraProps)
+            const lc = controlCodegen<LabelCodegen>('label', ctrl.extraProps)
             if (lc.colorEntry || lc.transparent) {
               editColorEntries.push({ idMacro: idText, textColor: lc.colorEntry?.textColor ?? 0, backColor: lc.colorEntry?.backColor ?? 0xffffff, transparent: lc.transparent ? 1 : 0 })
             }
           } else if (isControl(ctrl.type, 'checkable')) {
-            const cc = buildStdCheckableCodegen(ctrl.extraProps, isControl(ctrl.type, 'radio'))
+            const cc = controlCodegen<CheckableCodegen>('checkable', ctrl.extraProps, isControl(ctrl.type, 'radio'))
             if (cc.colorEntry) editColorEntries.push({ idMacro: idText, ...cc.colorEntry, transparent: 0 })
           } else if (isControl(ctrl.type, 'groupBox')) {
-            const gc = buildStdGroupBoxCodegen(ctrl.extraProps)
+            const gc = controlCodegen<GroupBoxCodegen>('groupBox', ctrl.extraProps)
             if (gc.colorEntry) editColorEntries.push({ idMacro: idText, ...gc.colorEntry, transparent: 0 })
           } else if (isControl(ctrl.type, 'picBox')) {
-            const pc = buildStdPicBoxCodegen(ctrl.extraProps, false)
+            const pc = controlCodegen<PicBoxCodegen>('picBox', ctrl.extraProps, false)
             if (pc.colorEntry) editColorEntries.push({ idMacro: idText, ...pc.colorEntry, transparent: 0 })
           } else if (isControl(ctrl.type, 'comboBox')) {
-            const cbc = buildStdComboBoxCodegen(ctrl.extraProps)
+            const cbc = controlCodegen<CommonCtrlCodegen>('comboBox', ctrl.extraProps)
             if (cbc.colorEntry) editColorEntries.push({ idMacro: idText, ...cbc.colorEntry, transparent: 0 })
           } else if (className === 'LISTBOX') {
-            const lbc = buildStdListBoxCodegen(ctrl.extraProps, false)
+            const lbc = controlCodegen<CommonCtrlCodegen>('listBox', ctrl.extraProps, false)
             if (lbc.colorEntry) editColorEntries.push({ idMacro: idText, ...lbc.colorEntry, transparent: 0 })
           }
         })
@@ -8574,34 +8128,34 @@ function generateMainC(
     const buttonDrawEntries: Array<{ idMacro: string; bgColor: number; textColor: number; hAlign: number; vAlign: number; isDefault: boolean }> = []
     for (const ctrl of winInfo.controls) {
       if (!(isControl(ctrl.type, 'button'))) continue
-      const backColor = readIntProp(ctrl.extraProps?.['底色'], 0)
-      const font = parseControlFont(ctrl.extraProps?.['字体'])
+      const backColor = controlProps(ctrl.extraProps).backColor
+      const font = parseControlFont(controlProps(ctrl.extraProps).font)
       const textColor = font && typeof font.color === 'number' ? font.color : -1
       if (backColor === 0 && textColor < 0) continue  // 无自定义颜色 → 标准按钮
       buttonDrawEntries.push({
         idMacro: `IDC_${ctrl.name.toUpperCase()}`,
         bgColor: backColor,
         textColor,
-        hAlign: readIntProp(ctrl.extraProps?.['横向对齐方式'], 1),
-        vAlign: readIntProp(ctrl.extraProps?.['纵向对齐方式'], 1),
-        isDefault: readIntProp(ctrl.extraProps?.['类型'], 0) === 1,
+        hAlign: controlProps(ctrl.extraProps).hAlign,
+        vAlign: controlProps(ctrl.extraProps).vAlign,
+        isDefault: controlProps(ctrl.extraProps).kind === 1,
       })
     }
     // 辅助窗按钮的底色/文本色并入同一表（控件 ID 全局唯一，WM_DRAWITEM 按 ID 查天然共用；辅助窗用数字 ID）
     for (const swx of secondaryWindows) {
       swx.info.controls.forEach((ctrl, ci) => {
         if (!(isControl(ctrl.type, 'button'))) return
-        const backColor = readIntProp(ctrl.extraProps?.['底色'], 0)
-        const font = parseControlFont(ctrl.extraProps?.['字体'])
+        const backColor = controlProps(ctrl.extraProps).backColor
+        const font = parseControlFont(controlProps(ctrl.extraProps).font)
         const textColor = font && typeof font.color === 'number' ? font.color : -1
         if (backColor === 0 && textColor < 0) return
         buttonDrawEntries.push({
           idMacro: String(swx.ctrlIds[ci]),
           bgColor: backColor,
           textColor,
-          hAlign: readIntProp(ctrl.extraProps?.['横向对齐方式'], 1),
-          vAlign: readIntProp(ctrl.extraProps?.['纵向对齐方式'], 1),
-          isDefault: readIntProp(ctrl.extraProps?.['类型'], 0) === 1,
+          hAlign: controlProps(ctrl.extraProps).hAlign,
+          vAlign: controlProps(ctrl.extraProps).vAlign,
+          isDefault: controlProps(ctrl.extraProps).kind === 1,
         })
       })
     }
@@ -8621,13 +8175,13 @@ function generateMainC(
       if (!(isControl(ctrl.type, 'shapeBox'))) continue
       shapeBoxEntries.push({
         idMacro: `IDC_${ctrl.name.toUpperCase()}`,
-        shape: readIntProp(ctrl.extraProps?.['外形'], 0),
-        effect: readIntProp(ctrl.extraProps?.['线条效果'], 0),
-        lineStyle: readIntProp(ctrl.extraProps?.['线型'], 1),
-        lineWidth: readIntProp(ctrl.extraProps?.['线宽'], 1),
-        lineColor: readIntProp(ctrl.extraProps?.['线条颜色'], 0),
-        fillColor: readIntProp(ctrl.extraProps?.['填充颜色'], 0xffffff),
-        backColor: readIntProp(ctrl.extraProps?.['背景颜色'], 0xffffff),
+        shape: controlProps(ctrl.extraProps).shape,
+        effect: controlProps(ctrl.extraProps).lineEffect,
+        lineStyle: controlProps(ctrl.extraProps).lineStyle,
+        lineWidth: controlProps(ctrl.extraProps).lineWidth,
+        lineColor: controlProps(ctrl.extraProps).lineColor,
+        fillColor: controlProps(ctrl.extraProps).fillColor,
+        backColor: controlProps(ctrl.extraProps).backgroundColor,
       })
     }
     if (shapeBoxEntries.length > 0) {
@@ -8651,15 +8205,15 @@ function generateMainC(
         const idx = lblCtrlIdx++
         if (!(isControl(ctrl.type, 'label'))) continue
         const hasImg = !!controlImageBytes[idx]
-        const gradMode = readIntProp(ctrl.extraProps?.['渐变背景方式'], 0)
+        const gradMode = controlProps(ctrl.extraProps).gradientMode
         if (!hasImg && gradMode === 0) continue  // 无底图无渐变 → 不挂子类
         labelBgEntries.push({
           idMacro: `IDC_${ctrl.name.toUpperCase()}`, imgIdx: idx, hasImg,
-          mode: readIntProp(ctrl.extraProps?.['底图方式'], 0),
+          mode: controlProps(ctrl.extraProps).backImageMode,
           gradMode,
-          g1: readIntProp(ctrl.extraProps?.['渐变背景颜色1'], 0),
-          g2: readIntProp(ctrl.extraProps?.['渐变背景颜色2'], 0),
-          g3: readIntProp(ctrl.extraProps?.['渐变背景颜色3'], 0),
+          g1: controlProps(ctrl.extraProps).gradientColor1,
+          g2: controlProps(ctrl.extraProps).gradientColor2,
+          g3: controlProps(ctrl.extraProps).gradientColor3,
         })
       }
     }
@@ -8731,9 +8285,9 @@ function generateMainC(
       if (!(isControl(ctrl.type, 'hyperLink'))) continue
       hyperLinkEntries.push({
         idMacro: `IDC_${ctrl.name.toUpperCase()}`,
-        type: readIntProp(ctrl.extraProps?.['类型'], 0),  // 0电子邮件 1网址
-        email: String(ctrl.extraProps?.['电子邮件地址'] ?? ''),
-        url: String(ctrl.extraProps?.['Internet地址'] ?? ''),
+        type: controlProps(ctrl.extraProps).kind,  // 0电子邮件 1网址
+        email: controlProps(ctrl.extraProps).email,
+        url: controlProps(ctrl.extraProps).url,
       })
     }
     // 辅助窗口的超级链接框并入同一张表（ID 全局唯一）
@@ -8742,9 +8296,9 @@ function generateMainC(
         if (!(isControl(ctrl.type, 'hyperLink'))) return
         hyperLinkEntries.push({
           idMacro: String(swx.ctrlIds[ci]),
-          type: readIntProp(ctrl.extraProps?.['类型'], 0),
-          email: String(ctrl.extraProps?.['电子邮件地址'] ?? ''),
-          url: String(ctrl.extraProps?.['Internet地址'] ?? ''),
+          type: controlProps(ctrl.extraProps).kind,
+          email: controlProps(ctrl.extraProps).email,
+          url: controlProps(ctrl.extraProps).url,
         })
       })
     }
@@ -8790,8 +8344,8 @@ function generateMainC(
       .filter(x => isControl(x.c.type, 'scrollBar'))
       .map(x => ({
         idMacro: `IDC_${x.c.name.toUpperCase()}`,
-        lineChange: readIntProp(x.c.extraProps?.['行改变值'], 1),
-        pageChange: readIntProp(x.c.extraProps?.['页改变值'], 10),
+        lineChange: controlProps(x.c.extraProps).lineStep,
+        pageChange: controlProps(x.c.extraProps).pageStep,
       }))
     if (scrollBarEntries.length > 0) {
       mainCode += '/* 滚动条：行/页增量表（供 WM_?SCROLL 移动滑块）*/\n'
@@ -8807,8 +8361,8 @@ function generateMainC(
     const tabPageEntries = winInfo.controls
       .map(c => ({
         childMacro: `IDC_${c.name.toUpperCase()}`,
-        owner: typeof c.extraProps?.['所属选择夹'] === 'string' ? String(c.extraProps['所属选择夹']) : '',
-        page: readIntProp(c.extraProps?.['所属子夹'], 0),
+        owner: controlProps(c.extraProps).tabOwner,
+        page: controlProps(c.extraProps).tabPage,
       }))
       .filter(x => x.owner)
     mainCode += '/* 选择夹子夹页表 + 切页显隐/子夹方法 */\n'
@@ -8833,7 +8387,7 @@ function generateMainC(
       const timerCtrls = winInfo.controls.filter(c => isControl(c.type, 'timer'))
       mainCode += 'struct YcTimerEntry { const wchar_t* name; int id; int period; };\n'
       const timerEntries = timerCtrls.map(c =>
-        `{ L"${escapeCString(c.name)}", IDC_${c.name.toUpperCase()}, ${readIntProp(c.extraProps?.['时钟周期'], 0)} }`)
+        `{ L"${escapeCString(c.name)}", IDC_${c.name.toUpperCase()}, ${controlProps(c.extraProps).timerInterval} }`)
       mainCode += `static YcTimerEntry g_ycTimers[] = { ${timerEntries.length ? timerEntries.join(', ') : '{ NULL, 0, 0 }'} };\n`
       mainCode += 'static YcTimerEntry* yc_timer_find(const wchar_t* n){ if(!n) return NULL; for(size_t i=0;i<sizeof(g_ycTimers)/sizeof(g_ycTimers[0]);i++){ if(g_ycTimers[i].name && lstrcmpW(g_ycTimers[i].name, n)==0) return &g_ycTimers[i]; } return NULL; }\n'
       mainCode += 'int yc_timer_get_period(const wchar_t* n){ YcTimerEntry* e=yc_timer_find(n); return e?e->period:0; }\n'
@@ -8845,7 +8399,7 @@ function generateMainC(
     const drawPanelCtrls = winInfo.controls.filter(c => isControl(c.type, 'drawPanel'))
     // 各画板绘画事件处理函数原型（弱定义在事件区、用户 .eyc 强符号覆盖）：地址存入 state.paintHandler，由 WM_PAINT 派发。
     for (const dp of drawPanelCtrls) {
-      mainCode += `void _${dp.name.replace(/^_+/, '')}_绘画(int, int, int, int);\n`
+      mainCode += `void _${dp.name.replace(/^_+/, '')}_${krnlnEvents().paint}(int, int, int, int);\n`
     }
     mainCode += '/* 画板运行时状态：backbuffer + GDI 画笔/刷子/文本状态 + 底图 + 绘画事件指针 */\n'
     mainCode += 'struct YcDrawPanelState { HDC memDC; HBITMAP memBmp; HBITMAP oldBmp; int cw; int ch; int penStyle; int penWidth; COLORREF penColor; int rop2; int brushStyle; COLORREF brushColor; COLORREF textColor; COLORREF textBkColor; HFONT hFont; int writeX; int writeY; int unit; int autoRedraw; COLORREF backColor; Gdiplus::Image* bgImage; int bgMode; void (*paintHandler)(int,int,int,int); };\n'
@@ -8926,9 +8480,9 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         const states = picBtnImageBytes[i]
         const imgPtrs = [0, 1, 2, 3].map(k => (states && states[k]) ? `g_pbImg_${i}_${k}` : 'NULL').join(', ')
         const imgSizes = [0, 1, 2, 3].map(k => (states && states[k]) ? `g_pbImgSize_${i}_${k}` : '0u').join(', ')
-        const tp = readIntProp(c.extraProps?.['类型'], 0)
-        const ck = readBoolProp(c.extraProps?.['选中'], false) ? 1 : 0
-        const tclr = readIntProp(c.extraProps?.['透明颜色'], -1)
+        const tp = controlProps(c.extraProps).kind
+        const ck = controlProps(c.extraProps).checked ? 1 : 0
+        const tclr = controlProps(c.extraProps).transparentColor
         mainCode += `    { IDC_${c.name.toUpperCase()}, ${tp}, ${ck}, 0, ${tclr}LL, { ${imgPtrs} }, { ${imgSizes} }, { NULL, NULL, NULL, NULL } },\n`
       }
       // 辅助窗图形按钮条目并入同表（数字 ID + 辅助窗字节引用；ID 全局唯一，WM_DRAWITEM 按 ID 查天然共用）
@@ -8939,9 +8493,9 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
           const id = secondaryWindows[si].ctrlIds[ci]
           const imgPtrs = [0, 1, 2, 3].map(k => states[k] ? `g_subPbImg_${si}_${ci}_${k}` : 'NULL').join(', ')
           const imgSizes = [0, 1, 2, 3].map(k => states[k] ? `g_subPbImgSize_${si}_${ci}_${k}` : '0u').join(', ')
-          const tp = readIntProp(ctrl.extraProps?.['类型'], 0)
-          const ck = readBoolProp(ctrl.extraProps?.['选中'], false) ? 1 : 0
-          const tclr = readIntProp(ctrl.extraProps?.['透明颜色'], -1)
+          const tp = controlProps(ctrl.extraProps).kind
+          const ck = controlProps(ctrl.extraProps).checked ? 1 : 0
+          const tclr = controlProps(ctrl.extraProps).transparentColor
           mainCode += `    { ${id}, ${tp}, ${ck}, 0, ${tclr}LL, { ${imgPtrs} }, { ${imgSizes} }, { NULL, NULL, NULL, NULL } },\n`
         })
       })
@@ -8974,17 +8528,17 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       // 处理函数原型：普通声明即可取址（弱定义在事件区、用户 .eyc 强符号覆盖，同画板 paintHandler 定式）
       for (const pb of picBoxMouseCtrls) {
         const base = `_${pb.name.replace(/^_+/, '')}`
-        for (const evName of PICBOX_MOUSE_XY_EVENTS) {
+        for (const evName of krnlnEvents().mouseXY) {
           mainCode += `bool ${base}_${evName}(int, int, int);\n`
         }
-        mainCode += `bool ${base}_滚轮被滚动(int, int);\n`
+        mainCode += `bool ${base}_${krnlnEvents().wheel}(int, int);\n`
       }
       mainCode += '/* 图片框鼠标事件表 + 子类过程：功能键状态按易语言常量（Ctrl=1/Shift=2/Alt=4）编组 */\n'
       mainCode += 'struct YcPicBoxMouseEntry { int id; bool (*ldown)(int,int,int); bool (*lup)(int,int,int); bool (*dbl)(int,int,int); bool (*rdown)(int,int,int); bool (*rup)(int,int,int); bool (*move)(int,int,int); bool (*wheel)(int,int); };\n'
       mainCode += 'static YcPicBoxMouseEntry g_ycPicBoxMouse[] = {\n'
       for (const pb of picBoxMouseCtrls) {
         const base = `_${pb.name.replace(/^_+/, '')}`
-        mainCode += `    { IDC_${pb.name.toUpperCase()}, ${base}_鼠标左键被按下, ${base}_鼠标左键被放开, ${base}_被双击, ${base}_鼠标右键被按下, ${base}_鼠标右键被放开, ${base}_鼠标位置被移动, ${base}_滚轮被滚动 },\n`
+        mainCode += `    { IDC_${pb.name.toUpperCase()}, ${[...krnlnEvents().mouseXY, krnlnEvents().wheel].map(e => `${base}_${e}`).join(', ')} },\n`
       }
       mainCode += '};\n'
       mainCode += 'static int yc_pb_fkeys(WPARAM w){ int fk=0; if(w & MK_CONTROL) fk|=1; if(w & MK_SHIFT) fk|=2; if(GetKeyState(VK_MENU)&0x8000) fk|=4; return fk; }\n'
@@ -9012,7 +8566,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     // 选择夹名 → 现行子夹（供子控件初始可视判定：非当前页子控件 born hidden）
     const tabCurTabMap = new Map<string, number>()
     for (const c of winInfo.controls) {
-      if (isControl(c.type, 'tab')) tabCurTabMap.set(c.name, readIntProp(c.extraProps?.['现行子夹'], 0))
+      if (isControl(c.type, 'tab')) tabCurTabMap.set(c.name, controlProps(c.extraProps).currentTab)
     }
     let ctrlId = 1001
     for (const ctrl of winInfo.controls) {
@@ -9023,7 +8577,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       const className = resolveControlClassName(ctrl.type, unitInfo, libraryFileName, controlProtocolBindings)
       // 时钟（Timer）：非可视组件，不创建窗口——用 SetTimer(定时器 id=IDC) 挂定时器，跳过其余生成。
       if (isControl(ctrl.type, 'timer')) {
-        const elapse = readIntProp(ctrl.extraProps?.['时钟周期'], 0)
+        const elapse = controlProps(ctrl.extraProps).timerInterval
         if (elapse > 0) mainCode += `    SetTimer(hWndParent, ${ctrlId}, (UINT)${elapse}, NULL);\n`
         ctrlId++
         continue
@@ -9067,58 +8621,59 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       // 缺省语言 JScript、超时 0 在库结构体里（与 window-units.json defaultValue 一致），只对改过默认的属性发调用。
       if (isControl(ctrl.type, 'scriptComponent')) {
         const scName = `L"${escapeCString(ctrl.name)}"`
-        const scLang = ctrl.extraProps?.['语言']
+        const scProps = controlCodegen<{ language: unknown; timeout: number }>('scriptComponentProps', ctrl.extraProps)
+        const scLang = scProps.language
         if (typeof scLang === 'string' && scLang && scLang !== 'JScript') {
           mainCode += `    script_set_text(${scName}, 0, L"${escapeCString(scLang)}");\n`
         }
-        const scTimeout = readIntProp(ctrl.extraProps?.['超时'], 0)
+        const scTimeout = scProps.timeout
         if (scTimeout !== 0) mainCode += `    script_set_int(${scName}, 2, ${scTimeout});\n`
         ctrlId++
         continue
       }
       const isStdEdit = className === 'EDIT'
-      const editCodegen = isStdEdit ? buildStdEditCodegen(ctrl.extraProps) : null
+      const editCodegen = isStdEdit ? controlCodegen<EditControlCodegen>('edit', ctrl.extraProps) : null
       // 标准按钮（非复选框/单选框/分组框，它们也是 BUTTON 类但样式不同）
       const isStdButton = isControl(ctrl.type, 'button')
       const buttonImageBytes = controlImageBytes[ctrlIndex]
       // 设了底色或文本色 → 自绘按钮（BS_OWNERDRAW）；自绘时图片让位于颜色（不走 BS_BITMAP）
-      const ownerDrawButton = isStdButton && (readIntProp(ctrl.extraProps?.['底色'], 0) !== 0 || typeof parseControlFont(ctrl.extraProps?.['字体'])?.color === 'number')
-      const buttonCodegen = isStdButton ? buildStdButtonCodegen(ctrl.extraProps, !!buttonImageBytes, ownerDrawButton) : null
+      const ownerDrawButton = isStdButton && (controlProps(ctrl.extraProps).backColor !== 0 || typeof parseControlFont(controlProps(ctrl.extraProps).font)?.color === 'number')
+      const buttonCodegen = isStdButton ? controlCodegen<ButtonCodegen>('button', ctrl.extraProps, !!buttonImageBytes, ownerDrawButton) : null
       // 标准 STATIC 标签：对齐/边框落成样式位（颜色/透明已在上方颜色表收集）
       const isStdLabel = isControl(ctrl.type, 'label')
-      const labelCodegen = isStdLabel ? buildStdLabelCodegen(ctrl.extraProps) : null
+      const labelCodegen = isStdLabel ? controlCodegen<LabelCodegen>('label', ctrl.extraProps) : null
       // 标准 BUTTON·选择框/单选框/分组框
       const isStdCheckable = isControl(ctrl.type, 'checkable')
-      const checkableCodegen = isStdCheckable ? buildStdCheckableCodegen(ctrl.extraProps, isControl(ctrl.type, 'radio')) : null
+      const checkableCodegen = isStdCheckable ? controlCodegen<CheckableCodegen>('checkable', ctrl.extraProps, isControl(ctrl.type, 'radio')) : null
       const isStdGroupBox = isControl(ctrl.type, 'groupBox')
-      const groupBoxCodegen = isStdGroupBox ? buildStdGroupBoxCodegen(ctrl.extraProps) : null
+      const groupBoxCodegen = isStdGroupBox ? controlCodegen<GroupBoxCodegen>('groupBox', ctrl.extraProps) : null
       // 标准 STATIC·图片框（SS_BITMAP）
       const isStdPicBox = isControl(ctrl.type, 'picBox')
       const picBoxImageBytes = controlImageBytes[ctrlIndex]
-      const picBoxCodegen = isStdPicBox ? buildStdPicBoxCodegen(ctrl.extraProps, !!picBoxImageBytes) : null
+      const picBoxCodegen = isStdPicBox ? controlCodegen<PicBoxCodegen>('picBox', ctrl.extraProps, !!picBoxImageBytes) : null
       // 图形按钮：BS_OWNERDRAW（样式/类名取 json），四态图片/类型/选中在 g_ycPicBtns 表，WM_DRAWITEM 绘制
       const isStdPicBtn = isControl(ctrl.type, 'picBtn')
       // 外形框：SS_OWNERDRAW（样式取 json），自绘参数在 g_ycShapeBoxes 表，需跳过 WCM_SETPROP
       const isStdShapeBox = isControl(ctrl.type, 'shapeBox')
       // 画板：自注册 YCDRAWPANEL 类（边框→style/exStyle），运行时状态/绘画由 g_ycDrawPanels + YcDrawPanelProc 负责
       const isStdDrawPanel = isControl(ctrl.type, 'drawPanel')
-      const drawPanelCodegen = isStdDrawPanel ? buildStdDrawPanelCodegen(ctrl.extraProps) : null
+      const drawPanelCodegen = isStdDrawPanel ? controlCodegen<CommonCtrlCodegen>('drawPanel', ctrl.extraProps) : null
       // 通用控件（原生 Win32 类，同样忽略 WM_APP+1，须专用 builder + 拦截分支）
       const isStdProgress = isControl(ctrl.type, 'progressBar')
-      const progressCodegen = isStdProgress ? buildStdProgressCodegen(ctrl.extraProps) : null
+      const progressCodegen = isStdProgress ? controlCodegen<CommonCtrlCodegen>('progress', ctrl.extraProps) : null
       const isStdSlider = isControl(ctrl.type, 'slider')
-      const sliderCodegen = isStdSlider ? buildStdSliderCodegen(ctrl.extraProps) : null
+      const sliderCodegen = isStdSlider ? controlCodegen<CommonCtrlCodegen>('slider', ctrl.extraProps) : null
       const isStdScrollBar = isControl(ctrl.type, 'scrollBar')
-      const scrollBarCodegen = isStdScrollBar ? buildStdScrollBarCodegen(ctrl.extraProps, isControl(ctrl.type, 'vScrollBar')) : null
+      const scrollBarCodegen = isStdScrollBar ? controlCodegen<CommonCtrlCodegen>('scrollBar', ctrl.extraProps, isControl(ctrl.type, 'vScrollBar')) : null
       const isStdDatePicker = isControl(ctrl.type, 'datePicker')
-      const datePickerCodegen = isStdDatePicker ? buildStdDatePickerCodegen(ctrl.extraProps) : null
+      const datePickerCodegen = isStdDatePicker ? controlCodegen<CommonCtrlCodegen>('datePicker', ctrl.extraProps) : null
       const isStdMonthCal = isControl(ctrl.type, 'monthCalendar')
-      const monthCalCodegen = isStdMonthCal ? buildStdMonthCalCodegen(ctrl.extraProps) : null
+      const monthCalCodegen = isStdMonthCal ? controlCodegen<CommonCtrlCodegen>('monthCal', ctrl.extraProps) : null
       const isStdComboBox = isControl(ctrl.type, 'comboBox')
-      const comboCodegen = isStdComboBox ? buildStdComboBoxCodegen(ctrl.extraProps) : null
+      const comboCodegen = isStdComboBox ? controlCodegen<CommonCtrlCodegen>('comboBox', ctrl.extraProps) : null
       const isStdChecklist = isControl(ctrl.type, 'checklist')
       const isStdListBox = className === 'LISTBOX'
-      const listBoxCodegen = isStdListBox ? buildStdListBoxCodegen(ctrl.extraProps, isStdChecklist) : null
+      const listBoxCodegen = isStdListBox ? controlCodegen<CommonCtrlCodegen>('listBox', ctrl.extraProps, isStdChecklist) : null
       const baseStyle = editCodegen ? editCodegen.style
         : buttonCodegen ? buttonCodegen.style
         : labelCodegen ? labelCodegen.style
@@ -9146,12 +8701,12 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         : '0'
       const isStdTabControl = isControl(ctrl.type, 'tab')
       // 子控件属于某选择夹的某页：初始可视=（所属子夹 == 该选择夹现行子夹）；隐藏自身=真时选择夹自身也不可视。
-      const tabOwner = typeof ctrl.extraProps?.['所属选择夹'] === 'string' ? String(ctrl.extraProps['所属选择夹']) : ''
+      const tabOwner = controlProps(ctrl.extraProps).tabOwner
       let effVisible = ctrl.visible
       if (tabOwner && tabCurTabMap.has(tabOwner)) {
-        effVisible = ctrl.visible && readIntProp(ctrl.extraProps?.['所属子夹'], 0) === tabCurTabMap.get(tabOwner)
+        effVisible = ctrl.visible && controlProps(ctrl.extraProps).tabPage === tabCurTabMap.get(tabOwner)
       }
-      if (isStdTabControl && readBoolProp(ctrl.extraProps?.['隐藏自身'], false)) effVisible = false
+      if (isStdTabControl && controlProps(ctrl.extraProps).hideSelf) effVisible = false
       const visFlag = effVisible ? ' | WS_VISIBLE' : ''
       const disFlag = ctrl.disabled ? ' | WS_DISABLED' : ''
       const style = `${baseStyle}${visFlag}${disFlag}`
@@ -9176,7 +8731,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       }
       // 字体：控件设了「字体」则 CreateFontW 专用字体，否则用默认 GUI 字体（所有控件通用）
       // 画板不走 WM_SETFONT（自绘用 st.hFont，在下方画板分支里创建），跳过通用字体块。
-      const ctrlFont = parseControlFont(ctrl.extraProps?.['字体'])
+      const ctrlFont = parseControlFont(controlProps(ctrl.extraProps).font)
       if (ctrlFont && !isStdDrawPanel) {
         mainCode += '    {\n'
         mainCode += '      HDC hdcF = GetDC(NULL);\n'
@@ -9236,7 +8791,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
           mainCode += `    SetWindowSubclass(hCtrl, YcPicBoxMouseProc, 1, (DWORD_PTR)&g_ycPicBoxMouse[${pbMouseIdx}]);\n`
         }
         if (picBoxImageBytes) {
-          const picDrawMode = readIntProp(ctrl.extraProps['显示方式'], 0)  // 0居左上 1缩放 2居中
+          const picDrawMode = controlProps(ctrl.extraProps).displayMode  // 0居左上 1缩放 2居中
           mainCode += '    {\n'
           mainCode += `      HGLOBAL hPicMem = GlobalAlloc(GMEM_MOVEABLE, g_ctrlImgSize_${ctrlIndex});\n`
           mainCode += '      if (hPicMem) {\n'
@@ -9275,19 +8830,19 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         // 外形框：SS_OWNERDRAW 自绘，参数已在 g_ycShapeBoxes 表，WM_DRAWITEM 绘制；跳过 WCM_SETPROP。
       } else if (isStdDrawPanel) {
         // 画板：WM_CREATE 已建好 backbuffer + 默认态，这里用设计属性覆盖 + 底图解码 + 绑定绘画事件指针。
-        const dpPenStyle = readIntProp(ctrl.extraProps?.['画笔类型'], 1)
-        const dpPenWidth = readIntProp(ctrl.extraProps?.['画笔粗细'], 0)
-        const dpPenColor = readIntProp(ctrl.extraProps?.['画笔颜色'], 0) >>> 0
-        const dpRop2 = readIntProp(ctrl.extraProps?.['画出方式'], 12)
-        const dpBrushStyle = readIntProp(ctrl.extraProps?.['刷子类型'], 1)
-        const dpBrushColor = readIntProp(ctrl.extraProps?.['刷子颜色'], 16777215) >>> 0
-        const dpTextColor = readIntProp(ctrl.extraProps?.['文本颜色'], 0) >>> 0
-        const dpTextBk = readIntProp(ctrl.extraProps?.['文本背景颜色'], 16777215) >>> 0
-        const dpUnit = readIntProp(ctrl.extraProps?.['绘画单位'], 0)
-        const dpAuto = readBoolProp(ctrl.extraProps?.['自动重画'], false) ? 1 : 0
-        const dpBack = readIntProp(ctrl.extraProps?.['画板背景色'], 16777215) >>> 0
-        const dpBgMode = readIntProp(ctrl.extraProps?.['底图方式'], 0)
-        const dpHandler = `_${ctrl.name.replace(/^_+/, '')}_绘画`
+        const dpPenStyle = controlProps(ctrl.extraProps).penStyle
+        const dpPenWidth = controlProps(ctrl.extraProps).penWidth
+        const dpPenColor = controlProps(ctrl.extraProps).penColor >>> 0
+        const dpRop2 = controlProps(ctrl.extraProps).drawMode
+        const dpBrushStyle = controlProps(ctrl.extraProps).brushStyle
+        const dpBrushColor = controlProps(ctrl.extraProps).brushColor >>> 0
+        const dpTextColor = controlProps(ctrl.extraProps).textColor >>> 0
+        const dpTextBk = controlProps(ctrl.extraProps).textBackColor >>> 0
+        const dpUnit = controlProps(ctrl.extraProps).drawUnit
+        const dpAuto = controlProps(ctrl.extraProps).autoRedraw ? 1 : 0
+        const dpBack = controlProps(ctrl.extraProps).panelBackColor >>> 0
+        const dpBgMode = controlProps(ctrl.extraProps).backImageMode
+        const dpHandler = `_${ctrl.name.replace(/^_+/, '')}_${krnlnEvents().paint}`
         mainCode += '    if (g_ycDrawPanels.count(hCtrl)) {\n'
         mainCode += '      YcDrawPanelState& dps = g_ycDrawPanels[hCtrl];\n'
         mainCode += `      dps.penStyle=${dpPenStyle}; dps.penWidth=${dpPenWidth}; dps.penColor=(COLORREF)${dpPenColor}; dps.rop2=${dpRop2};\n`
@@ -9322,12 +8877,12 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         mainCode += '    InvalidateRect(hCtrl, NULL, FALSE);\n'
       } else if (isStdTabControl) {
         // 选择夹：按「子夹标题」逐页 TCM_INSERTITEM，按「现行子夹」设当前页；切页显隐经 g_ycTabPages + yc_tab_sync。
-        const titles = String(ctrl.extraProps?.['子夹标题'] ?? '').split('\n').map(t => t.trim()).filter(Boolean)
+        const titles = controlProps(ctrl.extraProps).tabTitles.split('\n').map(t => t.trim()).filter(Boolean)
         titles.forEach((t, i) => {
           mainCode += `    { TCITEMW ti; ZeroMemory(&ti, sizeof(ti)); ti.mask = TCIF_TEXT; wchar_t tb[128]; wcsncpy(tb, L"${escapeCString(t)}", 127); tb[127]=0; ti.pszText = tb; SendMessageW(hCtrl, TCM_INSERTITEMW, (WPARAM)${i}, (LPARAM)&ti); }\n`
         })
         if (titles.length > 0) {
-          const curTab = Math.max(0, Math.min(readIntProp(ctrl.extraProps?.['现行子夹'], 0), titles.length - 1))
+          const curTab = Math.max(0, Math.min(controlProps(ctrl.extraProps).currentTab, titles.length - 1))
           mainCode += `    SendMessage(hCtrl, TCM_SETCURSEL, (WPARAM)${curTab}, 0);\n`
         }
       } else if (progressCodegen || sliderCodegen || scrollBarCodegen || datePickerCodegen || monthCalCodegen || comboCodegen || listBoxCodegen) {
@@ -9373,11 +8928,11 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       const events = unit?.events || []
       for (const ev of events) {
         // 画板「绘画」事件不走 WM_COMMAND/NOTIFY/SCROLL 通道，由 YcDrawPanelProc 的 WM_PAINT 带 4 个 int 参直接派发。
-        if ((isControl(ctrl.type, 'drawPanel')) && ev.name === '绘画') continue
+        if ((isControl(ctrl.type, 'drawPanel')) && ev.name === krnlnEvents().paint) continue
         // 时钟「周期事件」不走 WM_COMMAND/NOTIFY/SCROLL 通道，由主窗 WM_TIMER 按定时器 id 直接派发。
-        if ((isControl(ctrl.type, 'timer')) && ev.name === '周期事件') continue
+        if ((isControl(ctrl.type, 'timer')) && ev.name === krnlnEvents().timerTick) continue
         // 图片框/图形按钮鼠标事件不走上述通道（且 被双击 会被 STN_DBLCLK/BN_DBLCLK 兜底误绑成无参 void 处理），由 YcPicBoxMouseProc 子类带参直接派发。
-        if ((isControl(ctrl.type, 'picBox') || isControl(ctrl.type, 'picBtn')) && PICBOX_MOUSE_EVENT_SET.has(ev.name)) continue
+        if ((isControl(ctrl.type, 'picBox') || isControl(ctrl.type, 'picBtn')) && isPicBoxMouseEvent(ev.name)) continue
         const handlerName = `_${ctrl.name.replace(/^_+/, '')}_${ev.name}`
         const proto = resolveEventByProtocol(
           protocolBindings,
@@ -9457,9 +9012,9 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     const declaredHandlers = new Set<string>()
     for (const ctrl of winInfo.controls) {
       if (isClickable(ctrl.type)) {
-        mainCode += `WEAK_FUNC void ${ctrl.name}_被单击(void) { }\n`
-        const compatHandlerName = `_${ctrl.name.replace(/^_+/, '')}_被单击`
-        mainCode += `WEAK_FUNC void ${compatHandlerName}(void) { ${ctrl.name}_被单击(); }\n`
+        mainCode += `WEAK_FUNC void ${ctrl.name}_${krnlnEvents().click}(void) { }\n`
+        const compatHandlerName = `_${ctrl.name.replace(/^_+/, '')}_${krnlnEvents().click}`
+        mainCode += `WEAK_FUNC void ${compatHandlerName}(void) { ${ctrl.name}_${krnlnEvents().click}(); }\n`
         declaredHandlers.add(compatHandlerName)
       }
     }
@@ -9489,27 +9044,27 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       mainCode += `WEAK_FUNC void ${handlerName}(void) { }\n`
     }
 
-    mainCode += `WEAK_FUNC void ${windowEventPrefix}_创建完毕(void) { }\n`
-    mainCode += `WEAK_FUNC void ${windowEventPrefix}_按下某键(int 键代码, int 功能键状态) { }\n`
-    mainCode += `WEAK_FUNC void ${windowEventPrefix}_某键被放开(int 键代码, int 功能键状态) { }\n`
-    mainCode += `WEAK_FUNC void ${windowEventPrefix}_窗口尺寸被改变(int 宽度, int 高度) { }\n`
-    mainCode += `WEAK_FUNC void ${windowEventPrefix}_被移动(int 左边, int 顶边) { }\n`
-    mainCode += `WEAK_FUNC void ${windowEventPrefix}_被激活(int 激活状态) { }\n`
-    mainCode += `WEAK_FUNC void ${windowEventPrefix}_得到焦点(void) { }\n`
-    mainCode += `WEAK_FUNC void ${windowEventPrefix}_失去焦点(void) { }\n`
-    mainCode += `WEAK_FUNC void ${windowEventPrefix}_即将被销毁(void) { }\n`
-    mainCode += `WEAK_FUNC void ${windowEventPrefix}_被销毁(void) { }\n`
+    mainCode += `WEAK_FUNC void ${windowEventPrefix}_${krnlnEvents().windowCreated}(void) { }\n`
+    mainCode += `WEAK_FUNC void ${windowEventPrefix}_${krnlnEvents().windowKeyDown}(int 键代码, int 功能键状态) { }\n`
+    mainCode += `WEAK_FUNC void ${windowEventPrefix}_${krnlnEvents().windowKeyUp}(int 键代码, int 功能键状态) { }\n`
+    mainCode += `WEAK_FUNC void ${windowEventPrefix}_${krnlnEvents().windowResized}(int 宽度, int 高度) { }\n`
+    mainCode += `WEAK_FUNC void ${windowEventPrefix}_${krnlnEvents().windowMoved}(int 左边, int 顶边) { }\n`
+    mainCode += `WEAK_FUNC void ${windowEventPrefix}_${krnlnEvents().windowActivated}(int 激活状态) { }\n`
+    mainCode += `WEAK_FUNC void ${windowEventPrefix}_${krnlnEvents().windowFocus}(void) { }\n`
+    mainCode += `WEAK_FUNC void ${windowEventPrefix}_${krnlnEvents().windowBlur}(void) { }\n`
+    mainCode += `WEAK_FUNC void ${windowEventPrefix}_${krnlnEvents().windowClosing}(void) { }\n`
+    mainCode += `WEAK_FUNC void ${windowEventPrefix}_${krnlnEvents().windowDestroyed}(void) { }\n`
     // 画板「绘画」事件默认弱实现（带 4 个 int 参：需重画区 左/上/右/下）；用户 .eyc 强符号覆盖。
     for (const dp of drawPanelCtrls) {
-      mainCode += `WEAK_FUNC void _${dp.name.replace(/^_+/, '')}_绘画(int 左, int 上, int 右, int 下) { }\n`
+      mainCode += `WEAK_FUNC void _${dp.name.replace(/^_+/, '')}_${krnlnEvents().paint}(int 左, int 上, int 右, int 下) { }\n`
     }
     // 图片框鼠标事件默认弱实现（bool 返回：真=拦截缺省处理）；用户 .eyc 强符号覆盖（须为 逻辑型 返回 + 对应整数型参数）。
     for (const pb of picBoxMouseCtrls) {
       const base = `_${pb.name.replace(/^_+/, '')}`
-      for (const evName of PICBOX_MOUSE_XY_EVENTS) {
+      for (const evName of krnlnEvents().mouseXY) {
         mainCode += `WEAK_FUNC bool ${base}_${evName}(int 横向位置, int 纵向位置, int 功能键状态) { return false; }\n`
       }
-      mainCode += `WEAK_FUNC bool ${base}_滚轮被滚动(int 滚动距离, int 功能键状态) { return false; }\n`
+      mainCode += `WEAK_FUNC bool ${base}_${krnlnEvents().wheel}(int 滚动距离, int 功能键状态) { return false; }\n`
     }
 
     // ===== 窗口菜单（菜单编辑器的 menu 字段）：生成 CreateMenus + 菜单项被选择的弱空实现 + 命令表 =====
@@ -9534,7 +9089,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
             menuCreateBody += `    AppendMenuW(${parentVar}, ${flags}, (UINT_PTR)${sub}, L"${escapeCString(caption)}");\n`
           } else {
             const cmdId = nextMenuCmdId++
-            const evSub = it.name ? `_${it.name.replace(/^_+/, '')}_被选择` : ''
+            const evSub = it.name ? `_${it.name.replace(/^_+/, '')}_${krnlnEvents().menuSelected}` : ''
             if (evSub) menuCommands.push({ cmdId, evSub })
             let flags = 'MF_STRING'
             if (it.disabled) flags += ' | MF_GRAYED'
@@ -9570,14 +9125,14 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       if (isControl(c.type, 'tab')) mainCode += `        yc_tab_sync(IDC_${c.name.toUpperCase()});\n`
     }
     if (hasWindowMenu) mainCode += '        CreateMenus(hWnd);\n'
-    mainCode += `        ${windowEventPrefix}_创建完毕();\n`
+    mainCode += `        ${windowEventPrefix}_${krnlnEvents().windowCreated}();\n`
     mainCode += '        break;\n'
     // 时钟「周期事件」派发：定时器 id = 控件 IDC 宏值（SetTimer 创建期/yc_timer_set_period 均用它）
     if (timerEventCtrls.length > 0) {
       mainCode += '    case WM_TIMER:\n'
       mainCode += '        switch ((int)wParam) {\n'
       for (const ctrl of timerEventCtrls) {
-        mainCode += `        case IDC_${ctrl.name.toUpperCase()}: _${ctrl.name.replace(/^_+/, '')}_周期事件(); return 0;\n`
+        mainCode += `        case IDC_${ctrl.name.toUpperCase()}: _${ctrl.name.replace(/^_+/, '')}_${krnlnEvents().timerTick}(); return 0;\n`
       }
       mainCode += '        }\n'
       mainCode += '        break;\n'
@@ -9591,7 +9146,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     for (const ctrl of winInfo.controls) {
       const bindings = uniqueCommandEventBindings.filter(b => b.ctrlName === ctrl.name)
       const hasCompatClick = isClickable(ctrl.type)
-      const compatClickHandler = `_${ctrl.name.replace(/^_+/, '')}_被单击`
+      const compatClickHandler = `_${ctrl.name.replace(/^_+/, '')}_${krnlnEvents().click}`
       const hasCompatClickBinding = bindings.some(b => b.notifyCode === 'BN_CLICKED' && b.handlerName === compatClickHandler)
       if (bindings.length > 0 || hasCompatClick) {
         mainCode += `        case IDC_${ctrl.name.toUpperCase()}:\n`
@@ -9904,11 +9459,11 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '    }\n'
     mainCode += '    case WM_KEYDOWN:\n'
     mainCode += '    case WM_SYSKEYDOWN:\n'
-    mainCode += `        ${windowEventPrefix}_按下某键((int)wParam, (int)lParam);\n`
+    mainCode += `        ${windowEventPrefix}_${krnlnEvents().windowKeyDown}((int)wParam, (int)lParam);\n`
     mainCode += '        break;\n'
     mainCode += '    case WM_KEYUP:\n'
     mainCode += '    case WM_SYSKEYUP:\n'
-    mainCode += `        ${windowEventPrefix}_某键被放开((int)wParam, (int)lParam);\n`
+    mainCode += `        ${windowEventPrefix}_${krnlnEvents().windowKeyUp}((int)wParam, (int)lParam);\n`
     mainCode += '        break;\n'
     if (picBoxMouseCtrls.length > 0) {
       // 滚轮消息只发给焦点窗口而 STATIC 图片框永不聚焦：主窗按光标命中转派。必须直调处理函数，
@@ -9928,26 +9483,26 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
       mainCode += '    }\n'
     }
     mainCode += '    case WM_SIZE:\n'
-    mainCode += `        ${windowEventPrefix}_窗口尺寸被改变((int)LOWORD(lParam), (int)HIWORD(lParam));\n`
+    mainCode += `        ${windowEventPrefix}_${krnlnEvents().windowResized}((int)LOWORD(lParam), (int)HIWORD(lParam));\n`
     mainCode += '        break;\n'
     mainCode += '    case WM_MOVE:\n'
-    mainCode += `        ${windowEventPrefix}_被移动((int)(short)LOWORD(lParam), (int)(short)HIWORD(lParam));\n`
+    mainCode += `        ${windowEventPrefix}_${krnlnEvents().windowMoved}((int)(short)LOWORD(lParam), (int)(short)HIWORD(lParam));\n`
     mainCode += '        break;\n'
     mainCode += '    case WM_ACTIVATE:\n'
-    mainCode += `        ${windowEventPrefix}_被激活((int)LOWORD(wParam));\n`
+    mainCode += `        ${windowEventPrefix}_${krnlnEvents().windowActivated}((int)LOWORD(wParam));\n`
     mainCode += '        break;\n'
     mainCode += '    case WM_SETFOCUS:\n'
-    mainCode += `        ${windowEventPrefix}_得到焦点();\n`
+    mainCode += `        ${windowEventPrefix}_${krnlnEvents().windowFocus}();\n`
     mainCode += '        break;\n'
     mainCode += '    case WM_KILLFOCUS:\n'
-    mainCode += `        ${windowEventPrefix}_失去焦点();\n`
+    mainCode += `        ${windowEventPrefix}_${krnlnEvents().windowBlur}();\n`
     mainCode += '        break;\n'
     mainCode += '    case WM_CLOSE:\n'
-    mainCode += `        ${windowEventPrefix}_即将被销毁();\n`
+    mainCode += `        ${windowEventPrefix}_${krnlnEvents().windowClosing}();\n`
     mainCode += '        DestroyWindow(hWnd);\n'
     mainCode += '        break;\n'
     mainCode += '    case WM_DESTROY:\n'
-    mainCode += `        ${windowEventPrefix}_被销毁();\n`
+    mainCode += `        ${windowEventPrefix}_${krnlnEvents().windowDestroyed}();\n`
     // 易语言语义：销毁主窗只销毁它自己；程序在**所有窗口**都销毁后才退出（无父窗口的辅助窗继续存活）
     mainCode += '        g_hMainWnd = NULL;\n'
     mainCode += '        if (!yc_any_window_alive()) PostQuitMessage(0);\n'
@@ -9978,7 +9533,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
     mainCode += '}\n\n'
 
     // ===== 多窗口：辅助窗口运行时（事件分发 + 控件创建 + 通用子窗过程 + 窗口注册表 + 载入/销毁）=====
-    // v1 轻量形态：常规控件经 buildStd* 构建器创建；不支持 画板/选择夹/时钟/外形框/菜单/控件图片（跳过并告警）。
+    // v1 轻量形态：常规控件经支持库的组件代码生成脚本创建；不支持 画板/选择夹/时钟/外形框/菜单/控件图片（跳过并告警）。
     {
       type SecBinding = { id: number; code: string; handler: string }
       const secCommandBindings: SecBinding[] = []
@@ -9991,9 +9546,9 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
           const libraryFileName = unit ? (libNameToFileName.get(normalizeKey(unit.libraryName)) || '') : ''
           const className = resolveControlClassName(ctrl.type, unit, libraryFileName, controlProtocolBindings)
           for (const ev of unit?.events || []) {
-            if ((isControl(ctrl.type, 'drawPanel')) && ev.name === '绘画') continue
-            if ((isControl(ctrl.type, 'timer')) && ev.name === '周期事件') continue
-            if ((isControl(ctrl.type, 'picBox')) && PICBOX_MOUSE_EVENT_SET.has(ev.name)) continue
+            if ((isControl(ctrl.type, 'drawPanel')) && ev.name === krnlnEvents().paint) continue
+            if ((isControl(ctrl.type, 'timer')) && ev.name === krnlnEvents().timerTick) continue
+            if ((isControl(ctrl.type, 'picBox')) && isPicBoxMouseEvent(ev.name)) continue
             const handlerName = `_${ctrl.name.replace(/^_+/, '')}_${ev.name}`
             const proto = resolveEventByProtocol(protocolBindings, libraryFileName, unit?.name || ctrl.type, unit?.englishName || '', ev.name)
             const id = swx.ctrlIds[ci]
@@ -10020,7 +9575,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         // weak：辅助窗口窗级事件 + 控件事件（与主窗重名的控件共用同一处理函数，declaredHandlers 全局去重）
         mainCode += '/* 辅助窗口事件处理默认实现 */\n'
         for (const swx of secondaryWindows) {
-          for (const evn of ['创建完毕', '即将被销毁', '被销毁']) {
+          for (const evn of [krnlnEvents().windowCreated, krnlnEvents().windowClosing, krnlnEvents().windowDestroyed]) {
             const h = `_${swx.info.formName}_${evn}`
             if (declaredHandlers.has(h)) continue
             declaredHandlers.add(h)
@@ -10062,27 +9617,27 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
             // 通用对话框：非可视组件，属性灌入 krnln 按名状态表（与主窗同路径），不创建窗口
             if (isControl(ctrl.type, 'commonDialog')) return
             const isStdEdit = className === 'EDIT'
-            const editCodegen = isStdEdit ? buildStdEditCodegen(ctrl.extraProps) : null
+            const editCodegen = isStdEdit ? controlCodegen<EditControlCodegen>('edit', ctrl.extraProps) : null
             const isStdButton = isControl(ctrl.type, 'button')
             // 底色/文本色 → 自绘按钮(BS_OWNERDRAW)，颜色由 YcSubWinProc WM_DRAWITEM 查 g_ycButtonDraws 画
-            const swOwnerDrawButton = isStdButton && (readIntProp(ctrl.extraProps?.['底色'], 0) !== 0 || typeof parseControlFont(ctrl.extraProps?.['字体'])?.color === 'number')
-            const buttonCodegen = isStdButton ? buildStdButtonCodegen(ctrl.extraProps, false, swOwnerDrawButton) : null
+            const swOwnerDrawButton = isStdButton && (controlProps(ctrl.extraProps).backColor !== 0 || typeof parseControlFont(controlProps(ctrl.extraProps).font)?.color === 'number')
+            const buttonCodegen = isStdButton ? controlCodegen<ButtonCodegen>('button', ctrl.extraProps, false, swOwnerDrawButton) : null
             const isStdLabel = isControl(ctrl.type, 'label')
-            const labelCodegen = isStdLabel ? buildStdLabelCodegen(ctrl.extraProps) : null
+            const labelCodegen = isStdLabel ? controlCodegen<LabelCodegen>('label', ctrl.extraProps) : null
             const isStdCheckable = isControl(ctrl.type, 'checkable')
-            const checkableCodegen = isStdCheckable ? buildStdCheckableCodegen(ctrl.extraProps, isControl(ctrl.type, 'radio')) : null
+            const checkableCodegen = isStdCheckable ? controlCodegen<CheckableCodegen>('checkable', ctrl.extraProps, isControl(ctrl.type, 'radio')) : null
             const isStdGroupBox = isControl(ctrl.type, 'groupBox')
-            const groupBoxCodegen = isStdGroupBox ? buildStdGroupBoxCodegen(ctrl.extraProps) : null
+            const groupBoxCodegen = isStdGroupBox ? controlCodegen<GroupBoxCodegen>('groupBox', ctrl.extraProps) : null
             const isStdPicBox = isControl(ctrl.type, 'picBox')
-            const picBoxCodegen = isStdPicBox ? buildStdPicBoxCodegen(ctrl.extraProps, false) : null
-            const progressCodegen = (isControl(ctrl.type, 'progressBar')) ? buildStdProgressCodegen(ctrl.extraProps) : null
-            const sliderCodegen = (isControl(ctrl.type, 'slider')) ? buildStdSliderCodegen(ctrl.extraProps) : null
+            const picBoxCodegen = isStdPicBox ? controlCodegen<PicBoxCodegen>('picBox', ctrl.extraProps, false) : null
+            const progressCodegen = (isControl(ctrl.type, 'progressBar')) ? controlCodegen<CommonCtrlCodegen>('progress', ctrl.extraProps) : null
+            const sliderCodegen = (isControl(ctrl.type, 'slider')) ? controlCodegen<CommonCtrlCodegen>('slider', ctrl.extraProps) : null
             const scrollBarCodegen = (isControl(ctrl.type, 'scrollBar'))
-              ? buildStdScrollBarCodegen(ctrl.extraProps, isControl(ctrl.type, 'vScrollBar')) : null
-            const datePickerCodegen = (isControl(ctrl.type, 'datePicker')) ? buildStdDatePickerCodegen(ctrl.extraProps) : null
-            const monthCalCodegen = (isControl(ctrl.type, 'monthCalendar')) ? buildStdMonthCalCodegen(ctrl.extraProps) : null
-            const comboCodegen = (isControl(ctrl.type, 'comboBox')) ? buildStdComboBoxCodegen(ctrl.extraProps) : null
-            const listBoxCodegen = className === 'LISTBOX' ? buildStdListBoxCodegen(ctrl.extraProps, false) : null
+              ? controlCodegen<CommonCtrlCodegen>('scrollBar', ctrl.extraProps, isControl(ctrl.type, 'vScrollBar')) : null
+            const datePickerCodegen = (isControl(ctrl.type, 'datePicker')) ? controlCodegen<CommonCtrlCodegen>('datePicker', ctrl.extraProps) : null
+            const monthCalCodegen = (isControl(ctrl.type, 'monthCalendar')) ? controlCodegen<CommonCtrlCodegen>('monthCal', ctrl.extraProps) : null
+            const comboCodegen = (isControl(ctrl.type, 'comboBox')) ? controlCodegen<CommonCtrlCodegen>('comboBox', ctrl.extraProps) : null
+            const listBoxCodegen = className === 'LISTBOX' ? controlCodegen<CommonCtrlCodegen>('listBox', ctrl.extraProps, false) : null
             const anyCodegen = editCodegen || buttonCodegen || labelCodegen || checkableCodegen || groupBoxCodegen || picBoxCodegen
               || progressCodegen || sliderCodegen || scrollBarCodegen || datePickerCodegen || monthCalCodegen || comboCodegen || listBoxCodegen
             const baseStyle = anyCodegen ? anyCodegen.style
@@ -10098,7 +9653,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
             mainCode += `        ${baseStyle}${visFlag}${disFlag},\n`
             mainCode += `        ${ctrl.x}, ${ctrl.y}, ${ctrl.width}, ${ctrl.height},\n`
             mainCode += `        hWndParent, (HMENU)${cid}, g_hInstance, NULL);\n`
-            const ctrlFont = parseControlFont(ctrl.extraProps?.['字体'])
+            const ctrlFont = parseControlFont(controlProps(ctrl.extraProps).font)
             if (ctrlFont) {
               mainCode += '    {\n'
               mainCode += '      HDC hdcF = GetDC(NULL);\n'
@@ -10170,7 +9725,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         mainCode += '    { int save = g_ycCurEventWin; g_ycCurEventWin = idx + 1;\n'
         mainCode += '      switch (idx) {\n'
         for (let si = 0; si < secondaryWindows.length; si++) {
-          mainCode += `      case ${si}: _${secondaryWindows[si].info.formName}_创建完毕(); break;\n`
+          mainCode += `      case ${si}: _${secondaryWindows[si].info.formName}_${krnlnEvents().windowCreated}(); break;\n`
         }
         mainCode += '      }\n'
         mainCode += '      g_ycCurEventWin = save; }\n'
@@ -10450,7 +10005,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         mainCode += '        int save = g_ycCurEventWin; g_ycCurEventWin = wi;\n'
         mainCode += '        switch (wi) {\n'
         for (let si = 0; si < secondaryWindows.length; si++) {
-          mainCode += `        case ${si + 1}: _${secondaryWindows[si].info.formName}_即将被销毁(); break;\n`
+          mainCode += `        case ${si + 1}: _${secondaryWindows[si].info.formName}_${krnlnEvents().windowClosing}(); break;\n`
         }
         mainCode += '        }\n'
         mainCode += '        g_ycCurEventWin = save;\n'
@@ -10461,7 +10016,7 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
         mainCode += '        int save = g_ycCurEventWin; g_ycCurEventWin = wi;\n'
         mainCode += '        switch (wi) {\n'
         for (let si = 0; si < secondaryWindows.length; si++) {
-          mainCode += `        case ${si + 1}: _${secondaryWindows[si].info.formName}_被销毁(); break;\n`
+          mainCode += `        case ${si + 1}: _${secondaryWindows[si].info.formName}_${krnlnEvents().windowDestroyed}(); break;\n`
         }
         mainCode += '        }\n'
         mainCode += '        g_ycCurEventWin = save;\n'

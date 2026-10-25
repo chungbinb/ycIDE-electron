@@ -91,7 +91,11 @@ function connectPluginService(): void {
     const { requestId, command, args } = (payload ?? {}) as { requestId: number; command: string; args?: unknown[] }
     commandRegistry.executeLocal(command, ...(Array.isArray(args) ? args : []))
       .then(result => plugins.sendRendererCommandResult({ requestId, ok: true, result: toCloneable(result) }))
-      .catch((err: unknown) => plugins.sendRendererCommandResult({ requestId, ok: false, error: err instanceof Error ? err.message : String(err) }))
+      .catch((err: unknown) => {
+        // 带数字错误码的错误（如文档版本过期 -33002）原样传回插件
+        const code = typeof (err as { code?: unknown } | null)?.code === 'number' ? (err as { code: number }).code : undefined
+        plugins.sendRendererCommandResult({ requestId, ok: false, error: err instanceof Error ? err.message : String(err), code })
+      })
   })
   void refreshPluginState()
 }
@@ -109,6 +113,11 @@ function toCloneable(value: unknown): unknown {
 connectPluginService()
 
 // ───────────── 命令执行与注册 ─────────────
+
+/** 只执行渲染进程本地注册的命令（不转给插件进程） */
+export function executeLocalCommand(id: string, args: unknown[] = []): Promise<unknown> {
+  return commandRegistry.executeLocal(id, ...args)
+}
 
 export function executeCommand(id: string, ...args: unknown[]): Promise<unknown> {
   return commandRegistry.execute(id, ...args)

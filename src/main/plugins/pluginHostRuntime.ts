@@ -34,11 +34,33 @@ export interface YcideApi {
   documents: {
     /** 读取文档当前内容：已在编辑器打开的取编辑器里（含未保存修改）的内容，否则读磁盘 */
     getText(path: string): Promise<string>
+    /** 读取文档内容与版本号；修改时带上 version，文档在此期间被改过则失败（错误码 -33002） */
+    get(path: string): Promise<{ text: string; version: string }>
     /**
      * 把文档改为 text：编辑器里显示差异，用户可撤销；不会自动保存。
      * 传入 baseText 时，若文档已不是 baseText（被别人改过）则拒绝修改。
      */
-    applyEdit(path: string, text: string, baseText?: string): Promise<void>
+    applyEdit(path: string, text: string, base?: string | { version: string }): Promise<void>
+  }
+  workspace: {
+    /** 当前项目目录；没有打开项目时为 null（需要 workspace:read） */
+    getRoot(): Promise<string | null>
+    /** 项目内的文件（相对路径），pattern 为包含匹配（需要 workspace:read） */
+    listFiles(pattern?: string): Promise<string[]>
+    /** 读项目内的文件（相对或绝对路径，必须在项目目录内；需要 workspace:read） */
+    readFile(path: string): Promise<string>
+    /** 写项目内的文件（已在编辑器里打开的文件请用 documents.applyEdit；需要 workspace:write） */
+    writeFile(path: string, content: string): Promise<void>
+  }
+  ai: {
+    /** 用用户当前选择的模型对话，返回回复文本（需要 ai:invoke，消耗用户额度） */
+    chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>): Promise<string>
+  }
+  terminal: {
+    /** 在内置终端执行一条命令（需要 terminal） */
+    send(command: string): Promise<void>
+    /** 读取最近 limit 行终端输出（需要 terminal） */
+    read(limit?: number): Promise<string>
   }
   secrets: {
     /** 读取本插件自己的密钥（需要权限 secrets:own）；不存在时为 undefined */
@@ -92,6 +114,8 @@ export class PluginHostRuntime {
   }
 
   private createApi(pluginId: string, declaredCommands: ReadonlySet<string>): YcideApi {
+    const host = (command: string, ...args: unknown[]): Promise<unknown> =>
+      this.rpc.request('commands/executeHost', { pluginId, command, args }, 0)
     return {
       commands: {
         registerCommand: (id, handler) => {
@@ -129,9 +153,24 @@ export class PluginHostRuntime {
       },
       documents: {
         getText: async path => String(await this.rpc.request('commands/executeHost', { pluginId, command: 'documents:getText', args: [path] }, 0)),
-        applyEdit: async (path, text, baseText) => {
-          await this.rpc.request('commands/executeHost', { pluginId, command: 'documents:applyEdit', args: [{ path, text, baseText }] }, 0)
+        get: async path => (await host('documents:get', path)) as { text: string; version: string },
+        applyEdit: async (path, text, base) => {
+          const request = typeof base === 'object' && base ? { path, text, version: base.version } : { path, text, baseText: base }
+          await host('documents:applyEdit', request)
         },
+      },
+      workspace: {
+        getRoot: async () => (await host('workspace:getRoot')) as string | null,
+        listFiles: async pattern => (await host('workspace:listFiles', pattern ?? '')) as string[],
+        readFile: async path => String(await host('workspace:readFile', path)),
+        writeFile: async (path, content) => { await host('workspace:writeFile', path, content) },
+      },
+      ai: {
+        chat: async messages => String(await host('ai:chat', messages)),
+      },
+      terminal: {
+        send: async command => { await host('terminal:send', command) },
+        read: async limit => String(await host('terminal:read', limit ?? 40)),
       },
       secrets: {
         get: async key => (await this.rpc.request<string | null>('secrets/get', { pluginId, key })) ?? undefined,

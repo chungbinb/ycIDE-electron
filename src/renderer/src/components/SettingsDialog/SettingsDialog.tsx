@@ -568,6 +568,19 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
             />
             <span className="settings-unit" />
           </div>
+          <div className="settings-row">
+            <span className="settings-label">索引签名公钥</span>
+            <textarea
+              className="settings-input"
+              title="商店索引签名公钥：每行一个（scripts/plugin-pack.mjs keygen 生成的公钥）。填写后，没有有效签名的索引会被拒绝"
+              rows={2}
+              value={draft.storeIndexPublicKeys.join('\n')}
+              onChange={(e) => updateDraft('storeIndexPublicKeys', e.target.value.split(/\r?\n/))}
+              placeholder="自建商店时填写，每行一个；留空则不校验索引签名"
+              spellCheck={false}
+            />
+            <span className="settings-unit" />
+          </div>
         </div>
       </div>
       <footer className="settings-footer">
