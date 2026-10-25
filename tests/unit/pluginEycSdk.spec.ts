@@ -111,7 +111,7 @@ describe('易语言插件（插件开发支持库）', () => {
       expect(await service.executeCommand('eyc:greet', ['世界'])).toBe('问候了 世界，参数个数 1')
       expect(shown).toEqual(['eyc.reader|info|你好，世界'])
       expect(await service.executeCommand('eyc:who')).toBe('eyc.reader')
-      expect(await service.executeCommand('eyc:read', ['a.eyc'])).toBe('结果=宿主:documents:getText:a.eyc;错误=')
+      expect(await service.executeCommand('eyc:read', ['a.eyc'])).toBe('结果=宿主:documents:getTextScoped:a.eyc;错误=')
     } finally {
       await service.shutdown()
     }

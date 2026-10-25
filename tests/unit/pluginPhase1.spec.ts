@@ -245,12 +245,12 @@ describe('插件主题与文档 API', () => {
   })
 
   it('插件经 ycide.documents 读取文档、作为 AI 工具被调用', async () => {
-    const executeHostCommand = vi.fn(async (command: string) => (command === 'documents:getText' ? '第一行\r\n第二行\n第三行' : undefined))
+    const executeHostCommand = vi.fn(async (command: string) => (command === 'documents:getTextScoped' ? '第一行\r\n第二行\n第三行' : undefined))
     const service = makeService(dir => cpSync(resolve(repoRoot, 'tests', 'fixtures', 'plugins', 'demo.hello'), join(dir, 'demo.hello'), { recursive: true }), executeHostCommand)
     await service.start()
     const result = await service.executeCommand('hello:countLines', [{ path: 'src/a.eyc' }, { projectDir: 'D:\\proj', runId: 1 }])
     expect(result).toEqual({ ok: true, data: { ok: true, path: 'src/a.eyc', lines: 3 }, logs: ['示例插件：src/a.eyc 共 3 行'] })
-    expect(executeHostCommand).toHaveBeenCalledWith('documents:getText', [join('D:\\proj', 'src/a.eyc')])
+    expect(executeHostCommand).toHaveBeenCalledWith('documents:getTextScoped', [join('D:\\proj', 'src/a.eyc')])
     expect(collectAITools(service.getState().manifests).find(t => t.name === 'count_lines')).toMatchObject({ pluginId: 'demo.hello', builtin: false, risk: 'read' })
     await service.shutdown()
   })

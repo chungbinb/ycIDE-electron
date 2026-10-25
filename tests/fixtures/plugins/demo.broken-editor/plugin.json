@@ -1,0 +1,18 @@
+{
+  "id": "demo.broken-editor",
+  "displayName": "示例：会出错的编辑器",
+  "version": "1.0.0",
+  "publisher": "demo",
+  "description": "编辑器崩溃回退的测试夹具：页面加载后立即报告出错。",
+  "contributes": {
+    "editors": [
+      {
+        "id": "demo.brokenEditor",
+        "displayName": "会出错的编辑器（示例）",
+        "languages": ["plaintext"],
+        "priority": "option",
+        "ui": { "type": "web", "entry": "ui/editor.html" }
+      }
+    ]
+  }
+}

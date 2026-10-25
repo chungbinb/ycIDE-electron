@@ -101,11 +101,21 @@ test(`表格编辑器性能（渲染后端：${RENDERER}）`, async () => {
     await cdp.send('Profiler.setSamplingInterval', { interval: 200 })
 
     // 滚动：每帧滚动 120px，滚到底
+    await cdp.send('Performance.enable')
+    const metricsOf = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map(m => [m.name, m.value]))
+    const before = await metricsOf()
     await cdp.send('Profiler.start')
     result.scroll = await win.evaluate(async () => {
       const wrapper = document.querySelector('.eyc-table-wrapper')
       const frames = []
       const longTasks = []
+      // 空白帧：视口上下边缘落在虚拟化占位块（或滚动容器本身）上，说明行还没渲染出来
+      let blankFrames = 0
+      const rect = wrapper.getBoundingClientRect()
+      const isBlank = (y) => {
+        const el = document.elementFromPoint(rect.left + 120, y)
+        return !el || el === wrapper || el.classList.contains('eyc-virtual-spacer') || !!el.closest('.eyc-virtual-spacer')
+      }
       const obs = new PerformanceObserver(list => { for (const e of list.getEntries()) longTasks.push(e.duration) })
       try { obs.observe({ entryTypes: ['longtask'] }) } catch { /* 不支持 */ }
       let last = performance.now()
@@ -116,11 +126,16 @@ test(`表格编辑器性能（渲染后端：${RENDERER}）`, async () => {
         const now = performance.now()
         frames.push(now - last)
         last = now
+        if (isBlank(rect.top + 30) || isBlank(rect.bottom - 30)) blankFrames++
       }
       obs.disconnect()
-      return { frames, longTasks, scrollHeight: wrapper.scrollHeight }
+      return { frames, longTasks, blankFrames, scrollHeight: wrapper.scrollHeight }
     })
     result.scrollProfile = summarizeProfile((await cdp.send('Profiler.stop')).profile)
+    // 滚动期间浏览器各类工作的耗时（秒→毫秒）与布局、样式计算次数
+    const after = await metricsOf()
+    result.scrollMetrics = Object.fromEntries(['TaskDuration', 'ScriptDuration', 'LayoutDuration', 'RecalcStyleDuration', 'LayoutCount', 'RecalcStyleCount', 'Nodes']
+      .map(k => [k, k.endsWith('Duration') ? Math.round((after[k] - before[k]) * 1000) : k === 'Nodes' ? after[k] : after[k] - before[k]]))
 
     // 输入：回到顶部，进入第一行可编辑代码，逐字输入
     await win.evaluate(() => { document.querySelector('.eyc-table-wrapper').scrollTop = 0 })
@@ -158,6 +173,7 @@ test(`表格编辑器性能（渲染后端：${RENDERER}）`, async () => {
       scrollFrameP95Ms: +percentile(frames, 0.95).toFixed(1),
       scrollFrameMaxMs: +Math.max(...frames).toFixed(1),
       scrollLongTasks: result.scroll.longTasks.length,
+      scrollBlankFrames: result.scroll.blankFrames,
       typingMedianMs: +percentile(typing, 0.5).toFixed(1),
       typingP95Ms: +percentile(typing, 0.95).toFixed(1),
     }
@@ -165,6 +181,7 @@ test(`表格编辑器性能（渲染后端：${RENDERER}）`, async () => {
     fs.mkdirSync(path.dirname(out), { recursive: true })
     fs.writeFileSync(out, JSON.stringify(result, null, 2))
     console.log('SUMMARY', JSON.stringify(result.summary))
+    console.log('SCROLL_METRICS', JSON.stringify(result.scrollMetrics))
     console.log('SCROLL_PROFILE', JSON.stringify(result.scrollProfile, null, 1))
     console.log('TYPING_PROFILE', JSON.stringify(result.typingProfile, null, 1))
     console.log('FOCUS', result.focusTag)

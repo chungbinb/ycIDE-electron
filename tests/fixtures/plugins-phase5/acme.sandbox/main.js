@@ -22,6 +22,15 @@ exports.activate = (context, ycide) => {
     await attempt('fetchAllowed', async () => (await fetch(args.allowedUrl)).text())
     await attempt('fetchDenied', async () => (await fetch(args.deniedUrl)).text())
     await attempt('workbench', () => ycide.commands.executeCommand('tools:settings'))
+    const udpSend = (host) => new Promise((resolve, reject) => {
+      const socket = require('node:dgram').createSocket('udp4')
+      try {
+        socket.send(Buffer.from('x'), 9, host, err => { socket.close(); if (err) reject(err); else resolve('sent') })
+      } catch (e) { socket.close(); reject(e) }
+    })
+    await attempt('udpAllowed', () => udpSend('127.0.0.1'))
+    await attempt('udpDenied', () => udpSend('127.0.0.2'))
+    await attempt('dnsDenied', () => require('node:dns').promises.lookup('example.com'))
     return out
   }))
 }

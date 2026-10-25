@@ -49,6 +49,15 @@ test('插件网页编辑器：打开方式切换、编辑内容回到文档、�
     await tab.click({ button: 'right' })
     await win.locator('.editor-tab-context-menu').getByText('打开方式：文本编辑器').click()
     await expect(win.locator('.monaco-editor .view-lines')).toContainText('HELLO PLUGIN EDITOR')
+
+    // 崩溃回退：编辑器报告出错 → 自动改用文本编辑器并提示，可以重试
+    await tab.click({ button: 'right' })
+    await win.locator('.editor-tab-context-menu').getByText('打开方式：会出错的编辑器（示例）').click()
+    const banner = win.locator('.editor-eyc-fallback-banner')
+    await expect(banner).toContainText('「会出错的编辑器（示例）」出错（初始化失败（测试））')
+    await expect(win.locator('.monaco-editor .view-lines')).toContainText('HELLO PLUGIN EDITOR')
+    await banner.getByRole('button', { name: '重试' }).click()
+    await expect(banner).toContainText('出错')
   } finally {
     // 文档有未保存修改：直接销毁窗口，避免「是否保存」原生对话框挡住关闭
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(w => w.destroy())).catch(() => {})

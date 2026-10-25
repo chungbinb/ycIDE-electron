@@ -5,6 +5,8 @@
 //   宿主 → 编辑器  { type: 'editor/open', uri, label, language, text, theme }
 //   宿主 → 编辑器  { type: 'editor/didChangeDocument', text }        文档被别处修改（撤销、AI 编辑、外部修改）
 //   编辑器 → 宿主  { type: 'documents/applyEdit', text }            用新内容替换整个文档（未保存，可撤销）
+//   编辑器 → 宿主  { type: 'editor/error', message }                编辑器出错，宿主改用文本编辑器打开（设计稿 §6.3 崩溃回退）
+// 页面加载后 readyTimeoutMs 内没有发 editor/ready 也视为出错。
 
 import { useCallback, useEffect, useRef } from 'react'
 import type { EditorEntry } from '../../../shared/plugin/editorContributions'
@@ -19,16 +21,35 @@ export interface PluginWebEditorProps {
   text: string
   themeTokenValues?: Record<string, string>
   onChange: (text: string) => void
+  /** 编辑器出错（页面报错或迟迟不就绪）：宿主据此回退到文本编辑器 */
+  onFailure?: (reason: string) => void
+  readyTimeoutMs?: number
 }
+
+export const PLUGIN_EDITOR_READY_TIMEOUT_MS = 10000
 
 export function pluginUiUrl(pluginId: string, entry: string): string {
   const path = entry.split(/[\\/]+/).map(encodeURIComponent).join('/')
   return `${PLUGIN_UI_SCHEME}://${pluginId}/${path}`
 }
 
-export default function PluginWebEditor({ editor, uri, label, language, text, themeTokenValues, onChange }: PluginWebEditorProps): React.JSX.Element {
+export default function PluginWebEditor({ editor, uri, label, language, text, themeTokenValues, onChange, onFailure, readyTimeoutMs = PLUGIN_EDITOR_READY_TIMEOUT_MS }: PluginWebEditorProps): React.JSX.Element {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const readyRef = useRef(false)
+  const failureRef = useRef(onFailure)
+  failureRef.current = onFailure
+  const readyTimerRef = useRef<number | null>(null)
+  const armReadyTimer = useCallback(() => {
+    if (readyTimerRef.current !== null) window.clearTimeout(readyTimerRef.current)
+    readyTimerRef.current = window.setTimeout(() => {
+      readyTimerRef.current = null
+      if (!readyRef.current) failureRef.current?.(`${Math.round(readyTimeoutMs / 1000)} 秒内没有就绪`)
+    }, readyTimeoutMs)
+  }, [readyTimeoutMs])
+  useEffect(() => {
+    armReadyTimer()
+    return () => { if (readyTimerRef.current !== null) window.clearTimeout(readyTimerRef.current) }
+  }, [armReadyTimer])
   // 编辑器自己提交的内容：回显时不再作为外部修改发回去，避免编辑器光标被打断
   const lastFromEditorRef = useRef<string | null>(null)
   const latest = useRef({ uri, label, language, text, themeTokenValues, onChange })
@@ -46,9 +67,11 @@ export default function PluginWebEditor({ editor, uri, label, language, text, th
   useEffect(() => {
     const handler = (event: MessageEvent): void => {
       if (!frameRef.current || event.source !== frameRef.current.contentWindow) return
-      const data = event.data as { type?: unknown; text?: unknown } | null
+      const data = event.data as { type?: unknown; text?: unknown; message?: unknown } | null
       if (!data || typeof data.type !== 'string') return
-      if (data.type === 'editor/ready') {
+      if (data.type === 'editor/error') {
+        failureRef.current?.(typeof data.message === 'string' && data.message ? data.message : '编辑器报告出错')
+      } else if (data.type === 'editor/ready') {
         readyRef.current = true
         sendOpen()
       } else if (data.type === 'documents/applyEdit' && typeof data.text === 'string') {
@@ -79,7 +102,7 @@ export default function PluginWebEditor({ editor, uri, label, language, text, th
       title={`${editor.displayName}：${label}`}
       src={pluginUiUrl(editor.pluginId, (editor.ui as { entry: string }).entry)}
       sandbox="allow-scripts"
-      onLoad={() => { readyRef.current = false }}
+      onLoad={() => { readyRef.current = false; armReadyTimer() }}
       style={{ width: '100%', height: '100%', border: 'none', display: 'block', background: 'var(--editor-bg, transparent)' }}
     />
   )
