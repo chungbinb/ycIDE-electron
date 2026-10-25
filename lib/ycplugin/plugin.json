@@ -1,0 +1,24 @@
+{
+  "id": "ycide.ycplugin",
+  "displayName": "插件开发支持库",
+  "version": "1.0.0",
+  "publisher": "ycide",
+  "description": "用易语言写 ycIDE 插件：编译出的程序作为可执行文件插件运行，经标准输入输出与 IDE 通信。（支持库数据插件：命令清单与实现源码都在本目录）",
+  "builtin": true,
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "runtime": {
+    "type": "none"
+  },
+  "targets": [
+    "windows"
+  ],
+  "contributes": {
+    "libraries": [
+      {
+        "name": "ycplugin"
+      }
+    ]
+  }
+}

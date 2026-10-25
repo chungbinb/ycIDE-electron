@@ -1,0 +1,33 @@
+{
+  "id": "yourname.eyc-hello",
+  "displayName": "易语言插件模板",
+  "version": "0.1.0",
+  "publisher": "yourname",
+  "description": "用易语言写的插件：编译出的 plugin.exe 由 IDE 启动，经标准输入输出通信。",
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "platforms": [
+    "windows"
+  ],
+  "runtime": {
+    "type": "executable",
+    "command": "plugin.exe"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "id": "eychello:greet",
+        "title": "易语言插件：打招呼"
+      }
+    ],
+    "menus": {
+      "menubar/tools": [
+        {
+          "command": "eychello:greet",
+          "group": "9_plugins@2"
+        }
+      ]
+    }
+  }
+}

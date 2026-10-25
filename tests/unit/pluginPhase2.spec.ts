@@ -131,6 +131,8 @@ describe('支持库数据插件', () => {
     const service = new PluginService({
       builtinCandidates: BUILTIN_PLUGIN_CANDIDATES,
       pluginDirs: [join(repoRoot, 'lib')],
+      // 与正式环境一致：随安装包发布的 lib/ 是可信目录
+      trustedDirs: [join(repoRoot, 'lib')],
       statePath: join(root, 'state.json'),
       platform: 'linux',
       host: 'electron',
@@ -144,7 +146,7 @@ describe('支持库数据插件', () => {
     const libPlugins = service.getState().plugins.filter(p => service.getManifest(p.id)?.contributes?.libraries)
     // 宿主平台不限：Linux 上的 IDE 也加载只有 Windows 实现的支持库（目标平台另算，设计稿 §3.4）
     expect(libPlugins.map(p => [p.id, p.status]).sort()).toEqual([
-      ['ycide.krnln', 'enabled'], ['ycide.script', 'enabled'], ['ycide.spec', 'enabled'], ['ycide.webview2', 'enabled'],
+      ['ycide.krnln', 'enabled'], ['ycide.script', 'enabled'], ['ycide.spec', 'enabled'], ['ycide.webview2', 'enabled'], ['ycide.ycplugin', 'enabled'],
     ])
     expect(service.getManifest('ycide.krnln')?.contributes?.libraries).toEqual([{ name: 'krnln' }])
     expect(service.getState().plugins.find(p => p.id === 'ycide.krnln')?.canDisable).toBe(true)

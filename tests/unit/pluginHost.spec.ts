@@ -76,6 +76,8 @@ function createHarness(setup: (pluginsDir: string) => void, overrides: Partial<P
   const service = new PluginService({
     builtinCandidates: BUILTIN_PLUGIN_CANDIDATES,
     pluginDirs: [pluginsDir],
+    // 测试插件按开发目录处理：权限视同已授权（授权流程见 pluginPhase5.spec.ts）
+    devDirs: [pluginsDir],
     statePath: join(root, 'plugin-state.json'),
     platform: 'windows',
     host: 'electron',
@@ -180,7 +182,7 @@ describe('插件服务：激活、命令路由、停用', () => {
     expect(statusOf(h, 'demo.hello')).toMatchObject({ status: 'disabled' })
     expect(h.service.isPluginCommand('hello:greet')).toBe(false)
     expect(h.service.getModel().commands.has('hello:greet')).toBe(false)
-    expect(JSON.parse(readFileSync(join(h.root, 'plugin-state.json'), 'utf-8'))).toEqual({ disabled: ['demo.hello'] })
+    expect(JSON.parse(readFileSync(join(h.root, 'plugin-state.json'), 'utf-8'))).toEqual({ disabled: ['demo.hello'], granted: {} })
 
     // 重新启用后从头激活（deactivate 已把计数清零）
     await h.service.setEnabled('demo.hello', true)

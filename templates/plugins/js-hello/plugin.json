@@ -1,0 +1,33 @@
+{
+  "id": "yourname.hello",
+  "displayName": "你好插件",
+  "version": "0.1.0",
+  "publisher": "yourname",
+  "description": "插件模板：注册一个命令，读取当前文档并在输出面板显示行数。",
+  "engines": {
+    "ycide": ">=0.0.5"
+  },
+  "runtime": {
+    "type": "node",
+    "main": "main.js"
+  },
+  "permissions": [
+    "workspace:read"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "hello:countLines",
+        "title": "统计当前文件行数"
+      }
+    ],
+    "menus": {
+      "menubar/tools": [
+        {
+          "command": "hello:countLines",
+          "group": "9_plugins@1"
+        }
+      ]
+    }
+  }
+}

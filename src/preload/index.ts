@@ -41,11 +41,32 @@ type PluginState = {
     status: 'enabled' | 'disabled' | 'unavailable' | 'error'
     reason?: string
     source: string
+    publisher: string
     builtin: boolean
     active: boolean
     canDisable: boolean
+    /** 申请的权限（含可执行文件插件的 runtime:executable） */
+    permissions: string[]
+    /** 等待用户同意权限才能启用 */
+    needsConsent: boolean
+    processKind?: 'trusted' | 'sandboxed' | 'executable'
+    removable: boolean
+    dev: boolean
   }>
   manifests: PluginManifest[]
+}
+type StorePluginCard = {
+  id: string
+  kind: 'plugin' | 'theme'
+  displayName: string
+  version: string
+  publisher: string
+  summary?: string
+  size?: number
+  supportedPlatforms: string[]
+  permissions: string[]
+  signed: boolean
+  installedVersion?: string
 }
 type ThemeMenuState = { themes: string[]; currentTheme: string }
 type ThemeLifecycleSyncPayload = {
@@ -224,6 +245,18 @@ const api = {
     executeCommand: (command: string, args: unknown[]) => ipcRenderer.invoke('plugins:executeCommand', command, args),
     setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('plugins:setEnabled', id, enabled) as Promise<PluginState>,
     reload: () => ipcRenderer.invoke('plugins:reload') as Promise<PluginState>,
+    /** 同意插件申请的权限（授权并启用） */
+    grantPermissions: (id: string) => ipcRenderer.invoke('plugins:grantPermissions', id) as Promise<PluginState>,
+    /** 收回插件的权限（回到等待授权） */
+    revokePermissions: (id: string) => ipcRenderer.invoke('plugins:revokePermissions', id) as Promise<PluginState>,
+    /** 商店里的插件与主题 */
+    storeList: (indexUrl: string) => ipcRenderer.invoke('plugins:storeList', indexUrl) as Promise<
+      { ok: true; cards: StorePluginCard[] } | { ok: false; error: string }>,
+    /** 从商店安装：consent 为用户在确认框里同意的权限，未签名的包需要 allowUnsigned */
+    storeInstall: (indexUrl: string, id: string, consent: { permissions: string[]; allowUnsigned?: boolean }) =>
+      ipcRenderer.invoke('plugins:storeInstall', indexUrl, id, consent) as Promise<{ ok: true; id: string; permissions: string[] } | { ok: false; error: string }>,
+    /** 卸载商店安装的插件 */
+    uninstall: (id: string) => ipcRenderer.invoke('plugins:uninstall', id) as Promise<{ ok: true; id: string } | { ok: false; error: string }>,
     /** 回报主进程请求执行的内置命令结果 */
     sendRendererCommandResult: (payload: { requestId: number; ok: boolean; result?: unknown; error?: string }) =>
       ipcRenderer.send('plugins:rendererCommandResult', payload),

@@ -6,6 +6,7 @@
   "description": "插件化阶段 0 的示例与测试夹具：在插件进程里注册命令、显示消息、调用内置命令。",
   "runtime": { "type": "node", "main": "main.js" },
   "activationEvents": ["onCommand:hello:greet"],
+  "permissions": ["workbench:commands", "workspace:read"],
   "contributes": {
     "commands": [
       { "id": "hello:greet", "title": "打招呼（示例插件）" },

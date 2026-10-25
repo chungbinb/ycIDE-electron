@@ -1,0 +1,12 @@
+{
+  "id": "acme.sandbox",
+  "displayName": "沙箱探针（测试）",
+  "version": "1.0.0",
+  "publisher": "acme",
+  "description": "插件化阶段 5 的测试夹具：在受限进程里逐项尝试读写文件、启动程序、联网，报告哪些被拦下。",
+  "runtime": { "type": "node", "main": "main.js" },
+  "permissions": ["net:127.0.0.1"],
+  "contributes": {
+    "commands": [{ "id": "sandbox:probe", "title": "沙箱探针" }]
+  }
+}
