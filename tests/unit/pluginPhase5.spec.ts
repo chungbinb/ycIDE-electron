@@ -83,7 +83,8 @@ interface Harness {
 }
 
 const roots: string[] = []
-afterEach(() => { for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }) })
+// Windows 上子进程刚退出时目录可能还被短暂占用（EBUSY），删除时重试
+afterEach(() => { for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) })
 
 function writePlugin(dir: string, m: Record<string, unknown>, main?: string): void {
   mkdirSync(dir, { recursive: true })
@@ -273,6 +274,7 @@ process.stdin.on('data', chunk => {
 describe('可执行文件插件（stdio + JSON-RPC）', () => {
   it('宿主经 stdio 激活它、登记它声明的命令、转发命令；它调用宿主能力同样受权限检查', async () => {
     const messages: string[] = []
+    let exited: Promise<void> = Promise.resolve()
     const h = createHarness(dir => {
       writePlugin(join(dir, 'exe'), manifest('acme.native', {
         runtime: { type: 'executable', command: 'plugin.js' },
@@ -283,6 +285,7 @@ describe('可执行文件插件（stdio + JSON-RPC）', () => {
       // 测试里用 node 运行脚本代替原生可执行文件
       spawnHost: (spec): PluginHostConnection => {
         const child = spawn(process.execPath, [spec.command!], { cwd: spec.cwd, stdio: ['pipe', 'pipe', 'inherit'] })
+        exited = new Promise(resolve => child.once('exit', () => resolve()))
         return {
           transport: createStdioTransport(child.stdout!, child.stdin!),
           onExit: l => { child.on('exit', l) },
@@ -299,6 +302,8 @@ describe('可执行文件插件（stdio + JSON-RPC）', () => {
     expect(result).toEqual({ upper: 'HELLO', host: `DENIED:${RpcErrorCode.PermissionDenied}` })
     expect(messages).toEqual(['acme.native:来自可执行文件插件'])
     await h.service.shutdown()
+    // 等插件进程真正退出再结束测试，否则清理临时目录时目录仍被占用
+    await exited
   }, 20000)
 })
 
