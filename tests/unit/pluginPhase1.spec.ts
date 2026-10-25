@@ -201,6 +201,7 @@ describe('插件主题与文档 API', () => {
     return new PluginService({
       builtinCandidates: BUILTIN_PLUGIN_CANDIDATES.map(c => ({ ...c, dir: join(repoRoot, 'plugins', (c.manifest as { id: string }).id) })),
       pluginDirs: [pluginsDir],
+      devDirs: [pluginsDir],
       statePath: join(root, 'state.json'),
       platform: 'windows',
       host: 'electron',

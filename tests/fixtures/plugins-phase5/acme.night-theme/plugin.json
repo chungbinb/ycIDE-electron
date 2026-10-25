@@ -1,0 +1,9 @@
+{
+  "id": "acme.night-theme",
+  "displayName": "午夜主题（测试）",
+  "version": "1.0.0",
+  "publisher": "acme",
+  "contributes": {
+    "themes": [{ "id": "午夜测试", "path": "themes/night.json" }]
+  }
+}

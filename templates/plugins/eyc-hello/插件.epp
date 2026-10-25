@@ -1,0 +1,7 @@
+# YiCode Project File
+Version=1
+ProjectName=易语言插件模板
+OutputType=Console
+Platform=windows
+
+File=EYC|程序.eyc|0

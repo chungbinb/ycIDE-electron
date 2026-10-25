@@ -162,7 +162,7 @@ function toLegacyAction(command: string, args?: unknown[]): string | undefined {
 }
 
 /** 插件化之后有意新增的菜单项（改造前没有），对照时剔除 */
-const INTENDED_MENU_ADDITIONS = new Set(['plugins:reload'])
+const INTENDED_MENU_ADDITIONS = new Set(['plugins:reload', 'plugins:openManager'])
 
 function normalizeNew(items: ResolvedMenuItem[]): Normalized[] {
   // 剔除新增项后，去掉因此落单的分隔线（开头、结尾、连续）

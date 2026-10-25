@@ -1,0 +1,240 @@
+.pm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--overlay-bg);
+}
+
+.pm-dialog {
+  position: relative;
+  width: min(760px, calc(100vw - 32px));
+  height: min(640px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--dialog-bg);
+  border: 1px solid var(--dialog-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px var(--dialog-shadow);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.pm-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.pm-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pm-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.pm-tab {
+  padding: 4px 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.pm-tab.active {
+  color: var(--text-primary);
+  border-color: var(--border-color);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+
+.pm-close {
+  padding: 0 4px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.pm-close:hover {
+  color: var(--text-primary);
+}
+
+.pm-message {
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.pm-message-error {
+  color: var(--error-color, #f48771);
+}
+
+.pm-body {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 16px 16px;
+}
+
+.pm-section-title {
+  margin: 12px 0 6px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.pm-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  color: var(--text-secondary);
+}
+
+.pm-item {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.pm-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.pm-item-name {
+  font-weight: 600;
+}
+
+.pm-item-meta {
+  flex: 1;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.pm-status {
+  padding: 1px 8px;
+  font-size: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+}
+
+.pm-status-enabled {
+  color: var(--success-color, #89d185);
+}
+
+.pm-status-consent,
+.pm-status-error,
+.pm-status-unavailable {
+  color: var(--warning-color, #cca700);
+}
+
+.pm-status-disabled {
+  color: var(--text-secondary);
+}
+
+.pm-item-reason,
+.pm-item-process {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.pm-perm-list {
+  margin: 6px 0 0;
+  padding: 0 0 0 18px;
+}
+
+.pm-perm {
+  margin: 2px 0;
+}
+
+.pm-perm-sensitive .pm-perm-text {
+  color: var(--error-color, #f48771);
+  font-weight: 600;
+}
+
+.pm-perm-id {
+  margin-left: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.pm-perm-none {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.pm-item-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pm-btn {
+  padding: 4px 12px;
+  color: var(--text-primary);
+  background: var(--button-secondary-bg, transparent);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.pm-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pm-btn-primary {
+  color: var(--button-text, #fff);
+  background: var(--accent-color, #0e639c);
+  border-color: var(--accent-color, #0e639c);
+}
+
+.pm-btn-danger {
+  color: var(--error-color, #f48771);
+}
+
+.pm-consent {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(460px, calc(100% - 48px));
+  transform: translate(-50%, -50%);
+  padding: 16px;
+  background: var(--dialog-bg);
+  border: 1px solid var(--dialog-border);
+  border-radius: 8px;
+  /* 第二个阴影把对话框其余部分压暗，突出确认框 */
+  box-shadow: 0 8px 32px var(--dialog-shadow), 0 0 0 100vmax rgba(0, 0, 0, 0.35);
+}
+
+.pm-consent-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pm-consent-text {
+  margin-top: 8px;
+  color: var(--text-secondary);
+}
+
+.pm-consent-unsigned {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--warning-color, #cca700);
+}

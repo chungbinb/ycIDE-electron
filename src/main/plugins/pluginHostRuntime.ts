@@ -40,12 +40,20 @@ export interface YcideApi {
      */
     applyEdit(path: string, text: string, baseText?: string): Promise<void>
   }
+  secrets: {
+    /** 读取本插件自己的密钥（需要权限 secrets:own）；不存在时为 undefined */
+    get(key: string): Promise<string | undefined>
+    store(key: string, value: string): Promise<void>
+    delete(key: string): Promise<void>
+  }
 }
 
 export interface PluginContext {
   pluginId: string
   /** 插件所在目录 */
   extensionPath: string
+  /** 插件自己的可写存储目录（第三方插件只能写这里） */
+  storagePath?: string
   /** 插件停用时统一 dispose */
   subscriptions: Disposable[]
 }
@@ -106,7 +114,7 @@ export class PluginHostRuntime {
         executeCommand: async (id, ...args) => {
           const local = this.commands.get(id)
           if (local) return local.handler(...args)
-          return this.rpc.request('commands/executeHost', { command: id, args }, 0)
+          return this.rpc.request('commands/executeHost', { pluginId, command: id, args }, 0)
         },
       },
       window: {
@@ -120,10 +128,15 @@ export class PluginHostRuntime {
         },
       },
       documents: {
-        getText: async path => String(await this.rpc.request('commands/executeHost', { command: 'documents:getText', args: [path] }, 0)),
+        getText: async path => String(await this.rpc.request('commands/executeHost', { pluginId, command: 'documents:getText', args: [path] }, 0)),
         applyEdit: async (path, text, baseText) => {
-          await this.rpc.request('commands/executeHost', { command: 'documents:applyEdit', args: [{ path, text, baseText }] }, 0)
+          await this.rpc.request('commands/executeHost', { pluginId, command: 'documents:applyEdit', args: [{ path, text, baseText }] }, 0)
         },
+      },
+      secrets: {
+        get: async key => (await this.rpc.request<string | null>('secrets/get', { pluginId, key })) ?? undefined,
+        store: async (key, value) => { await this.rpc.request('secrets/store', { pluginId, key, value }) },
+        delete: async key => { await this.rpc.request('secrets/delete', { pluginId, key }) },
       },
     }
   }
@@ -133,12 +146,13 @@ export class PluginHostRuntime {
     if (existing) return { commands: [...existing.commands] }
     let mod: PluginModule
     try {
+      if (!params.mainPath) throw new Error('缺少入口文件')
       const requireFromPlugin = createRequire(params.mainPath)
       mod = requireFromPlugin(params.mainPath) as PluginModule
     } catch (err) {
       throw new RpcError(RpcErrorCode.InternalError, `加载插件 ${params.id} 失败：${err instanceof Error ? err.message : String(err)}`)
     }
-    const context: PluginContext = { pluginId: params.id, extensionPath: params.extensionPath, subscriptions: [] }
+    const context: PluginContext = { pluginId: params.id, extensionPath: params.extensionPath, storagePath: params.storagePath, subscriptions: [] }
     const entry: ActivePlugin = { module: mod, context, commands: new Set() }
     this.active.set(params.id, entry)
     try {

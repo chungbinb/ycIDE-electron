@@ -23,6 +23,7 @@ import {
   type StoreLibraryCard,
   type StorePackageKind,
 } from '../shared/library-store'
+import { assertSafeZipEntry, MAX_ZIP_ENTRIES, MAX_ZIP_TOTAL_BYTES } from './security/safeZip'
 
 export interface LibraryParam {
   name: string
@@ -370,9 +371,15 @@ function normalizeRemoteIndex(raw: unknown): LibraryRemoteIndex {
           minYcideVersion: typeof item.minYcideVersion === 'string' ? item.minYcideVersion.trim() : undefined,
           publishedAt: typeof item.publishedAt === 'string' ? item.publishedAt.trim() : undefined,
           summary: typeof item.summary === 'string' ? item.summary.trim() : undefined,
+          publisher: typeof item.publisher === 'string' ? item.publisher.trim() : undefined,
+          signature: typeof item.signature === 'string' ? item.signature.trim() : undefined,
+          permissions: Array.isArray(item.permissions) ? item.permissions.filter((p): p is string => typeof p === 'string') : undefined,
         }
       })
       .filter(item => item.id.length > 0 && item.packageUrl.length > 0 && item.id !== CORE_LIBRARY_FILE_NAME),
+    publishers: input.publishers && typeof input.publishers === 'object'
+      ? Object.fromEntries(Object.entries(input.publishers).filter(([, key]) => typeof key === 'string')) as Record<string, string>
+      : undefined,
   }
 }
 
@@ -381,17 +388,6 @@ function sha256Buffer(buffer: Buffer): string {
 }
 
 // 解压限额：防止恶意构造的 zip 炸弹耗尽磁盘/内存
-const MAX_ZIP_ENTRIES = 5000
-const MAX_ZIP_TOTAL_BYTES = 200 * 1024 * 1024
-
-function assertSafeZipEntry(entryName: string): string {
-  const normalized = normalize(entryName.replace(/\\/g, '/')).replace(/\\/g, '/')
-  if (!normalized || normalized === '.' || isAbsolute(normalized) || normalized.startsWith('../') || normalized.includes('/../')) {
-    throw new Error(`zip 内含不安全路径: ${entryName}`)
-  }
-  return normalized
-}
-
 function normalizeTargetPlatform(value?: string): YcmdTargetPlatform | undefined {
   if (value === 'windows' || value === 'macos' || value === 'linux' || value === 'android' || value === 'ios' || value === 'harmony') return value
   return undefined

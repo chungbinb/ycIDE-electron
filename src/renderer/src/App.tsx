@@ -10,6 +10,7 @@ import Editor, { type EditorTab, type EditorHandle, type DiffLineInfo } from './
 import OutputPanel, { type OutputMessage, type CommandDetail, type FileProblem, type DebugPauseState } from './components/OutputPanel/OutputPanel'
 import StatusBar from './components/StatusBar/StatusBar'
 import LibraryDialog from './components/LibraryDialog/LibraryDialog'
+import PluginManagerDialog from './components/PluginManagerDialog/PluginManagerDialog'
 import NewProjectDialog from './components/NewProjectDialog/NewProjectDialog'
 import EProjectImportDialog, { type EProjectImportDialogSubmit } from './components/EProjectImportDialog/EProjectImportDialog'
 import ThemeSettingsDialog from './components/ThemeSettingsDialog/ThemeSettingsDialog'
@@ -832,6 +833,7 @@ function App(): React.JSX.Element {
   const [settingsFocusCompiler, setSettingsFocusCompiler] = useState(false)
   const noCompilerPromptedRef = useRef(false)
   const [showAbout, setShowAbout] = useState(false)
+  const [showPluginManager, setShowPluginManager] = useState(false)
   const isCompilingRef = useRef(false)
   useEffect(() => { isCompilingRef.current = isCompiling }, [isCompiling])
   // 订阅编译环境预热状态（主进程启动即在后台检查/预热）
@@ -4131,6 +4133,9 @@ function App(): React.JSX.Element {
     },
 
     // 插件
+    'plugins:openManager': () => {
+      setShowPluginManager(true)
+    },
     'plugins:reload': async () => {
       const state = await window.api?.plugins?.reload()
       if (!state) return
@@ -5551,6 +5556,7 @@ function App(): React.JSX.Element {
       )}
       <NewProjectDialog open={showNewProject} onClose={() => setShowNewProject(false)} onConfirm={handleNewProjectConfirm} />
       <AboutDialog open={showAbout} onClose={() => setShowAbout(false)} />
+      <PluginManagerDialog open={showPluginManager} onClose={() => setShowPluginManager(false)} storeIndexUrl={ideSettings.libraryStoreIndexUrl} />
       <EProjectImportDialog
         open={!!eProjectImportDialog}
         projectName={eProjectImportDialog?.projectName || ''}

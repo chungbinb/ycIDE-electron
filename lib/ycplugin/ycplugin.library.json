@@ -1,0 +1,9 @@
+{
+  "guid": "6D3F0C2A9B8E4F5A8C1D2E3F4A5B6C7D",
+  "description": "插件开发支持库：让易语言程序成为 ycIDE 的可执行文件插件（设计稿 §13.1 第 1 条、§4.1）。",
+  "author": "ycIDE",
+  "qq": "-",
+  "email": "-",
+  "homePage": "https://ycide.dev",
+  "otherInfo": "协议：标准输入输出上的 JSON-RPC 2.0，按 Content-Length 头分帧。插件程序里不要使用「标准输出」，否则会打乱协议。"
+}

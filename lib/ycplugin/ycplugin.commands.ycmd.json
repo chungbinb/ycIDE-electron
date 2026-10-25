@@ -1,0 +1,189 @@
+{
+  "contractVersion": "1.0",
+  "library": "ycplugin",
+  "libraryDisplayName": "插件开发支持库",
+  "libraryVersion": "1.0",
+  "implementations": {
+    "windows": {
+      "entry": "impl/windows.cpp",
+      "language": "cpp"
+    }
+  },
+  "commands": [
+    {
+      "commandId": "ycplugin.WaitRequest",
+      "displayName": "插件_等待请求",
+      "summary": "等待 IDE 发来下一条命令，返回命令标识（插件清单 contributes.commands 里声明的 id）。握手、激活等协议细节由本库自动处理。IDE 要求插件退出时返回空文本，此时应结束程序。",
+      "params": [],
+      "returnType": "文本型",
+      "category": "插件",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    },
+    {
+      "commandId": "ycplugin.GetArgCount",
+      "displayName": "插件_取参数数量",
+      "summary": "返回当前命令带的参数个数。",
+      "params": [],
+      "returnType": "整数型",
+      "category": "插件",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    },
+    {
+      "commandId": "ycplugin.GetArg",
+      "displayName": "插件_取参数",
+      "summary": "返回当前命令的第几个参数：文本参数原样返回，其它类型（数值、对象、数组）返回 JSON 文本。序号超出范围时返回空文本。",
+      "params": [
+        {
+          "name": "序号",
+          "type": "整数型",
+          "optional": false,
+          "description": "参数序号，从 1 开始。"
+        }
+      ],
+      "returnType": "文本型",
+      "category": "插件",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    },
+    {
+      "commandId": "ycplugin.Reply",
+      "displayName": "插件_回复",
+      "summary": "把当前命令的执行结果（文本）回复给 IDE。每条命令必须回复一次（成功用本命令，失败用「插件_回复错误」）。",
+      "params": [
+        {
+          "name": "结果",
+          "type": "文本型",
+          "optional": false,
+          "description": "命令的执行结果。"
+        }
+      ],
+      "returnType": "无返回值",
+      "category": "插件",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    },
+    {
+      "commandId": "ycplugin.ReplyError",
+      "displayName": "插件_回复错误",
+      "summary": "告诉 IDE 当前命令执行失败。",
+      "params": [
+        {
+          "name": "错误信息",
+          "type": "文本型",
+          "optional": false,
+          "description": "失败原因。"
+        }
+      ],
+      "returnType": "无返回值",
+      "category": "插件",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    },
+    {
+      "commandId": "ycplugin.ShowMessage",
+      "displayName": "插件_显示消息",
+      "summary": "在 IDE 的输出面板显示一条消息。",
+      "params": [
+        {
+          "name": "内容",
+          "type": "文本型",
+          "optional": false,
+          "description": "消息内容。"
+        },
+        {
+          "name": "类型",
+          "type": "文本型",
+          "optional": true,
+          "description": "info（默认）、warning、error 或 success。"
+        }
+      ],
+      "returnType": "无返回值",
+      "category": "插件",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    },
+    {
+      "commandId": "ycplugin.Output",
+      "displayName": "插件_输出",
+      "summary": "往 IDE 的编译输出面板追加一行。",
+      "params": [
+        {
+          "name": "内容",
+          "type": "文本型",
+          "optional": false,
+          "description": "要输出的一行文本。"
+        }
+      ],
+      "returnType": "无返回值",
+      "category": "插件",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    },
+    {
+      "commandId": "ycplugin.ExecuteCommand",
+      "displayName": "插件_执行命令",
+      "summary": "调用 IDE 的命令（内置命令或其他插件的命令），返回执行结果：文本结果原样返回，其它返回 JSON 文本。失败时返回空文本，可用「插件_取错误信息」查看原因（例如没有在清单里申请相应权限）。",
+      "params": [
+        {
+          "name": "命令",
+          "type": "文本型",
+          "optional": false,
+          "description": "命令标识，如 documents:getText。"
+        },
+        {
+          "name": "参数",
+          "type": "文本型",
+          "optional": true,
+          "description": "作为唯一参数传给命令的文本；省略表示不带参数。"
+        }
+      ],
+      "returnType": "文本型",
+      "category": "插件",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    },
+    {
+      "commandId": "ycplugin.GetLastError",
+      "displayName": "插件_取错误信息",
+      "summary": "返回最近一次「插件_执行命令」失败的原因。",
+      "params": [],
+      "returnType": "文本型",
+      "category": "插件",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    },
+    {
+      "commandId": "ycplugin.GetPluginId",
+      "displayName": "插件_取插件标识",
+      "summary": "返回本插件的 ID（激活后可用）。",
+      "params": [],
+      "returnType": "文本型",
+      "category": "插件",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    },
+    {
+      "commandId": "ycplugin.GetStoragePath",
+      "displayName": "插件_取存储目录",
+      "summary": "返回 IDE 为本插件分配的可写存储目录。",
+      "params": [],
+      "returnType": "文本型",
+      "category": "插件",
+      "supportedPlatforms": [
+        "windows"
+      ]
+    }
+  ]
+}

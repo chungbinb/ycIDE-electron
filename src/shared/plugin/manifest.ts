@@ -2,6 +2,7 @@
 // 阶段 0 只落地命令 / 菜单 / 快捷键三类贡献点，其余贡献点字段先原样保留、不做解释。
 
 import { RENDERER_SURFACES } from './rendererContributions'
+import { isValidPermission } from './permissions'
 import { parseWhenClause } from './whenClause'
 import { parseKeybinding } from './keybinding'
 import { BUILTIN_API_KEY_SETTINGS } from './aiContributions'
@@ -193,6 +194,31 @@ export function validatePluginManifest(raw: unknown): ManifestValidationResult {
   if (raw.dependencies !== undefined) {
     if (!isRecord(raw.dependencies) || Object.values(raw.dependencies).some(v => typeof v !== 'string')) {
       errors.push('dependencies 必须是「插件ID → 版本范围」的对象')
+    }
+  }
+  // 设计稿 §13.1 第 7 条：ycide 发布者保留给官方（随安装包发布的内置插件）
+  if (raw.publisher === 'ycide' && !raw.builtin) errors.push('发布者 ycide 保留给官方内置插件')
+
+  if (raw.runtime !== undefined) {
+    const runtime = raw.runtime
+    if (!isRecord(runtime) || (runtime.type !== 'node' && runtime.type !== 'executable' && runtime.type !== 'none')) {
+      errors.push('runtime.type 只能是 node / executable / none')
+    } else if (runtime.type === 'node' && (!isNonEmptyString(runtime.main) || !isSafeRelativePath(runtime.main))) {
+      errors.push('runtime.type 为 node 时需要插件目录内的 runtime.main')
+    } else if (runtime.type === 'executable') {
+      if (!isNonEmptyString(runtime.command) || !isSafeRelativePath(runtime.command)) {
+        errors.push('runtime.type 为 executable 时需要插件目录内的 runtime.command')
+      }
+      if (runtime.args !== undefined && (!Array.isArray(runtime.args) || runtime.args.some(a => typeof a !== 'string'))) {
+        errors.push('runtime.args 必须是字符串数组')
+      }
+    }
+  }
+  if (raw.permissions !== undefined) {
+    if (!Array.isArray(raw.permissions)) errors.push('permissions 必须是数组')
+    else {
+      const unknown = raw.permissions.filter(p => !isValidPermission(p))
+      if (unknown.length > 0) errors.push(`未知的权限：${unknown.map(String).join('、')}`)
     }
   }
 

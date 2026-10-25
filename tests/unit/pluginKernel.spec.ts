@@ -14,7 +14,8 @@ function key(partial: Partial<KeyEventLike> & { key: string }): KeyEventLike {
 }
 
 function manifest(id: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
-  return { id, displayName: id, version: '1.0.0', publisher: id.split('.')[0], ...extra }
+  // ycide 发布者保留给官方内置插件，测试里的 ycide.* 清单按内置插件构造
+  return { id, displayName: id, version: '1.0.0', publisher: id.split('.')[0], ...(id.startsWith('ycide.') ? { builtin: true } : {}), ...extra }
 }
 
 describe('when 表达式', () => {

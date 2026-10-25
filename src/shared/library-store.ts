@@ -26,12 +26,20 @@ export interface LibraryPackageEntry {
   minYcideVersion?: string
   publishedAt?: string
   summary?: string
+  /** 插件 / 主题：发布者（插件 ID 的前缀） */
+  publisher?: string
+  /** 插件 / 主题：发布者签名，Ed25519 签名（base64），被签的内容是包的 sha256 十六进制字符串（设计稿 §8.2） */
+  signature?: string
+  /** 插件：申请的权限，安装前展示给用户确认；包里 plugin.json 申请的权限不能超出这里 */
+  permissions?: string[]
 }
 
 export interface LibraryRemoteIndex {
   schemaVersion: string
   updatedAt?: string
   libraries: LibraryPackageEntry[]
+  /** 发布者公钥：发布者 → Ed25519 公钥（SPKI DER 的 base64）。首次见到后固定在本机，之后变化视为被篡改 */
+  publishers?: Record<string, string>
 }
 
 export interface InstalledLibraryState {
