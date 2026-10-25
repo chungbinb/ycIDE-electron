@@ -251,7 +251,9 @@ export function buildMultiLinePasteResult(params: {
     const del = new Set<number>()
     for (const i of replaceLineIndices) {
       if (i < 0 || i >= srcLines.length) continue
-      if (parsedCur[i]?.type === 'assembly') continue
+      // 文件级声明受保护：粘贴内容里的同类行会被 sanitize 剔除，删了就补不回来
+      const t = parsedCur[i]?.type
+      if (t === 'assembly' || t === 'version' || t === 'supportLib') continue
       del.add(i)
     }
     if (del.size > 0) {
@@ -260,6 +262,15 @@ export function buildMultiLinePasteResult(params: {
       currentText = kept.join('\n')
       // 选区首行之前的行都未被删除，剔除后该位置索引不变；选区吞到文档尾时=EOF 追加位
       cursorLine = Math.min(minSel, kept.length)
+      // 插入点不能落在受保护的 .程序集 声明之上或其程序集变量区中间：全选后粘贴整个程序集时，
+      // 否则子程序会插到 .程序集 行上面，整张程序集表连同程序集变量被挤到文件末尾
+      const keptParsed = parseLines(currentText)
+      const asmIdx = keptParsed.findIndex(l => l.type === 'assembly')
+      if (asmIdx >= 0) {
+        let headerEnd = asmIdx + 1
+        while (headerEnd < keptParsed.length && keptParsed[headerEnd].type === 'assemblyVar') headerEnd++
+        if (cursorLine < headerEnd) cursorLine = headerEnd
+      }
       replaceMode = true
     }
   }

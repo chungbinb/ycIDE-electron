@@ -700,7 +700,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     return Math.max(52, Math.round(base))
   }, [editorFontSize])
   const logicalLineCount = useMemo(() => currentText.split('\n').length, [currentText])
-  const shouldShowMinimapPreview = showMinimapPreview && logicalLineCount <= 600
+  // 缩略图最多采样 260 行渲染（见 minimapPreviewRows），开销与文件行数基本无关，大文件也照常显示
+  const shouldShowMinimapPreview = showMinimapPreview
   const [visibleLineWindow, setVisibleLineWindow] = useState<{ startLine: number; endLine: number }>({
     startLine: 0,
     endLine: Math.max(logicalLineCount - 1, 0),
@@ -3829,10 +3830,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       | { kind: 'table'; cells: MiniTableCell[]; lineIndex: number; marker: MiniMarker }
       | { kind: 'code'; spans: Array<{ text: string; cls: string }>; lineIndex: number; marker: MiniMarker }
       | { kind: 'deleted'; marker: 'deleted' }
-    // 先收集不着色的行描述，待采样出最终展示的 ≤260 行后再 colorize，
-    // 避免每次文本变化都对全文档所有代码行做语法着色。
+    // 先收集不着色的行描述，待采样出最终展示的 ≤260 行后再 colorize / 整理单元格，
+    // 避免每次文本变化都对全文档所有行做语法着色。
     type MiniSourceRow =
-      | { kind: 'table'; cells: MiniTableCell[]; lineIndex: number; marker: MiniMarker }
+      | { kind: 'table'; rawCells: Array<{ text?: string; cls?: string }>; lineIndex: number; marker: MiniMarker }
       | { kind: 'code'; codeText: string; lineIndex: number; marker: MiniMarker }
       | { kind: 'deleted'; marker: 'deleted' }
 
@@ -3850,16 +3851,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if (blk.kind === 'table') {
         for (const row of blk.rows) {
           if (row.isHeader) continue
-          const cells = row.cells
-            .map(cell => ({
-              text: (cell.text || '').replace(/\u00A0/g, ' ').trim() || ' ',
-              cls: cell.cls || '',
-            }))
           sourceRows.push({
             kind: 'table',
             lineIndex: row.lineIndex,
             marker: resolveMarker(row.lineIndex),
-            cells: cells.length > 0 ? cells : [{ text: ' ', cls: '' }],
+            rawCells: row.cells,
           })
           for (let di = 0; di < (diffDeletedLinesByAnchor.get(row.lineIndex)?.length || 0); di++) {
             sourceRows.push({ kind: 'deleted', marker: 'deleted' })
@@ -3882,7 +3878,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
 
     const toMiniRow = (row: MiniSourceRow): MiniRow => {
-      if (row.kind !== 'code') return row
+      if (row.kind === 'deleted') return row
+      if (row.kind === 'table') {
+        const cells = row.rawCells.map(cell => ({
+          text: (cell.text || '').replace(/\u00A0/g, ' ').trim() || ' ',
+          cls: cell.cls || '',
+        }))
+        return { kind: 'table', lineIndex: row.lineIndex, marker: row.marker, cells: cells.length > 0 ? cells : [{ text: ' ', cls: '' }] }
+      }
       const spans = colorize(row.codeText)
       const displaySpans = spans.map(s => {
         if (shouldAliasJudgeStartInTableMode && s.cls === 'comecolor' && s.text === '判断开始') {
@@ -6891,6 +6894,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     if (action === 'newDllCommand' || action === 'newPtrCommand') {
       setEditorContextMenu(null)
+      // 同上：在空白处右键会挂起一个单元格编辑态，其迟到的 blur 提交会把追加前的文本写回，
+      // 表现为第一次新建 DLL 命令不出现、项目树闪一下又消失
+      if (editCellRef.current) {
+        suppressBlurCommitUntilRef.current = Date.now() + 300
+        setEditCell(null)
+      }
       const isPtr = action === 'newPtrCommand'
       const declPrefix = isPtr ? '.指针命令 ' : '.DLL命令 '
       const baseName = isPtr ? '指针命令' : 'DLL命令'
