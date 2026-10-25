@@ -65,6 +65,7 @@ import {
 } from './editorFlowAutoExpandUtils'
 import { useFlowLineRenderer, type FlowLineMetrics } from './flowLineRenderers'
 import { buildMultiLinePasteResult, relocateMisplacedLocalVarLines } from './editorPasteUtils'
+import { expandDeclBlockSelection, toggleLineInSelection } from './tableSelection'
 import { useEditorInteractionHandlers, EYC_LONG_TEXT_PLACEHOLDER_RE } from './useEditorInteractionHandlers'
 import {
   getCmdIconClass,
@@ -86,6 +87,7 @@ import {
   isValidVariableLikeName,
   normalizeMemberTypeName,
   rebuildLineField,
+  quoteDllTextFieldValue,
   textPosForRelativeX,
   rebuildLineFlagField,
   splitDebugRenderableText,
@@ -457,9 +459,58 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   }, [currentText, editCell])
 
   // ===== 行选择状态 =====
+  // 选区按画布上鼠标 / 键盘实际经过的行来定（所见即所选），不自动扩成整块；
+  // 删除 DLL 命令 / 数据类型声明行时再连带其参数 / 成员（见 getDeletableSelection）。
   const [selectedLines, setSelectedLines] = useState<Set<number>>(new Set())
   // 粘贴入口经 ref 取最新选区（覆盖粘贴语义），避免把选区塞进各粘贴回调的依赖
   const selectedLinesRef = useRef(selectedLines)
+  // 画布上实际选中的可见行（表格 <tr> 的 data-vrow 键）。DLL 命令声明一行源码画成「命令名 / 库文件名 /
+  // 对应命令名」好几个可见行，按源码行高亮会把整块都点亮；拖选、Shift / Ctrl+单击时记下鼠标实际经过的
+  // 可见行，只高亮这些行。只在 lines 与当前 selectedLines 是同一个 Set 时生效——选区被别的途径改写
+  //（行号区、Ctrl+A、Shift+方向键…）后自动退回按源码行高亮。删除、复制等操作仍按源码行。
+  //（minLine, maxLine）开区间内的源码行整行高亮：拖选经过的、虚拟滚动未渲染的中间行不在 keys 里。
+  const [visualRowSel, setVisualRowSel] = useState<{ lines: Set<number>; keys: Set<string>; minLine: number; maxLine: number } | null>(null)
+  const visualRowSelRef = useRef(visualRowSel)
+  visualRowSelRef.current = visualRowSel
+
+  // 一条源码行在画布上画成多个可见行（DLL 命令声明）而只选中了其中几行时：不删整行，只清空这几行里的格子
+  //（命令名不清，DLL 命令不能没有名字）。返回清空后的各行与剩下要整行删除的选区；没有部分选中时原样返回。
+  const splitPartialRowClears = useCallback((ls: string[], selection: Set<number>): { lines: string[]; rest: Set<number>; cleared: boolean } => {
+    const wrapper = wrapperRef.current
+    const vis = visualRowSelRef.current
+    if (!wrapper || !vis || vis.lines !== selectedLinesRef.current) return { lines: ls, rest: selection, cleared: false }
+    let out: string[] | null = null
+    const rest = new Set(selection)
+    for (const li of selection) {
+      const rows = Array.from(wrapper.querySelectorAll<HTMLElement>(`tr.eyc-data-row[data-line-index="${li}"]`))
+      if (rows.length < 2) continue
+      const picked = rows.filter(r => r.classList.contains('eyc-line-selected'))
+      if (picked.length === 0 || picked.length === rows.length) continue
+      rest.delete(li)
+      const fields = new Set<number>()
+      for (const r of picked) {
+        r.querySelectorAll<HTMLElement>('td[data-field]').forEach(td => {
+          const f = Number(td.dataset.field)
+          if (Number.isInteger(f) && f > 0) fields.add(f)
+        })
+      }
+      if (!out) out = [...ls]
+      let line = out[li] || ''
+      // 取声明关键字后的原始字段（splitCSV 保留引号；parseLines 的字段已去掉引号）
+      const body = line.trim()
+      const rawFields = splitCSV(body.slice(body.search(/\s/) + 1))
+      const isDllDecl = /^\.DLL命令(?:\s|$)/.test(body)
+      for (const f of fields) {
+        const old = (rawFields[f] || '').trim()
+        // 文本字段（DLL 命令的库文件名、对应命令名，或原来就带引号的）清成空文本 ""，其余清成空
+        const empty = /^["\u201c]/.test(old) || (isDllDecl && (f === 2 || f === 3)) ? '""' : ''
+        line = rebuildLineField(line, f, empty, false)
+      }
+      out[li] = line
+    }
+    return out ? { lines: out, rest, cleared: true } : { lines: ls, rest: selection, cleared: false }
+  }, [])
+
   useEffect(() => { selectedLinesRef.current = selectedLines }, [selectedLines])
   // ===== 展开参数行多选状态（Ctrl/Shift 点选 → Delete 删除，与行选择互斥）=====
   const [selectedParamRows, setSelectedParamRows] = useState<{ lineIndex: number; argIdxs: Set<number> } | null>(null)
@@ -539,8 +590,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
   }, [insertVarPrompt])
   const isDragging = useRef(false)
   const dragStartPos = useRef<{ x: number; y: number } | null>(null)
+  // 从表格单元格按下时所在的那一个可见行（<tr>）：鼠标还在这一行里就不转行多选。
+  // DLL 命令声明一行源码画成「命令名 / 库文件名 / 对应命令名」好几个可见行，按画布上鼠标实际到达的行来选。
+  const dragStartTableRowRef = useRef<HTMLElement | null>(null)
+  // 选区锚点所在的可见行（Shift+单击、拖选从这一行算起）
+  const dragAnchorRowElRef = useRef<HTMLElement | null>(null)
   const wasDragSelect = useRef(false)
-  const pendingInputDragRef = useRef<{ lineIndex: number; x: number; y: number; allowRowDrag: boolean } | null>(null)
+  // rowEl：表格单元格编辑框所在的可见行。给出时只在鼠标纵向拖出这一行才转行多选（行内左右拖仍是选文字）
+  const pendingInputDragRef = useRef<{ lineIndex: number; x: number; y: number; allowRowDrag: boolean; rowEl?: HTMLElement | null } | null>(null)
   // 起始于代码行内容区的拖动手势：未跨行时按"行内文本选择"处理（与已聚焦行内拖选行为一致）
   // isVirtual 保留原始值（普通行为 undefined），与 blk.isVirtual 的全等比较才能匹配
   const lineTextDragCandidateRef = useRef<{ lineIndex: number; isVirtual?: boolean } | null>(null)
@@ -1375,6 +1432,73 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     input.setSelectionRange(Math.min(anchorPos, headPos), Math.max(anchorPos, headPos), headPos < anchorPos ? 'backward' : 'forward')
   }, [])
 
+  /** 画布上 clientY 处（或其上方最近）的表格可见行；上方没有表格行时返回 null */
+  const tableRowElAtY = useCallback((clientY: number): HTMLElement | null => {
+    const wrapper = wrapperRef.current
+    if (!wrapper) return null
+    let found: HTMLElement | null = null
+    for (const el of wrapper.querySelectorAll<HTMLElement>('tr[data-vrow]')) {
+      if (el.getBoundingClientRect().top <= clientY) found = el
+      else break
+    }
+    return found
+  }, [])
+
+  /** 按源码行选 anchor..li，并记下画布上从锚点可见行到鼠标所在可见行之间的表格行（含表头） */
+  const applyRowRangeSelection = useCallback((anchor: number, li: number, clientY: number): void => {
+    const lines = rangeSet(anchor, li)
+    let vis: { lines: Set<number>; keys: Set<string>; minLine: number; maxLine: number } | null = null
+    const startEl = dragAnchorRowElRef.current
+    const wrapper = wrapperRef.current
+    if (startEl && startEl.isConnected && wrapper) {
+      const els = Array.from(wrapper.querySelectorAll<HTMLElement>('tr[data-vrow]'))
+      const i = els.indexOf(startEl)
+      if (i >= 0) {
+        // 鼠标所在（或其上方最近）的可见行
+        let j = 0
+        for (let k = 0; k < els.length; k++) {
+          if (els[k].getBoundingClientRect().top <= clientY) j = k
+          else break
+        }
+        const keys = new Set<string>()
+        for (let k = Math.min(i, j); k <= Math.max(i, j); k++) {
+          const key = els[k].dataset.vrow
+          if (key) keys.add(key)
+        }
+        vis = { lines, keys, minLine: Math.min(anchor, li), maxLine: Math.max(anchor, li) }
+      }
+    }
+    setSelectedLines(lines)
+    setVisualRowSel(vis)
+  }, [rangeSet])
+
+  /** Ctrl+单击表格行：按可见行加选 / 取消（取消到某源码行一个可见行都不剩时才从选区去掉该行） */
+  const toggleVisualRow = useCallback((rowEl: HTMLElement, lineIndex: number, editingRowEl: HTMLElement | null, editingLine: number | undefined): void => {
+    const wrapper = wrapperRef.current
+    const key = rowEl.dataset.vrow
+    if (!wrapper || !key) return
+    const curLines = selectedLinesRef.current
+    // 当前画布上已高亮的可见行（无论来自哪种选择方式），作为加选的基础
+    const keys = new Set<string>()
+    wrapper.querySelectorAll<HTMLElement>('tr.eyc-line-selected[data-vrow]').forEach(el => { if (el.dataset.vrow) keys.add(el.dataset.vrow) })
+    const lines = new Set(curLines)
+    if (curLines.size === 0 && editingRowEl?.dataset.vrow && editingLine !== undefined && editingRowEl !== rowEl) {
+      keys.add(editingRowEl.dataset.vrow)
+      lines.add(editingLine)
+    }
+    if (keys.has(key)) {
+      keys.delete(key)
+      const stillHasRow = Array.from(wrapper.querySelectorAll<HTMLElement>(`tr[data-line-index="${lineIndex}"][data-vrow]`))
+        .some(el => !!el.dataset.vrow && keys.has(el.dataset.vrow))
+      if (!stillHasRow) lines.delete(lineIndex)
+    } else {
+      keys.add(key)
+      lines.add(lineIndex)
+    }
+    setSelectedLines(lines)
+    setVisualRowSel({ lines, keys, minLine: Infinity, maxLine: -Infinity })
+  }, [])
+
   const handleLineMouseDown = useCallback((e: React.MouseEvent, lineIndex: number, opts?: { textSelectable?: boolean; isVirtual?: boolean }) => {
     // 正在编辑的输入框中不处理
     if ((e.target as HTMLElement).tagName === 'INPUT') return
@@ -1383,19 +1507,50 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     e.preventDefault()
     optimisticLineEditRef.current = null
+    const editingLine = editCellRef.current?.lineIndex
+    const editingRowEl = editCellRef.current
+      ? (document.activeElement as HTMLElement | null)?.closest?.('tr.eyc-data-row') as HTMLElement | null
+      : null
     // 如果有活跃编辑，先提交当前编辑（含自动补全上屏）
     if (editCellRef.current) {
       commitRef.current()
     }
     dragStartPos.current = { x: e.clientX, y: e.clientY }
+    const pressedRowEl = (e.target as HTMLElement).closest?.('tr.eyc-data-row') as HTMLElement | null
+    dragStartTableRowRef.current = pressedRowEl
     wasDragSelect.current = false
     lineTextDragCandidateRef.current = null
     lineTextSelectDragRef.current = null
+    if (e.button === 0 && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      // Ctrl+点击：加选 / 取消该行（可选不连续的行）。选区为空时把正在编辑的行一并算进去，
+      // 「先点一行、再 Ctrl 点另一行」得到两行。置 wasDragSelect 吞掉随后的 click（不进入编辑）。
+      setEditCell(null)
+      if (pressedRowEl) {
+        toggleVisualRow(pressedRowEl, lineIndex, editingRowEl, editingLine)
+      } else {
+        setSelectedLines(prev => {
+          const base = prev.size === 0 && editingLine !== undefined && editingLine !== lineIndex
+            ? new Set([editingLine])
+            : prev
+          return toggleLineInSelection(base, lineIndex)
+        })
+      }
+      dragAnchor.current = lineIndex
+      dragAnchorRowElRef.current = pressedRowEl
+      wasDragSelect.current = true
+      isDragging.current = false
+      focusWrapper()
+      return
+    }
     if (e.shiftKey && dragAnchor.current !== null) {
-      // Shift+点击: 扩展选择到当前行
-      setSelectedLines(rangeSet(dragAnchor.current, lineIndex))
+      // Shift+点击: 扩展选择到当前行；吞掉随后的 click，避免进入编辑态把选区清掉
+      setEditCell(null)
+      applyRowRangeSelection(dragAnchor.current, lineIndex, e.clientY)
+      wasDragSelect.current = true
     } else {
       dragAnchor.current = lineIndex
+      // 表格行上按下：就是这一行；表格块空白处（无 opts、不在行上）：按按下位置找；代码行：不参与可见行高亮
+      dragAnchorRowElRef.current = pressedRowEl ?? (opts ? null : tableRowElAtY(e.clientY))
       // 普通单击不立即标记行选中，避免蓝色闪烁；只有实际拖动时才设置
       if (opts?.textSelectable) {
         lineTextDragCandidateRef.current = { lineIndex, isVirtual: opts.isVirtual }
@@ -1411,11 +1566,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     isDragging.current = true
     // 聚焦 wrapper 以便接收键盘事件（Delete等）
     focusWrapper()
-  }, [focusWrapper, rangeSet])
+  }, [focusWrapper, applyRowRangeSelection, toggleVisualRow, tableRowElAtY])
 
   // 行号区按下：单击=整行选中、按住拖动=整行多选（不进入编辑态）；Shift+单击扩展选择。
   // 折叠按钮自带 stopPropagation 不会到这；断点圆点无独立交互、一并按整行选中处理。
-  const handleGutterMouseDown = useCallback((e: React.MouseEvent, lineIndex: number) => {
+  // vrowKey：表格行号格对应的可见行（data-vrow）。给出时按可见行选——DLL 命令声明一行源码画成
+  // 「命令名 / 库文件名 / 对应命令名」几行，点哪个行号只选那一行；代码行的行号不给，按源码行。
+  const handleGutterMouseDown = useCallback((e: React.MouseEvent, lineIndex: number, vrowKey?: string) => {
     if (e.button !== 0) return
     e.preventDefault()
     e.stopPropagation() // 不冒泡到行 mousedown，避免乐观进入编辑态
@@ -1424,16 +1581,128 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     lineTextDragCandidateRef.current = null
     lineTextSelectDragRef.current = null
     dragStartPos.current = { x: e.clientX, y: e.clientY }
+    dragStartTableRowRef.current = null
+    const rowEl = vrowKey ? wrapperRef.current?.querySelector<HTMLElement>(`tr[data-vrow="${vrowKey}"]`) ?? null : null
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      // Ctrl+点击行号：加选 / 取消该行
+      if (rowEl) toggleVisualRow(rowEl, lineIndex, null, undefined)
+      else setSelectedLines(prev => toggleLineInSelection(prev, lineIndex))
+      dragAnchor.current = lineIndex
+      dragAnchorRowElRef.current = rowEl
+      wasDragSelect.current = true
+      focusWrapper()
+      return
+    }
     if (e.shiftKey && dragAnchor.current !== null) {
-      setSelectedLines(rangeSet(dragAnchor.current, lineIndex))
+      applyRowRangeSelection(dragAnchor.current, lineIndex, e.clientY)
     } else {
       dragAnchor.current = lineIndex
-      setSelectedLines(new Set([lineIndex]))
+      dragAnchorRowElRef.current = rowEl
+      const lines = new Set([lineIndex])
+      setSelectedLines(lines)
+      setVisualRowSel(rowEl && vrowKey ? { lines, keys: new Set([vrowKey]), minLine: Infinity, maxLine: -Infinity } : null)
     }
     // 点击即选中整行；置 wasDragSelect 让后续拖动直接走 onMove 的 rangeSet 多选、
     // 并吞掉随后的 click（不触发点击进编辑）。
     wasDragSelect.current = true
     isDragging.current = true
+    focusWrapper()
+  }, [focusWrapper, applyRowRangeSelection, toggleVisualRow])
+
+  // Shift+↑/↓：按行扩大选区。编辑态下从当前编辑行开始（先提交编辑），已有选区时从锚点往远端继续扩，
+  // 都没有时从最后聚焦的行开始。展开参数的编辑态不接管（参数行有自己的多选）。
+  const shiftSelectHeadRef = useRef<{ anchor: number; head: number } | null>(null)
+  const extendLineSelectionByArrow = useCallback((dir: -1 | 1): boolean => {
+    const ec = editCellRef.current
+    if (ec && (ec.paramIdx !== undefined || ec.lineIndex < 0)) return false
+    const maxLine = Math.max(prevRef.current.split('\n').length - 1, 0)
+    const sel = selectedLinesRef.current
+    let anchor: number
+    let head: number
+    if (ec) {
+      anchor = ec.lineIndex
+      head = anchor
+      commitRef.current()
+      setEditCell(null)
+      setAcVisible(false)
+    } else if (sel.size > 0 && dragAnchor.current !== null) {
+      anchor = dragAnchor.current
+      const last = shiftSelectHeadRef.current
+      if (last && last.anchor === anchor && sel.has(last.head)) {
+        // 沿用上次按键的端点：选区按整块补过行，按最远端推算会卡在块里（收缩时补回的子行又被选上）
+        head = last.head
+      } else {
+        let lo = Infinity, hi = -Infinity
+        for (const li of sel) { if (li < lo) lo = li; if (li > hi) hi = li }
+        head = anchor <= lo ? hi : anchor >= hi ? lo : (dir > 0 ? hi : lo)
+      }
+    } else {
+      const li = lastFocusedLine.current
+      if (li < 0) return false
+      anchor = li
+      head = li
+    }
+    head = Math.min(Math.max(head + dir, 0), maxLine)
+    dragAnchor.current = anchor
+    shiftSelectHeadRef.current = { anchor, head }
+    setSelectedLines(rangeSet(anchor, head))
+    focusWrapper()
+    window.requestAnimationFrame(() => {
+      wrapperRef.current?.querySelector<HTMLElement>(`[data-line-index="${head}"]`)?.scrollIntoView({ block: 'nearest' })
+    })
+    return true
+  }, [focusWrapper, rangeSet])
+  const extendLineSelectionByArrowRef = useRef(extendLineSelectionByArrow)
+  extendLineSelectionByArrowRef.current = extendLineSelectionByArrow
+
+  // 表头行按下：选中该表头下面的整组数据行（参数表头 → 全部参数、局部变量表头 → 全部局部变量）。
+  // 表格首行表头（「DLL命令名」「数据类型名」）代表整个声明：连同参数 / 成员一起选中；
+  // 「DLL库文件名：」这类声明内部的标签行只选声明行本身。Shift 从锚点扩到该组、Ctrl 加选该组。
+  const handleTableHeaderMouseDown = useCallback((e: React.MouseEvent, rawGroupLines: number[], wholeDecl: boolean, vrowKey: string) => {
+    if (e.button !== 0 || rawGroupLines.length === 0) return
+    const groupLines = wholeDecl
+      ? [...expandDeclBlockSelection(prevRef.current.split('\n'), new Set(rawGroupLines))].sort((a, b) => a - b)
+      : rawGroupLines
+    e.preventDefault()
+    e.stopPropagation() // 不冒泡到表格块 mousedown（按 Y 找行会落到上一组的末行）
+    optimisticLineEditRef.current = null
+    if (editCellRef.current) commitRef.current()
+    setEditCell(null)
+    lineTextDragCandidateRef.current = null
+    lineTextSelectDragRef.current = null
+    dragStartPos.current = { x: e.clientX, y: e.clientY }
+    const first = groupLines[0]
+    const last = groupLines[groupLines.length - 1]
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      setSelectedLines(prev => {
+        const next = new Set(prev)
+        for (const li of groupLines) next.add(li)
+        return next
+      })
+      dragAnchor.current = first
+    } else if (e.shiftKey && dragAnchor.current !== null) {
+      const anchor = dragAnchor.current
+      setSelectedLines(rangeSet(anchor, anchor <= first ? last : first))
+    } else {
+      dragAnchor.current = first
+      const lines = new Set(groupLines)
+      setSelectedLines(lines)
+      // 「DLL库文件名：」这类声明内部的标签行：只亮这个标签行和紧跟其下的数据行，不把整条声明的几个可见行全点亮
+      const hdrEl = wrapperRef.current?.querySelector<HTMLElement>(`tr[data-vrow="${vrowKey}"]`)
+      if (!wholeDecl && hdrEl) {
+        const keys = new Set<string>([vrowKey])
+        let sib = hdrEl.nextElementSibling as HTMLElement | null
+        while (sib && sib.classList.contains('eyc-data-row')) {
+          if (sib.dataset.vrow) keys.add(sib.dataset.vrow)
+          sib = sib.nextElementSibling as HTMLElement | null
+        }
+        setVisualRowSel({ lines, keys, minLine: Infinity, maxLine: -Infinity })
+      }
+    }
+    dragAnchorRowElRef.current = null
+    // 表头行没有 data-line-index，按 Y 找行会落到上一组，故表头上不起拖选（要拖选从数据行或行号开始）
+    wasDragSelect.current = true
+    isDragging.current = false
     focusWrapper()
   }, [focusWrapper, rangeSet])
 
@@ -1478,14 +1747,20 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if (!isDragging.current && pendingInputDragRef.current) {
         const p = pendingInputDragRef.current
         if (!p.allowRowDrag) return
-        // 判断鼠标是否已离开 input 元素边界
+        // 判断鼠标是否已离开 input 元素边界（表格单元格：是否纵向拖出了所在可见行）
         const inputEl = inputRef.current
         if (inputEl) {
-          const rect = inputEl.getBoundingClientRect()
-          const outside = e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom
+          const rect = p.rowEl?.isConnected ? p.rowEl.getBoundingClientRect() : inputEl.getBoundingClientRect()
+          const outside = p.rowEl?.isConnected
+            ? e.clientY < rect.top || e.clientY >= rect.bottom
+            : e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom
           if (outside) {
             if (editCellRef.current) commitRef.current()
+            setEditCell(null)
+            setAcVisible(false)
             dragStartPos.current = { x: p.x, y: p.y }
+            dragStartTableRowRef.current = null
+            dragAnchorRowElRef.current = p.rowEl?.isConnected ? p.rowEl : null
             dragAnchor.current = p.lineIndex
             setSelectedLines(new Set([p.lineIndex]))
             isDragging.current = true
@@ -1517,6 +1792,11 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if (dragStartPos.current && !wasDragSelect.current) {
         const dx = e.clientX - dragStartPos.current.x
         const dy = e.clientY - dragStartPos.current.y
+        const startRow = dragStartTableRowRef.current
+        if (startRow) {
+          const r = startRow.getBoundingClientRect()
+          if (e.clientY >= r.top && e.clientY < r.bottom) return
+        }
         if (dx * dx + dy * dy > 25) {
           const cand = lineTextDragCandidateRef.current
           // 起始于代码行内容区的拖动：拖到另一行、或纵向拖动意图 → 行多选；
@@ -1543,14 +1823,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       if (!wasDragSelect.current) return
       if (li >= 0) {
         // 确保锚点行也被选中（首次拖入超过阈值时）
-        setSelectedLines(rangeSet(dragAnchor.current, li))
+        applyRowRangeSelection(dragAnchor.current, li, e.clientY)
       }
       // 拖到编辑器上/下边界附近：持续滚动并随滚动继续扩选
       dragAutoScrollStepRef.current = () => {
         const anchor = dragAnchor.current
         if (anchor === null) return
         const liNow = findLineAtY(lastDragClientYRef.current)
-        if (liNow >= 0) setSelectedLines(rangeSet(anchor, liNow))
+        if (liNow >= 0) applyRowRangeSelection(anchor, liNow, lastDragClientYRef.current)
       }
       lastDragClientYRef.current = e.clientY
       updateDragAutoScroll(e.clientX, e.clientY)
@@ -1669,7 +1949,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const getDeletableSelection = (ls: string[], selection: Set<number>): { protectedLine: number; deletable: Set<number>; sorted: number[] } => {
       const protectedLine = getProtectedDeclarationLine(ls)
       const deletable = new Set<number>()
-      for (const i of expandSelectionWithCollapsedSubs(selection)) {
+      // 删 DLL 命令 / 数据类型声明行时连同其参数 / 成员（否则参数会挂到上一个命令下面）
+      for (const i of expandSelectionWithCollapsedSubs(expandDeclBlockSelection(ls, selection))) {
         if (i < 0 || i >= ls.length) continue
         if (i === protectedLine) continue
         deletable.add(i)
@@ -1779,6 +2060,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           setEditCell(null)
           return
         }
+      }
+
+      // Shift+↑/↓：按行扩大选区（非编辑态；编辑态由输入框 onKey 接管）
+      if (inEditor && e.shiftKey && !ctrl && !e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        if (extendLineSelectionByArrowRef.current(e.key === 'ArrowUp' ? -1 : 1)) e.preventDefault()
+        return
       }
 
       // Ctrl+K 屏蔽 / Ctrl+M 解除屏蔽（易语言快捷键，与右键菜单 G.屏蔽/B.解除屏蔽 同一路径：
@@ -1906,8 +2193,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       // 无选中时不劫持——调试「逐过程」的 F10 照常；运行到光标已挪 Ctrl+F8 不打架。
       if (e.key === 'Delete' || e.key === 'Backspace' || ((e.key === ' ' || e.key === 'F10') && !ctrl && selectedLines.size > 0)) {
         e.preventDefault()
-        const ls = currentText.split('\n')
-        const { deletable: rawDeletable, sorted: sortedSel } = getDeletableSelection(ls, selectedLines)
+        const partial = splitPartialRowClears(currentText.split('\n'), selectedLines)
+        const ls = partial.lines
+        if (partial.cleared && partial.rest.size === 0) {
+          // 只选中了声明里的几个可见行：清空这些格子即可
+          pushUndo(currentText)
+          const nt = ls.join('\n')
+          setCurrentText(nt); prevRef.current = nt; onChange(nt)
+          setSelectedLines(new Set())
+          return
+        }
+        const { deletable: rawDeletable, sorted: sortedSel } = getDeletableSelection(ls, partial.rest)
         if (sortedSel.length === 0) return
         const { deletable, forceBlank } = applySubAnchorDeleteRule(ls, rawDeletable)
         pushUndo(currentText)
@@ -1938,7 +2234,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedLines, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo, localRouteLanguage, expandSelectionWithCollapsedSubs, ensureDeclTableSkeleton, isResourceTableDoc, docLanguage])
+  }, [selectedLines, splitPartialRowClears, onChange, pushUndo, repairBrokenFlowAfterDelete, dissolveSingleFlowHeadIfAny, collectMatchingFlowMarkers, protectMinimalFlowInPartialSelection, onGlobalUndo, onGlobalRedo, localRouteLanguage, expandSelectionWithCollapsedSubs, ensureDeclTableSkeleton, isResourceTableDoc, docLanguage])
 
   // ===== 自动补全状态 =====
   const [acItems, setAcItems] = useState<AcDisplayItem[]>([])
@@ -3699,6 +3995,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       tableLineIndices: number[]
       tableColCount: number
       tableRenderRowsAll: TableRenderRow[]
+      headerGroupLines: Map<number, number[]>
     }>()
 
     for (let bi = 0; bi < visibleBlocks.length; bi++) {
@@ -3720,7 +4017,22 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         return rows
       })
 
-      map.set(bi, { tableLineIndices, tableColCount, tableRenderRowsAll })
+      // 每个表头行下面那一组数据行（到下一个表头为止）的源码行号，供点表头整组选中与表头选中高亮
+      const headerGroupLines = new Map<number, number[]>()
+      let currentHeader = -1
+      for (let ri = 0; ri < blk.rows.length; ri++) {
+        const row = blk.rows[ri]
+        if (row.isHeader) {
+          currentHeader = ri
+          headerGroupLines.set(ri, [])
+          continue
+        }
+        if (currentHeader < 0) continue
+        const group = headerGroupLines.get(currentHeader)!
+        if (group[group.length - 1] !== row.lineIndex) group.push(row.lineIndex)
+      }
+
+      map.set(bi, { tableLineIndices, tableColCount, tableRenderRowsAll, headerGroupLines })
     }
 
     return map
@@ -5042,6 +5354,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
         fieldValue = `"${trimmed.replace(/"/g, '\\"')}"`
       }
     }
+    if (!editCell.sliceField) fieldValue = quoteDllTextFieldValue(rawLine, editCell.fieldIdx, fieldValue)
     const newLine = rebuildLineField(rawLine, editCell.fieldIdx, fieldValue, editCell.sliceField)
     const nl = [...lines]; nl[editCell.lineIndex] = newLine
 
@@ -5152,7 +5465,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     }
   }, [])
 
-  const startEditCell = useCallback((li: number, ci: number, cellText: string, fieldIdx?: number, sliceField?: boolean) => {
+  // caretIndex：鼠标点进单元格时点中的字符位置，光标落在点击处；不给（键盘导航等）时光标在末尾
+  const startEditCell = useCallback((li: number, ci: number, cellText: string, fieldIdx?: number, sliceField?: boolean, caretIndex?: number) => {
     if (fieldIdx === undefined) return // 无字段映射（tick 单元格等），不可编辑
     // 已经在编辑这个单元格：不要用「渲染时的文档值」重置 editVal——那会丢掉尚未提交的输入。
     // 用户报障：类型格里补全上屏（editVal 已是「字节型」但未 commit）后再次点同一格，
@@ -5172,7 +5486,12 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     editCellOrigValRef.current = initVal
     setEditVal(initVal)
     setTimeout(() => {
-      inputRef.current?.focus()
+      const input = inputRef.current
+      input?.focus()
+      if (input && caretIndex !== undefined) {
+        const pos = Math.max(0, Math.min(caretIndex, input.value.length))
+        input.setSelectionRange(pos, pos)
+      }
       if (canUseTypeCompletion(li, fieldIdx)) {
         const pos = inputRef.current?.selectionStart ?? initVal.length
         updateCompletion(initVal, pos)
@@ -6058,7 +6377,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     const latestLines = prevRef.current.split('\n')
     const li = editCellState.lineIndex
     let rawLine = latestLines[li]
-    rawLine = rebuildLineField(rawLine, editCellState.fieldIdx, editVal, editCellState.sliceField)
+    // DLL 命令的库文件名 / 对应命令名写回时补回引号（同 commit）
+    const enterVal = editCellState.sliceField ? editVal : quoteDllTextFieldValue(rawLine, editCellState.fieldIdx, editVal)
+    rawLine = rebuildLineField(rawLine, editCellState.fieldIdx, enterVal, editCellState.sliceField)
 
     const newLine = getTableRowInsertTemplate(rawLine)
     if (!newLine) return false
@@ -6574,6 +6895,13 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   const onKey = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     const cursorPos = e.currentTarget.selectionStart ?? 0
+    // Shift+↑/↓：结束编辑、从当前行开始按行多选（补全弹窗打开时仍由弹窗处理上下键）
+    if (e.shiftKey && !(e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && !acVisible) {
+      if (extendLineSelectionByArrowRef.current(e.key === 'ArrowUp' ? -1 : 1)) {
+        e.preventDefault()
+        return
+      }
+    }
     // 先过守卫层：补全弹窗、Ctrl 组合键、括号上下文等高优先行为。
     const preAction = dispatchPreKeyGuards({
       key: e.key,
@@ -6637,6 +6965,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       return
     }
   }, [
+    acVisible,
     applyArrowNavigationKey,
     applyCompletionPopupKey,
     applyEmptyDeleteKey,
@@ -6653,7 +6982,17 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
   // 插入子程序：在当前光标所处子程序后方插入，无光标时插入到末尾
   const deleteLineSelection = useCallback((selection: Set<number>): boolean => {
-    const ls = currentText.split('\n')
+    const partial = splitPartialRowClears(currentText.split('\n'), selection)
+    const ls = partial.lines
+    if (partial.cleared && partial.rest.size === 0) {
+      // 只选中了声明里的几个可见行：清空这些格子即可
+      pushUndo(currentText)
+      const nt = ls.join('\n')
+      setCurrentText(nt); prevRef.current = nt; onChange(nt)
+      setSelectedLines(new Set())
+      return true
+    }
+    selection = partial.rest
     const protectedLine = (() => {
       const parsed = parseLines(ls.join('\n'))
       for (let i = 0; i < parsed.length; i++) {
@@ -6663,7 +7002,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     })()
 
     const deletable = new Set<number>()
-    for (const i of expandSelectionWithCollapsedSubs(selection)) {
+    // 删 DLL 命令 / 数据类型声明行时连同其参数 / 成员（与键盘删除一致）
+    for (const i of expandSelectionWithCollapsedSubs(expandDeclBlockSelection(ls, selection))) {
       if (i < 0 || i >= ls.length) continue
       if (i === protectedLine) continue
       deletable.add(i)
@@ -6680,7 +7020,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
     onChange(nt)
     setSelectedLines(new Set())
     return true
-  }, [currentText, onChange, pushUndo, applyFlowAwareDeletion, expandSelectionWithCollapsedSubs, ensureDeclTableSkeleton])
+  }, [currentText, onChange, pushUndo, applyFlowAwareDeletion, expandSelectionWithCollapsedSubs, ensureDeclTableSkeleton, splitPartialRowClears])
   deleteLineSelectionRef.current = deleteLineSelection
 
   const handleWrapperContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -7850,9 +8190,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
 
     if (editCell.fieldIdx < 0) return
 
-    // 表格单元格
+    // 表格单元格（DLL 命令的库文件名 / 对应命令名实时写回时同样补回引号）
     const rawLine = lines[editCell.lineIndex]
-    const newLine = rebuildLineField(rawLine, editCell.fieldIdx, val, editCell.sliceField)
+    const liveVal = editCell.sliceField ? val : quoteDllTextFieldValue(rawLine, editCell.fieldIdx, val)
+    const newLine = rebuildLineField(rawLine, editCell.fieldIdx, liveVal, editCell.sliceField)
     const nl = [...lines]; nl[editCell.lineIndex] = newLine
     const nt = nl.join('\n')
     applyTextChange(nt)
@@ -8154,7 +8495,15 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
       <div
         className="eyc-table-wrapper"
         ref={wrapperRef}
-        onMouseDown={handleWrapperMouseDown}
+        onMouseDown={(e) => {
+          // 空白处按下（往上拖多选的起点）：起始可见行按按下位置定。此前沿用上一次点过的单元格所在行，
+          // 一拖就从那一行开始高亮到鼠标处
+          if (e.target === wrapperRef.current && e.button === 0) {
+            dragAnchorRowElRef.current = tableRowElAtY(e.clientY)
+            dragStartTableRowRef.current = null
+          }
+          handleWrapperMouseDown(e)
+        }}
         onContextMenu={handleWrapperContextMenu}
         onCopy={handleWrapperCopy}
         onPaste={handleWrapperPaste}
@@ -8221,7 +8570,28 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
           if (blk.kind === 'table') {
             const tableMeta = tableRenderMetaByBlockIndex.get(bi)
             if (!tableMeta) return null
-            const { tableLineIndices, tableColCount, tableRenderRowsAll } = tableMeta
+            const { tableLineIndices, tableColCount, tableRenderRowsAll, headerGroupLines } = tableMeta
+            // 表头下面整组都被选中时，表头一起高亮，选中的 DLL 命令等显示为完整的一块
+            const isHeaderSelected = (ri: number): boolean => {
+              const group = headerGroupLines.get(ri)
+              return !!group && group.length > 0 && group.every(li => selectedLines.has(li))
+            }
+            // 可见行选区生效时按画布上实际选中的可见行高亮，否则按源码行
+            const visualSel = visualRowSel && visualRowSel.lines === selectedLines ? visualRowSel : null
+            const isTableRowSelected = (row: typeof blk.rows[number], ri: number): boolean => {
+              if (visualSel) {
+                if (visualSel.keys.has(`${bi}:${ri}`)) return true
+                const li = row.isHeader ? (headerGroupLines.get(ri)?.[0] ?? -1) : row.lineIndex
+                return li > visualSel.minLine && li < visualSel.maxLine
+              }
+              return row.isHeader ? isHeaderSelected(ri) : selectedLines.has(row.lineIndex)
+            }
+            // 编辑态背景只给正在编辑的那个单元格所在的可见行（一条 DLL 命令声明画成好几行）
+            const isTableRowEditing = (row: typeof blk.rows[number]): boolean => {
+              if (!editCell || row.isHeader || editCell.lineIndex !== row.lineIndex) return false
+              if (editCell.cellIndex < 0) return true
+              return row.cells.some((cell, ci) => ci === editCell.cellIndex && cell.fieldIdx === editCell.fieldIdx)
+            }
             // 表格块内的行另有冗余（与上面的 overscanLines 叠加），同样按性能录制减半
             const tableRowOverscanLines = 60
             const minVisibleLine = Math.max(0, visibleLineWindow.startLine - tableRowOverscanLines)
@@ -8270,9 +8640,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           <div
                             key={`gutter-row-${ri}-${renderIndex}`}
                             className={row.isHeader
-                              ? 'eyc-gutter-cell'
-                              : `eyc-gutter-cell${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${editCell && editCell.lineIndex === row.lineIndex ? ' eyc-line-editing' : ''}${diffClassSuffixFor(row.lineIndex)}`}
-                            onMouseDown={row.isHeader ? undefined : (e) => handleGutterMouseDown(e, row.lineIndex)}
+                              ? `eyc-gutter-cell${isTableRowSelected(row, ri) ? ' eyc-line-selected' : ''}`
+                              : `eyc-gutter-cell${isTableRowSelected(row, ri) ? ' eyc-line-selected' : ''}${isTableRowEditing(row) ? ' eyc-line-editing' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                            onMouseDown={row.isHeader ? (e) => handleTableHeaderMouseDown(e, headerGroupLines.get(ri) || [], ri === 0, `${bi}:${ri}`) : (e) => handleGutterMouseDown(e, row.lineIndex, `${bi}:${ri}`)}
                           >
                             {(() => {
                               const actualLine = row.isHeader ? 0 : (lineNumMaps.tableRowNumMap.get(`${bi}:${ri}`) ?? row.lineIndex + 1)
@@ -8340,9 +8710,10 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                           : (
                               <tr
                                 key={`tbl-row-${ri}-${renderIndex}`}
-                                className={row.isHeader ? 'eyc-hdr-row' : `eyc-data-row${selectedLines.has(row.lineIndex) ? ' eyc-line-selected' : ''}${editCell && editCell.lineIndex === row.lineIndex ? ' eyc-line-editing' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                                className={row.isHeader ? `eyc-hdr-row${isTableRowSelected(row, ri) ? ' eyc-line-selected' : ''}` : `eyc-data-row${isTableRowSelected(row, ri) ? ' eyc-line-selected' : ''}${isTableRowEditing(row) ? ' eyc-line-editing' : ''}${diffClassSuffixFor(row.lineIndex)}`}
+                                data-vrow={`${bi}:${ri}`}
                                 {...(!row.isHeader ? { 'data-line-index': row.lineIndex } : {})}
-                                onMouseDown={row.isHeader ? undefined : (e) => handleTableRowMouseDown(e, row.lineIndex)}
+                                onMouseDown={row.isHeader ? (e) => handleTableHeaderMouseDown(e, headerGroupLines.get(ri) || [], ri === 0, `${bi}:${ri}`) : (e) => handleTableRowMouseDown(e, row.lineIndex)}
                               >
                             {row.cells.map((cell, ci) => (
                               (() => {
@@ -8352,6 +8723,7 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                 key={ci}
                                 className={`${cell.cls} Rowheight${cell.align ? ' eyc-cell-align-center' : ''}${isInvalidVarNameCell ? ' eyc-cell-invalid' : ''}${editCell && editCell.booleanCell && editCell.lineIndex === row.lineIndex && editCell.cellIndex === ci ? ' eyc-cell-bool-focus' : ''}`}
                                 colSpan={cell.colSpan}
+                                data-field={cell.fieldIdx}
                                 onMouseDown={handleTableCellMouseDown}
                                 onClick={(e) => {
                                   // 长文本常量的值格：弹多行文本编辑框，绝不进行内编辑
@@ -8389,6 +8761,9 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                     <input
                                       ref={inputRef}
                                       className={`eyc-cell-input${isInvalidVarNameCell ? ' eyc-input-invalid' : ''}`}
+                                      // 在已选中的文字上按下拖动时浏览器会改成「拖放文字」，之后不再派发 mousemove，
+                                      // 往上下拖多选就卡在第一行；单元格里用不到拖放文字，直接取消
+                                      onDragStart={(e) => e.preventDefault()}
                                       aria-label="编辑表格单元格"
                                       value={editVal}
                                       onPaste={(e) => {
@@ -8399,8 +8774,14 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                                       }}
                                       onMouseDown={(e) => {
                                         if (e.button !== 0) return
-                                        // 单元格输入框内拖选仅限单元格，不切换到行拖选
-                                        pendingInputDragRef.current = { lineIndex: row.lineIndex, x: e.clientX, y: e.clientY, allowRowDrag: false }
+                                        // 单元格输入框内左右拖是选文字；纵向拖出所在可见行才转行多选（编辑态也能往上下多选）
+                                        pendingInputDragRef.current = {
+                                          lineIndex: row.lineIndex,
+                                          x: e.clientX,
+                                          y: e.clientY,
+                                          allowRowDrag: true,
+                                          rowEl: e.currentTarget.closest('tr') as HTMLElement | null,
+                                        }
                                       }}
                                       onChange={e => {
                                         const raw = e.target.value
@@ -8545,6 +8926,8 @@ const EycTableEditor = forwardRef<EycTableEditorHandle, EycTableEditorProps>(fun
                       className="eyc-inline-input"
                       aria-label="编辑代码行"
                       value={editVal}
+                      // 同单元格输入框：取消「拖放已选中文字」，否则拖出输入框转跳行拖选时收不到 mousemove
+                      onDragStart={(e) => e.preventDefault()}
                       onPaste={(e) => {
                         const clipText = e.clipboardData.getData('text/plain')
                         if (!/[\r\n]/.test(clipText)) e.stopPropagation()

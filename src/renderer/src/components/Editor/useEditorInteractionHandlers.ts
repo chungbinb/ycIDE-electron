@@ -69,8 +69,25 @@ interface UseEditorInteractionHandlersParams {
   tryToggleTableBooleanCell: (tableType: string | undefined, lineIndex: number, cellIndex: number) => boolean
   isResourceTableDoc: boolean
   handleTableCellHint: (lineIndex: number, fieldIdx: number, text: string) => void
-  startEditCell: (lineIndex: number, cellIndex: number, text: string, fieldIdx?: number, sliceField?: boolean) => void
+  startEditCell: (lineIndex: number, cellIndex: number, text: string, fieldIdx?: number, sliceField?: boolean, caretIndex?: number) => void
   openResourcePreview: (lineIndex: number) => Promise<void>
+}
+
+/**
+ * 点击处是单元格显示文字里的第几个字符（光标落点）。按显示出来的文字算而不是按坐标换算到输入框，
+ * 输入框与单元格文字有几像素的水平偏差，换算会差一个字。显示文字与编辑值不同（占位符、切片字段）时返回 undefined。
+ */
+function caretIndexAtPoint(cell: HTMLElement, cellText: string, clientX: number, clientY: number): number | undefined {
+  if ((cell.textContent || '') !== cellText) return undefined
+  const range = document.caretRangeFromPoint?.(clientX, clientY)
+  if (!range || !cell.contains(range.startContainer)) return undefined
+  let index = 0
+  const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node === range.startContainer) return index + range.startOffset
+    index += node.textContent?.length || 0
+  }
+  return undefined
 }
 
 export function useEditorInteractionHandlers(params: UseEditorInteractionHandlersParams) {
@@ -418,7 +435,9 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
   }, [handleLineMouseDown])
 
   const handleTableCellMouseDown = useCallback((e: React.MouseEvent<HTMLTableCellElement>) => {
-    e.stopPropagation()
+    // 左键冒泡到行：与代码行一样，按住拖到别的行即转为行多选，Shift / Ctrl+单击扩选、加选
+    //（单击不动仍由 click 进入单元格编辑）。其余按键维持原样不冒泡。
+    if (e.button !== 0) e.stopPropagation()
   }, [])
 
   const handleTableCellClick = useCallback((
@@ -427,11 +446,19 @@ export function useEditorInteractionHandlers(params: UseEditorInteractionHandler
   ) => {
     e.stopPropagation()
     if (actionParams.rowIsHeader) return
+    // 刚拖选完、或 Shift / Ctrl+单击（mousedown 已处理选区）：不进入编辑，保留选区
+    if (wasDragSelectRef.current) {
+      wasDragSelectRef.current = false
+      return
+    }
+    if (e.shiftKey || e.ctrlKey || e.metaKey) return
+    setSelectedLines(prev => (prev.size === 0 ? prev : new Set()))
     if (tryToggleTableBooleanCell(actionParams.tableType, actionParams.lineIndex, actionParams.cellIndex)) return
     if (isResourceTableDoc && actionParams.tableType === 'constant' && actionParams.fieldIdx === 1) return
     handleTableCellHint(actionParams.lineIndex, actionParams.fieldIdx ?? -1, actionParams.text)
-    startEditCell(actionParams.lineIndex, actionParams.cellIndex, actionParams.text, actionParams.fieldIdx, actionParams.sliceField)
-  }, [handleTableCellHint, isResourceTableDoc, startEditCell, tryToggleTableBooleanCell])
+    // 光标落在点击处（此前总在末尾）
+    startEditCell(actionParams.lineIndex, actionParams.cellIndex, actionParams.text, actionParams.fieldIdx, actionParams.sliceField, caretIndexAtPoint(e.currentTarget, actionParams.text, e.clientX, e.clientY))
+  }, [handleTableCellHint, isResourceTableDoc, setSelectedLines, startEditCell, tryToggleTableBooleanCell, wasDragSelectRef])
 
   const handleTableCellDoubleClick = useCallback((
     e: React.MouseEvent<HTMLTableCellElement>,
