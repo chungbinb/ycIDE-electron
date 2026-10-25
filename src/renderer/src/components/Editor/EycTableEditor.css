@@ -1393,6 +1393,23 @@ tr.eyc-diff-deleted-placeholder-row > td.eyc-diff-deleted-placeholder-cell {
 .eyc-hdr-row td {
   cursor: default;
 }
+/* 表头下面整组都选中时表头一起高亮（DLL 命令等选中后显示为完整的一块），右侧空白同数据行补色 */
+.eyc-hdr-row.eyc-line-selected > td {
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
+}
+.eyc-hdr-row.eyc-line-selected > td:last-child {
+  position: relative;
+}
+.eyc-hdr-row.eyc-line-selected > td:last-child::after {
+  content: '';
+  position: absolute;
+  left: 100%;
+  top: -1px;
+  bottom: -1px;
+  width: 100vw;
+  background: var(--table-selection-bg-gradient, var(--table-selection-bg, var(--bg-selection, rgba(51, 153, 255, 0.2))));
+  pointer-events: none;
+}
 
 /* 数据行 */
 .eyc-data-row {

@@ -577,6 +577,20 @@ const DECL_PREFIXES = [
   '.指针命令 ', '.图片 ', '.声音 ', '.参数 ', '.成员 ',
 ]
 
+/**
+ * 表格单元格写回源码前的值：DLL 命令的库文件名（字段 2）、对应命令名（字段 3）是文本，表格里显示和编辑的是
+ * 去掉引号的内容，写回时要补回引号（此前点进库文件名格再离开，引号就被去掉、文件变成已修改）。
+ * 已带引号的值、其它字段原样返回。
+ */
+export function quoteDllTextFieldValue(rawLine: string, fieldIdx: number, value: string): string {
+  if (fieldIdx !== 2 && fieldIdx !== 3) return value
+  if (!/^\s*\.DLL命令(?:\s|$)/.test(rawLine)) return value
+  const trimmed = value.trim()
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2)
+    || (trimmed.startsWith('\u201c') && trimmed.endsWith('\u201d') && trimmed.length >= 2)) return trimmed
+  return `"${trimmed.replace(/"/g, '\\"')}"`
+}
+
 export function rebuildLineField(rawLine: string, fieldIdx: number, newValue: string, isSlice: boolean): string {
   const line = rawLine.replace(/\r/g, '')
   const stripped = line.replace(/^ +/, '')
