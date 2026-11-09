@@ -39,3 +39,6 @@ compiler/
 
 # 主题管理器损坏自动备份（本地留存即可，不入库）
 themes/*.corrupted.*
+
+# 网页版（在线编辑器）构建时生成的支持库数据快照
+src/web/public/snapshot.json
