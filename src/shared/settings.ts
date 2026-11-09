@@ -45,6 +45,10 @@ export interface IDESettings {
   backgroundImagePath: string
   /** 背景图填充方式 */
   backgroundImageFit: 'cover' | 'contain' | 'stretch' | 'tile' | 'center'
+  /** 磨砂玻璃：背景图模糊处理；仅在设置了背景图时生效 */
+  backgroundFrostedGlass: boolean
+  /** 磨砂强度：背景图模糊半径 (px) */
+  backgroundFrostedBlur: number
   /** 前景（界面）不透明度 (%)：越低背景图越明显；100 = 背景图不可见 */
   backgroundForegroundOpacity: number
   /** 整体（窗口）不透明度 (%) */
@@ -115,6 +119,8 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   designerVc6Style: true,
   backgroundImagePath: '',
   backgroundImageFit: 'cover',
+  backgroundFrostedGlass: false,
+  backgroundFrostedBlur: 8,
   backgroundForegroundOpacity: 85,
   windowOpacity: 100,
   aiFontFamily: '"Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif',
@@ -148,6 +154,8 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
 
 /** 前景不透明度下限 (%)：再低界面文字基本看不清 */
 export const MIN_FOREGROUND_OPACITY = 20
+/** 磨砂强度上限 (px) */
+export const MAX_FROSTED_BLUR = 40
 /** 窗口不透明度下限 (%)：防止把窗口调到完全看不见、找不回设置入口 */
 export const MIN_WINDOW_OPACITY = 30
 
@@ -186,6 +194,8 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
     designerVc6Style: typeof raw.designerVc6Style === 'boolean' ? raw.designerVc6Style : d.designerVc6Style,
     backgroundImagePath: resolvePath(raw.backgroundImagePath, d.backgroundImagePath),
     backgroundImageFit: resolveBackgroundImageFit(raw.backgroundImageFit, d.backgroundImageFit),
+    backgroundFrostedGlass: typeof raw.backgroundFrostedGlass === 'boolean' ? raw.backgroundFrostedGlass : d.backgroundFrostedGlass,
+    backgroundFrostedBlur: clampInt(raw.backgroundFrostedBlur, 1, MAX_FROSTED_BLUR, d.backgroundFrostedBlur),
     backgroundForegroundOpacity: clampInt(raw.backgroundForegroundOpacity, MIN_FOREGROUND_OPACITY, 100, d.backgroundForegroundOpacity),
     windowOpacity: clampInt(raw.windowOpacity, MIN_WINDOW_OPACITY, 100, d.windowOpacity),
     aiFontFamily: typeof raw.aiFontFamily === 'string' && raw.aiFontFamily.trim()

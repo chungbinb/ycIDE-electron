@@ -5461,12 +5461,13 @@ function App(): React.JSX.Element {
     <div className={`app${isWorkspaceEmpty ? ' app-empty-workspace' : ''}`}>
       {backgroundImageUrl && ideSettings.backgroundForegroundOpacity < 100 && (
         <div
-          className={`app-background-image app-background-image-${ideSettings.backgroundImageFit}`}
+          className={`app-background-image app-background-image-${ideSettings.backgroundImageFit}${ideSettings.backgroundFrostedGlass ? ' app-background-image-frosted' : ''}`}
           aria-hidden="true"
           style={{
             backgroundImage: `url("${backgroundImageUrl}")`,
             opacity: 1 - ideSettings.backgroundForegroundOpacity / 100,
-          }}
+            '--frosted-blur': `${ideSettings.backgroundFrostedBlur}px`,
+          } as React.CSSProperties}
         />
       )}
       <TitleBar onCommand={executeCommand} onWindowClose={handleWindowCloseClick} runtimePlatform={runtimePlatform} hasProject={!!currentProjectDir && isProjectWorkspace} hasWorkspace={!!currentProjectDir} hasOpenFile={(openProjectFiles?.length ?? 0) > 0} themes={themeList} currentTheme={currentTheme} recentOpened={recentOpened} />

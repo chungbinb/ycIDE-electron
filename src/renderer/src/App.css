@@ -36,6 +36,12 @@
   background-size: auto;
 }
 
+/* 磨砂玻璃：模糊背景图并略提饱和度；向外扩出模糊半径，避免窗口边缘出现模糊淡出的亮边 */
+.app-background-image-frosted {
+  inset: calc(var(--frosted-blur, 8px) * -2);
+  filter: blur(var(--frosted-blur, 8px)) saturate(1.4);
+}
+
 .app-body {
   display: flex;
   flex: 1;
