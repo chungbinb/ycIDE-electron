@@ -33,3 +33,28 @@ describe('resolveIDESettings.designerCanvasMode', () => {
     expect(resolveIDESettings({ designerCanvasMode: 123 }).designerCanvasMode).toBe('center')
   })
 })
+
+describe('resolveIDESettings 背景与透明度', () => {
+  it('默认无背景图、前景 85%、窗口不透明', () => {
+    const s = resolveIDESettings(null)
+    expect(s.backgroundImagePath).toBe('')
+    expect(s.backgroundImageFit).toBe('cover')
+    expect(s.backgroundForegroundOpacity).toBe(85)
+    expect(s.windowOpacity).toBe(100)
+  })
+
+  it('透明度按上下限钳制，非法填充方式回落默认', () => {
+    const s = resolveIDESettings({
+      backgroundImagePath: '  C:\bg.png  ',
+      backgroundImageFit: 'zoom' as never,
+      backgroundForegroundOpacity: 5,
+      windowOpacity: 150,
+    })
+    expect(s.backgroundImagePath).toBe('C:\bg.png')
+    expect(s.backgroundImageFit).toBe('cover')
+    expect(s.backgroundForegroundOpacity).toBe(20)
+    expect(s.windowOpacity).toBe(100)
+    expect(resolveIDESettings({ windowOpacity: 10 }).windowOpacity).toBe(30)
+    expect(resolveIDESettings({ backgroundImageFit: 'tile' }).backgroundImageFit).toBe('tile')
+  })
+})

@@ -5,6 +5,37 @@
   height: 100%;
 }
 
+/* 背景图蒙层：叠在整个界面之上且不拦截鼠标，效果等同于前景以 (1 - opacity) 透出背景 */
+.app-background-image {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.app-background-image-cover {
+  background-size: cover;
+}
+
+.app-background-image-contain {
+  background-size: contain;
+}
+
+.app-background-image-stretch {
+  background-size: 100% 100%;
+}
+
+.app-background-image-tile {
+  background-position: 0 0;
+  background-repeat: repeat;
+}
+
+.app-background-image-center {
+  background-size: auto;
+}
+
 .app-body {
   display: flex;
   flex: 1;

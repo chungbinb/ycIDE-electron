@@ -91,7 +91,9 @@ const api = {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
-    forceClose: () => ipcRenderer.send('window:forceClose')
+    forceClose: () => ipcRenderer.send('window:forceClose'),
+    /** 窗口整体不透明度（0.3~1） */
+    setOpacity: (opacity: number) => ipcRenderer.send('window:setOpacity', opacity)
   },
   // 文件操作
   compilerEnv: {
@@ -265,6 +267,12 @@ const api = {
   settings: {
     get: () => ipcRenderer.invoke('settings:get') as Promise<IDESettings>,
     save: (partial: Partial<IDESettings>) => ipcRenderer.invoke('settings:save', partial) as Promise<IDESettings>,
+  },
+  appearance: {
+    /** 弹出对话框选择背景图，返回路径（取消为 null） */
+    pickBackgroundImage: () => ipcRenderer.invoke('appearance:pickBackgroundImage') as Promise<string | null>,
+    /** 读取背景图为 data URL（仅限已选中或已保存的路径；读取失败为 null） */
+    loadBackgroundImage: (filePath: string) => ipcRenderer.invoke('appearance:loadBackgroundImage', filePath) as Promise<string | null>,
   },
   ai: {
     chat: (request: AIChatRequest) => ipcRenderer.invoke('ai:chat', request) as Promise<AIChatResult>,

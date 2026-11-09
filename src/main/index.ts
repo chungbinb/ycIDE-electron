@@ -457,6 +457,17 @@ function readIDESettings(): IDESettings {
   }
 }
 
+const BACKGROUND_IMAGE_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+}
+const MAX_BACKGROUND_IMAGE_BYTES = 50 * 1024 * 1024
+
 function writeIDESettings(settings: IDESettings): void {
   // 浅拷贝加密后落盘：绝不就地 mutate settings，否则 settings:save 回传给 renderer 的会是密文。
   const onDisk: IDESettings = {
@@ -1362,6 +1373,10 @@ app.whenReady().then(() => {
   ipcMain.on('window:close', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     win?.webContents.send('app:requestClose')
+  })
+  ipcMain.on('window:setOpacity', (event, opacity: unknown) => {
+    if (typeof opacity !== 'number' || !Number.isFinite(opacity)) return
+    BrowserWindow.fromWebContents(event.sender)?.setOpacity(Math.max(0.3, Math.min(1, opacity)))
   })
   ipcMain.on('window:forceClose', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -2346,6 +2361,35 @@ app.whenReady().then(() => {
       void ensureCompilerWarm(findZigCompiler())
     }
     return merged
+  })
+
+  // 背景图：只允许读取本会话用对话框选中的、或设置里已保存的图片，避免渲染进程借此读任意文件
+  const pickedBackgroundImages = new Set<string>()
+  ipcMain.handle('appearance:pickBackgroundImage', async (event): Promise<string | null> => {
+    const win = BrowserWindow.fromWebContents(event.sender) || BrowserWindow.getFocusedWindow()
+    const options: Electron.OpenDialogOptions = {
+      title: '选择背景图',
+      properties: ['openFile'],
+      filters: [{ name: '图片', extensions: Object.keys(BACKGROUND_IMAGE_MIME) }],
+    }
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+    pickedBackgroundImages.add(result.filePaths[0])
+    return result.filePaths[0]
+  })
+  ipcMain.handle('appearance:loadBackgroundImage', async (_event, filePath: unknown): Promise<string | null> => {
+    if (typeof filePath !== 'string' || !filePath) return null
+    if (!pickedBackgroundImages.has(filePath) && readIDESettings().backgroundImagePath !== filePath) return null
+    const mime = BACKGROUND_IMAGE_MIME[extname(filePath).slice(1).toLowerCase()]
+    if (!mime) return null
+    try {
+      const info = await statAsync(filePath)
+      if (!info.isFile() || info.size > MAX_BACKGROUND_IMAGE_BYTES) return null
+      const data = await readFileAsync(filePath)
+      return `data:${mime};base64,${data.toString('base64')}`
+    } catch {
+      return null
+    }
   })
 
   // 编译环境预热：状态查询 + 主动触发（渲染进程据此禁用运行/编译按钮并显示进度）
