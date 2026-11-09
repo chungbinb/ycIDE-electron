@@ -4,15 +4,26 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) — 自由使用、修改、分发（含商用），衍生作品须注明基于 ycIDE
 
+## 主要功能
+
+- **表格式代码编辑器**：.eyc 源码按易语言风格以表格 + 代码行显示，带流程线、补全、语法检查；支持按行拖选、Shift / Ctrl 多选、代码预览缩略图。
+- **声明编辑器**：全局变量、常量表、自定义数据类型、资源表、DLL 命令都有对应的表格编辑器，编辑时项目管理器即时刷新。
+- **窗口设计器**：可视化设计窗口与组件，双击组件跳转到事件子程序。
+- **编译与运行**：内置 Zig 编译链，编译、运行、调试（断点、逐过程 / 逐语句、运行到光标处、暂停时查看变量）。
+- **AI 代码助手**：对话、编辑、Plan、Agent 四种模式；内置 DeepSeek、GLM，也可接入任意 OpenAI 兼容模型。
+- **插件系统**：菜单、快捷键、主题、AI 模型、AI 工具、编译器、支持库、编辑器都由插件提供，可单独启用或停用；第三方插件可以用 JavaScript、易语言或任意语言编写（见下文「插件开发」）。
+- **项目管理器**：按窗口 / 程序集 / 全局变量 / 常量 / 数据类型 / DLL 命令 / 资源分类，顶部搜索框可直接按名称过滤。
+
 ## 技术栈
 
 - **前端**：React 19 + TypeScript + Vite
 - **桌面框架**：Electron 43
 - **编辑器**：Monaco Editor（文本文件）+ 自研表格式代码编辑器（.eyc 源码）
-- **编译器**：内置 Zig（Windows GNU 目标）
+- **编译器**：内置 Zig（Windows GNU 目标），可经编译器插件替换
+- **插件系统**：插件清单 + 独立插件宿主进程（JSON-RPC），第三方插件运行在受限进程中
 - **构建工具**：electron-vite + electron-builder
 
-📋 [版本更新说明](版本更新说明.md)
+📋 [版本更新说明](版本更新说明.md) · [版本开发日志](版本开发日志.md)
 
 ## 编译器环境准备（首次拉取后必读）
 
@@ -28,15 +39,30 @@
 
 ---
 
-## 待开发和优化的功能
+## 开发进度
 
-### 一、自定义数据类型编辑器和全局变量编辑器和常量表编辑器和资源编辑器和 DLL 命令编辑器（已完成）
-### 二、AI 代码助手（基于 deepseek API 的智能代码补全、错误分析、代码优化建议）（已基本完成，还剩Agent和Plan模式）
-### 三、调试器集成（基于 Windows 调试 API 的本地调试、断点管理、变量监视、调用堆栈）
-### 四、会员系统，主要用于AI代码助手的使用权限控制和额度管理
-### 五、插件系统，允许第三方开发者为 ycIDE 开发功能插件，扩展编辑器功能、编译器功能、调试器功能等
+| 功能 | 状态 |
+|------|------|
+| 自定义数据类型、全局变量、常量表、资源、DLL 命令编辑器 | ✅ 已完成 |
+| AI 代码助手（对话 / 编辑 / Plan / Agent 模式，多模型） | ✅ 已完成，持续优化 |
+| 插件系统（第三方插件、易语言写插件、插件商店） | ✅ 已完成（v0.0.5-beta.29） |
+| 调试器（断点、单步、变量查看已可用；调用堆栈等完善中） | 🚧 进行中 |
+| 会员系统（AI 助手的使用权限与额度管理） | ⏳ 计划中 |
 
+## 插件开发
 
+IDE 的大部分功能本身就是插件（见仓库根目录 `plugins/`）。第三方插件可以：
+
+- 用 **JavaScript** 编写，运行在受限的插件进程中（只能访问自己的目录与声明过的网站）；
+- 用 **易语言** 编写：加载「插件开发支持库」（`插件_等待请求`、`插件_回复`、`插件_执行命令` 等），编译出的程序就是一个插件；
+- 用 **任意语言** 编写的可执行文件，经 stdio + JSON-RPC 与 IDE 通信。
+
+插件申请的权限（读写项目文件、修改文档、联网、调用 AI、使用终端等）需要用户确认后才启用。
+
+- 📘 开发文档：[docs/插件开发指南.md](docs/插件开发指南.md)
+- 🏗️ 架构设计：[docs/插件架构设计稿.md](docs/插件架构设计稿.md)
+- 🧩 模板：[templates/plugins/js-hello](templates/plugins/js-hello)（JavaScript）、[templates/plugins/eyc-hello](templates/plugins/eyc-hello)（易语言）
+- 在 IDE 里：工具 → 插件管理（启用 / 停用 / 授权 / 卸载 / 商店）
 
 ## 开发
 
@@ -47,8 +73,17 @@ npm install
 # 开发模式
 npm run dev
 
+# 检查（类型检查 + lint + 单元测试 + 编辑器契约测试）
+npm test
+
+# UI 测试（先构建，再用 Playwright 启动真实 IDE）
+npm run test:ui
+
 # 打包
 npm run package:win
+
+# 打包测试版压缩包（不含 compiler/ 目录，装有 7-Zip 时输出 .7z）
+npm run package:win:zip
 
 # Windows 签名打包（可选）
 npm run package:win:signed
@@ -80,13 +115,20 @@ npm run security:av:report -- --sample "<你的exe路径>" --compiler "zig c++" 
 	- `YCIDE_WIN_PUBLISHER_NAME`：发布者名称（可选）
 	- `YCIDE_REQUIRE_WIN_SIGN=1`：强制要求签名（未配置证书时打包失败）
 
+## 分支与发版
+
+- **`dev`**：日常开发分支。每次推送到 dev 会自动构建测试包并发布到 Release（标签 `dev-v<版本号>`），所以每次发测试包都要先升版本号。
+- **`main`**：稳定版分支。从 dev 向 main 发起的 PR **合并后**自动构建稳定版。
+- 推送到 dev / main 以及每个 PR 都会自动跑类型检查、lint、单元测试与契约测试。
+- 发版时用 `npm version <版本> --no-git-tag-version` 改版本号，并在 [版本更新说明](版本更新说明.md) 顶部写上该版本的说明（打包时按版本号读取）。
+
 ## 贡献
 欢迎任何形式的贡献！无论是修复 bug、添加新功能、改进文档还是提供反馈，都非常感谢。请遵循以下步骤：
 1. Fork 本仓库
-2. 创建一个新的分支（`git checkout -b feature/your-feature-name`）
-3. 提交你的更改（`git commit -m 'Add some feature'`）
+2. 从 `dev` 创建一个新的分支（`git checkout -b feature/your-feature-name dev`）
+3. 提交你的更改（`git commit -m 'Add some feature'`），提交前建议先跑一遍 `npm test`
 4. 推送到分支（`git push origin feature/your-feature-name`）
-5. 创建一个 Pull Request
+5. 向 **`dev`** 分支创建一个 Pull Request
 ## 📜 许可证
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
