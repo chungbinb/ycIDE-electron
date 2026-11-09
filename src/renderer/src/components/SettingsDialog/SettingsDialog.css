@@ -129,6 +129,15 @@
   cursor: default;
 }
 
+.settings-switch-disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.settings-switch-disabled .settings-switch-input {
+  cursor: default;
+}
+
 .settings-row-actions {
   display: flex;
   gap: 4px;

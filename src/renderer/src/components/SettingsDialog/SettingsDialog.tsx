@@ -1,6 +1,6 @@
 import './SettingsDialog.css'
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { DEFAULT_IDE_SETTINGS, MIN_FOREGROUND_OPACITY, MIN_WINDOW_OPACITY, type IDESettings } from '../../../../shared/settings'
+import { DEFAULT_IDE_SETTINGS, MAX_FROSTED_BLUR, MIN_FOREGROUND_OPACITY, MIN_WINDOW_OPACITY, type IDESettings } from '../../../../shared/settings'
 import { collectAIModels, collectProviderKeySlots } from '../../../../shared/plugin/aiContributions'
 import { collectCompilers } from '../../../../shared/plugin/compilerContributions'
 import { collectRenderers, renderersForSurface } from '../../../../shared/plugin/rendererContributions'
@@ -227,6 +227,38 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
               ))}
             </select>
             <span className="settings-unit" />
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">磨砂玻璃</span>
+            <label
+              className={`settings-switch${draft.backgroundImagePath ? '' : ' settings-switch-disabled'}`}
+              aria-label="磨砂玻璃"
+              title={draft.backgroundImagePath ? '模糊背景图，呈现磨砂玻璃效果' : '请先设置背景图'}
+            >
+              <input
+                type="checkbox"
+                className="settings-switch-input"
+                checked={!!draft.backgroundImagePath && draft.backgroundFrostedGlass}
+                disabled={!draft.backgroundImagePath}
+                onChange={(e) => updateDraft('backgroundFrostedGlass', e.target.checked)}
+              />
+              <span className="settings-switch-track" aria-hidden="true" />
+            </label>
+            <span className="settings-unit" />
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">磨砂强度</span>
+            <input
+              type="range"
+              className="settings-range"
+              title="背景图模糊程度：越大越模糊"
+              min={1}
+              max={MAX_FROSTED_BLUR}
+              value={draft.backgroundFrostedBlur}
+              disabled={!draft.backgroundImagePath || !draft.backgroundFrostedGlass}
+              onChange={(e) => handleNumberChange('backgroundFrostedBlur', e.target.value)}
+            />
+            <span className="settings-unit settings-unit-percent">{draft.backgroundFrostedBlur}px</span>
           </div>
           <div className="settings-row">
             <span className="settings-label">前景透明度</span>
