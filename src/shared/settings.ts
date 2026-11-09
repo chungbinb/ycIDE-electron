@@ -41,6 +41,14 @@ export interface IDESettings {
    * （嵌入清单 + 启动时显式建立激活上下文）。关闭则不嵌清单，控件呈经典 Win32 灰样式。
    */
   designerVc6Style: boolean
+  /** 背景图路径；空 = 不显示背景图 */
+  backgroundImagePath: string
+  /** 背景图填充方式 */
+  backgroundImageFit: 'cover' | 'contain' | 'stretch' | 'tile' | 'center'
+  /** 前景（界面）不透明度 (%)：越低背景图越明显；100 = 背景图不可见 */
+  backgroundForegroundOpacity: number
+  /** 整体（窗口）不透明度 (%) */
+  windowOpacity: number
   /** AI 助手字体 */
   aiFontFamily: string
   /** AI 助手字号 (px) */
@@ -105,6 +113,10 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   editorShowVarSummaryPanel: true,
   designerCanvasMode: 'center',
   designerVc6Style: true,
+  backgroundImagePath: '',
+  backgroundImageFit: 'cover',
+  backgroundForegroundOpacity: 85,
+  windowOpacity: 100,
   aiFontFamily: '"Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif',
   aiFontSize: 13,
   aiModel: 'deepseek',
@@ -133,6 +145,11 @@ export const DEFAULT_IDE_SETTINGS: IDESettings = {
   androidAdbDeviceId: '',
   androidAutoStartEmulator: false,
 }
+
+/** 前景不透明度下限 (%)：再低界面文字基本看不清 */
+export const MIN_FOREGROUND_OPACITY = 20
+/** 窗口不透明度下限 (%)：防止把窗口调到完全看不见、找不回设置入口 */
+export const MIN_WINDOW_OPACITY = 30
 
 export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettings {
   const d = DEFAULT_IDE_SETTINGS
@@ -167,6 +184,10 @@ export function resolveIDESettings(raw?: Partial<IDESettings> | null): IDESettin
       : d.editorShowVarSummaryPanel,
     designerCanvasMode: resolveDesignerCanvasMode(raw.designerCanvasMode, d.designerCanvasMode),
     designerVc6Style: typeof raw.designerVc6Style === 'boolean' ? raw.designerVc6Style : d.designerVc6Style,
+    backgroundImagePath: resolvePath(raw.backgroundImagePath, d.backgroundImagePath),
+    backgroundImageFit: resolveBackgroundImageFit(raw.backgroundImageFit, d.backgroundImageFit),
+    backgroundForegroundOpacity: clampInt(raw.backgroundForegroundOpacity, MIN_FOREGROUND_OPACITY, 100, d.backgroundForegroundOpacity),
+    windowOpacity: clampInt(raw.windowOpacity, MIN_WINDOW_OPACITY, 100, d.windowOpacity),
     aiFontFamily: typeof raw.aiFontFamily === 'string' && raw.aiFontFamily.trim()
       ? raw.aiFontFamily.trim()
       : d.aiFontFamily,
@@ -285,4 +306,9 @@ function resolveOptimizeLevel(value: unknown, fallback: IDESettings['compilerOpt
 /** 设计器画布模式：只认 'center' / 'topleft'，非法值回落默认 */
 function resolveDesignerCanvasMode(value: unknown, fallback: IDESettings['designerCanvasMode']): IDESettings['designerCanvasMode'] {
   return (value === 'center' || value === 'topleft') ? value : fallback
+}
+
+/** 背景图填充方式：只认白名单，非法值回落默认 */
+function resolveBackgroundImageFit(value: unknown, fallback: IDESettings['backgroundImageFit']): IDESettings['backgroundImageFit'] {
+  return (value === 'cover' || value === 'contain' || value === 'stretch' || value === 'tile' || value === 'center') ? value : fallback
 }

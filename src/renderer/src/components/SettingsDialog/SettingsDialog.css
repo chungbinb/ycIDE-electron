@@ -110,6 +110,30 @@
   color: var(--text-secondary);
 }
 
+.settings-unit-percent {
+  min-width: 36px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-range {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.settings-range:disabled,
+.settings-input:disabled,
+.settings-browse-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.settings-row-actions {
+  display: flex;
+  gap: 4px;
+}
+
 .settings-switch {
   position: relative;
   display: inline-flex;

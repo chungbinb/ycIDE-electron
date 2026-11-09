@@ -1,6 +1,6 @@
 import './SettingsDialog.css'
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { DEFAULT_IDE_SETTINGS, type IDESettings } from '../../../../shared/settings'
+import { DEFAULT_IDE_SETTINGS, MIN_FOREGROUND_OPACITY, MIN_WINDOW_OPACITY, type IDESettings } from '../../../../shared/settings'
 import { collectAIModels, collectProviderKeySlots } from '../../../../shared/plugin/aiContributions'
 import { collectCompilers } from '../../../../shared/plugin/compilerContributions'
 import { collectRenderers, renderersForSurface } from '../../../../shared/plugin/rendererContributions'
@@ -40,6 +40,13 @@ const AI_FONT_OPTIONS: Array<{ label: string; value: string }> = [
   { label: 'Consolas', value: 'Consolas, "Cascadia Code", "JetBrains Mono", "Courier New", monospace' },
 ]
 const AI_FONT_SIZE_OPTIONS = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24]
+const BACKGROUND_FIT_OPTIONS: Array<{ label: string; value: IDESettings['backgroundImageFit'] }> = [
+  { label: '填充（裁切铺满）', value: 'cover' },
+  { label: '适应（完整显示）', value: 'contain' },
+  { label: '拉伸', value: 'stretch' },
+  { label: '平铺', value: 'tile' },
+  { label: '居中（原始大小）', value: 'center' },
+]
 const ANDROID_EMULATOR_OPTIONS: Array<{ label: string; value: IDESettings['androidEmulatorKind'] }> = [
   { label: '雷电模拟器', value: 'ldplayer' },
   { label: 'Android Studio Emulator', value: 'android-studio' },
@@ -102,6 +109,11 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
   const pickCompilerPath = useCallback(async () => {
     const picked = await window.api?.file?.openDialog?.()
     if (picked) updateDraft('compilerZigPath', picked)
+  }, [updateDraft])
+
+  const pickBackgroundImage = useCallback(async () => {
+    const picked = await window.api?.appearance?.pickBackgroundImage?.()
+    if (picked) updateDraft('backgroundImagePath', picked)
   }, [updateDraft])
 
   const handleNumberChange = (key: keyof IDESettings, raw: string): void => {
@@ -173,6 +185,75 @@ function SettingsDialog({ settings, onClose, onSave, onChange, focusCompiler = f
               onChange={(e) => handleNumberChange('toolbarIconSize', e.target.value)}
             />
             <span className="settings-unit">px</span>
+          </div>
+        </div>
+        <div className="settings-group">
+          <h4 className="settings-group-title">背景与透明度</h4>
+          <div className="settings-row">
+            <span className="settings-label">背景图</span>
+            <input
+              type="text"
+              className="settings-input"
+              title={draft.backgroundImagePath || '未设置背景图'}
+              value={draft.backgroundImagePath}
+              placeholder="未设置"
+              readOnly
+            />
+            <div className="settings-row-actions">
+              <button
+                type="button"
+                className="settings-browse-btn"
+                onClick={() => { void pickBackgroundImage() }}
+              >浏览…</button>
+              <button
+                type="button"
+                className="settings-browse-btn"
+                disabled={!draft.backgroundImagePath}
+                onClick={() => updateDraft('backgroundImagePath', '')}
+              >清除</button>
+            </div>
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">填充方式</span>
+            <select
+              className="settings-input"
+              title="背景图填充方式"
+              value={draft.backgroundImageFit}
+              disabled={!draft.backgroundImagePath}
+              onChange={(e) => updateDraft('backgroundImageFit', e.target.value as IDESettings['backgroundImageFit'])}
+            >
+              {BACKGROUND_FIT_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+            <span className="settings-unit" />
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">前景透明度</span>
+            <input
+              type="range"
+              className="settings-range"
+              title="界面前景的不透明度：越低背景图越明显，100% 时不显示背景图"
+              min={MIN_FOREGROUND_OPACITY}
+              max={100}
+              value={draft.backgroundForegroundOpacity}
+              disabled={!draft.backgroundImagePath}
+              onChange={(e) => handleNumberChange('backgroundForegroundOpacity', e.target.value)}
+            />
+            <span className="settings-unit settings-unit-percent">{draft.backgroundForegroundOpacity}%</span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">整体透明度</span>
+            <input
+              type="range"
+              className="settings-range"
+              title="整个窗口的不透明度：越低越能透过窗口看到桌面"
+              min={MIN_WINDOW_OPACITY}
+              max={100}
+              value={draft.windowOpacity}
+              onChange={(e) => handleNumberChange('windowOpacity', e.target.value)}
+            />
+            <span className="settings-unit settings-unit-percent">{draft.windowOpacity}%</span>
           </div>
         </div>
         <div className="settings-group">

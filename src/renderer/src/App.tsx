@@ -1005,6 +1005,25 @@ function App(): React.JSX.Element {
     root.style.setProperty('--editor-line-height', `${editorLineHeight}px`)
   }, [ideSettings])
 
+  // 背景图：主进程读成 data URL 后以半透明蒙层叠在界面之上（不拦截鼠标），前景不透明度越低图越明显
+  const [backgroundImageUrl, setBackgroundImageUrl] = useState<string | null>(null)
+  useEffect(() => {
+    const filePath = ideSettings.backgroundImagePath
+    if (!filePath) {
+      setBackgroundImageUrl(null)
+      return
+    }
+    let cancelled = false
+    void window.api?.appearance?.loadBackgroundImage(filePath)
+      .then(url => { if (!cancelled) setBackgroundImageUrl(url) })
+      .catch(() => { if (!cancelled) setBackgroundImageUrl(null) })
+    return () => { cancelled = true }
+  }, [ideSettings.backgroundImagePath])
+
+  useEffect(() => {
+    window.api?.window?.setOpacity?.(ideSettings.windowOpacity / 100)
+  }, [ideSettings.windowOpacity])
+
   useEffect(() => {
     if (runtimePlatform !== 'macos') return
     window.api?.system?.updateRecentOpened?.(recentOpened)
@@ -5440,6 +5459,16 @@ function App(): React.JSX.Element {
 
   return (
     <div className={`app${isWorkspaceEmpty ? ' app-empty-workspace' : ''}`}>
+      {backgroundImageUrl && ideSettings.backgroundForegroundOpacity < 100 && (
+        <div
+          className={`app-background-image app-background-image-${ideSettings.backgroundImageFit}`}
+          aria-hidden="true"
+          style={{
+            backgroundImage: `url("${backgroundImageUrl}")`,
+            opacity: 1 - ideSettings.backgroundForegroundOpacity / 100,
+          }}
+        />
+      )}
       <TitleBar onCommand={executeCommand} onWindowClose={handleWindowCloseClick} runtimePlatform={runtimePlatform} hasProject={!!currentProjectDir && isProjectWorkspace} hasWorkspace={!!currentProjectDir} hasOpenFile={(openProjectFiles?.length ?? 0) > 0} themes={themeList} currentTheme={currentTheme} recentOpened={recentOpened} />
       <Toolbar
         hasProject={!!currentProjectDir && isProjectWorkspace}
