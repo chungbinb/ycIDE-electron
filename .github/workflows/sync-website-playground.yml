@@ -1,0 +1,39 @@
+name: 通知官网同步在线体验
+
+# dev 有新推送时通知官网仓库（chungbinb/ycide-website）的「同步在线体验（playground）」工作流，
+# 让它用这次推送的提交重新构建网页版（npm run build:web）并更新官网的 playground/。
+# 官网那边另有每天一次的定时同步兜底。
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+# 连续推送时只需通知最新一次：官网按收到的提交构建，旧通知没有意义。
+concurrency:
+  group: sync-website-playground
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: 通知 ycide-website 构建在线体验
+    runs-on: ubuntu-latest
+    steps:
+      # 跨仓库发 repository_dispatch 不能用默认的 GITHUB_TOKEN，需要对 ycide-website 有
+      # Contents 读写权限的 token，存为本仓库 Secret：YCIDE_WEBSITE_DISPATCH_TOKEN。
+      # 未配置时只给出提示，不让 dev 推送显示为失败。
+      - name: 发送同步通知
+        env:
+          GH_TOKEN: ${{ secrets.YCIDE_WEBSITE_DISPATCH_TOKEN }}
+          REF: ${{ github.sha }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::未配置 Secret YCIDE_WEBSITE_DISPATCH_TOKEN，跳过通知；官网会在每天定时同步时更新在线体验。"
+            exit 0
+          fi
+          gh api repos/chungbinb/ycide-website/dispatches \
+            -f event_type=ycide-playground \
+            -f "client_payload[ref]=$REF"
+          echo "已通知官网用 chungbinb/ycIDE-electron@${REF:0:7} 构建在线体验"
