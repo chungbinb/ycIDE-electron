@@ -3,6 +3,7 @@ import { normalizeRuntimePlatform } from '../shared/platform'
 import { THEME_CONFIG_VERSION } from '../shared/theme'
 import type { IDESettings } from '../shared/settings'
 import type { PluginManifest } from '../shared/plugin/manifest'
+import type { WindowUiProviderEntry } from '../shared/plugin/windowUiProviders'
 import type { AIChatRequest, AIChatResult, AIChatWithToolsRequest, AIChatWithToolsResult, AIEditRequest, AIEditResult } from '../shared/ai'
 import type { EProjectImportRequest, EProjectImportResult, OpenProjectSelectionResult, OpenWorkspaceFolderSelectionResult } from '../shared/eprojectImport'
 import type {
@@ -126,11 +127,12 @@ const api = {
   },
   // 项目管理
   project: {
+    windowUiProviders: (target: string) => ipcRenderer.invoke('project:windowUiProviders', target) as Promise<WindowUiProviderEntry[]>,
     getDefaultPath: () => ipcRenderer.invoke('project:getDefaultPath') as Promise<string>,
     selectDirectory: () => ipcRenderer.invoke('project:selectDirectory') as Promise<string | null>,
     checkCreateTarget: (info: { name: string; path: string }) =>
       ipcRenderer.invoke('project:checkCreateTarget', info) as Promise<{ projectDir: string; exists: boolean }>,
-    create: (info: { name: string; path: string; type: string; platform: string; overwrite?: boolean }) =>
+    create: (info: { name: string; path: string; type: string; platform: string; uiProvider?: string; overwrite?: boolean }) =>
       ipcRenderer.invoke('project:create', info) as Promise<
         | { status: 'created'; projectDir: string; eppPath: string }
         | { status: 'exists'; projectDir: string }
@@ -142,6 +144,7 @@ const api = {
       projectName: string; outputType: string; platform: string;
       files: Array<{ type: string; fileName: string; flag: number }>;
       projectDir: string;
+      uiProvider: string; uiProviderApiVersion?: number; uiProviderPluginVersion?: string;
     } | null>,
     updatePlatform: (projectDir: string, platform: string) => ipcRenderer.invoke('project:updatePlatform', projectDir, platform),
     saveOpenTabs: (projectDir: string, session: { openTabs: string[]; activeTabPath?: string }) => ipcRenderer.invoke('project:saveOpenTabs', projectDir, session),
@@ -221,7 +224,7 @@ const api = {
     getInfo: (name: string) => ipcRenderer.invoke('library:getInfo', name),
     getAllCommands: (targetPlatform?: string) => ipcRenderer.invoke('library:getAllCommands', targetPlatform),
     getAllDataTypes: (targetPlatform?: string) => ipcRenderer.invoke('library:getAllDataTypes', targetPlatform),
-    getWindowUnits: (targetPlatform?: string) => ipcRenderer.invoke('library:getWindowUnits', targetPlatform),
+    getWindowUnits: (targetPlatform?: string, projectDir?: string) => ipcRenderer.invoke('library:getWindowUnits', targetPlatform, projectDir),
   },
   // 命令元数据（ycmd）
   ycmd: {

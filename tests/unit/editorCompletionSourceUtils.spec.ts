@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { selectCompletionSourceList } from '@/components/Editor/editorCompletionSourceUtils'
 import type { CompletionItem } from '@/components/Editor/editorCoreUtils'
+import { windowUnitKey } from '../../src/shared/plugin/windowControls'
 
 const editUnit = {
   name: '编辑框',
@@ -19,7 +20,7 @@ const DEFAULT_ITEM: CompletionItem = {
   libraryName: '核心支持库', isMember: false, ownerTypeName: '', params: [],
 }
 
-function run(val: string, wordStart: number, opts?: { controls?: Array<[string, string]>; varTypes?: Array<[string, string]> }): CompletionItem[] {
+function run(val: string, wordStart: number, opts?: { controls?: Array<[string, string]>; varTypes?: Array<[string, string]>; units?: Array<typeof editUnit> }): CompletionItem[] {
   return selectCompletionSourceList({
     defaultSourceList: [DEFAULT_ITEM],
     isClassNameCellEdit: false,
@@ -36,7 +37,7 @@ function run(val: string, wordStart: number, opts?: { controls?: Array<[string, 
       userVarCompletionItems: [],
       userVarTypeMap: new Map(opts?.varTypes || []),
       windowControlTypeMap: new Map(opts?.controls || []),
-      windowUnits: [editUnit],
+      windowUnits: opts?.units || [editUnit],
       customDataTypeFieldMap: new Map(),
       memberCommands: [],
       allCommands: [],
@@ -60,6 +61,19 @@ describe('成员补全：对象必须真实存在（设计器放置的组件/有
   it('有类型的变量按变量类型出成员；名称随意（不依赖「编辑框N」命名）', () => {
     const out = run('我的框.', '我的框.'.length, { varTypes: [['我的框', '编辑框']] })
     expect(out.some(i => i.name === '标题')).toBe(true)
+  })
+
+  it('跨库同名控件只补全稳定身份对应的属性', () => {
+    const external = { ...editUnit, libraryName: 'vendor.controls', properties: [{ ...editUnit.properties[0], name: '外库属性' }] }
+    const out = run('外库框1.', '外库框1.'.length, {
+      controls: [['外库框1', windowUnitKey(external)]], units: [editUnit, external],
+    })
+    expect(out.some(item => item.name === '外库属性')).toBe(true)
+    expect(out.some(item => item.name === '标题')).toBe(false)
+    const missing = run('外库框1.', '外库框1.'.length, {
+      controls: [['外库框1', windowUnitKey(external)]], units: [editUnit],
+    })
+    expect(missing.some(item => item.name === '标题')).toBe(false)
   })
 
   it('对象名为空时回退默认命令列表（原行为不变）', () => {

@@ -38,6 +38,7 @@ export interface CompilerBackend {
 export type BuiltinCompilerFactory = (entry: CompilerEntry) => CompilerBackend
 
 export interface CompilerServiceDeps {
+  validateWindowUi?(projectDir: string, targetPlatform: string, compilerId: string): string | null
   /** 已启用插件的清单（按依赖拓扑序） */
   getManifests(): PluginManifest[]
   /** 内置编译器的实现，键为编译器 ID */
@@ -129,6 +130,8 @@ export class CompilerService {
   async compile(request: CompileRequest, targetPlatform: string): Promise<CompileResult & { error?: string }> {
     const entry = this.pickCompiler(request.projectDir)
     if (!entry) return compileError('没有可用的编译器：请在插件管理中启用编译器插件（如内置的 Zig 编译器）。')
+    const windowError = this.deps.validateWindowUi?.(request.projectDir, targetPlatform, entry.id)
+    if (windowError) return compileError(windowError)
     const backend = this.createBackend(entry)
     if (!backend) return compileError(`编译器「${entry.displayName}」没有提供编译实现（缺少 commands.build）。`)
     const incompatible = this.checkLibraryImplementations(entry, targetPlatform)
@@ -142,8 +145,10 @@ export class CompilerService {
     const result = await this.compile(request, targetPlatform)
     if (!result.success || !result.outputFile || !entry) return result
     const backend = this.createBackend(entry)!
+    if (!await backend.run(result.outputFile)) {
+      return { ...result, success: false, errorCount: result.errorCount + 1, error: '程序编译成功，但启动失败。请查看运行输出。' }
+    }
     this.lastRunBackend = backend
-    await backend.run(result.outputFile)
     return result
   }
 

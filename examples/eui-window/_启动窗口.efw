@@ -1,0 +1,19 @@
+{
+  "name": "_启动窗口",
+  "title": "ycIDE EUI 窗口项目（实验）",
+  "width": 800,
+  "height": 520,
+  "sourceFile": "_启动窗口.eyc",
+  "properties": { "深色主题": false },
+  "controls": [
+    { "id": "name", "libraryId": "eui", "typeId": "EuiInput", "type": "EUI编辑框", "name": "编辑框1", "left": 24, "top": 32, "width": 460, "height": 44, "text": "你好，EUI", "visible": true, "enabled": true, "properties": {} },
+    { "id": "apply", "libraryId": "eui", "typeId": "EuiButton", "type": "EUI按钮", "name": "按钮1", "left": 508, "top": 32, "width": 240, "height": 44, "text": "应用属性", "visible": true, "enabled": true, "properties": {} },
+    { "id": "label", "libraryId": "eui", "typeId": "EuiLabel", "type": "EUI标签", "name": "标签1", "left": 24, "top": 100, "width": 720, "height": 40, "text": "等待创建事件", "visible": true, "enabled": true, "properties": {} },
+    { "id": "notes", "libraryId": "eui", "typeId": "EuiInput", "type": "EUI编辑框", "name": "说明框1", "left": 24, "top": 160, "width": 460, "height": 180, "text": "这是由 .efw 与 .eyc 编译的真实窗口。\n双击设计器中的按钮可编辑事件。", "visible": true, "enabled": true, "properties": { "是否允许多行": true } },
+    { "id": "picture", "libraryId": "eui", "typeId": "EuiImage", "type": "EUI图片框", "name": "图片框1", "left": 508, "top": 160, "width": 240, "height": 180, "text": "", "visible": true, "enabled": true, "properties": { "图片": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzNjAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMzYwIDE4MCI+DQogIDxyZWN0IHg9IjIiIHk9IjIiIHdpZHRoPSIzNTYiIGhlaWdodD0iMTc2IiByeD0iMTQiIGZpbGw9IiNlZmYzZmEiIHN0cm9rZT0iIzhiYTBiZCIgc3Ryb2tlLXdpZHRoPSIyIi8+DQogIDxwYXRoIGQ9Ik0xNiAyaDMyOGExNCAxNCAwIDAgMSAxNCAxNHYyMEgyVjE2QTE0IDE0IDAgMCAxIDE2IDIiIGZpbGw9IiNkNmUxZjEiLz4NCiAgPHJlY3QgeD0iMjAiIHk9IjU0IiB3aWR0aD0iMTg0IiBoZWlnaHQ9IjE2IiByeD0iNCIgZmlsbD0iI2E1YjdkMCIvPg0KICA8cmVjdCB4PSIyMCIgeT0iODQiIHdpZHRoPSIxODQiIGhlaWdodD0iMzgiIHJ4PSI2IiBmaWxsPSIjZmZmIiBzdHJva2U9IiM4YmEwYmQiLz4NCiAgPHJlY3QgeD0iMjAiIHk9IjEzOCIgd2lkdGg9Ijg2IiBoZWlnaHQ9IjI0IiByeD0iNiIgZmlsbD0iIzM4NzFlMCIvPg0KICA8cmVjdCB4PSIxMTgiIHk9IjEzOCIgd2lkdGg9Ijg2IiBoZWlnaHQ9IjI0IiByeD0iNiIgZmlsbD0iI2Q2ZTFmMSIvPg0KICA8cmVjdCB4PSIyMjYiIHk9IjU0IiB3aWR0aD0iMTEyIiBoZWlnaHQ9IjEwOCIgcng9IjgiIGZpbGw9IiNkNmUxZjEiLz4NCiAgPHBhdGggZD0iTTI0MCAxNDJsMjItMzAgMjAgMTIgMjAtNDAgMjIgNTh6IiBmaWxsPSIjMzg3MWUwIi8+DQo8L3N2Zz4NCg==" } },
+    { "id": "theme", "libraryId": "eui", "typeId": "EuiButton", "type": "EUI按钮", "name": "主题按钮1", "left": 24, "top": 376, "width": 220, "height": 44, "text": "切换浅深色", "visible": true, "enabled": true, "properties": {} },
+    { "id": "child", "libraryId": "eui", "typeId": "EuiButton", "type": "EUI按钮", "name": "子窗口按钮1", "left": 272, "top": 376, "width": 220, "height": 44, "text": "打开非模态窗口", "visible": true, "enabled": true, "properties": {} },
+    { "id": "modal", "libraryId": "eui", "typeId": "EuiButton", "type": "EUI按钮", "name": "模态按钮1", "left": 520, "top": 376, "width": 228, "height": 44, "text": "异步模态窗口", "visible": true, "enabled": true, "properties": {} },
+    { "id": "warning", "libraryId": "eui", "typeId": "EuiLabel", "type": "EUI标签", "name": "状态标签1", "left": 24, "top": 456, "width": 724, "height": 36, "text": "Windows x64 实验接入；系统读屏和其他平台尚未开放。", "visible": true, "enabled": true, "properties": {} }
+  ]
+}

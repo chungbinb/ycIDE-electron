@@ -9,6 +9,10 @@
     {
       "name": "浏览框",
       "englishName": "WebView",
+      "controlAdapters": ["win32", "eui"],
+      "supportedTargets": ["windows"],
+      "runtimeType": "EuiWebView",
+      "toolboxCategory": "WebView2控件",
       "description": "基于 Microsoft Edge WebView2 运行时的网页浏览框，设计期与运行期渲染一致。",
       "className": "YcWebView2Host",
       "style": "WS_CHILD | WS_TABSTOP",
@@ -30,6 +34,10 @@
     {
       "name": "网页按钮",
       "englishName": "WebButton",
+      "controlAdapters": ["win32", "eui"],
+      "supportedTargets": ["windows"],
+      "runtimeType": "EuiWebButton",
+      "toolboxCategory": "WebView2控件",
       "description": "WebView2 渲染的现代风格按钮，设计期与运行期外观一致。",
       "className": "YcWebButton",
       "style": "WS_CHILD | WS_TABSTOP",
@@ -58,6 +66,10 @@
     {
       "name": "网页编辑框",
       "englishName": "WebEdit",
+      "controlAdapters": ["win32", "eui"],
+      "supportedTargets": ["windows"],
+      "runtimeType": "EuiWebEdit",
+      "toolboxCategory": "WebView2控件",
       "description": "WebView2 渲染的现代风格编辑框，设计期与运行期外观一致。",
       "className": "YcWebEdit",
       "style": "WS_CHILD | WS_TABSTOP",

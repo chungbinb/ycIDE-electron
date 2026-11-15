@@ -1,4 +1,5 @@
 import { FLOW_AUTO_TAG } from './eycFlow'
+import { windowUnitKey } from '../../../../shared/plugin/windowControls'
 import { parseLines } from './eycBlocks'
 import {
   colorize,
@@ -52,19 +53,22 @@ const INPUT_MODE_CONTENT_TYPES: Record<string, string> = {
  * 数值/日期输入方式 → 对应数值/日期类型，文本类方式保持单元定义的类型。
  */
 export function buildControlPropTypes(
-  controls: Array<{ name?: string; type?: string; properties?: Record<string, string | number | boolean> }>,
-  units: Array<{ name?: string; properties?: Array<{ name?: string; typeName?: string; pickOptions?: string[]; defaultValue?: string | number | boolean }> }>,
+  controls: Array<{ name?: string; type?: string; libraryId?: string; typeId?: string; properties?: Record<string, string | number | boolean> }>,
+  units: Array<{ name?: string; libraryName?: string; englishName?: string; properties?: Array<{ name?: string; typeName?: string; pickOptions?: string[]; defaultValue?: string | number | boolean }> }>,
 ): Record<string, Record<string, string>> | undefined {
   if (!controls.length || !units.length) return undefined
   const unitByName = new Map<string, (typeof units)[number]>()
   for (const u of units) {
     const n = (u.name || '').trim()
     if (n && !unitByName.has(n)) unitByName.set(n, u)
+    if (n && u.libraryName && u.englishName) unitByName.set(windowUnitKey({ name: n, libraryName: u.libraryName, englishName: u.englishName }), u)
   }
   const out: Record<string, Record<string, string>> = {}
   for (const c of controls) {
     const ctrlName = (c.name || '').trim()
-    const unit = unitByName.get((c.type || '').trim())
+    const unit = c.libraryId || c.typeId
+      ? units.find(unit => unit.libraryName === c.libraryId && unit.englishName === c.typeId)
+      : unitByName.get((c.type || '').trim())
     if (!ctrlName || !unit) continue
     const props: Record<string, string> = {}
     let inputModeProp: { pickOptions?: string[]; defaultValue?: string | number | boolean } | undefined

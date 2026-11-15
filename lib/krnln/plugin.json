@@ -17,6 +17,20 @@
     "macos"
   ],
   "contributes": {
+    "windowUiProviders": [
+      {
+        "id": "ycide.krnln.win32",
+        "displayName": "Win32 原生窗口",
+        "library": "krnln",
+        "apiVersion": 1,
+        "targets": ["windows-x64", "windows-x86", "windows-arm64"],
+        "rootWindowType": "Window",
+        "runtimeAdapter": "win32",
+        "designerAdapter": "win32",
+        "compilerId": "ycide.zig",
+        "controlAdapters": ["win32"]
+      }
+    ],
     "libraries": [
       {
         "name": "krnln"

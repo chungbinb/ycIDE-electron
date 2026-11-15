@@ -14,6 +14,9 @@ import {
 } from '../shared/theme'
 import { THEME_TOKEN_GROUPS } from '../shared/theme-tokens'
 import { DEMO_EPP, DEMO_FILES, DEMO_ROOT } from './demoProject'
+import coreManifest from '../../lib/krnln/plugin.json'
+import { validatePluginManifest } from '../shared/plugin/manifest'
+import { collectWindowUiProviders } from '../shared/plugin/windowUiProviders'
 
 const WEB_NOTICE = '网页版仅用于体验编辑器，编译、运行和调试请下载 ycIDE 桌面版：https://ycide.dev/'
 const VFS_KEY = 'ycide.web.vfs.v1'
@@ -226,6 +229,13 @@ const api = {
     readDir: async (path: string) => listDir(path),
   },
   project: {
+    windowUiProviders: async (target: string) => {
+      const result = validatePluginManifest(coreManifest)
+      if (!result.ok) throw new Error(result.errors.join('；'))
+      return collectWindowUiProviders([result.manifest], target).map(entry => ({
+        ...entry, displayName: `${entry.displayName}（网页版仅设计，不能编译）`,
+      }))
+    },
     getDefaultPath: async () => 'C:\\ycIDE',
     selectDirectory: async () => 'C:\\ycIDE',
     checkCreateTarget: async (info: { name: string; path: string }) => {
@@ -359,7 +369,7 @@ const api = {
     getInfo: async (name: string) => (await loadSnap()).infos[name] ?? null,
     getAllCommands: async () => (await libData()).commands,
     getAllDataTypes: async () => (await libData()).dataTypes,
-    getWindowUnits: async () => (await libData()).windowUnits,
+    getWindowUnits: async () => (await libData()).windowUnits.filter(unit => !!unit && typeof unit === 'object' && !('uiProviders' in unit && unit.uiProviders)),
   },
   ycmd: {
     scan: async () => ({ rootPath: '', libraries: [], errors: [] }),

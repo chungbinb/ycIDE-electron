@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { findWindowControlUnit, windowUnitKey } from '../../shared/plugin/windowControls'
 import { createPortal } from 'react-dom'
 import TitleBar from './components/TitleBar/TitleBar'
 import Toolbar from './components/Toolbar/Toolbar'
@@ -1353,7 +1354,7 @@ function App(): React.JSX.Element {
   // 检查设计时诊断：扫描所有 efw 标签页中的控件类型，找出依赖库未加载的
   const checkDesignProblems = useCallback(async (tabs: EditorTab[]) => {
     try {
-      const units = await window.api.library.getWindowUnits(targetPlatform) as Array<{ name: string; englishName?: string }>
+      const units = await window.api.library.getWindowUnits(targetPlatform, currentProjectDir || undefined) as Array<{ name: string; englishName?: string }>
       const knownTypes = new Set<string>(
         units.flatMap(u => [u.name, u.englishName].filter((n): n is string => !!n))
       )
@@ -1376,7 +1377,7 @@ function App(): React.JSX.Element {
     } catch {
       // 无法获取窗口单元列表时忽略
     }
-  }, [targetPlatform])
+  }, [targetPlatform, currentProjectDir])
 
   // 硬件加载或卸载时重新检查
   const handleLibraryChange = useCallback(() => {
@@ -1601,14 +1602,15 @@ function App(): React.JSX.Element {
         const formData = formTab?.formData
         if (formData) {
           const control = formData.controls.find(c => normalize(c.name) === normalize(parsedEvent.targetName))
-          const targetType = control ? control.type : '窗口'
           try {
-            const windowUnits = await window.api.library.getWindowUnits(targetPlatform) as Array<{
+            const windowUnits = await window.api.library.getWindowUnits(targetPlatform, currentProjectDir || undefined) as Array<{
               name: string
-              englishName?: string
+              englishName: string
+              libraryName: string
+              topLevel?: boolean
               events?: Array<{ name: string; description?: string }>
             }>
-            const unit = windowUnits.find((u) => u.name === targetType || u.englishName === targetType)
+            const unit = control ? findWindowControlUnit(windowUnits, control) : windowUnits.find(unit => unit.topLevel || unit.name === '窗口')
             const ev = unit?.events?.find((e) => e.name === parsedEvent.eventName)
             eventDescription = ev?.description || ''
           } catch {
@@ -1644,12 +1646,13 @@ function App(): React.JSX.Element {
       if (!unitType || !member) return
       setHighlightParamIndex(undefined)
       try {
-        const units = await window.api.library.getWindowUnits(targetPlatform) as Array<{
+        const units = await window.api.library.getWindowUnits(targetPlatform, currentProjectDir || undefined) as Array<{
           name: string
-          englishName?: string
+          englishName: string
+          libraryName: string
           properties?: Array<{ name: string; englishName?: string; typeName?: string; description?: string; pickOptions?: string[] }>
         }>
-        const unit = units.find(u => u.name === unitType)
+        const unit = units.find(u => windowUnitKey(u) === unitType) || units.find(u => u.name === unitType)
         const prop = unit?.properties?.find(p => p.name === member || (p.englishName || '') === member)
         if (unit && prop) {
           const lines = [
@@ -3238,7 +3241,7 @@ function App(): React.JSX.Element {
         properties: efwData.properties || undefined,
         menu: Array.isArray(efwData.menu) ? efwData.menu : undefined,
         controls: (efwData.controls || []).map((c: any) => ({
-          id: c.id, type: c.type, name: c.name,
+          id: c.id, type: c.type, name: c.name, libraryId: c.libraryId, typeId: c.typeId,
           left: c.x ?? c.left ?? 0, top: c.y ?? c.top ?? 0,
           width: c.width ?? 100, height: c.height ?? 30,
           text: c.properties?.['标题'] ?? c.properties?.['内容'] ?? c.properties?.['文本'] ?? c.text ?? c.name ?? '',
@@ -4498,7 +4501,7 @@ function App(): React.JSX.Element {
     })
   }, [openEditorTabs])
 
-  const handleNewProjectConfirm = useCallback(async (info: { name: string; path: string; type: string; platform: string }) => {
+  const handleNewProjectConfirm = useCallback(async (info: { name: string; path: string; type: string; platform: string; uiProvider?: string }) => {
     try {
       const target = await window.api?.project?.checkCreateTarget?.({ name: info.name, path: info.path })
       const overwrite = !!target?.exists
@@ -4554,6 +4557,8 @@ function App(): React.JSX.Element {
             controls: (efwData.controls || []).map((c: any) => ({
               id: c.id,
               type: c.type,
+              libraryId: c.libraryId,
+              typeId: c.typeId,
               name: c.name,
               left: c.x ?? c.left ?? 0,
               top: c.y ?? c.top ?? 0,
@@ -5430,12 +5435,18 @@ function App(): React.JSX.Element {
   const handleToolbarSave = useCallback(() => { void handleMenuAction('file:save') }, [handleMenuAction])
   const handleToolbarUndo = useCallback(() => { void handleMenuAction('edit:undo') }, [handleMenuAction])
   const handleToolbarRedo = useCallback(() => { void handleMenuAction('edit:redo') }, [handleMenuAction])
-  const handleToolbarPlatformChange = useCallback((platform: string) => {
+  const handleToolbarPlatformChange = useCallback(async (platform: string) => {
     const normalizedPlatform = normalizeTargetPlatform(platform)
+    try {
+      if (isProjectWorkspace && currentProjectDir) await window.api.project.updatePlatform(currentProjectDir, normalizedPlatform)
+    } catch (error) {
+      appendOutputMessage({ type: 'error', text: `无法修改项目平台：${error instanceof Error ? error.message : String(error)}` })
+      setShowOutput(true)
+      return
+    }
     setTargetPlatform(normalizedPlatform)
     setTargetArch(prev => coerceArchByPlatform(normalizedPlatform, prev))
-    if (isProjectWorkspace && currentProjectDir) window.api?.project?.updatePlatform(currentProjectDir, normalizedPlatform)
-  }, [isProjectWorkspace, currentProjectDir])
+  }, [isProjectWorkspace, currentProjectDir, appendOutputMessage])
   const handleToolbarArchChange = useCallback((arch: string) => {
     const normalizedArch = normalizeTargetArch(arch)
     setTargetArch(coerceArchByPlatform(targetPlatform, normalizedArch))

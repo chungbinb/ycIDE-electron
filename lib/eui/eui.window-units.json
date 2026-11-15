@@ -1,0 +1,973 @@
+{
+  "version": "1.0",
+  "description": "EUI 自绘窗口元数据。由 generate-metadata.mjs 生成。",
+  "controlMemberBindings": [
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "Button",
+      "member": "标题",
+      "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+      "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "Static",
+      "member": "标题",
+      "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+      "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "CheckBox",
+      "member": "标题",
+      "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+      "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "RadioButton",
+      "member": "标题",
+      "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+      "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "GroupBox",
+      "member": "标题",
+      "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+      "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "Edit",
+      "member": "内容",
+      "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+      "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+    },
+    {
+      "library": "webview2",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "WebButton",
+      "member": "标题",
+      "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+      "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+    },
+    {
+      "library": "webview2",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "WebEdit",
+      "member": "内容",
+      "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+      "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "PictureBox",
+      "member": "图片",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"text\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"text\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "SliderBar",
+      "member": "最小位置",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"min\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"min\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "SliderBar",
+      "member": "最大位置",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"max\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"max\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "SliderBar",
+      "member": "位置",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"value\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"value\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "ProgressBar",
+      "member": "最小位置",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"min\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"min\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "ProgressBar",
+      "member": "最大位置",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"max\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"max\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "ProgressBar",
+      "member": "位置",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"value\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"value\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "CheckBox",
+      "member": "选中",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"checked\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"checked\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "RadioButton",
+      "member": "选中",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"checked\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"checked\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unit": "*",
+      "member": "左边",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"left\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"left\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unit": "*",
+      "member": "顶边",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"top\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"top\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unit": "*",
+      "member": "宽度",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"width\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"width\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unit": "*",
+      "member": "高度",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"height\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"height\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unit": "*",
+      "member": "可视",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"visible\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"visible\", {v})"
+    },
+    {
+      "library": "krnln",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unit": "*",
+      "member": "禁止",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"disabled\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"disabled\", {v})"
+    },
+    {
+      "library": "webview2",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unit": "*",
+      "member": "左边",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"left\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"left\", {v})"
+    },
+    {
+      "library": "webview2",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unit": "*",
+      "member": "顶边",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"top\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"top\", {v})"
+    },
+    {
+      "library": "webview2",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unit": "*",
+      "member": "宽度",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"width\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"width\", {v})"
+    },
+    {
+      "library": "webview2",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unit": "*",
+      "member": "高度",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"height\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"height\", {v})"
+    },
+    {
+      "library": "webview2",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unit": "*",
+      "member": "可视",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"visible\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"visible\", {v})"
+    },
+    {
+      "library": "webview2",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unit": "*",
+      "member": "禁止",
+      "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"disabled\")",
+      "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"disabled\", {v})"
+    },
+    {
+      "library": "webview2",
+      "uiProvider": "ycide.eui.selfdraw",
+      "unitEnglishName": "WebView",
+      "member": "地址",
+      "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+      "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+    }
+  ],
+  "controlMethodBindings": [
+    {
+      "unit": "EUI窗口",
+      "unitEnglishName": "EuiWindow",
+      "member": "销毁",
+      "call": "yc_win_destroy({n})"
+    }
+  ],
+  "windowUnits": [
+    {
+      "name": "EUI窗口",
+      "englishName": "EuiWindow",
+      "previewType": "窗口",
+      "topLevel": true,
+      "uiProviders": [
+        "ycide.eui.selfdraw"
+      ],
+      "supportedTargets": [
+        "windows-x64"
+      ],
+      "previewTheme": {
+        "bodyFontSize": 16,
+        "buttonRadius": 16,
+        "inputRadius": 6,
+        "titlebarHeight": 36,
+        "captionButtonWidth": 72,
+        "titleFontSize": 14,
+        "windowBorderWidth": 1,
+        "light": {
+          "background": [
+            0.95,
+            0.95,
+            0.97,
+            1
+          ],
+          "primary": [
+            0.2196078431,
+            0.4431372549,
+            0.8784313725,
+            1
+          ],
+          "surface": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "surfaceHover": [
+            0.9,
+            0.9,
+            0.9,
+            1
+          ],
+          "surfaceActive": [
+            0.8,
+            0.8,
+            0.8,
+            1
+          ],
+          "text": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "border": [
+            0.55,
+            0.55,
+            0.55,
+            1
+          ],
+          "buttonText": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "buttonHover": [
+            0.18,
+            0.35,
+            0.7,
+            1
+          ],
+          "buttonPressed": [
+            0.14,
+            0.3,
+            0.65,
+            1
+          ]
+        },
+        "dark": {
+          "background": [
+            0.1,
+            0.1,
+            0.12,
+            1
+          ],
+          "primary": [
+            0.2196078431,
+            0.4431372549,
+            0.8784313725,
+            1
+          ],
+          "surface": [
+            0.15,
+            0.15,
+            0.18,
+            1
+          ],
+          "surfaceHover": [
+            0.25,
+            0.25,
+            0.28,
+            1
+          ],
+          "surfaceActive": [
+            0.35,
+            0.35,
+            0.38,
+            1
+          ],
+          "text": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "border": [
+            0.55,
+            0.55,
+            0.55,
+            1
+          ],
+          "buttonText": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "buttonHover": [
+            0.18,
+            0.35,
+            0.7,
+            1
+          ],
+          "buttonPressed": [
+            0.14,
+            0.3,
+            0.65,
+            1
+          ]
+        }
+      },
+      "iconFileName": "",
+      "description": "EUI 自绘组件（实验）；不提供 Win32 原生句柄。",
+      "className": "",
+      "style": "",
+      "toolboxCategory": "EUI自绘控件",
+      "properties": [
+        {
+          "name": "宽度",
+          "englishName": "Width",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 120,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"width\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"width\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "宽度属性。"
+        },
+        {
+          "name": "高度",
+          "englishName": "Height",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 36,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"height\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"height\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "高度属性。"
+        },
+        {
+          "name": "标题",
+          "englishName": "Title",
+          "type": 0,
+          "typeName": "文本型",
+          "defaultValue": "",
+          "access": {
+            "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+            "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "标题属性。"
+        },
+        {
+          "name": "深色主题",
+          "englishName": "DarkTheme",
+          "type": 0,
+          "typeName": "逻辑型",
+          "defaultValue": false,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"dark\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"dark\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "深色主题属性。"
+        }
+      ],
+      "events": [
+        {
+          "name": "创建完毕",
+          "description": "创建完毕时触发。",
+          "args": []
+        }
+      ]
+    },
+    {
+      "name": "EUI按钮",
+      "englishName": "EuiButton",
+      "previewType": "按钮",
+      "topLevel": false,
+      "controlAdapters": [
+        "eui"
+      ],
+      "supportedTargets": [
+        "windows-x64"
+      ],
+      "runtimeType": "EuiButton",
+      "iconFileName": "Button.svg",
+      "description": "EUI 自绘组件（实验）；不提供 Win32 原生句柄。",
+      "className": "",
+      "style": "",
+      "toolboxCategory": "EUI自绘控件",
+      "properties": [
+        {
+          "name": "左边",
+          "englishName": "Left",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 0,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"left\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"left\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "左边属性。"
+        },
+        {
+          "name": "顶边",
+          "englishName": "Top",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 0,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"top\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"top\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "顶边属性。"
+        },
+        {
+          "name": "宽度",
+          "englishName": "Width",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 120,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"width\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"width\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "宽度属性。"
+        },
+        {
+          "name": "高度",
+          "englishName": "Height",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 36,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"height\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"height\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "高度属性。"
+        },
+        {
+          "name": "可视",
+          "englishName": "Visible",
+          "type": 0,
+          "typeName": "逻辑型",
+          "defaultValue": true,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"visible\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"visible\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "可视属性。"
+        },
+        {
+          "name": "禁止",
+          "englishName": "Disabled",
+          "type": 0,
+          "typeName": "逻辑型",
+          "defaultValue": false,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"disabled\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"disabled\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "禁止属性。"
+        },
+        {
+          "name": "标题",
+          "englishName": "Caption",
+          "type": 0,
+          "typeName": "文本型",
+          "defaultValue": "按钮",
+          "access": {
+            "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+            "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "标题属性。"
+        }
+      ],
+      "events": [
+        {
+          "name": "被单击",
+          "description": "被单击时触发。",
+          "args": []
+        }
+      ]
+    },
+    {
+      "name": "EUI编辑框",
+      "englishName": "EuiInput",
+      "previewType": "编辑框",
+      "topLevel": false,
+      "controlAdapters": [
+        "eui"
+      ],
+      "supportedTargets": [
+        "windows-x64"
+      ],
+      "runtimeType": "EuiInput",
+      "iconFileName": "TextBox.svg",
+      "description": "EUI 自绘组件（实验）；不提供 Win32 原生句柄。",
+      "className": "",
+      "style": "",
+      "toolboxCategory": "EUI自绘控件",
+      "properties": [
+        {
+          "name": "左边",
+          "englishName": "Left",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 0,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"left\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"left\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "左边属性。"
+        },
+        {
+          "name": "顶边",
+          "englishName": "Top",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 0,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"top\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"top\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "顶边属性。"
+        },
+        {
+          "name": "宽度",
+          "englishName": "Width",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 120,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"width\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"width\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "宽度属性。"
+        },
+        {
+          "name": "高度",
+          "englishName": "Height",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 36,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"height\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"height\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "高度属性。"
+        },
+        {
+          "name": "可视",
+          "englishName": "Visible",
+          "type": 0,
+          "typeName": "逻辑型",
+          "defaultValue": true,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"visible\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"visible\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "可视属性。"
+        },
+        {
+          "name": "禁止",
+          "englishName": "Disabled",
+          "type": 0,
+          "typeName": "逻辑型",
+          "defaultValue": false,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"disabled\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"disabled\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "禁止属性。"
+        },
+        {
+          "name": "内容",
+          "englishName": "Text",
+          "type": 0,
+          "typeName": "文本型",
+          "defaultValue": "",
+          "access": {
+            "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+            "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "内容属性。"
+        },
+        {
+          "name": "是否允许多行",
+          "englishName": "Multiline",
+          "type": 0,
+          "typeName": "逻辑型",
+          "defaultValue": false,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"multiline\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"multiline\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "是否允许多行属性。"
+        }
+      ],
+      "events": [
+        {
+          "name": "内容被改变",
+          "description": "内容被改变时触发。",
+          "args": []
+        }
+      ]
+    },
+    {
+      "name": "EUI标签",
+      "englishName": "EuiLabel",
+      "previewType": "标签",
+      "topLevel": false,
+      "controlAdapters": [
+        "eui"
+      ],
+      "supportedTargets": [
+        "windows-x64"
+      ],
+      "runtimeType": "EuiLabel",
+      "iconFileName": "Label.svg",
+      "description": "EUI 自绘组件（实验）；不提供 Win32 原生句柄。",
+      "className": "",
+      "style": "",
+      "toolboxCategory": "EUI自绘控件",
+      "properties": [
+        {
+          "name": "左边",
+          "englishName": "Left",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 0,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"left\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"left\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "左边属性。"
+        },
+        {
+          "name": "顶边",
+          "englishName": "Top",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 0,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"top\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"top\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "顶边属性。"
+        },
+        {
+          "name": "宽度",
+          "englishName": "Width",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 120,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"width\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"width\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "宽度属性。"
+        },
+        {
+          "name": "高度",
+          "englishName": "Height",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 36,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"height\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"height\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "高度属性。"
+        },
+        {
+          "name": "可视",
+          "englishName": "Visible",
+          "type": 0,
+          "typeName": "逻辑型",
+          "defaultValue": true,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"visible\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"visible\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "可视属性。"
+        },
+        {
+          "name": "禁止",
+          "englishName": "Disabled",
+          "type": 0,
+          "typeName": "逻辑型",
+          "defaultValue": false,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"disabled\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"disabled\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "禁止属性。"
+        },
+        {
+          "name": "标题",
+          "englishName": "Caption",
+          "type": 0,
+          "typeName": "文本型",
+          "defaultValue": "标签",
+          "access": {
+            "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+            "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "标题属性。"
+        }
+      ],
+      "events": []
+    },
+    {
+      "name": "EUI图片框",
+      "englishName": "EuiImage",
+      "previewType": "图片框",
+      "topLevel": false,
+      "controlAdapters": [
+        "eui"
+      ],
+      "supportedTargets": [
+        "windows-x64"
+      ],
+      "runtimeType": "EuiImage",
+      "iconFileName": "Image.svg",
+      "description": "EUI 自绘组件（实验）；不提供 Win32 原生句柄。",
+      "className": "",
+      "style": "",
+      "toolboxCategory": "EUI自绘控件",
+      "properties": [
+        {
+          "name": "左边",
+          "englishName": "Left",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 0,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"left\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"left\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "左边属性。"
+        },
+        {
+          "name": "顶边",
+          "englishName": "Top",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 0,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"top\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"top\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "顶边属性。"
+        },
+        {
+          "name": "宽度",
+          "englishName": "Width",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 120,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"width\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"width\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "宽度属性。"
+        },
+        {
+          "name": "高度",
+          "englishName": "Height",
+          "type": 0,
+          "typeName": "整数型",
+          "defaultValue": 36,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"height\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"height\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "高度属性。"
+        },
+        {
+          "name": "可视",
+          "englishName": "Visible",
+          "type": 0,
+          "typeName": "逻辑型",
+          "defaultValue": true,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"visible\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"visible\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "可视属性。"
+        },
+        {
+          "name": "禁止",
+          "englishName": "Disabled",
+          "type": 0,
+          "typeName": "逻辑型",
+          "defaultValue": false,
+          "access": {
+            "get": "eui_GetNumber(yc_wide_to_utf8({n}), \"disabled\")",
+            "set": "eui_SetNumber(yc_wide_to_utf8({n}), \"disabled\", {v})"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "禁止属性。"
+        },
+        {
+          "name": "图片",
+          "englishName": "Source",
+          "type": 0,
+          "typeName": "文本型",
+          "defaultValue": "",
+          "access": {
+            "get": "yc_utf8_to_wide(eui_GetText(yc_wide_to_utf8({n})))",
+            "set": "eui_SetText(yc_wide_to_utf8({n}), yc_wide_to_utf8({vtext}))"
+          },
+          "pickOptions": [],
+          "isReadOnly": false,
+          "description": "图片属性。"
+        }
+      ],
+      "events": []
+    }
+  ]
+}

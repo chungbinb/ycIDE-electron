@@ -23,12 +23,16 @@ export interface SweepCommandItem {
 }
 
 export interface SweepWindowControl {
+  libraryId?: string
+  typeId?: string
   name: string
   type: string
   properties?: Record<string, string | number | boolean>
 }
 
 export interface SweepUnit {
+  libraryName?: string
+  englishName?: string
   name?: string
   properties?: Array<{ name?: string; typeName?: string; pickOptions?: string[]; defaultValue?: string | number | boolean }>
 }

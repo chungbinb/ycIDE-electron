@@ -82,7 +82,14 @@
       },
       {
         "from": "lib",
-        "to": "lib"
+        "to": "lib",
+        "filter": [
+          "**/*",
+          "!eui-poc",
+          "!eui-poc/**/*",
+          "!eui/sdk",
+          "!eui/sdk/**/*"
+        ]
       },
       {
         "from": "themes",

@@ -12,6 +12,9 @@
     {
       "name": "脚本组件",
       "englishName": "Script",
+      "controlAdapters": ["win32", "eui"],
+      "supportedTargets": ["windows"],
+      "runtimeType": "EuiScript",
       "description": "脚本语言支持组件（功能窗口组件，非可视）：基于系统 IActiveScript 引擎运行 JScript / VBScript 脚本。放置到窗口后不可见，运行期通过「执行 / 计算表达式 / 运行 / 清除」方法驱动。",
       "className": "",
       "style": "",

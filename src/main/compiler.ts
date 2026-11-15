@@ -12,6 +12,9 @@ import { ycmdCommandIdToNativeSymbol } from './ycmd-registry'
 import { parseColorLiteralToColorref } from '../shared/colorNames'
 import { parseStmtFromLine, emitStmt, type EycStmt } from './transpiler/stmtAst'
 import { parseVarDeclFromLine, type EycVarDecl } from './transpiler/varDeclAst'
+import { buildEuiProject, type EuiFormInput, type EuiUserCode } from './euiCompiler'
+import { EUI_WINDOW_UI_PROVIDER, LEGACY_WINDOW_UI_PROVIDER, readWindowUiProject } from '../shared/plugin/windowUiProviders'
+import { findWindowControlUnit } from '../shared/plugin/windowControls'
 
 // 编译消息类型
 export interface CompileMessage {
@@ -130,6 +133,9 @@ interface ProjectFileEntry {
 
 // 项目信息
 interface ProjectInfo {
+  uiProvider?: string
+  uiProviderApiVersion?: number
+  uiProviderPluginVersion?: string
   projectName: string
   outputType: string
   platform: string
@@ -220,6 +226,7 @@ interface LibraryCompileProtocol {
   // 与 windowUnits[].properties[].access 二选一或并用；公共属性因由 libraryManager 合并、不在 per-unit properties[]，故走这里。
   controlMemberBindings?: Array<{
     library?: string
+    uiProvider?: string
     unit?: string
     unitEnglishName?: string
     member?: string
@@ -234,6 +241,7 @@ interface LibraryCompileProtocol {
   // 过 C variadic 会 `cannot pass object of non-trivial type through variadic function` 编译错误（踩过）。
   controlMethodBindings?: Array<{
     library?: string
+    uiProvider?: string
     unit?: string
     unitEnglishName?: string
     member?: string
@@ -312,6 +320,7 @@ interface NormalizedControlBinding {
 // get/set 为 C 表达式模板（属性）；method 侧后续期扩展 emit/expr（见分期计划）。
 interface NormalizedControlMemberBinding {
   library: string
+  uiProvider: string
   unit: string
   unitEnglishName: string
   member: string
@@ -323,6 +332,7 @@ interface NormalizedControlMemberBinding {
 // 控件成员【方法】运行时绑定，归一化后。call 为 C 表达式模板（{h}/{n}/{0..}）。
 interface NormalizedControlMethodBinding {
   library: string
+  uiProvider: string
   unit: string
   unitEnglishName: string
   member: string
@@ -924,6 +934,7 @@ function parseEppFile(eppPath: string): ProjectInfo | null {
     projectName: info['ProjectName'] || '',
     outputType: info['OutputType'] || 'WindowsApp',
     platform: info['Platform'] || 'x64',
+    ...readWindowUiProject(content),
     files,
     projectDir: dirname(eppPath)
   }
@@ -1405,7 +1416,7 @@ function parseControlMemberBindingsFromProtocol(content: string, libName: string
         const member = normalizeKey(prop.name || '')
         const memberEn = normalizeKey(prop.englishName || '')
         if (!member && !memberEn) continue
-        result.push({ library: normalizeKey(libName), unit: unitKey, unitEnglishName: unitEn, member, memberEnglishName: memberEn, get, set })
+        result.push({ library: normalizeKey(libName), uiProvider: '', unit: unitKey, unitEnglishName: unitEn, member, memberEnglishName: memberEn, get, set })
       }
     }
   }
@@ -1422,7 +1433,7 @@ function parseControlMemberBindingsFromProtocol(content: string, libName: string
       const unitKey = normalizeKey(b.unit || '')
       const unitEn = normalizeKey(b.unitEnglishName || '')
       if (!unitKey && !unitEn) continue
-      result.push({ library: normalizeKey(b.library || libName), unit: unitKey, unitEnglishName: unitEn, member, memberEnglishName: memberEn, get, set })
+      result.push({ library: normalizeKey(b.library || libName), uiProvider: normalizeKey(b.uiProvider || ''), unit: unitKey, unitEnglishName: unitEn, member, memberEnglishName: memberEn, get, set })
     }
   }
   return result
@@ -1437,16 +1448,16 @@ function parseControlMethodBindingsFromProtocol(content: string, libName: string
     return []
   }
   const result: NormalizedControlMethodBinding[] = []
-  const push = (library: string, unit: string, unitEn: string, member: string, memberEn: string, call: string, callEach: string): void => {
+  const push = (library: string, uiProvider: string, unit: string, unitEn: string, member: string, memberEn: string, call: string, callEach: string): void => {
     const c = (call || '').trim(); const ce = (callEach || '').trim()
     const m = normalizeKey(member); const mEn = normalizeKey(memberEn)
     const u = normalizeKey(unit); const uEn = normalizeKey(unitEn)
     if ((!c && !ce) || (!m && !mEn) || (!u && !uEn)) return
-    result.push({ library: normalizeKey(library || libName), unit: u, unitEnglishName: uEn, member: m, memberEnglishName: mEn, call: c, callEach: ce })
+    result.push({ library: normalizeKey(library || libName), uiProvider: normalizeKey(uiProvider || ''), unit: u, unitEnglishName: uEn, member: m, memberEnglishName: mEn, call: c, callEach: ce })
   }
   if (Array.isArray(json.controlMethodBindings)) {
     for (const b of json.controlMethodBindings) {
-      if (b && typeof b === 'object') push(b.library || libName, b.unit || '', b.unitEnglishName || '', b.member || '', b.memberEnglishName || '', b.call || '', b.callEach || '')
+      if (b && typeof b === 'object') push(b.library || libName, b.uiProvider || '', b.unit || '', b.unitEnglishName || '', b.member || '', b.memberEnglishName || '', b.call || '', b.callEach || '')
     }
   }
   // 就地形式：windowUnits[].methods[] 尚未在 schema 展开（留待需要），当前只读顶层数组。
@@ -1614,7 +1625,12 @@ function applyMemberTemplate(template: string, handleExpr: string, valueExpr: st
 }
 
 // 按（控件类型, 方法名）解析方法绑定（call 或 callEach）；先精确类型、再回退通用 '*'。
-function resolveControlMethod(bindings: NormalizedControlMethodBinding[], unitType: string, method: string): NormalizedControlMethodBinding | null {
+function resolveControlMethod(bindings: NormalizedControlMethodBinding[], unitType: string, method: string, library?: string): NormalizedControlMethodBinding | null {
+  if (library) bindings = bindings.filter(binding => binding.library === normalizeKey(library))
+  bindings = bindings.filter(binding => !binding.uiProvider || binding.uiProvider === normalizeKey(activeWindowUiProvider))
+  if (activeWindowUiProvider === EUI_WINDOW_UI_PROVIDER && ['krnln', 'webview2'].includes(normalizeKey(library || ''))) {
+    bindings = bindings.filter(binding => binding.uiProvider === normalizeKey(activeWindowUiProvider))
+  }
   if (bindings.length === 0) return null
   const ut = normalizeKey(unitType)
   const mb = normalizeKey(method)
@@ -1642,7 +1658,7 @@ function translateControlMethodCall(call: { name: string; args: string[] }, tx: 
   if (!/^[一-龥㐀-䶿가-힣぀-ヿA-Za-z_][一-龥㐀-䶿가-힣぀-ヿA-Za-z0-9_]*$/.test(objName)) return null
   const type = resolveProjectControlType(objName)
   if (!type) return null
-  const binding = resolveControlMethod(loadCompileProtocols().controlMethods, type, method)
+  const binding = resolveControlMethod(loadCompileProtocols().controlMethods, type, method, currentProjectControlLibraries.get(objName))
   if (!binding) return null
   // 省略实参保留空串（不转译成 '0'）：让 applyMemberTemplate 的 {N|默认} 占位对省略参数取默认（如移动的哨兵）。
   const cArgs = (call.args || []).map(a => (a ?? '').trim() === '' ? '' : tx(a))
@@ -1660,13 +1676,19 @@ function translateControlMethodCall(call: { name: string; args: string[] }, tx: 
   return applyMemberTemplate(binding.call, hExpr, '', cArgs, nExpr)
 }
 
-// 按（控件类型, 成员名）解析属性读写模板。控件类型全局唯一，故不按 library 过滤（与 resolveControlByProtocol 一致宽松）。
+// 新格式控件按支持库和类型解析；旧 Win32 项目保留原来的类型查找行为。
 function resolveControlMemberTemplate(
   bindings: NormalizedControlMemberBinding[],
   unitType: string,
   member: string,
   kind: 'get' | 'set',
+  library?: string,
 ): string | null {
+  if (library) bindings = bindings.filter(binding => binding.library === normalizeKey(library))
+  bindings = bindings.filter(binding => !binding.uiProvider || binding.uiProvider === normalizeKey(activeWindowUiProvider))
+  if (activeWindowUiProvider === EUI_WINDOW_UI_PROVIDER && ['krnln', 'webview2'].includes(normalizeKey(library || ''))) {
+    bindings = bindings.filter(binding => binding.uiProvider === normalizeKey(activeWindowUiProvider))
+  }
   if (bindings.length === 0) return null
   const ut = normalizeKey(unitType)
   const mb = normalizeKey(member)
@@ -2503,7 +2525,8 @@ function bytesToCArrayBody(bytes: Buffer): string {
 // 命令名 → 支持库命令信息（来源由支持库元数据决定）
 function buildCommandMap(targetPlatform?: TargetPlatform): Map<string, LibCommand & { libraryName: string; libraryFileName: string }> {
   const map = new Map<string, LibCommand & { libraryName: string; libraryFileName: string }>()
-  const allCommands = libraryManager.getAllCommands(targetPlatform)
+  const allCommands = libraryManager.getAllCommands(targetPlatform).filter(command =>
+    command.libraryFileName !== 'eui' || activeWindowUiProvider === EUI_WINDOW_UI_PROVIDER)
 
   for (const cmd of allCommands) {
     if (cmd.isHidden) continue
@@ -3179,6 +3202,8 @@ let fileScopeArrayVars = new Map<string, TranspileArrayInfo>()
 // 项目全体控件名→控件类型（跨所有窗口，转译开始前灌一次）。控件成员访问按类型键控派发的依据：
 // 只有确属控件的 `名.成员` 才译成运行时读写，避免与自定义类型成员（如 rect.位置）撞名。
 let currentProjectControls = new Map<string, string>()
+let currentProjectControlLibraries = new Map<string, string>()
+let activeWindowUiProvider: string = LEGACY_WINDOW_UI_PROVIDER
 function resolveProjectControlType(name: string): string {
   return currentProjectControls.get(name) || ''
 }
@@ -3531,7 +3556,7 @@ function replaceControlPropertyReads(expr: string, variableTypeResolver?: (name:
       if (!type) return whole
       // 同名变量遮蔽控件名（如自定义类型变量恰与控件同名）→ 按变量成员处理，原样保留
       if (variableTypeResolver?.(ctrlName)) return whole
-      const getTpl = resolveControlMemberTemplate(bindings, type, member, 'get')
+      const getTpl = resolveControlMemberTemplate(bindings, type, member, 'get', currentProjectControlLibraries.get(ctrlName))
       // 确属控件而属性无 get 绑定 → 友好报错并中止（原样保留会变成难懂的 undeclared identifier）；
       // 行号前缀由 transpileEycContent 主循环的 catch 统一补上。
       if (!getTpl) throw new Error(`${type}“${ctrlName}”的属性“${member}”暂不支持在代码中读取`)
@@ -4718,6 +4743,9 @@ const YCMD_CUSTOM_NATIVE_EXPRS: Record<string, (args: string[], name: string, co
       throw new Error(`命令“${name}”的「父窗口」须为本项目中的窗口名，但收到：${parent}`)
     }
     const dlg = (args[2] || '').trim() ? formatArgForC(args[2], commandMap, directCallables) : '1'
+    if (activeWindowUiProvider === EUI_WINDOW_UI_PROVIDER && !['0', 'false'].includes(dlg)) {
+      throw new Error('EUI 的标准「载入」目前只支持明确指定非模态（第三参数为假）。异步模态窗口请使用「EUI显示窗口」，不能冒充 Win32 同步模态语义。')
+    }
     return `yc_win_load(L"${escapeCString(t)}", L"${escapeCString(parent)}", (int)(${dlg}))`
   },
   // 销毁(窗口?)：省略窗口=销毁当前代码所在窗口（须在窗口的代码文件中，efw.sourceFile↔eyc 归属判定）。
@@ -7148,7 +7176,7 @@ function transpileEycContent(eycContent: string, fileName: string, projectGlobal
         // 模板占位 {h}=控件句柄、{v}=原始值、{vtext}=文本化值。
         const propCtrlType = propMatch ? resolveProjectControlType(propMatch[1]) : ''
         const propSetTpl = (propMatch && propCtrlType)
-          ? resolveControlMemberTemplate(loadCompileProtocols().controlMembers, propCtrlType, propMatch[2], 'set')
+          ? resolveControlMemberTemplate(loadCompileProtocols().controlMembers, propCtrlType, propMatch[2], 'set', currentProjectControlLibraries.get(propMatch[1]))
           : null
         // 确属控件（且名字未被同名变量遮蔽）而属性无 set 绑定 → 友好报错并中止，
         // 不再把 `控件.属性` 原样发成 C++ 左值（那会变成难懂的 undeclared identifier）。
@@ -7518,18 +7546,7 @@ function generateMainC(
   // 之外定义——转译产物的前导里这两条声明是**无条件**发的（见 extern int yc_text_compare），
   // 定义却曾被关在窗口分支里：控制台工程只要写了 `甲 ＝ 乙`（文本比较）就链接失败
   // 「未定义符号: yc_text_compare」。
-  mainCode += 'int yc_text_compare(const wchar_t* left, const wchar_t* right) {\n'
-  mainCode += '    const wchar_t* lhs = left ? left : L"";\n'
-  mainCode += '    const wchar_t* rhs = right ? right : L"";\n'
-  mainCode += '    return lstrcmpW(lhs, rhs);\n'
-  mainCode += '}\n\n'
-
-  mainCode += 'int yc_text_starts_with(const wchar_t* text, const wchar_t* prefix) {\n'
-  mainCode += '    const wchar_t* src = text ? text : L"";\n'
-  mainCode += '    const wchar_t* pre = prefix ? prefix : L"";\n'
-  mainCode += '    size_t preLen = wcslen(pre);\n'
-  mainCode += '    return wcsncmp(src, pre, preLen) == 0 ? 1 : 0;\n'
-  mainCode += '}\n\n'
+  mainCode += generateTextComparisonRuntimeCode()
 
   if (isWindowsApp) {
     // 查找启动窗口文件（预览时优先用指定的当前窗体作为启动窗口）
@@ -7909,6 +7926,7 @@ function generateMainC(
     // 窗体名也注册为「窗口」类型——`窗口名.标题/宽度/可视` 等经通用绑定生效（启动窗口经名字解析到 g_hMainWnd；
     // 非启动窗口暂解析不到句柄，运行时为无害空操作，与声明式化前的行为一致）。
     currentProjectControls = new Map<string, string>()
+    currentProjectControlLibraries = new Map()
     currentProjectWindowNames = new Set<string>()
     // 代码文件 → 所属窗口名（efw.sourceFile 显式关联，缺省回退 <efw基名>.eyc）：裸 销毁() 的归属判定
     const eycFileToWindowName = new Map<string, string>()
@@ -10412,6 +10430,81 @@ void yc_dp_set_prop(const wchar_t* n, int prop, int v){ YC_DP_V(n); switch(prop)
   return additionalCFiles
 }
 
+function generateTextComparisonRuntimeCode(): string {
+  return 'int yc_text_compare(const wchar_t* left, const wchar_t* right) {\n'
+    + '    const wchar_t* lhs = left ? left : L"";\n'
+    + '    const wchar_t* rhs = right ? right : L"";\n'
+    + '    return lstrcmpW(lhs, rhs);\n'
+    + '}\n\n'
+    + 'int yc_text_starts_with(const wchar_t* text, const wchar_t* prefix) {\n'
+    + '    const wchar_t* src = text ? text : L"";\n'
+    + '    const wchar_t* pre = prefix ? prefix : L"";\n'
+    + '    size_t preLen = wcslen(pre);\n'
+    + '    return wcsncmp(src, pre, preLen) == 0 ? 1 : 0;\n'
+    + '}\n\n'
+}
+
+function generateEuiUserSources(project: ProjectInfo, forms: EuiFormInput[], temp: string, editorFiles?: Map<string, string>, preview = false): EuiUserCode {
+  if (preview) {
+    const used = new Set(forms.flatMap(form => form.controls.map(control => control.libraryId)))
+    return {
+      sources: libraryManager.getLoadedLibraryFiles('windows').filter(library => library.name !== 'eui' && used.has(library.name)).map(library => library.libraryPath),
+      definitions: '', handlers: [],
+    }
+  }
+  const metadata = resolveProjectCompileMetadata(project, editorFiles)
+  currentProjectControls = new Map()
+  currentProjectControlLibraries = new Map()
+  currentProjectWindowNames = new Set(forms.map(form => form.name))
+  currentKnownConstantNames = new Set(metadata.constants.map(constant => constant.name))
+  currentProjectResourceNames = new Set(metadata.resources.map(resource => resource.name))
+  activeProjectCustomTypeNames = new Set(metadata.dataTypes.map(type => type.name))
+  activeProjectClassNames = new Set(metadata.classModules.map(type => type.className))
+  if (metadata.resources.length || metadata.classModules.length) throw new Error('EUI 实验后端暂不支持 .erc 资源和类模块，请使用图片路径及普通子程序')
+  const rootUnit = libraryManager.getAllWindowUnits('windows').find(unit => unit.topLevel && unit.uiProviders?.includes(EUI_WINDOW_UI_PROVIDER))
+  if (!rootUnit) throw new Error('EUI 支持库缺少顶层窗口定义')
+  for (const form of forms) {
+    currentProjectControls.set(form.name, rootUnit.englishName)
+    currentProjectControlLibraries.set(form.name, rootUnit.libraryName)
+    for (const control of form.controls) {
+      const unit = findWindowControlUnit(libraryManager.getAllWindowUnits('windows'), control)
+      if (!unit) throw new Error(`控件支持库或稳定类型未加载：${control.libraryId}/${control.typeId}`)
+      currentProjectControls.set(control.name, unit.englishName)
+      currentProjectControlLibraries.set(control.name, unit.libraryName)
+    }
+  }
+  const constants = collectLibraryConstants(new Set(libraryManager.getLoadedLibraryFiles('windows').map(library => library.name)))
+  const sources: string[] = []
+  if (!preview) {
+    const used = collectUsedLibraryFileNames(project, editorFiles)
+    for (const form of forms) for (const control of form.controls) if (control.libraryId) used.add(control.libraryId)
+    sources.push(...libraryManager.getLoadedLibraryFiles('windows').filter(library => library.name !== 'eui' && used.has(library.name)).map(library => library.libraryPath))
+  }
+  if (!preview) for (const file of project.files) {
+    if (!['EYC', 'EGV', 'ECS', 'EDT', 'ELL'].includes(file.type)) continue
+    const content = editorFiles?.get(file.fileName) ?? readFileSync(join(project.projectDir, file.fileName), 'utf8')
+    currentTranspileWindowName = forms.find(form => (form.sourceFile || `${form.name}.eyc`) === file.fileName)?.name || ''
+    try {
+      const code = transpileEycContent(content, file.fileName, metadata.globals, metadata.constants, metadata.resources, constants, metadata.subprograms, metadata.dataTypes, metadata.dllCommands, false, {}, 'windows')
+      const output = join(temp, `source-${sources.length}.cpp`)
+      writeFileSync(output, code, 'utf8')
+      sources.push(output)
+    } finally { currentTranspileWindowName = '' }
+  }
+  // Use the same value types and declarations as the shared language transpiler.
+  const definitions = `#include <string>\n#include <vector>\n
+struct YC_TEXT { std::wstring s; YC_TEXT() {} YC_TEXT(const wchar_t* p) : s(p ? p : L"") {} YC_TEXT(const std::wstring& w) : s(w) {} YC_TEXT(std::wstring&& w) : s(std::move(w)) {} operator const wchar_t*() const { return s.c_str(); } const wchar_t* c_str() const { return s.c_str(); } bool empty() const { return s.empty(); } };
+struct YC_DATE { double v; YC_DATE() : v(0.0) {} YC_DATE(double d) : v(d) {} operator double() const { return v; } };
+typedef std::vector<unsigned char> YC_BIN;
+${generateProjectDataTypeStructCode(metadata.dataTypes)}
+${metadata.globals.map(variable => `${mapTypeToVarCType(variable.type)} ${variable.name} = ${getTypeDefaultInitializer(variable.type)};`).join('\n')}
+${generateTextComparisonRuntimeCode()}`
+  return {
+    sources, definitions,
+    handlers: preview ? [] : metadata.subprograms.map(sub => ({ name: sub.name, params: sub.params.length, returnType: sub.returnType })),
+  }
+}
+
 // 编译项目
 export async function compileProject(options: CompileOptions, editorFiles?: Map<string, string>): Promise<CompileResult> {
   const result: CompileResult = {
@@ -10419,6 +10512,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
   }
 
   const startTime = Date.now()
+  currentProjectControlLibraries = new Map()
   activeProjectCustomTypeNames = new Set()
   activeProjectClassNames = new Set()
   resetCompileDiagnosticContext()
@@ -10442,6 +10536,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
     }
 
     startCompileLog(projectDir, project.projectName)
+    activeWindowUiProvider = project.uiProvider || LEGACY_WINDOW_UI_PROVIDER
     compileLogRaw(`项目目录: ${projectDir}`)
     compileLogRaw(`文件数: ${project.files.length}, 输出类型: ${project.outputType}, 平台标记: ${project.platform}`)
     compileLogMark('解析项目文件 .epp')
@@ -10466,7 +10561,7 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       : (projectPlatform || hostPlatform)
 
     await yieldToEventLoop()
-    const signatureErrors = validateProjectCommandSignatures(project, editorFiles, targetPlatform)
+    const signatureErrors = options.previewWindow ? [] : validateProjectCommandSignatures(project, editorFiles, targetPlatform)
     compileLogMark('校验命令签名（遍历全部源文件）')
     await yieldToEventLoop()
     if (signatureErrors.length > 0) {
@@ -10487,6 +10582,21 @@ export async function compileProject(options: CompileOptions, editorFiles?: Map<
       : (normalizeTargetArch(options.arch)
         || normalizeTargetArch(project.platform)
         || (targetPlatform === 'macos' ? 'arm64' : 'x64'))
+
+    if (project.outputType === 'WindowsApp' && project.uiProvider === EUI_WINDOW_UI_PROVIDER) {
+      if (projectPlatform !== 'windows' || targetPlatform !== 'windows' || targetArch !== 'x64') throw new Error('EUI 当前只支持 Windows x64 项目及本机运行，不会自动改目标平台')
+      if (project.uiProviderApiVersion !== 1 || project.uiProviderPluginVersion !== '0.1.0') throw new Error('EUI 项目协议或支持库版本不兼容')
+      if (Object.values(options.breakpoints || {}).some(points => points.length)) throw new Error('EUI 实验后端尚未支持断点调试，请清除断点后普通运行')
+      const built = await buildEuiProject(project, getAppDirectory(), libraryManager.getAllWindowUnits('windows'),
+        (forms, temp) => generateEuiUserSources(project, forms, temp, editorFiles, !!options.previewWindow),
+        sendMessage, editorFiles, options.previewWindow)
+      finishCompileLog('EUI / MSVC 构建成功')
+      return built
+    }
+    if (project.outputType === 'WindowsApp' && project.uiProvider && project.uiProvider !== LEGACY_WINDOW_UI_PROVIDER) {
+      throw new Error(`窗口提供者未注册：${project.uiProvider}`)
+    }
+    if (project.outputType === 'WindowsApp' && targetPlatform !== 'windows') throw new Error('Win32 窗口不支持当前目标平台，不能自动更换为自绘窗口')
 
     const targetTriple = buildZigTargetTriple(targetPlatform, targetArch)
     if (buildMode === 'compile' && !projectPlatform) {

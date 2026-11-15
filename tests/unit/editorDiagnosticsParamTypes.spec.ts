@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { windowUnitKey } from '../../src/shared/plugin/windowControls'
 import {
   buildControlPropTypes,
   buildEditorDiagnosticsProblems,
@@ -34,6 +35,16 @@ function run(text: string): ReturnType<typeof buildEditorDiagnosticsProblems> {
 }
 
 const SUB_HEAD = '.子程序 测试子程序\n.局部变量 文本变量, 文本型\n.局部变量 整数变量, 整数型\n'
+
+it('跨库同名控件的属性诊断使用各自定义，不按显示名串库', () => {
+  const first = { name: '状态框', libraryName: 'first', englishName: 'Status', properties: [{ name: '状态', typeName: '整数型' }] }
+  const second = { ...first, libraryName: 'vendor.controls', properties: [{ name: '状态', typeName: '文本型' }] }
+  const types = buildControlPropTypes([
+    { name: '框1', type: windowUnitKey(first) }, { name: '框2', type: windowUnitKey(second) },
+  ], [first, second])
+  expect(types?.框1.状态).toBe('整数型')
+  expect(types?.框2.状态).toBe('文本型')
+})
 
 describe('命令参数数据类型检查', () => {
   it('用户场景：文本参数传未加引号的 1.txt → 报无效表达式并提示加引号', () => {

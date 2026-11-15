@@ -1,0 +1,34 @@
+{
+  "id": "ycide.eui",
+  "displayName": "EUI 自绘窗口支持库（实验）",
+  "version": "0.1.0",
+  "publisher": "ycide",
+  "builtin": true,
+  "engines": { "ycide": ">=0.0.5" },
+  "runtime": { "type": "none" },
+  "dependencies": { "ycide.krnln": "*" },
+  "targets": ["windows-x64"],
+  "description": "EUI-NEO v0.6.3 自绘窗口，当前仅 Windows x64 实验接入；需要本地 MSVC、CMake 和已准备的 SDK，系统读屏桥接尚未实现。",
+  "contributes": {
+    "libraries": [{ "name": "eui" }],
+    "compilers": [{
+      "id": "ycide.eui-msvc",
+      "displayName": "EUI / MSVC（实验）",
+      "targets": ["windows-x64"],
+      "acceptsImplementations": ["cpp", "c"]
+    }],
+    "windowUiProviders": [{
+      "id": "ycide.eui.selfdraw",
+      "displayName": "EUI 跨平台自绘（当前仅 Windows x64 实验）",
+      "library": "eui",
+      "apiVersion": 1,
+      "targets": ["windows-x64"],
+      "rootWindowType": "EuiWindow",
+      "runtimeAdapter": "eui",
+      "designerAdapter": "eui",
+      "compilerId": "ycide.eui-msvc",
+      "controlAdapters": ["eui", "win32"],
+      "experimental": true
+    }]
+  }
+}

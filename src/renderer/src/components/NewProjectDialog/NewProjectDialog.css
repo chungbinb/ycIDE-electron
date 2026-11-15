@@ -1,5 +1,40 @@
 /* 新建项目对话框 */
 
+.np-field select {
+  min-height: 30px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  font: inherit;
+}
+
+.np-field select:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.np-provider-error {
+  color: var(--error);
+  margin: 0;
+}
+
+.np-experimental {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.np-field .np-experimental input {
+  height: auto;
+  flex: none;
+}
+
+.np-experimental input:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
 .np-dialog-overlay {
   position: fixed;
   inset: 0;
@@ -11,6 +46,7 @@
 }
 
 .np-dialog {
+  max-height: calc(100vh - 32px);
   background: var(--dialog-bg);
   border: 1px solid var(--dialog-border);
   border-radius: 6px;
@@ -48,6 +84,8 @@
 }
 
 .np-dialog-body {
+  overflow-y: auto;
+  min-height: 0;
   padding: 16px;
   display: flex;
   flex-direction: column;

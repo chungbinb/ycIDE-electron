@@ -1,4 +1,5 @@
 import type { LibWindowUnit } from './VisualDesigner'
+import { windowUnitKey } from '../../../../shared/plugin/windowControls'
 import {
   WINDOW_METHOD_WHITELIST,
   WINDOW_OBJECT_METHODS,
@@ -70,7 +71,9 @@ export function buildMemberCompletionSource(params: {
   // 才提供成员补全；不再按「去尾数字」猜类型（设计器没放置 编辑框1 时，敲 编辑框1. 不应弹成员窗）。
   // 返回空列表（非 null）让调用方直接不弹窗，而不是回退到全量命令列表。
   if (!mappedType) return []
-  const typeName = normalizeMemberTypeName(mappedType)
+  const qualifiedUnit = windowUnits.find(unit => windowUnitKey(unit) === mappedType)
+  const displayType = qualifiedUnit?.name || mappedType
+  const typeName = normalizeMemberTypeName(displayType)
 
   const toMemberItem = (
     name: string,
@@ -98,7 +101,7 @@ export function buildMemberCompletionSource(params: {
   for (const unit of windowUnits) {
     const unitName = normalizeMemberTypeName(unit.name)
     const unitEn = normalizeMemberTypeName(unit.englishName || '')
-    if (typeName && unitName !== typeName && unitEn !== typeName) continue
+    if (qualifiedUnit ? unit !== qualifiedUnit : typeName && unitName !== typeName && unitEn !== typeName) continue
 
     for (const p of unit.properties || []) {
       const propName = (p.name || '').trim()
@@ -119,7 +122,7 @@ export function buildMemberCompletionSource(params: {
   }
 
   // 变量类型为项目类模块时，补全该类的公开方法
-  const rawMappedType = (mappedType || '').trim()
+  const rawMappedType = displayType.trim()
   const classMembers = classMethodMap
     ? (classMethodMap.get(rawMappedType) || classMethodMap.get(typeName) || [])
     : []
@@ -131,7 +134,7 @@ export function buildMemberCompletionSource(params: {
       field.type ? `成员（${field.type}）` : '成员',
       '成员',
       field.type || '',
-      mappedType || typeName,
+      displayType,
       '用户定义',
     ),
   )
@@ -146,18 +149,18 @@ export function buildMemberCompletionSource(params: {
   // 2) 窗口/控件的「对象」通用方法（获取焦点/销毁/移动/重画…）。
   // 这些方法在命令目录里缺失（只存在于 ABI 映射），故用内置静态定义直接合成成员项，
   // 仅当访问对象是窗口单元（窗口本身或某控件类型）时才注入，避免污染类实例/自定义类型的成员列表。
-  const isWindowOrControlType = windowUnits.some(u =>
+  const isWindowOrControlType = !!qualifiedUnit || windowUnits.some(u =>
     normalizeMemberTypeName(u.name) === typeName || normalizeMemberTypeName(u.englishName || '') === typeName,
   )
   const objectMethodMembers: CompletionItem[] = isWindowOrControlType
     ? WINDOW_OBJECT_METHODS.map(m => toMemberItem(
-      m.name, '', m.description, '方法', m.returnType, mappedType || typeName, '系统核心支持库', m.params,
+      m.name, '', m.description, '方法', m.returnType, displayType, '系统核心支持库', m.params,
     ))
     : []
   // 控件类型专属方法（如 编辑框.加入文本）：按 typeName 匹配追加。
   const typeMethodList = CONTROL_TYPE_METHODS[typeName] || (mappedType ? CONTROL_TYPE_METHODS[mappedType] : undefined) || []
   const controlTypeMethodMembers: CompletionItem[] = typeMethodList.map(m => toMemberItem(
-    m.name, '', m.description, '方法', m.returnType, mappedType || typeName, '系统核心支持库', m.params,
+    m.name, '', m.description, '方法', m.returnType, displayType, '系统核心支持库', m.params,
   ))
   // 保留命令目录白名单过滤路径（未来清单若补入这些方法，dedupe 会去重）。
   const windowMethods = [...memberCommands, ...allCommands]
@@ -189,7 +192,10 @@ export function buildMemberCompletionSource(params: {
   }
   const childControlMembers: CompletionItem[] = controlPairs
     .filter(([ctrlName]) => !!ctrlName)
-    .map(([ctrlName, ctrlType]) => toMemberItem(ctrlName, '', `窗口组件（${ctrlType}）`, '组件', ctrlType, '窗口', '窗口组件'))
+    .map(([ctrlName, ctrlType]) => {
+      const displayType = windowUnits.find(unit => windowUnitKey(unit) === ctrlType)?.name || ctrlType
+      return toMemberItem(ctrlName, '', `窗口组件（${displayType}）`, '组件', ctrlType, '窗口', '窗口组件')
+    })
   const subMembers: CompletionItem[] = subNames
     .map(name => (name || '').trim())
     .filter(Boolean)

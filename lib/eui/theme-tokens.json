@@ -1,0 +1,33 @@
+{
+  "bodyFontSize": 16,
+  "buttonRadius": 16,
+  "inputRadius": 6,
+  "titlebarHeight": 36,
+  "captionButtonWidth": 72,
+  "titleFontSize": 14,
+  "windowBorderWidth": 1,
+  "light": {
+    "background": [0.95, 0.95, 0.97, 1],
+    "primary": [0.2196078431, 0.4431372549, 0.8784313725, 1],
+    "surface": [1, 1, 1, 1],
+    "surfaceHover": [0.9, 0.9, 0.9, 1],
+    "surfaceActive": [0.8, 0.8, 0.8, 1],
+    "text": [0, 0, 0, 1],
+    "border": [0.55, 0.55, 0.55, 1],
+    "buttonText": [1, 1, 1, 1],
+    "buttonHover": [0.18, 0.35, 0.7, 1],
+    "buttonPressed": [0.14, 0.3, 0.65, 1]
+  },
+  "dark": {
+    "background": [0.1, 0.1, 0.12, 1],
+    "primary": [0.2196078431, 0.4431372549, 0.8784313725, 1],
+    "surface": [0.15, 0.15, 0.18, 1],
+    "surfaceHover": [0.25, 0.25, 0.28, 1],
+    "surfaceActive": [0.35, 0.35, 0.38, 1],
+    "text": [1, 1, 1, 1],
+    "border": [0.55, 0.55, 0.55, 1],
+    "buttonText": [1, 1, 1, 1],
+    "buttonHover": [0.18, 0.35, 0.7, 1],
+    "buttonPressed": [0.14, 0.3, 0.65, 1]
+  }
+}

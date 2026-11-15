@@ -1,0 +1,134 @@
+{
+  "contractVersion": "1.0",
+  "library": "eui",
+  "libraryDisplayName": "EUI 自绘窗口支持库（实验）",
+  "libraryVersion": "0.1.0",
+  "implementations": {
+    "windows": {
+      "entry": "runtime.cpp",
+      "language": "cpp"
+    }
+  },
+  "commands": [
+    {
+      "commandId": "eui.GetText",
+      "displayName": "EUI取文本",
+      "summary": "EUI 控件状态与窗口运行时接口（实验）。",
+      "returnType": "文本型",
+      "category": "EUI窗口",
+      "supportedPlatforms": [
+        "windows"
+      ],
+      "params": [
+        {
+          "name": "名称",
+          "type": "文本型",
+          "optional": false,
+          "description": "名称"
+        }
+      ]
+    },
+    {
+      "commandId": "eui.SetText",
+      "displayName": "EUI置文本",
+      "summary": "EUI 控件状态与窗口运行时接口（实验）。",
+      "returnType": "无返回值",
+      "category": "EUI窗口",
+      "supportedPlatforms": [
+        "windows"
+      ],
+      "params": [
+        {
+          "name": "名称",
+          "type": "文本型",
+          "optional": false,
+          "description": "名称"
+        },
+        {
+          "name": "文本",
+          "type": "文本型",
+          "optional": false,
+          "description": "文本"
+        }
+      ]
+    },
+    {
+      "commandId": "eui.GetNumber",
+      "displayName": "EUI取数值属性",
+      "summary": "EUI 控件状态与窗口运行时接口（实验）。",
+      "returnType": "整数型",
+      "category": "EUI窗口",
+      "supportedPlatforms": [
+        "windows"
+      ],
+      "params": [
+        {
+          "name": "名称",
+          "type": "文本型",
+          "optional": false,
+          "description": "名称"
+        },
+        {
+          "name": "属性",
+          "type": "文本型",
+          "optional": false,
+          "description": "属性"
+        }
+      ]
+    },
+    {
+      "commandId": "eui.SetNumber",
+      "displayName": "EUI置数值属性",
+      "summary": "EUI 控件状态与窗口运行时接口（实验）。",
+      "returnType": "无返回值",
+      "category": "EUI窗口",
+      "supportedPlatforms": [
+        "windows"
+      ],
+      "params": [
+        {
+          "name": "名称",
+          "type": "文本型",
+          "optional": false,
+          "description": "名称"
+        },
+        {
+          "name": "属性",
+          "type": "文本型",
+          "optional": false,
+          "description": "属性"
+        },
+        {
+          "name": "数值",
+          "type": "整数型",
+          "optional": false,
+          "description": "数值"
+        }
+      ]
+    },
+    {
+      "commandId": "eui.OpenWindow",
+      "displayName": "EUI显示窗口",
+      "summary": "异步显示本项目中的 EUI 窗口，立即返回；模态时限制主窗口输入，关闭后恢复。不具有 Win32 同步载入的等待语义。",
+      "returnType": "整数型",
+      "category": "EUI窗口",
+      "supportedPlatforms": [
+        "windows"
+      ],
+      "params": [
+        {
+          "name": "窗口名称",
+          "type": "文本型",
+          "optional": false,
+          "description": "窗口名称"
+        },
+        {
+          "name": "模态",
+          "type": "逻辑型",
+          "optional": false,
+          "description": "模态"
+        }
+      ]
+    }
+  ]
+}

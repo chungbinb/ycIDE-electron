@@ -14,7 +14,9 @@ import { setRuntimeEnv } from './runtimeEnv'
 import { buildAndRunAndroidProject, shouldRunAsAndroid } from './android-runner'
 import { normalizeRuntimePlatform } from '../shared/platform'
 import { initPluginHost, getPluginService } from './plugins/electronPluginHost'
-import { CompilerService, DEFAULT_COMPILER_ID, readProjectValue } from './compilers/compilerService'
+import { CompilerService, DEFAULT_COMPILER_ID, readProjectValue, type CompilerEntry, type CompilerBackend } from './compilers/compilerService'
+import { filterWindowUnits, projectWindowUi, resolveWindowProviders, validateProjectWindowUi } from './windowUiService'
+import { collectWindowUiProviders, readWindowUiProject, requireWindowUiProvider } from '../shared/plugin/windowUiProviders'
 import { buildContributionModel } from '../shared/plugin/contributions'
 import { resolveMenubar, type ResolvedMenuItem } from '../shared/plugin/contributions'
 import { buildRecentOpenedEntries, buildThemeEntries, RECENT_OPENED_SUBMENU, THEMES_SUBMENU } from '../shared/plugin/workbenchMenus'
@@ -1143,10 +1145,7 @@ function setupNativeMenu(): void {
 }
 
 // 编译器由插件提供（设计稿 §6.5）：内置 Zig 编译器的实现在本进程，第三方编译器经插件命令实现
-const compilerService = new CompilerService({
-  getManifests: () => getPluginService()?.getState().manifests ?? [],
-  builtinBackends: {
-    [DEFAULT_COMPILER_ID]: entry => ({
+const builtinWindowCompiler = (entry: CompilerEntry): CompilerBackend => ({
       id: entry.id,
       displayName: entry.displayName,
       build: async request => libraryManager.getList().some(l => l.isCore) ? compileViaWorker({
@@ -1168,7 +1167,22 @@ const compilerService = new CompilerService({
       stop: async () => stopExecutable(),
       isRunning: async () => isRunning(),
       continueDebug: async () => continueDebugExecutable(),
-    }),
+    })
+const compilerService = new CompilerService({
+  getManifests: () => getPluginService()?.getState().manifests ?? [],
+  builtinBackends: {
+    [DEFAULT_COMPILER_ID]: builtinWindowCompiler,
+    'ycide.eui-msvc': builtinWindowCompiler,
+  },
+  validateWindowUi: (projectDir, target, compilerId) => {
+    if (readProjectValue(projectDir, 'OutputType') !== 'WindowsApp') return null
+    if (/^(android|ios|harmony)/.test(readProjectValue(projectDir, 'Platform'))) return null
+    try {
+      const provider = validateProjectWindowUi(getPluginService()?.getState().manifests ?? [], libraryManager.getAllWindowUnits(target), target, app.isPackaged ? dirname(process.execPath) : app.getAppPath(), projectDir)
+      if ((provider.runtimeAdapter === 'eui' && provider.compilerId !== compilerId) ||
+        (provider.runtimeAdapter === 'win32' && compilerId === 'ycide.eui-msvc')) return `窗口后端需要兼容编译器，当前选择 ${compilerId}。请恢复项目 Compiler 设置。`
+      return null
+    } catch (error) { return error instanceof Error ? error.message : String(error) }
   },
   executeCommand: (command, args) => {
     const service = getPluginService()
@@ -1463,7 +1477,20 @@ app.whenReady().then(() => {
     return { projectDir, exists: existsSync(projectDir) }
   })
 
-  ipcMain.handle('project:create', (_event, info: { name: string; path: string; type: string; platform: string; overwrite?: boolean }) => {
+  ipcMain.handle('project:windowUiProviders', (_event, target: string) => {
+    return resolveWindowProviders(getPluginService()?.getState().manifests ?? [], libraryManager.getAllWindowUnits(target), target, app.isPackaged ? dirname(process.execPath) : app.getAppPath())
+  })
+  ipcMain.handle('project:create', (_event, info: { name: string; path: string; type: string; platform: string; uiProvider?: string; overwrite?: boolean }) => {
+    const providers = info.type === 'windows-app'
+      ? resolveWindowProviders(getPluginService()?.getState().manifests ?? [], libraryManager.getAllWindowUnits(info.platform), info.platform, app.isPackaged ? dirname(process.execPath) : app.getAppPath())
+      : []
+    const available = providers.filter(provider => provider.available)
+    if (info.type === 'windows-app' && !info.uiProvider && available.length !== 1) {
+      throw new Error(available.length ? '多个窗口 UI 支持库可用，请明确选择。' : '当前目标没有可用窗口 UI 支持库。')
+    }
+    const selected = info.type === 'windows-app'
+      ? requireWindowUiProvider(providers, { uiProvider: info.uiProvider || (available.length === 1 ? available[0].id : '') })
+      : undefined
     const projectDir = join(validatePath(info.path), info.name)
     if (existsSync(projectDir)) {
       if (!info.overwrite) {
@@ -1529,6 +1556,12 @@ app.whenReady().then(() => {
       `ProjectName=${info.name}`,
       `OutputType=${outputType}`,
       `Platform=${info.platform}`,
+      ...(selected ? [
+        `UiProvider=${selected.id}`,
+        `UiProviderApiVersion=${selected.apiVersion}`,
+        `UiProviderPluginVersion=${selected.pluginVersion}`,
+        ...(selected.runtimeAdapter === 'eui' ? [`Compiler=${selected.compilerId}`] : []),
+      ] : []),
       '',
       ...files
     ]
@@ -1595,7 +1628,7 @@ app.whenReady().then(() => {
       }
     }
     const projectDir = join(safeEppPath, '..')
-    return { projectName: info['ProjectName'] || '', outputType: info['OutputType'] || '', platform: info['Platform'] || '', files, projectDir }
+    return { projectName: info['ProjectName'] || '', outputType: info['OutputType'] || '', platform: info['Platform'] || '', ...readWindowUiProject(content), files, projectDir }
   })
 
   // 更新项目文件中的平台架构
@@ -1606,6 +1639,7 @@ app.whenReady().then(() => {
     if (!eppFile) return
     const eppPath = join(safeDir, eppFile)
     let content = await readFileAsync(eppPath, 'utf-8')
+    if (!/^(windows|linux|macos)(-(x64|x86|arm64))?$/.test(platform)) throw new Error(`无效的项目目标平台：${platform}`)
     if (content.match(/^Platform=.*/m)) {
       content = content.replace(/^Platform=.*/m, `Platform=${platform}`)
     } else {
@@ -2335,8 +2369,16 @@ app.whenReady().then(() => {
   ipcMain.handle('library:getAllDataTypes', (_event, targetPlatform?: string) => {
     return libraryManager.getAllDataTypes(targetPlatform)
   })
-  ipcMain.handle('library:getWindowUnits', (_event, targetPlatform?: string) => {
-    return libraryManager.getAllWindowUnits(targetPlatform)
+  ipcMain.handle('library:getWindowUnits', (_event, targetPlatform?: string, projectDir?: string) => {
+    const directory = projectDir ? validatePath(projectDir) : undefined
+    const hasProject = directory && readdirSync(directory).some(file => file.toLowerCase().endsWith('.epp'))
+    const target = targetPlatform || (directory ? readProjectValue(directory, 'Platform') : undefined) || 'windows'
+    const units = libraryManager.getAllWindowUnits()
+    const providerId = hasProject ? projectWindowUi(directory).uiProvider : undefined
+    const provider = providerId
+      ? collectWindowUiProviders(getPluginService()?.getState().manifests ?? [], target).find(entry => entry.id === providerId)
+      : undefined
+    return filterWindowUnits(units, providerId, target, provider?.controlAdapters)
   })
 
   ipcMain.handle('ycmd:scan', (_event, rootPath?: string) => {

@@ -8,6 +8,7 @@ import type { EditorTab } from '../../components/Editor/Editor'
 import type { LibWindowUnit } from '../../components/Editor/VisualDesigner'
 import { eycToYiFormat } from '../../components/Editor/eycFormat'
 import { parseLines } from '../../components/Editor/eycBlocks'
+import { windowUnitKey, type WindowControlIdentity } from '../../../../shared/plugin/windowControls'
 
 export interface ProjectDllParam {
   name: string
@@ -58,8 +59,11 @@ export function useEycProjectSymbols({ projectDir, tabs, debouncedTabs, activeTa
 
   // 从支持库加载窗口组件信息，并在支持库加载后刷新
   const loadWindowUnits = useCallback(() => {
-    window.api.library.getWindowUnits(targetPlatform).then(setWindowUnits).catch(() => {})
-  }, [targetPlatform])
+    window.api.library.getWindowUnits(targetPlatform, projectDir).then(setWindowUnits).catch(error => {
+      console.error('[window-ui] 无法加载项目窗口组件', error)
+      setWindowUnits([])
+    })
+  }, [targetPlatform, projectDir])
 
   useEffect(() => {
     loadWindowUnits()
@@ -485,7 +489,8 @@ export function useEycProjectSymbols({ projectDir, tabs, debouncedTabs, activeTa
 
   // 项目内所有窗口的控件表+子程序（读盘）：供「.eyc 代码打开但对应 .efw 未打开」时解析窗口成员，
   // 以及「在任意窗口代码里引用另一个窗口名」的跨窗口成员补全。
-  type WinControlEntry = { name: string; controls: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>; subs: string[] }
+  type WindowControlSymbol = WindowControlIdentity & { name: string; properties?: Record<string, string | number | boolean> }
+  type WinControlEntry = { name: string; controls: WindowControlSymbol[]; subs: string[] }
   const [projectWindowControlsMap, setProjectWindowControlsMap] = useState<Map<string, WinControlEntry>>(new Map())
   const [projectWindows, setProjectWindows] = useState<WinControlEntry[]>([])
   useEffect(() => {
@@ -505,7 +510,7 @@ export function useEycProjectSymbols({ projectDir, tabs, debouncedTabs, activeTa
             const name = (data.name || data.formName || f.replace(/\.efw$/i, '')).trim()
             if (!name) continue
             const controls = (Array.isArray(data.controls) ? data.controls : [])
-              .map((c: { name?: string; type?: string; properties?: Record<string, string | number | boolean> }) => ({ name: (c.name || '').trim(), type: (c.type || '').trim(), properties: c.properties }))
+              .map((c: Partial<WindowControlSymbol>) => ({ name: (c.name || '').trim(), type: (c.type || '').trim(), libraryId: c.libraryId, typeId: c.typeId, properties: c.properties }))
               .filter((c: { name: string }) => c.name)
             // 关联 .eyc 里提取子程序名（`.子程序 名, ...`）
             const eycName = (data.sourceFile || `${name}.eyc`)
@@ -539,16 +544,18 @@ export function useEycProjectSymbols({ projectDir, tabs, debouncedTabs, activeTa
 
     const items: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }> = []
     const seen = new Set<string>()
-    const add = (name: string, type: string, properties?: Record<string, string | number | boolean>): void => {
+    const add = (name: string, type: string, properties?: Record<string, string | number | boolean>, identity?: WindowControlIdentity): void => {
       const n = (name || '').trim()
       const t = (type || '').trim()
       if (!n || seen.has(n)) return
       seen.add(n)
-      items.push({ name: n, type: t, properties })
+      const stable = identity && (identity.libraryId !== undefined || identity.typeId !== undefined)
+      const key = stable ? windowUnitKey({ name: t, libraryName: identity.libraryId || '', englishName: identity.typeId || '' }) : t
+      items.push({ name: n, type: key, properties })
     }
-    const buildFrom = (winName: string, controls: Array<{ name: string; type: string; properties?: Record<string, string | number | boolean> }>): typeof items => {
-      add(winName, '窗口')
-      for (const control of controls) add(control.name, control.type, control.properties)
+    const buildFrom = (winName: string, controls: WindowControlSymbol[]): typeof items => {
+      add(winName, windowUnits.find(unit => unit.topLevel)?.name || '窗口')
+      for (const control of controls) add(control.name, control.type, control.properties, control)
       return items
     }
 
@@ -570,16 +577,16 @@ export function useEycProjectSymbols({ projectDir, tabs, debouncedTabs, activeTa
     // 本窗条目在前（add 按 seen 去重，重名时本窗类型优先）。
     for (const t of tabs) {
       if (t.language !== 'efw' || !t.formData) continue
-      add(t.formData.name, '窗口')
-      for (const c of t.formData.controls || []) add(c.name, c.type, c.properties)
+      add(t.formData.name, windowUnits.find(unit => unit.topLevel)?.name || '窗口')
+      for (const c of t.formData.controls || []) add(c.name, c.type, c.properties, c)
     }
     for (const [, entry] of projectWindowControlsMap) {
-      add(entry.name, '窗口')
-      for (const c of entry.controls || []) add(c.name, c.type, c.properties)
+      add(entry.name, windowUnits.find(unit => unit.topLevel)?.name || '窗口')
+      for (const c of entry.controls || []) add(c.name, c.type, c.properties, c)
     }
 
     return items
-  }, [activeTab, tabs, projectWindowControlsMap])
+  }, [activeTab, tabs, projectWindowControlsMap, windowUnits])
 
   const activeWindowControlNames = useMemo(() => {
     return activeWindowControls.map(c => c.name)

@@ -1,0 +1,14 @@
+# YiCode Project File
+Version=1
+ProjectName=EUI窗口示例
+OutputType=WindowsApp
+Platform=windows
+UiProvider=ycide.eui.selfdraw
+UiProviderApiVersion=1
+UiProviderPluginVersion=0.1.0
+Compiler=ycide.eui-msvc
+
+File=EFW|_启动窗口.efw|1
+File=EYC|_启动窗口.eyc|0
+File=EFW|第二窗口.efw|0
+File=EYC|第二窗口.eyc|0

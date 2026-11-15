@@ -6,6 +6,7 @@ import { isValidPermission } from './permissions'
 import { parseWhenClause } from './whenClause'
 import { parseKeybinding } from './keybinding'
 import { BUILTIN_API_KEY_SETTINGS } from './aiContributions'
+import { validateWindowUiProviders, type WindowUiProvider } from './windowUiProviders'
 
 export type PluginHostPlatform = 'windows' | 'linux' | 'macos'
 export type PluginHostKind = 'electron' | 'native'
@@ -81,6 +82,7 @@ export interface ThemeContribution {
 }
 
 export interface PluginContributes {
+  windowUiProviders?: WindowUiProvider[]
   commands?: CommandContribution[]
   menubarMenus?: MenubarMenuContribution[]
   /** 键为菜单位置，阶段 0 只支持 menubar/<顶层菜单ID> */
@@ -171,6 +173,9 @@ export function validatePluginManifest(raw: unknown): ManifestValidationResult {
   if (!isRecord(raw)) return { ok: false, errors: ['清单必须是 JSON 对象'] }
 
   const id = raw.id
+  if (isRecord(raw.contributes)) {
+    errors.push(...validateWindowUiProviders(raw.contributes.windowUiProviders, typeof id === 'string' ? id : ''))
+  }
   if (!isNonEmptyString(id) || !PLUGIN_ID_PATTERN.test(id)) {
     errors.push(`id「${String(id)}」不符合「发布者.名称」格式（小写英文、数字、短横线）`)
   }

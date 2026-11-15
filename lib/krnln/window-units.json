@@ -386,6 +386,9 @@
     {
       "name": "窗口",
       "englishName": "Window",
+      "uiProviders": ["ycide.krnln.win32"],
+      "supportedTargets": ["windows-x64", "windows-x86", "windows-arm64"],
+      "topLevel": true,
       "description": "基础窗口。",
       "properties": [
         {
@@ -835,6 +838,9 @@
     {
       "name": "按钮",
       "englishName": "Button",
+      "controlAdapters": ["win32"],
+      "supportedTargets": ["windows-x64", "windows-x86", "windows-arm64"],
+      "toolboxCategory": "Win32控件",
       "description": "标准按钮控件。",
       "className": "BUTTON",
       "style": "WS_CHILD | BS_PUSHBUTTON",
@@ -969,6 +975,9 @@
     {
       "name": "标签",
       "englishName": "Static",
+      "controlAdapters": ["win32"],
+      "supportedTargets": ["windows-x64", "windows-x86", "windows-arm64"],
+      "toolboxCategory": "Win32控件",
       "description": "标准标签控件。",
       "className": "STATIC",
       "style": "WS_CHILD | SS_LEFT | SS_NOTIFY",
@@ -1225,6 +1234,9 @@
     {
       "name": "编辑框",
       "englishName": "Edit",
+      "controlAdapters": ["win32"],
+      "supportedTargets": ["windows-x64", "windows-x86", "windows-arm64"],
+      "toolboxCategory": "Win32控件",
       "description": "标准单行编辑框。",
       "className": "EDIT",
       "style": "WS_CHILD | WS_BORDER | ES_AUTOHSCROLL",
@@ -1534,6 +1546,9 @@
     {
       "name": "选择框",
       "englishName": "CheckBox",
+      "controlAdapters": ["win32"],
+      "supportedTargets": ["windows-x64", "windows-x86", "windows-arm64"],
+      "toolboxCategory": "Win32控件",
       "description": "选择框控件。",
       "className": "BUTTON",
       "style": "WS_CHILD | BS_AUTOCHECKBOX",
@@ -1695,6 +1710,9 @@
     {
       "name": "单选框",
       "englishName": "RadioButton",
+      "controlAdapters": ["win32"],
+      "supportedTargets": ["windows-x64", "windows-x86", "windows-arm64"],
+      "toolboxCategory": "Win32控件",
       "description": "单选框控件。",
       "className": "BUTTON",
       "style": "WS_CHILD | BS_AUTORADIOBUTTON",
@@ -2335,6 +2353,9 @@
     {
       "name": "滑块条",
       "englishName": "SliderBar",
+      "controlAdapters": ["win32"],
+      "supportedTargets": ["windows-x64", "windows-x86", "windows-arm64"],
+      "toolboxCategory": "Win32控件",
       "description": "滑块条控件。",
       "className": "msctls_trackbar32",
       "style": "WS_CHILD | TBS_AUTOTICKS",
@@ -2477,8 +2498,8 @@
       ],
       "events": [
         {
-          "name": "值被改变",
-          "description": "滑块条值被改变时触发。",
+          "name": "位置被改变",
+          "description": "滑块条位置被改变时触发。",
           "args": [],
           "channel": "WM_HSCROLL"
         }
@@ -2566,6 +2587,9 @@
     {
       "name": "进度条",
       "englishName": "ProgressBar",
+      "controlAdapters": ["win32"],
+      "supportedTargets": ["windows-x64", "windows-x86", "windows-arm64"],
+      "toolboxCategory": "Win32控件",
       "description": "进度条控件。",
       "className": "msctls_progress32",
       "style": "WS_CHILD",
@@ -2650,6 +2674,9 @@
     {
       "name": "分组框",
       "englishName": "GroupBox",
+      "controlAdapters": ["win32"],
+      "supportedTargets": ["windows-x64", "windows-x86", "windows-arm64"],
+      "toolboxCategory": "Win32控件",
       "description": "分组框控件。",
       "className": "BUTTON",
       "style": "WS_CHILD | BS_GROUPBOX",
@@ -2705,6 +2732,9 @@
     {
       "name": "图片框",
       "englishName": "PictureBox",
+      "controlAdapters": ["win32"],
+      "supportedTargets": ["windows-x64", "windows-x86", "windows-arm64"],
+      "toolboxCategory": "Win32控件",
       "description": "图片框控件。",
       "className": "STATIC",
       "style": "WS_CHILD | SS_LEFT",

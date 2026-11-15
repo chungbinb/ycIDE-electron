@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { findWindowControlUnit } from '../../../../shared/plugin/windowControls'
 import { createPortal } from 'react-dom'
 import { sanitizeImageDisplaySrc } from '../../utils/imageDisplay'
 import type { DesignControl, DesignForm, SelectionTarget, LibWindowUnit, LibUnitProperty, LibUnitEvent } from '../Editor/VisualDesigner'
@@ -1872,7 +1873,7 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
 
   if (selection.kind === 'form') {
     const f = selection.form
-    const windowUnit = windowUnits.find(u => u.name === '窗口')
+    const windowUnit = windowUnits.find(u => u.topLevel || u.name === '窗口')
     const allNames = [f.name, ...f.controls.map(c => c.name)]
     return (
       <div className="sidebar-panel">
@@ -1893,7 +1894,7 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
             </tr>
             <tr className="prop-row">
               <th className="prop-name" scope="row">类型</th>
-              <td className="prop-value">窗口</td>
+              <td className="prop-value">{windowUnit?.name || '窗口'}</td>
             </tr>
             {windowUnit ? (
               (() => {
@@ -1950,7 +1951,7 @@ function PropertyPanel({ selection, windowUnits, onSelectControl, onPropertyChan
 
   const control = selection.control
   const typeName = control.type
-  const unit = windowUnits.find(u => u.name === control.type)
+  const unit = findWindowControlUnit(windowUnits, control)
   const allNames = form ? [form.name, ...form.controls.filter(c => c.id !== control.id).map(c => c.name)] : []
 
   return (
@@ -2049,8 +2050,11 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
 
   // 从支持库加载窗口组件信息，并在支持库加载后刷新
   const loadWindowUnits = useCallback(() => {
-    window.api.library.getWindowUnits().then(setWindowUnits).catch(() => {})
-  }, [])
+    window.api.library.getWindowUnits(undefined, projectDir).then(setWindowUnits).catch(error => {
+      console.error('[window-ui] 无法加载属性面板窗口组件', error)
+      setWindowUnits([])
+    })
+  }, [projectDir])
 
   useEffect(() => {
     loadWindowUnits()
@@ -2148,8 +2152,9 @@ function Sidebar({ width, onResize, placement = 'left', selection, activeTab, on
   // 当前选中组件的事件列表
   const selectedEvents = useMemo<LibUnitEvent[]>(() => {
     if (!selection) return []
-    const typeName = selection.kind === 'form' ? '窗口' : selection.control.type
-    const unit = windowUnits.find(u => u.name === typeName)
+    const unit = selection.kind === 'form'
+      ? windowUnits.find(u => u.topLevel || u.name === '窗口')
+      : findWindowControlUnit(windowUnits, selection.control)
     return unit?.events ?? []
   }, [selection, windowUnits])
 

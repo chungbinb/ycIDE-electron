@@ -5,6 +5,8 @@ import Icon, { resolveUnitIconName } from '../Icon/Icon'
 import '../Icon/Icon.css'
 import './VisualDesigner.css'
 import MenuEditorDialog from './MenuEditorDialog'
+import type { WindowUiPreviewTheme } from '../../../../shared/plugin/windowUiProviders'
+import { euiControlType, findWindowControlUnit, windowUnitKey, type EuiControlType } from '../../../../shared/plugin/windowControls'
 
 // ========== 类型定义 ==========
 
@@ -31,6 +33,15 @@ export interface LibUnitEvent {
 
 /** 窗口组件信息（来自支持库） */
 export interface LibWindowUnit {
+  runtimeType?: EuiControlType
+  controlAdapters?: Array<'eui' | 'win32'>
+  supportedTargets?: string[]
+  targetSupported?: boolean
+  targetSupportReason?: string
+  previewTheme?: WindowUiPreviewTheme
+  uiProviders?: string[]
+  previewType?: string
+  topLevel?: boolean
   name: string
   englishName: string
   description: string
@@ -46,6 +57,8 @@ export interface LibWindowUnit {
 
 /** 控件实例 */
 export interface DesignControl {
+  libraryId?: string
+  typeId?: string
   id: string
   type: string          // 窗口组件名（如 "按钮"、"编辑框"，来自支持库）
   name: string
@@ -112,6 +125,7 @@ interface VisualDesignerProps {
   onChange: (form: DesignForm) => void
   onSelectControl: (target: SelectionTarget) => void
   windowUnits?: LibWindowUnit[]
+  targetPlatform?: string
   externalSelectedId?: string
   onMultiSelectChange?: (count: number) => void
   onControlDoubleClick?: (control: DesignControl, defaultEvent: LibUnitEvent | null) => void
@@ -390,12 +404,14 @@ let vdControlClipboard: DesignControl[] = []
 // 记住上次选中的 id（跨重渲染保持）
 let lastSelectedId: string = '__form__'
 
-function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], externalSelectedId, onMultiSelectChange, onControlDoubleClick, onFormDoubleClick, onUndo, onOpenWindowSource, onNavigateBack, onCanNavigateBack, onPreviewWindow, onMenuItemActivate, onMenuItemRenames, canvasMode = 'center' }: VisualDesignerProps): React.JSX.Element {
+function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], targetPlatform = 'windows', externalSelectedId, onMultiSelectChange, onControlDoubleClick, onFormDoubleClick, onUndo, onOpenWindowSource, onNavigateBack, onCanNavigateBack, onPreviewWindow, onMenuItemActivate, onMenuItemRenames, canvasMode = 'center' }: VisualDesignerProps): React.JSX.Element {
+  const [compatibilityError, setCompatibilityError] = useState('')
   // '__form__' 表示选中窗口自身，null 表示无选中
   const [selectedId, setSelectedId] = useState<string | null>(lastSelectedId)
   // 多选支持
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeTool, setActiveTool] = useState<string | null>(null)
+  const activeToolUnit = windowUnits.find(unit => windowUnitKey(unit) === activeTool)
   // 右键菜单：位置(视口坐标) + 是否右键在控件上；null 表示未打开
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; onControl: boolean } | null>(null)
   // 「位置及尺寸」子菜单是否展开
@@ -468,7 +484,24 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     })
     if (changed) onChangeRef.current({ ...latest, controls })
   }
+  const previewTheme = windowUnits.find(unit => unit.topLevel)?.previewTheme
+  const euiWindow = windowUnits.some(unit => unit.topLevel && unit.uiProviders?.includes('ycide.eui.selfdraw'))
+  const unsupportedControls = form.controls.flatMap(control => {
+    const unit = findWindowControlUnit(windowUnits, control)
+    if (!unit) return [{ control, reason: `支持库或控件定义未加载：${control.libraryId ?? control.type}/${control.typeId ?? control.type}` }]
+    return unit.targetSupported === false
+      ? [{ control, reason: unit.targetSupportReason ?? `控件「${unit.name}」不支持目标平台 ${targetPlatform}` }]
+      : []
+  })
+  const euiPalette = previewTheme ? (form.properties?.['深色主题'] === true ? previewTheme.dark : previewTheme.light) : undefined
+  const rgba = (value: number[]) => `rgba(${value.slice(0, 3).map(channel => channel * 255).join(',')},${value[3]})`
   const formVisualColors = resolveFormVisualColors(form)
+  if (euiPalette) {
+    formVisualColors.canvasBg = rgba(euiPalette.background)
+    formVisualColors.titleBg = rgba(euiPalette.surface)
+    formVisualColors.titleText = rgba(euiPalette.text)
+    formVisualColors.border = rgba(euiPalette.border)
+  }
   const designerRootRef = useRef<HTMLDivElement>(null)
   const canvasRegionRef = useRef<HTMLDivElement>(null)
   const canvasAreaRef = useRef<HTMLDivElement>(null)
@@ -511,7 +544,9 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     : null
   const visualFormWidth = Math.max(form.width, FORM_MIN_WIDTH)
   const visualFormHeight = Math.max(form.height, FORM_MIN_HEIGHT)
-  const formChrome = resolveFormChromeStyle(form)
+  const formChrome = euiWindow && previewTheme
+    ? { borderStyle: 1, hasTitlebar: true, isToolWindow: false, titlebarHeight: previewTheme.titlebarHeight }
+    : resolveFormChromeStyle(form)
   const formTitlebarHeight = formChrome.titlebarHeight
   // 窗口铬高度 = 标题栏 + 菜单栏（有可见顶级菜单时 renderFormMenuBar 渲染 22px 条）——几何换算统一用它，
   // 判定条件须与 renderFormMenuBar 的过滤一致（menu 数组存在且至少一个 visible !== false 的顶级项）
@@ -1078,21 +1113,31 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     })
   }, [])
 
-  const addControl = useCallback((unitName: string, x: number, y: number, w?: number, h?: number) => {
+  const addControl = useCallback((unitKey: string, x: number, y: number, w?: number, h?: number) => {
     const latestForm = formRef.current
-    const sizes = DEFAULT_SIZES[unitName] || DEFAULT_SIZE
+    const unit = windowUnits.find(unit => windowUnitKey(unit) === unitKey)
+    if (!unit) { setCompatibilityError(`窗口组件未加载：${unitKey}`); return }
+    const unitName = unit.name
+    setCompatibilityError('')
+    const sizes = euiControlType(unit) === 'EuiScript' ? [32, 32] : unit.controlAdapters?.length ? [
+      Number(unit.properties.find(property => property.name === '宽度')?.defaultValue ?? 120),
+      Number(unit.properties.find(property => property.name === '高度')?.defaultValue ?? 36),
+    ] : DEFAULT_SIZES[unit.previewType || unitName] || DEFAULT_SIZE
     // 确保 ID 不与现有控件冲突
     const existingIds = new Set(latestForm.controls.map(c => c.id))
     let id: string
     do {
       id = `ctrl_${nextControlId++}`
     } while (existingIds.has(id))
-    const count = latestForm.controls.filter(c => c.type === unitName).length + 1
+    let count = latestForm.controls.filter(c => c.type === unitName).length + 1
+    while (latestForm.controls.some(control => control.name === `${unitName}${count}`)) count++
     // 某些组件默认带文字
-    const hasText = ['按钮', '标签', '选择框', '单选框', '分组框'].includes(unitName)
+    const hasText = ['按钮', '标签', '选择框', '单选框', '分组框'].includes(unit.previewType || unitName)
     const newCtrl: DesignControl = {
       id,
       type: unitName,
+      libraryId: unit.libraryName,
+      typeId: unit.englishName,
       name: `${unitName}${count}`,
       left: snap(x),
       top: snap(y),
@@ -1112,7 +1157,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
     setSelectedId(id)
     setSelectedIds(new Set())
     setActiveTool(null)
-  }, [])
+  }, [windowUnits])
 
   const deleteSelected = useCallback(() => {
     const latestForm = formRef.current
@@ -1144,6 +1189,11 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
   const pasteControls = useCallback(() => {
     if (vdControlClipboard.length === 0) return
+    if (vdControlClipboard.some(control => !findWindowControlUnit(windowUnits, control))) {
+      setCompatibilityError('无法粘贴：剪贴板包含与当前窗口后端不兼容的控件。')
+      return
+    }
+    setCompatibilityError('')
     const latestForm = formRef.current
     const existingIds = new Set(latestForm.controls.map(c => c.id))
     const newControls: DesignControl[] = []
@@ -1166,7 +1216,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       setSelectedIds(new Set())
       setSelectedId(newControls[0]?.id ?? null)
     }
-  }, [])
+  }, [windowUnits])
 
   const cutSelected = useCallback(() => {
     copySelected()
@@ -1229,7 +1279,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
       case 'viewType': {
         const ctrl = formRef.current.controls.find(c => c.id === getSelectedControlIds()[0])
         if (ctrl) {
-          const unit = windowUnits.find(u => u.name === ctrl.type)
+          const unit = findWindowControlUnit(windowUnits, ctrl)
           setTypeInfoUnit(unit ?? { name: ctrl.type, englishName: '', description: '（未在支持库中找到该类型的定义信息）', libraryName: '', properties: [], events: [] })
         }
         break
@@ -1505,7 +1555,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const handleControlDblClick = useCallback((e: React.MouseEvent, ctrl: DesignControl) => {
     e.stopPropagation()
     e.preventDefault()
-    const unitInfo = windowUnits.find(u => u.name === ctrl.type)
+    const unitInfo = findWindowControlUnit(windowUnits, ctrl)
     const defaultEvent = unitInfo?.events?.[0] ?? null
     onControlDoubleClick?.(ctrl, defaultEvent)
   }, [windowUnits, onControlDoubleClick])
@@ -1514,7 +1564,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   const handleFormDblClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
     e.preventDefault()
-    const formUnit = windowUnits.find(u => u.name === '窗口')
+    const formUnit = windowUnits.find(u => u.topLevel || u.name === '窗口')
     const defaultEvent = formUnit?.events?.[0] ?? null
     onFormDoubleClick?.(form, defaultEvent)
   }, [windowUnits, onFormDoubleClick, form])
@@ -1869,7 +1919,42 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   // 渲染单个控件的预览外观
   const renderControlPreview = (ctrl: DesignControl): React.JSX.Element => {
     const controlColors = resolveControlVisualColors(ctrl)
-    const unitInfo = windowUnits.find(u => u.name === ctrl.type)
+    const unitInfo = findWindowControlUnit(windowUnits, ctrl)
+
+    if (euiWindow && unitInfo?.controlAdapters?.includes('eui') && euiControlType(unitInfo) !== 'EuiScript') {
+      if (!euiPalette || !previewTheme) return <div role="alert">EUI 主题元数据未加载</div>
+      const runtimeType = euiControlType(unitInfo)
+      const button = runtimeType === 'EuiButton' || runtimeType === 'EuiWebButton'
+      const input = runtimeType === 'EuiInput' || runtimeType === 'EuiWebEdit'
+      const checked = ctrl.properties['选中'] === true || ctrl.properties['选中'] === '真'
+      const minimum = Number(ctrl.properties['最小位置'] ?? 0)
+      const maximum = Number(ctrl.properties['最大位置'] ?? 100)
+      const position = Number(ctrl.properties['位置'] ?? minimum)
+      const range = Number.isFinite(minimum) && Number.isFinite(maximum) && maximum > minimum
+        ? Math.max(0, Math.min(100, (position - minimum) / (maximum - minimum) * 100)) : 0
+      return <div className={`vd-eui-preview ${button ? 'vd-eui-preview-button' : ''} ${input ? 'vd-eui-preview-input' : ''}`}
+        role="img"
+        aria-label={`${ctrl.name}：EUI 布局模拟，真实外观请运行预览`}
+        ref={element => setCssVars(element, {
+          '--vd-eui-text': rgba(button ? euiPalette.buttonText : euiPalette.text),
+          '--vd-eui-background': button ? rgba(euiPalette.primary) : input ? rgba(euiPalette.surface) : 'transparent',
+          '--vd-eui-border': rgba(euiPalette.border),
+          '--vd-eui-primary': rgba(euiPalette.primary),
+          '--vd-eui-surface': rgba(euiPalette.surface),
+          '--vd-eui-font-size': `${previewTheme.bodyFontSize}px`,
+          '--vd-eui-radius': `${button ? previewTheme.buttonRadius : previewTheme.inputRadius}px`,
+          '--vd-eui-value': `${range}%`,
+        })}>
+        {runtimeType === 'EuiImage' ? <img src={sanitizeImageDisplaySrc(String(ctrl.properties['图片'] || '')) || undefined} alt="" />
+          : runtimeType === 'EuiCheckbox' ? <span className="vd-eui-check-row"><span className={`vd-eui-check-box${checked ? ' is-checked' : ''}`} aria-hidden="true" />{ctrl.text}</span>
+          : runtimeType === 'EuiRadio' ? <span className="vd-eui-check-row"><span className={`vd-eui-radio-box${checked ? ' is-checked' : ''}`} aria-hidden="true" />{ctrl.text}</span>
+          : runtimeType === 'EuiSlider' ? <span className="vd-eui-slider" aria-hidden="true"><span className="vd-eui-slider-track" /><span className="vd-eui-slider-fill" /><span className="vd-eui-slider-thumb" /></span>
+          : runtimeType === 'EuiProgress' ? <span className="vd-eui-progress" aria-hidden="true"><span /></span>
+          : runtimeType === 'EuiGroup' ? <span className="vd-eui-group">{ctrl.text}</span>
+          : runtimeType === 'EuiWebView' ? <span className="vd-eui-webview">WebView2 · {String(ctrl.properties['地址'] || '网页浏览框')}</span>
+          : ctrl.text}
+      </div>
+    }
 
     switch (ctrl.type) {
       case '按钮': {
@@ -2376,7 +2461,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
   // 过滤工具箱项（使用支持库的窗口组件）
   const toolboxItems = windowUnits.length > 0
-    ? windowUnits.filter(u => u.name !== '窗口') // 窗口自身不在工具箱中
+    ? windowUnits.filter(u => !u.topLevel && u.name !== '窗口' && u.targetSupported !== false) // 不支持当前目标的控件仅保留在画布中
     : [] // 如果没有加载支持库则为空
   // 第一层「核心组件 / 第三方组件」：优先主进程注入的 isCore，缺省按 libraryName 兜底
   const resolveUnitTop = (unit: LibWindowUnit): string =>
@@ -2590,10 +2675,11 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
         </button>
         {filteredTools.map(unit => (
           <button
-            key={unit.name}
-            className={`vd-tool-item ${activeTool === unit.name ? 'active' : ''}`}
-            onClick={() => setActiveTool(activeTool === unit.name ? null : unit.name)}
+            key={windowUnitKey(unit)}
+            className={`vd-tool-item ${activeTool === windowUnitKey(unit) ? 'active' : ''}`}
+            onClick={() => setActiveTool(activeTool === windowUnitKey(unit) ? null : windowUnitKey(unit))}
             title={`${unit.name} (${unit.libraryName})`}
+            aria-label={`${unit.name} (${unit.libraryName})`}
           >
             <span className="vd-tool-icon"><Icon name={resolveUnitIconName(unit.name, unit.iconFileName, unit.libraryName)} size={16} /></span>
             {toolboxViewMode === 'list' && <span className="vd-tool-label">{unit.name}</span>}
@@ -2814,6 +2900,16 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
   }
 
   return (
+    <div className="vd-shell">
+      {compatibilityError && <div role="alert" className="vd-provider-notice">{compatibilityError}</div>}
+      {windowUnits.some(unit => unit.topLevel && unit.uiProviders?.includes('ycide.eui.selfdraw')) &&
+        <div role="status" className="vd-provider-notice">EUI 实验后端：当前画布为布局模拟；真实样式请使用“预览”。系统读屏桥接尚未实现。</div>}
+      {unsupportedControls.length > 0 &&
+        <div role="alert" className="vd-provider-notice vd-unsupported-notice">
+          {unsupportedControls.length} 个已放置控件不支持目标平台 {targetPlatform}，请移除或替换。控件仍保留在窗体中。
+        </div>}
+      {!windowUnits.length &&
+        <div role="alert" className="vd-provider-notice">没有加载当前项目的兼容窗口组件。请检查窗口支持库；已有控件数据仍保留。</div>}
     <div className="vd" ref={designerRootRef}>
       {/* 画布区域 */}
       <div
@@ -2927,7 +3023,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
 
         {/* 窗口外壳 */}
         <div
-          className={`vd-form-wrapper vd-form-border-${formChrome.borderStyle} vd-form-shape-${formShape} ${selectedId === '__form__' ? 'vd-form-wrapper-selected' : ''}`}
+          className={`vd-form-wrapper${euiWindow ? ' vd-eui-window' : ''} vd-form-border-${formChrome.borderStyle} vd-form-shape-${formShape} ${selectedId === '__form__' ? 'vd-form-wrapper-selected' : ''}`}
           ref={(element) => setCssVars(element, {
             '--vd-form-title-bg': formVisualColors.titleBg,
             '--vd-form-title-text': formVisualColors.titleText,
@@ -2935,15 +3031,29 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
             '--vd-form-border': formVisualColors.border,
             '--vd-form-grid': formVisualColors.grid,
             '--vd-form-corner-radius': `${formCornerRadius}px`,
+            ...(euiPalette && previewTheme ? {
+              '--vd-eui-titlebar-height': `${previewTheme.titlebarHeight}px`,
+              '--vd-eui-caption-width': `${previewTheme.captionButtonWidth}px`,
+              '--vd-eui-title-font-size': `${previewTheme.titleFontSize}px`,
+              '--vd-eui-window-border-width': `${previewTheme.windowBorderWidth}px`,
+              '--vd-eui-caption-hover': rgba(euiPalette.surfaceHover),
+              '--vd-eui-caption-pressed': rgba(euiPalette.surfaceActive),
+            } : {}),
           })}
         >
           {/* 窗口本体（标题栏+客户区）：外形裁剪作用于此层，让调整句柄留在外部不被裁掉 */}
           <div className={`vd-form-body vd-form-shape-${formShape}`}>
           {formChrome.hasTitlebar && (
             <div className={`vd-form-titlebar${formChrome.isToolWindow ? ' vd-form-titlebar-tool' : ''}`} onMouseDown={handleFormTitleClick} onDoubleClick={handleFormDblClick}>
-              {!formChrome.isToolWindow && <span className="vd-form-titlebar-icon">{formIcon ? <img className="vd-form-titlebar-icon-img" src={sanitizeImageDisplaySrc(formIcon)} alt="" /> : <Icon name="windows-form" size={14} />}</span>}
+              {!euiWindow && !formChrome.isToolWindow && <span className="vd-form-titlebar-icon">{formIcon ? <img className="vd-form-titlebar-icon-img" src={sanitizeImageDisplaySrc(formIcon)} alt="" /> : <Icon name="windows-form" size={14} />}</span>}
               <span className="vd-form-titlebar-text">{form.title || form.name}</span>
-              {formControlBox && (
+              {euiWindow ? (
+                <span className="vd-form-titlebar-btns" aria-hidden="true">
+                  <span className="vd-form-btn">最小化</span>
+                  <span className="vd-form-btn">最大化</span>
+                  <span className="vd-form-btn">关闭</span>
+                </span>
+              ) : formControlBox && (
                 <span className="vd-form-titlebar-btns">
                   {/* 工具窗标题栏只有关闭钮；最小化/最大化都关时按钮组不显示，只关一个则灰显（Win32 行为） */}
                   {!formChrome.isToolWindow && (formMinButton || formMaxButton) && (
@@ -3021,12 +3131,14 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               >
                 {renderControlPreview({
                   id: '__preview__',
-                  type: activeTool,
-                  name: activeTool,
+                  type: activeToolUnit?.name || '',
+                  libraryId: activeToolUnit?.libraryName,
+                  typeId: activeToolUnit?.englishName,
+                  name: activeToolUnit?.name || '',
                   left: 0, top: 0,
                   width: drawRect.w,
                   height: drawRect.h,
-                  text: ['按钮', '标签', '选择框', '单选框', '分组框'].includes(activeTool) ? activeTool : '',
+                  text: activeToolUnit?.name || '',
                   visible: true,
                   enabled: true,
                   properties: {},
@@ -3040,10 +3152,13 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
               const isSelected = ctrl.id === selectedId
               const isMultiSelected = selectedIds.has(ctrl.id)
               const isHovered = hoveredControlId === ctrl.id && !isSelected && !isMultiSelected
+              const availability = unsupportedControls.find(item => item.control.id === ctrl.id)
               return (
                 <div
                   key={ctrl.id}
-                  className={`vd-control ${isSelected ? 'vd-control-selected' : ''} ${isMultiSelected ? 'vd-control-multi-selected' : ''} ${isHovered ? 'vd-control-hovered' : ''} ${ctrl.locked ? 'vd-control-locked' : ''}`}
+                  className={`vd-control ${isSelected ? 'vd-control-selected' : ''} ${isMultiSelected ? 'vd-control-multi-selected' : ''} ${isHovered ? 'vd-control-hovered' : ''} ${ctrl.locked ? 'vd-control-locked' : ''} ${availability ? 'vd-control-unsupported' : ''}`}
+                  title={availability?.reason}
+                  aria-label={availability ? `${ctrl.name}：${availability.reason}` : ctrl.name}
                   ref={(element) => {
                     const fontCss = fontSpecToCss(parseFontSpec(ctrl.properties?.['字体']))
                     setCssVars(element, {
@@ -3168,6 +3283,7 @@ function VisualDesigner({ form, onChange, onSelectControl, windowUnits = [], ext
           }}
         />
       )}
+    </div>
     </div>
   )
 }

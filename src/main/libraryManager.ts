@@ -3,6 +3,7 @@
  * 扫描 lib 目录中的 *.ycmd.json 清单，并补充窗口单元元数据。
  */
 import { getRuntimeEnv } from './runtimeEnv'
+import { parseEuiControlType, type EuiControlType } from '../shared/plugin/windowControls'
 import { createHash } from 'crypto'
 import AdmZip from 'adm-zip'
 import { dirname, join, resolve, sep } from 'path'
@@ -99,6 +100,15 @@ export interface LibraryWindowUnitEvent {
 }
 
 export interface LibraryWindowUnit {
+  runtimeType?: EuiControlType
+  controlAdapters?: WindowControlAdapter[]
+  supportedTargets?: string[]
+  targetSupported?: boolean
+  targetSupportReason?: string
+  previewTheme?: WindowUiPreviewTheme
+  uiProviders?: string[]
+  previewType?: string
+  topLevel?: boolean
   name: string
   englishName: string
   description: string
@@ -787,7 +797,24 @@ class LibraryManager {
       .map(item => {
         const englishName = typeof item.englishName === 'string' ? item.englishName.trim() : ''
         const className = typeof item.className === 'string' ? item.className.trim() : ''
+        const uiProviders = Array.isArray(item.uiProviders) ? item.uiProviders.filter((id): id is string => typeof id === 'string') : undefined
+        const runtimeType = parseEuiControlType(item.runtimeType)
+        const explicitAdapters = Array.isArray(item.controlAdapters)
+          ? item.controlAdapters.filter((adapter): adapter is WindowControlAdapter => adapter === 'eui' || adapter === 'win32')
+          : undefined
+        const controlAdapters = explicitAdapters ?? uiProviders?.flatMap(id =>
+          id === 'ycide.eui.selfdraw' ? ['eui' as const] : id === 'ycide.krnln.win32' ? ['win32' as const] : [])
+        const supportedTargets = Array.isArray(item.supportedTargets)
+          ? item.supportedTargets.filter((target): target is string => typeof target === 'string')
+          : controlAdapters?.includes('win32') || className ? ['windows'] : undefined
         return {
+          uiProviders,
+          controlAdapters: controlAdapters?.length ? [...new Set(controlAdapters)] : undefined,
+          supportedTargets,
+          previewType: typeof item.previewType === 'string' ? item.previewType : undefined,
+          runtimeType,
+          topLevel: item.topLevel === true,
+          previewTheme: parseWindowUiPreviewTheme(item.previewTheme),
           name: typeof item.name === 'string' ? item.name.trim() : '',
           englishName,
           description: typeof item.description === 'string' ? item.description.trim() : '',
@@ -796,7 +823,9 @@ class LibraryManager {
           iconFileName: typeof item.iconFileName === 'string'
             ? item.iconFileName.trim()
             : (typeof item.icon === 'string' ? item.icon.trim() : ''),
-          properties: mergeWithFixedCommonProperties(this.parseWindowUnitProperties(item.properties)),
+          properties: Array.isArray(item.uiProviders) && !item.uiProviders.includes('ycide.krnln.win32')
+            ? this.parseWindowUnitProperties(item.properties)
+            : mergeWithFixedCommonProperties(this.parseWindowUnitProperties(item.properties)),
           events: this.parseWindowUnitEvents(item.events),
           libraryName,
           isCore,
@@ -996,8 +1025,8 @@ class LibraryManager {
         if (mergedWindowUnits.length > 0) {
           parsed.windowUnits = this.mergeWindowUnits(parsed.windowUnits, mergedWindowUnits)
         }
-      } catch {
-        // ignore malformed metadata file and continue with other candidates
+      } catch (error) {
+        console.warn(`[libraryManager] 支持库元数据无效：${candidate}`, error)
       }
     }
 
@@ -1569,3 +1598,4 @@ class LibraryManager {
 }
 
 export const libraryManager = new LibraryManager()
+import { parseWindowUiPreviewTheme, type WindowControlAdapter, type WindowUiPreviewTheme } from '../shared/plugin/windowUiProviders'

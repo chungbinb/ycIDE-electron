@@ -708,6 +708,8 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
         controls: (Array.isArray(data.controls) ? data.controls : []).map((c: any) => ({
           id: c.id,
           type: c.type,
+          libraryId: c.libraryId,
+          typeId: c.typeId,
           name: c.name,
           left: c.x ?? c.left ?? 0,
           top: c.y ?? c.top ?? 0,
@@ -1633,7 +1635,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             sourceFile: (fd.sourceFile || `${fd.name}.eyc`).toLowerCase(),
             controls: [
               { name: fd.name, type: '窗口' },
-              ...(fd.controls || []).map(c => ({ name: c.name, type: c.type, properties: c.properties })),
+              ...(fd.controls || []).map(c => ({ name: c.name, type: c.type, libraryId: c.libraryId, typeId: c.typeId, properties: c.properties })),
             ],
           })
         }
@@ -2750,6 +2752,7 @@ const Editor = forwardRef<EditorHandle, { onSelectControl?: (target: SelectionTa
             onChange={handleFormChange}
             onSelectControl={handleSelectControl}
             windowUnits={windowUnits}
+            targetPlatform={targetPlatform}
             canvasMode={designerCanvasMode}
             externalSelectedId={selection?.kind === 'form' ? '__form__' : selection?.kind === 'control' ? selection.control.id : undefined}
             onMultiSelectChange={onMultiSelectChange}

@@ -1,0 +1,11 @@
+{
+  "name": "第二窗口",
+  "title": "EUI 子窗口",
+  "width": 500,
+  "height": 260,
+  "sourceFile": "第二窗口.eyc",
+  "controls": [
+    { "id": "child-label", "libraryId": "eui", "typeId": "EuiLabel", "type": "EUI标签", "name": "子窗口标签1", "left": 24, "top": 32, "width": 440, "height": 44, "text": "关闭后可以重新载入本窗口。", "visible": true, "enabled": true, "properties": {} },
+    { "id": "child-close", "libraryId": "eui", "typeId": "EuiButton", "type": "EUI按钮", "name": "关闭按钮1", "left": 24, "top": 112, "width": 220, "height": 44, "text": "关闭子窗口", "visible": true, "enabled": true, "properties": {} }
+  ]
+}

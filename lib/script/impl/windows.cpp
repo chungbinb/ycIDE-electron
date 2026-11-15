@@ -6,6 +6,7 @@
 //     int          script_execute(const wchar_t* name, const wchar_t* code)         执行代码，成功=1 失败=0
 //     const char*  script_calc_exp(const wchar_t* name, const wchar_t* expr)        计算表达式→UTF-8 文本
 //     void         script_reset(const wchar_t* name)                                清除引擎（含已定义过程）
+//     void         script_dispose(const wchar_t* name)                              窗口关闭时释放并移除实例状态
 //     const char*  script_run(name, proc, initializer_list<const wchar_t*> args)    运行过程/函数→UTF-8 文本
 //   组件属性（propId: 0=语言 1=错误信息(只读) 2=超时）：
 //     long long    script_get_int(name, propId) / void script_set_int(name, propId, v)
@@ -325,6 +326,13 @@ extern "C" void script_reset(const wchar_t* name) {
     destroyEngine(s);
     s.errorInfo.clear();
     s.lastCode.clear();
+}
+
+extern "C" void script_dispose(const wchar_t* name) {
+    const auto found = g_states.find(name ? std::wstring(name) : std::wstring());
+    if (found == g_states.end()) return;
+    destroyEngine(found->second);
+    g_states.erase(found);
 }
 
 // 运行指定过程/函数，args 每项为一个宽字符串参数（以 VT_BSTR 传入脚本）；返回结果文本（UTF-8）。

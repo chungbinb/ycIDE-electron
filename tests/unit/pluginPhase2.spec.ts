@@ -146,12 +146,13 @@ describe('支持库数据插件', () => {
     const libPlugins = service.getState().plugins.filter(p => service.getManifest(p.id)?.contributes?.libraries)
     // 宿主平台不限：Linux 上的 IDE 也加载只有 Windows 实现的支持库（目标平台另算，设计稿 §3.4）
     expect(libPlugins.map(p => [p.id, p.status]).sort()).toEqual([
-      ['ycide.krnln', 'enabled'], ['ycide.script', 'enabled'], ['ycide.spec', 'enabled'], ['ycide.webview2', 'enabled'], ['ycide.ycplugin', 'enabled'],
+      ['ycide.eui', 'enabled'], ['ycide.krnln', 'enabled'], ['ycide.script', 'enabled'], ['ycide.spec', 'enabled'], ['ycide.webview2', 'enabled'], ['ycide.ycplugin', 'enabled'],
     ])
     expect(service.getManifest('ycide.krnln')?.contributes?.libraries).toEqual([{ name: 'krnln' }])
     expect(service.getState().plugins.find(p => p.id === 'ycide.krnln')?.canDisable).toBe(true)
     await service.setEnabled('ycide.krnln', false)
     expect(service.getState().plugins.find(p => p.id === 'ycide.krnln')?.status).toBe('disabled')
+    expect(service.getState().plugins.find(p => p.id === 'ycide.eui')?.status).toBe('unavailable')
   })
 
   it('清单校验：libraries 必须是 [{ name }]', () => {

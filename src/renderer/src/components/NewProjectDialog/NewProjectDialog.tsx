@@ -1,5 +1,6 @@
 import { useState, useEffect, useId, useRef } from 'react'
 import './NewProjectDialog.css'
+import type { WindowUiProviderEntry } from '../../../../shared/plugin/windowUiProviders'
 
 type ProjectPlatformGroup = 'desktop' | 'mobile'
 
@@ -76,7 +77,7 @@ async function resolveDefaultProjectName(platform: string, type: string, path: s
 interface NewProjectDialogProps {
   open: boolean
   onClose: () => void
-  onConfirm: (info: { name: string; path: string; type: string; platform: string }) => void | boolean | Promise<void | boolean>
+  onConfirm: (info: { name: string; path: string; type: string; platform: string; uiProvider?: string }) => void | boolean | Promise<void | boolean>
 }
 
 function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): React.JSX.Element | null {
@@ -84,6 +85,35 @@ function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): 
   const [projectPath, setProjectPath] = useState('')
   const [selectedType, setSelectedType] = useState('windows-app')
   const [selectedPlatform, setSelectedPlatform] = useState('windows')
+  const [providers, setProviders] = useState<WindowUiProviderEntry[]>([])
+  const [providerId, setProviderId] = useState('')
+  const [providerError, setProviderError] = useState('')
+  const [providersLoading, setProvidersLoading] = useState(true)
+  const [experimentalAccepted, setExperimentalAccepted] = useState(false)
+  const selectedProvider = providers.find(provider => provider.id === providerId && provider.available)
+  const needsProvider = selectedType === 'windows-app'
+  const providerReady = !needsProvider || (!providersLoading && !!selectedProvider && (!selectedProvider.experimental || experimentalAccepted))
+  const providerInputId = useId()
+  useEffect(() => {
+    if (!open || !needsProvider) return
+    let cancelled = false
+    setProvidersLoading(true)
+    setProviderError('')
+    setExperimentalAccepted(false)
+    window.api.project.windowUiProviders(selectedPlatform).then(entries => {
+      if (cancelled) return
+      setProviders(entries)
+      const available = entries.filter(entry => entry.available)
+      setProviderId(previous => available.some(entry => entry.id === previous) ? previous : available.length === 1 ? available[0].id : '')
+    }).catch(error => {
+      if (!cancelled) {
+        setProviders([])
+        setProviderId('')
+        setProviderError(error instanceof Error ? error.message : String(error))
+      }
+    }).finally(() => { if (!cancelled) setProvidersLoading(false) })
+    return () => { cancelled = true }
+  }, [open, needsProvider, selectedPlatform])
   const projectTypes = getProjectTypes(selectedPlatform)
   const dialogRef = useRef<HTMLDivElement>(null)
   const lastFocusedRef = useRef<HTMLElement | null>(null)
@@ -154,18 +184,21 @@ function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): 
   }
 
   const handleConfirm = async (): Promise<void> => {
-    if (!projectName.trim()) return
-    const result = await onConfirm({ name: projectName.trim(), path: projectPath, type: selectedType, platform: selectedPlatform })
+    if (!projectName.trim() || !providerReady) return
+    const result = await onConfirm({ name: projectName.trim(), path: projectPath, type: selectedType, platform: selectedPlatform, uiProvider: needsProvider ? providerId : undefined })
     if (result !== false) onClose()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key === 'Enter' && e.target instanceof HTMLElement &&
+      (['BUTTON', 'SELECT'].includes(e.target.tagName) || e.target instanceof HTMLInputElement && e.target.type === 'checkbox')) return
     if (e.key === 'Escape') {
       onClose()
       return
     }
 
     if (e.key === 'Enter') {
+      e.preventDefault()
       handleConfirm()
       return
     }
@@ -252,6 +285,23 @@ function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): 
             </div>
           </div>
 
+          {needsProvider && <div className="np-field">
+            <label htmlFor={providerInputId}>窗口 UI 支持库：</label>
+            <select id={providerInputId} value={providerId} disabled={providersLoading}
+              onChange={event => { setProviderId(event.target.value); setExperimentalAccepted(false) }}>
+              <option value="">{providersLoading ? '正在检查窗口支持库…' : '请选择窗口 UI 支持库'}</option>
+              {providers.map(provider => <option key={provider.id} value={provider.id} disabled={!provider.available}>
+                {provider.displayName}{provider.available ? '' : ` — ${provider.reason}`}
+              </option>)}
+            </select>
+            {providerError && <p role="alert" className="np-provider-error">{providerError}</p>}
+            {!providersLoading && !providerError && !providers.some(provider => provider.available) &&
+              <p role="alert" className="np-provider-error">当前目标没有可用窗口提供者。请检查平台、支持库、SDK 和编译工具链。</p>}
+            {selectedProvider?.experimental && <label className="np-experimental">
+              <input type="checkbox" checked={experimentalAccepted} onChange={event => setExperimentalAccepted(event.target.checked)} />
+              我了解这是实验后端，尚未实现系统读屏桥接，其他平台仍待验证。
+            </label>}
+          </div>}
           {/* 项目名称 */}
           <div className="np-field">
             <label htmlFor={nameInputId}>项目名称：</label>
@@ -286,7 +336,7 @@ function NewProjectDialog({ open, onClose, onConfirm }: NewProjectDialogProps): 
         </div>
 
         <div className="np-dialog-footer">
-          <button type="button" className="np-btn np-btn-primary" onClick={handleConfirm} disabled={!projectName.trim()} aria-label="确认创建项目">
+          <button type="button" className="np-btn np-btn-primary" onClick={handleConfirm} disabled={!projectName.trim() || !providerReady} aria-label="确认创建项目">
             确定
           </button>
           <button type="button" className="np-btn np-btn-secondary" onClick={onClose} aria-label="取消创建项目">
